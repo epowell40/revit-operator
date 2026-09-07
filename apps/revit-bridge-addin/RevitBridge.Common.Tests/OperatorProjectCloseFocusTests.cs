@@ -7,31 +7,18 @@ namespace RevitBridge.Common.Tests
     public class OperatorProjectCloseFocusTests
     {
         [Fact]
-        public void ActiveDrawingWithBrowserFocusDoesNotInvokeTemporarilyDisabledActiveViewSetter()
+        public void DrawingFocusMustBeVerifiedBeforeArmingDiscardAndPosting()
         {
             var calls = new List<string>();
-            OperatorProjectCloseFocus.PrepareAndPost("DrawingSheet",
-                () => OperatorProjectCloseFocus.RestoreDrawingFocus(true,
-                    () => throw new InvalidOperationException("Setting active view is temporarily disabled."),
-                    () => calls.Add("keyboard-focus")),
-                () => calls.Add("post"));
-            Assert.Equal(new[] { "keyboard-focus", "post" }, calls);
-        }
-
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void DifferentDrawingRequiresActivationBeforeFocusOrPosting(bool activationFails)
-        {
-            var calls = new List<string>();
-            Action close = () => OperatorProjectCloseFocus.PrepareAndPost("ProjectBrowser",
-                () => OperatorProjectCloseFocus.RestoreDrawingFocus(false,
-                    () => { calls.Add("activate"); if (activationFails) throw new InvalidOperationException("Unavailable."); },
-                    () => calls.Add("keyboard-focus")),
-                () => calls.Add("post"));
-            if (activationFails) Assert.Throws<InvalidOperationException>(close);
-            else close();
-            Assert.Equal(activationFails ? new[] { "activate" } : new[] { "activate", "keyboard-focus", "post" }, calls);
+            OperatorProjectCloseFocus.PrepareAndPost("ProjectBrowser",
+                () => calls.Add("keyboard-focus-verified"),
+                () => { calls.Add("discard-guard"); calls.Add("post"); });
+            Assert.Equal(new[] { "keyboard-focus-verified", "discard-guard", "post" }, calls);
+            calls.Clear();
+            Assert.Throws<InvalidOperationException>(() => OperatorProjectCloseFocus.PrepareAndPost("ProjectBrowser",
+                () => throw new InvalidOperationException("Drawing focus verification failed."),
+                () => { calls.Add("discard-guard"); calls.Add("post"); }));
+            Assert.Empty(calls);
         }
 
         [Theory]

@@ -103,9 +103,33 @@
     "OperatorWriteGrantAdmissionTests",
     "RevitTextCasePolicyTests",
     "OperatorJsonWireSchemaTests",
-    "OperatorRequestPropertyPresenceTests"
+    "OperatorRequestPropertyPresenceTests",
+    "OperatorConditionalRequestContractsTests"
   ],
   "failure_families": [
+    {
+      "id": "nested-wire-scalars-erased-at-reflection-depth-limit",
+      "coverage": [
+        "dotnet:OperatorJsonWireSchemaTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "mode-specific-native-inputs-incorrectly-required-and-unions-unchecked",
+      "coverage": [
+        "dotnet:OperatorConditionalRequestContractsTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "fixture-close-browser-focus-cannot-assign-active-view",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
     {
       "id": "nullable-view-selectors-and-default-flags-required-by-reflection",
       "coverage": [

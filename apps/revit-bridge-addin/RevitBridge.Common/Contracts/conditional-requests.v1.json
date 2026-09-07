@@ -1,0 +1,380 @@
+{
+  "/revit/rotate-elements": {
+    "type": "object",
+    "properties": {
+      "ids": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        },
+        "minItems": 1,
+        "maxItems": 200
+      },
+      "angleDegrees": {
+        "type": "number"
+      },
+      "axis": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "pointX": {
+            "type": "number"
+          },
+          "pointY": {
+            "type": "number"
+          },
+          "pointZ": {
+            "type": "number"
+          },
+          "endPointX": {
+            "type": "number"
+          },
+          "endPointY": {
+            "type": "number"
+          },
+          "endPointZ": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "mode",
+          "pointX",
+          "pointY",
+          "pointZ"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "zThroughPoint"
+                ]
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "throughPoints"
+                ]
+              }
+            },
+            "required": [
+              "endPointX",
+              "endPointY",
+              "endPointZ"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "behavior": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "maxLength": 32
+          }
+        ]
+      },
+      "options": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "failOnPinned": {
+                "type": "boolean"
+              },
+              "unpinIfAllowed": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "required": [
+      "ids",
+      "angleDegrees",
+      "axis"
+    ],
+    "additionalProperties": false
+  },
+  "/revit/export-view-region": {
+    "type": "object",
+    "properties": {
+      "viewId": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      "imageMaxSizePx": {
+        "type": "integer"
+      },
+      "imageSize": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      "folder": {
+        "type": "string"
+      },
+      "includeMapping": {
+        "type": "boolean"
+      },
+      "preserveViewSpecificDetailing": {
+        "type": "boolean"
+      },
+      "fileName": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "maxLength": 180
+          }
+        ]
+      },
+      "region": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "focusElementIds": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 1,
+                "maxItems": 200
+              }
+            ]
+          },
+          "marginFt": {
+            "type": "number"
+          },
+          "centerX": {
+            "type": "number"
+          },
+          "centerY": {
+            "type": "number"
+          },
+          "halfWidth": {
+            "type": "number"
+          },
+          "halfHeight": {
+            "type": "number"
+          },
+          "coordinateSpace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "maxLength": 24
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "focusElements"
+                ]
+              },
+              "focusElementIds": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 1,
+                "maxItems": 200
+              }
+            },
+            "required": [
+              "focusElementIds"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "center"
+                ]
+              }
+            },
+            "required": [
+              "centerX",
+              "centerY",
+              "halfWidth",
+              "halfHeight"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "hideCategories": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "required": [
+      "region"
+    ],
+    "additionalProperties": false
+  },
+  "/revit/transaction-validate": {
+    "type": "object",
+    "properties": {
+      "transactionId": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "elementId": {
+              "type": "integer"
+            },
+            "parameterName": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "expectedValue": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "elementId"
+          ],
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "exists",
+                    "notExists"
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "parameterEquals"
+                  ]
+                },
+                "parameterName": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "parameterName",
+                "expectedValue"
+              ],
+              "additionalProperties": true
+            }
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 200
+      }
+    },
+    "required": [
+      "checks"
+    ],
+    "additionalProperties": false
+  }
+}

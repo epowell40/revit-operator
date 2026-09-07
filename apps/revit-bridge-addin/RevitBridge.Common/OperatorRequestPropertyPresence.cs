@@ -8,12 +8,23 @@ namespace RevitBridge.Common
     /// <summary>Recover property presence without treating nullable selectors or false flags as mandatory.</summary>
     public static class OperatorRequestPropertyPresence
     {
+        public static bool AllowsReferenceNull(PropertyInfo property) =>
+            !property.PropertyType.IsValueType && NullableReferenceFlag(property) == 2;
+
         public static bool IsRequired(PropertyInfo property, object? defaultValue, bool isDefaultValue)
         {
             if (property == null) throw new ArgumentNullException(nameof(property));
             if (property.GetCustomAttributesData().Any(attribute =>
                 attribute.AttributeType.FullName == "System.Text.Json.Serialization.JsonRequiredAttribute" ||
                 attribute.AttributeType.FullName == "System.Runtime.CompilerServices.RequiredMemberAttribute")) return true;
+
+            // An explicitly documented native default makes presence optional.
+            // Ignore mismatched/unsupported attribute overloads instead of
+            // assuming every zero-valued identifier or coordinate is optional.
+            var documentedDefault = property.GetCustomAttributesData().FirstOrDefault(attribute =>
+                attribute.AttributeType.FullName == "System.ComponentModel.DefaultValueAttribute");
+            if (documentedDefault != null && documentedDefault.ConstructorArguments.Count == 1
+                && Equals(defaultValue, documentedDefault.ConstructorArguments[0].Value)) return false;
 
             var type = property.PropertyType;
             // Omitted Boolean controls deserialize to their native default.

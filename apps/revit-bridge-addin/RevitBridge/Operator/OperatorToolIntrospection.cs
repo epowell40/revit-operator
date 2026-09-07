@@ -440,8 +440,39 @@ namespace RevitBridge.Operator
                 var p = (path ?? "").Trim();
                 if (m == "GET") return null;
 
+                if (OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema))
+                    return conditionalSchema;
+
                 if (string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
                     return OperatorDuplicateSheetContract.RequestSchema();
+
+                if (p == "/revit/move-elements")
+                {
+                    var schema = (Dictionary<string, object>)WithRequiredFields(SchemaFromType(RequestTypesByPath[p], 0), "ids", "mode");
+                    var properties = (Dictionary<string, object>)schema["properties"];
+                    properties["ids"] = Arr(Int(), minItems: 1, maxItems: 200);
+                    schema["oneOf"] = new[] {
+                        Obj(new Dictionary<string, object> { ["mode"] = Str(new[] { "vector" }) },
+                            new[] { "vectorX", "vectorY", "vectorZ" }, additionalProps: true),
+                        Obj(new Dictionary<string, object> { ["mode"] = Str(new[] { "fromTo" }) },
+                            new[] { "fromX", "fromY", "fromZ", "toX", "toY", "toZ" }, additionalProps: true)
+                    };
+                    return schema;
+                }
+
+                if (p == "/revit/set-type-parameters")
+                {
+                    var schema = (Dictionary<string, object>)WithRequiredFields(SchemaFromType(RequestTypesByPath[p], 0), "changes");
+                    var properties = (Dictionary<string, object>)schema["properties"];
+                    properties["changes"] = Arr(Obj(new Dictionary<string, object> {
+                        ["parameterName"] = Str(maxLength: 128), ["value"] = Str(maxLength: 2000)
+                    }, new[] { "parameterName", "value" }, additionalProps: false), minItems: 1, maxItems: 250);
+                    schema["anyOf"] = new[] {
+                        Obj(new Dictionary<string, object> { ["typeId"] = Int(minimum: 1) }, new[] { "typeId" }, additionalProps: true),
+                        Obj(new Dictionary<string, object> { ["typeIds"] = Arr(Int(minimum: 1), minItems: 1, maxItems: 200) }, new[] { "typeIds" }, additionalProps: true)
+                    };
+                    return schema;
+                }
 
                 // Introspection endpoints (POST) – keep small.
                 if (string.Equals(p, "/revit/tool-search", StringComparison.OrdinalIgnoreCase))
@@ -1145,12 +1176,8 @@ namespace RevitBridge.Operator
                     return OneOf(Null(), core);
                 }
 
-                // Route request DTOs contain several mutually exclusive nullable string
-                // selectors (ductType/pipeType/conduitType and their sizes). The generic
-                // net48 reflection fallback cannot recover nullable-reference metadata and
-                // would incorrectly advertise every selector as simultaneously required.
-                // The handlers require ordered points; kind defaults to duct and every
-                // other selector is conditional or has a guarded native fallback.
+                // The handlers require ordered points. Kind defaults to duct;
+                // other selectors are conditional or have a guarded native fallback.
                 if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1159,9 +1186,7 @@ namespace RevitBridge.Operator
 
                 // This route accepts two alternative request shapes: either one of
                 // parameterName/parameter/paramName plus value, or a predicates array.
-                // The net48 reflection fallback cannot represent that conditional union
-                // and otherwise advertises every nullable string alias (including the
-                // optional systemName filter) as simultaneously required. Publish no
+                // Reflection alone cannot represent that conditional union. Publish no
                 // unconditional root requirements; native schema validation enforces the
                 // selected shape before handler execution.
                 if (string.Equals(p, "/revit/find-elements-by-parameter", StringComparison.OrdinalIgnoreCase))
@@ -1170,9 +1195,8 @@ namespace RevitBridge.Operator
                 }
 
                 // Exact-id lookup, text filters, and family-session selection are
-                // independent optional selectors. The net48 reflection fallback
-                // cannot recover nullable-reference metadata and would advertise
-                // every nullable string selector as simultaneously required.
+                // independent optional selectors. Keep their explicit native
+                // bounds in the published schema.
                 if (string.Equals(p, "/revit/find-text-notes", StringComparison.OrdinalIgnoreCase))
                 {
                     return Obj(
@@ -1695,7 +1719,8 @@ namespace RevitBridge.Operator
                     var root = doc.RootElement;
 
                     // If schema is oneOf(null, object) pick the object branch for field summaries.
-                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("oneOf", out var oneOf) && oneOf.ValueKind == JsonValueKind.Array)
+                    if (root.ValueKind == JsonValueKind.Object && !root.TryGetProperty("properties", out _)
+                        && root.TryGetProperty("oneOf", out var oneOf) && oneOf.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var branch in oneOf.EnumerateArray())
                         {
@@ -1741,18 +1766,22 @@ namespace RevitBridge.Operator
             private static object SchemaFromType(Type t, int depth)
             {
                 if (OperatorJsonWireSchema.TryCreate(t, out var jsonSchema)) return jsonSchema!;
-                if (depth > 4) return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
-
-                if (t == typeof(string)) return Str();
-                if (t == typeof(bool)) return Bool();
-                if (t == typeof(int) || t == typeof(long) || t == typeof(short)) return Int();
-                if (t == typeof(double) || t == typeof(float) || t == typeof(decimal)) return Num();
-
                 var nullable = Nullable.GetUnderlyingType(t);
                 if (nullable != null)
                 {
-                    return OneOf(Null(), SchemaFromType(nullable, depth + 1));
+                    var valueSchema = SchemaFromType(nullable, depth + 1);
+                    // Unconstrained JSON already accepts null; wrapping it in
+                    // oneOf(null, {}) would make null match two alternatives.
+                    return valueSchema is Dictionary<string, object> anyJson && anyJson.Count == 0
+                        ? valueSchema : OneOf(Null(), valueSchema);
                 }
+
+                // Bound recursive object expansion without inventing an object
+                // constraint for scalars or sequences at the truncation boundary.
+                if (depth > 4)
+                    return t.IsArray || IsListLike(t, out _)
+                        ? Arr(new Dictionary<string, object>())
+                        : Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
 
                 if (t.IsArray)
                 {
@@ -1778,6 +1807,9 @@ namespace RevitBridge.Operator
 
                     var pt = p.PropertyType;
                     var schema = SchemaFromType(pt, depth + 1);
+                    if (OperatorRequestPropertyPresence.AllowsReferenceNull(p)
+                        && schema is Dictionary<string, object> typedSchema && typedSchema.ContainsKey("type"))
+                        schema = OneOf(Null(), schema);
                     props[p.Name] = WithHeuristicDescription(p.Name, pt, schema);
 
                     var defaultVal = instance != null ? SafeGet(p, instance) : null;

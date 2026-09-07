@@ -135,8 +135,8 @@ namespace RevitBridge.Logic.Handlers
             public List<long> elementIds { get; set; }
             public List<string> categories { get; set; }
             public List<string> levelNames { get; set; }
-            public string roomNumber { get; set; }
-            public string roomNameContains { get; set; }
+            public string? roomNumber { get; set; }
+            public string? roomNameContains { get; set; }
             public long? nearElementId { get; set; }
             public double? maxDistanceFt { get; set; }
             public int? limit { get; set; } = 200;
@@ -146,9 +146,9 @@ namespace RevitBridge.Logic.Handlers
             public bool? includeHostRooms { get; set; }
             public bool? includeHostSpaces { get; set; }
             public bool? includeLinkedRooms { get; set; }
-            public string linkedModelNameContains { get; set; }
+            public string? linkedModelNameContains { get; set; }
             public long? phaseId { get; set; }
-            public string phaseName { get; set; }
+            public string? phaseName { get; set; }
             public int? nearestCandidateLimit { get; set; }
         }
 
@@ -791,7 +791,7 @@ namespace RevitBridge.Logic.Handlers
             public string sheetNumber { get; set; }
             public List<SheetRegion> sheetRegions { get; set; }
             public List<string> categories { get; set; }
-            public string textContains { get; set; }
+            public string? textContains { get; set; }
             public int? limit { get; set; } = 25;
         }
 

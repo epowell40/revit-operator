@@ -56,17 +56,15 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException("Revit's Close Active Project command is unavailable in this version.");
             object? dialogGuard = null;
             var restoredGraphicalFocus = OperatorProjectCloseFocus.PrepareAndPost(
-                uiDocument!.ActiveView?.ViewType.ToString(),
+                null,
                 () =>
                 {
-                    // ActiveView can be ProjectBrowser/SystemBrowser after a browser
-                    // selection. Restore the actual drawing before posting File Close.
+                    // ActiveView may describe ProjectBrowser/SystemBrowser here.
+                    // ActiveGraphicalView already identifies the drawing to focus;
+                    // assigning ActiveView inside this callback can be prohibited.
                     var graphicalView = uiDocument.ActiveGraphicalView
                         ?? throw new InvalidOperationException("No graphical view is available to close the active project.");
-                    OperatorProjectCloseFocus.RestoreDrawingFocus(
-                        uiDocument.ActiveView?.Id == graphicalView.Id,
-                        () => uiDocument.ActiveView = graphicalView,
-                        () => OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView));
+                    OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView);
                 },
                 () =>
                 {

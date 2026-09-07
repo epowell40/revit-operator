@@ -3055,9 +3055,11 @@
           }
         },
         {
-          "name": "Get parameters (single id shorthand)",
+          "name": "Get parameters for one resolved element",
           "request": {
-            "elementIds": 123,
+            "elementIds": [
+              123
+            ],
             "names": [
               "Mark"
             ]
@@ -3201,11 +3203,9 @@
               "kind": "face",
               "side": "right"
             },
-            "axis": "viewX",
-            "dryRun": true
+            "axis": "viewX"
           },
           "expected_response_shape": {
-            "status": "Success",
             "gapFt": 0.5
           },
           "notes": [
@@ -4626,11 +4626,16 @@
               111,
               222
             ],
-            "fileName": "highlight.png"
+            "folder": "artifacts/highlight-review"
           },
           "expected_response_shape": {
-            "path": "C:\\\\...\\\\highlight.png"
-          }
+            "path": "C:/workspace/artifacts/highlight-review/generated-view-image.png",
+            "widthPx": 2200,
+            "heightPx": 1600
+          },
+          "notes": [
+            "The tool generates its image filename inside the workspace folder."
+          ]
         }
       ]
     },
@@ -4657,14 +4662,14 @@
         {
           "name": "Select elements",
           "request": {
-            "ids": [
+            "elementIds": [
               111,
               222
             ]
           },
           "expected_response_shape": {
-            "status": "Selected",
-            "count": 2
+            "ok": true,
+            "selectedCount": 2
           }
         }
       ]
@@ -8542,10 +8547,12 @@
         {
           "name": "Load RFA from workspace",
           "request": {
-            "sourcePath": "artifacts/uploads/Device.rfa"
+            "filePath": "artifacts/uploads/Device.rfa"
           },
           "expected_response_shape": {
-            "status": "Success"
+            "status": "Loaded",
+            "loaded": true,
+            "familyName": "Device"
           }
         }
       ]
@@ -8557,13 +8564,17 @@
         {
           "name": "Create family from template",
           "request": {
-            "templatePath": "C:\\\\Templates\\\\Metric Generic Model.rft",
-            "familyName": "NewFamily"
+            "templatePath": "artifacts/templates/Metric Generic Model.rft",
+            "savePath": "artifacts/families/NewFamily.rfa"
           },
           "expected_response_shape": {
-            "status": "Success",
-            "path": "C:\\\\...\\\\NewFamily.rfa"
-          }
+            "status": "Created",
+            "filePath": "C:/workspace/artifacts/families/NewFamily.rfa",
+            "load": null
+          },
+          "notes": [
+            "Stage the template under the workspace and choose an available output path before applying."
+          ]
         }
       ]
     },
@@ -8783,15 +8794,20 @@
       "path": "/revit/duplicate-view",
       "examples": [
         {
-          "name": "Duplicate active view",
+          "name": "Duplicate one resolved view",
           "request": {
-            "mode": "Duplicate",
-            "newName": "Copy"
+            "viewId": 123,
+            "newName": "Copy",
+            "withDetailing": false
           },
           "expected_response_shape": {
-            "status": "Success",
-            "viewId": 123
-          }
+            "viewId": 456,
+            "name": "Copy",
+            "sourceViewId": 123
+          },
+          "notes": [
+            "Resolve an existing view ID first; the handler does not infer the active view."
+          ]
         }
       ]
     },
@@ -9299,13 +9315,15 @@
       "path": "/revit/export-dimensioning-v2",
       "examples": [
         {
-          "name": "Export dimensioning v2 (dry run)",
+          "name": "Read dimensioning geometry from one resolved view",
           "request": {
-            "dryRun": true
+            "viewId": 123
           },
           "expected_response_shape": {
-            "status": "Dry Run",
-            "paths": []
+            "schema": "dimensioning_v2",
+            "view": {},
+            "elements": [],
+            "dimensions": []
           }
         }
       ]
@@ -9315,13 +9333,35 @@
       "path": "/revit/spatial-analysis",
       "examples": [
         {
-          "name": "Run spatial analysis (dry run)",
+          "name": "Check room area against an example project requirement",
           "request": {
-            "dryRun": true
+            "levels": [
+              "Level 1"
+            ],
+            "ruleset": {
+              "rules": [
+                {
+                  "id": "room-min-area",
+                  "citation": "Example project requirement",
+                  "description": "Check rooms against the specified 100 square foot threshold.",
+                  "category": "OST_Rooms",
+                  "check_type": "min_area",
+                  "min_sf": 100
+                }
+              ]
+            }
           },
           "expected_response_shape": {
-            "status": "Success"
-          }
+            "summary": {
+              "passed": 0,
+              "failed": 0,
+              "warnings": 0
+            },
+            "violations": []
+          },
+          "notes": [
+            "Replace the example level and project requirement with resolved project inputs. This analysis rolls back its temporary transaction."
+          ]
         }
       ]
     },
@@ -9495,13 +9535,18 @@
       "path": "/revit/ensure-spaces",
       "examples": [
         {
-          "name": "Ensure spaces (dry run)",
+          "name": "Create missing spaces on one resolved level",
           "request": {
-            "dryRun": true
+            "levelName": "Level 1"
           },
           "expected_response_shape": {
-            "status": "Dry Run"
-          }
+            "spacesCreated": 0,
+            "existingSpaces": 0,
+            "errors": []
+          },
+          "notes": [
+            "Resolve the exact existing level name first. This tool applies changes directly and has no dryRun input."
+          ]
         }
       ]
     },
@@ -9510,13 +9555,17 @@
       "path": "/revit/create-zones",
       "examples": [
         {
-          "name": "Create zones (dry run)",
+          "name": "Create thermal zones on one resolved level",
           "request": {
-            "dryRun": true
+            "levelName": "Level 1"
           },
           "expected_response_shape": {
-            "status": "Dry Run"
-          }
+            "zones": [],
+            "warnings": []
+          },
+          "notes": [
+            "Resolve the exact existing level name first. This tool applies changes directly and has no dryRun input."
+          ]
         }
       ]
     },
@@ -9525,13 +9574,17 @@
       "path": "/revit/create-zone-visuals",
       "examples": [
         {
-          "name": "Create zone visuals (dry run)",
+          "name": "Create zone visuals on one resolved level",
           "request": {
-            "dryRun": true
+            "levelName": "Level 1"
           },
           "expected_response_shape": {
-            "status": "Dry Run"
-          }
+            "viewName": "M-TZ-Level 1",
+            "success": true
+          },
+          "notes": [
+            "Resolve the exact existing level name first. This tool applies changes directly and has no dryRun input."
+          ]
         }
       ]
     },

@@ -20,7 +20,8 @@ namespace RevitBridge.Logic.Handlers
 
         public sealed class Params
         {
-            public long typeId { get; set; } // back-compat single target
+            [System.ComponentModel.DefaultValue(0L)]
+            public long typeId { get; set; } // omitted when typeIds supplies the targets
             public List<long>? typeIds { get; set; } // optional multi-target
             public List<Change>? changes { get; set; }
             public bool dryRun { get; set; }

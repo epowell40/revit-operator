@@ -330,6 +330,66 @@ test("native arbitrary JSON values admit geometry arrays and deferred scalar bin
     ["body.invented"]);
 });
 
+test("native nullable alternatives enforce nested requirements without rejecting explicit null values", () => {
+  const contract = { method: "POST", path: "/revit/nullable-contract", request_schema: {
+    oneOf: [{ type: "null" }, { type: "object", additionalProperties: false, required: ["selector"], properties: {
+      selector: { oneOf: [{ type: "null" }, { type: "integer", minimum: 1 }] },
+      name: { oneOf: [{ type: "null" }, { type: "string" }] }
+    } }]
+  } };
+  for (const body of [null, { selector: 123 }, { selector: null, name: null }])
+    assert.equal(preflightKnownGenericToolBody(contract, body), null);
+  for (const body of [{}, { selector: "123" }, { selector: 0 }, { selector: 123, name: false }, { selector: 123, extra: true }]) {
+    const failure = preflightKnownGenericToolBody(contract, body);
+    assert.equal(failure?.request_dispatched, false);
+    assert.equal(failure?.validation_issues?.[0]?.expected_constraint.kind, "schema_alternative");
+  }
+  assert.equal(preflightKnownGenericToolBody(contract, undefined)?.request_dispatched, false);
+  const requiredNullable = { method: "POST", path: "/revit/nullable-required", required_fields: ["value"], request_schema: {
+    type: "object", required: ["value"], properties: { value: { oneOf: [{ type: "null" }, { type: "integer" }] } }
+  } };
+  assert.equal(preflightKnownGenericToolBody(requiredNullable, { value: null }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(requiredNullable, {})?.missing_required_fields, ["value"]);
+});
+
+test("native move alternatives require only the selected coordinate mode and preserve the closed outer envelope", () => {
+  const properties = Object.fromEntries(["vectorX", "vectorY", "vectorZ", "fromX", "fromY", "fromZ", "toX", "toY", "toZ"].map(name => [name, { type: "number" }]));
+  const contract = { method: "POST", path: "/revit/move-elements", request_schema: {
+    type: "object", additionalProperties: false, required: ["ids", "mode"],
+    properties: { ...properties, ids: { type: "array", minItems: 1, items: { type: "integer" } }, mode: { type: "string" } },
+    oneOf: [
+      { properties: { mode: { enum: ["vector"] } }, required: ["vectorX", "vectorY", "vectorZ"] },
+      { properties: { mode: { enum: ["fromTo"] } }, required: ["fromX", "fromY", "fromZ", "toX", "toY", "toZ"] }
+    ]
+  } };
+  const vector = { ids: [123], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0 };
+  assert.equal(preflightKnownGenericToolBody(contract, vector), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { ids: [123], mode: "fromTo", fromX: 0, fromY: 0, fromZ: 0, toX: 1, toY: 0, toZ: 0 }), null);
+  for (const body of [{ ...vector, mode: "fromTo" }, { ...vector, vectorX: "1" }, { ...vector, invented: true }, { ...vector, ids: [] }, { ...vector, vectorZ: undefined }])
+    assert.equal(preflightKnownGenericToolBody(contract, body)?.request_dispatched, false);
+});
+
+test("anyOf permits overlapping native selectors while allOf and nested required fields remain enforced", () => {
+  const contract = { method: "POST", path: "/revit/type-selector", request_schema: {
+    type: "object", anyOf: [{ required: ["typeId"] }, { required: ["typeIds"] }],
+    allOf: [{ required: ["change"] }, { properties: { change: { type: "object", required: ["value"], properties: { value: { type: "string" } } } } }]
+  } };
+  assert.equal(preflightKnownGenericToolBody(contract, { typeId: 1, typeIds: [2], change: { value: "" } }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { typeIds: [2], change: {} })?.invalid_fields, ["body.change.value"]);
+  assert.equal(preflightKnownGenericToolBody(contract, { change: { value: "x" } })?.validation_issues?.[0]?.expected_constraint.kind, "schema_alternative");
+  const ambiguous = { method: "POST", path: "/revit/ambiguous", request_schema: { oneOf: [{ type: "integer" }, { type: "number" }] } };
+  assert.equal(preflightKnownGenericToolBody(ambiguous, 1)?.request_dispatched, false);
+});
+
+test("alternative validation cannot bypass depth, branch-count or total-work limits", () => {
+  const contract = (request_schema: unknown) => ({ method: "POST", path: "/revit/bounded-alternatives", request_schema });
+  assert.equal(preflightKnownGenericToolBody(contract({ oneOf: Array.from({ length: 17 }, () => ({})) }), {})?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+  let deep: unknown = { type: "object" };
+  for (let index = 0; index < 26; index++) deep = { allOf: [deep] };
+  assert.equal(preflightKnownGenericToolBody(contract({ anyOf: [{}, deep] }), {})?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "array", items: { type: "number" } }), Array(100_001).fill(0))?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+});
+
 test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
   const tooMany = preflightKnownGenericToolBody({
     method: "POST",
@@ -347,4 +407,28 @@ test("schema diagnostics fail closed within bounded issue and field-path limits"
   }, {});
   assert.equal(oversizedPath?.validation_issues?.[0]?.field_path, "body");
   assert.equal(oversizedPath?.validation_issues?.[0]?.actual_type, "schema_contract_out_of_bounds");
+});
+
+test("native conditional contracts accept bundled requests without fields from unused modes", () => {
+  const schemas = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  for (const [path, request_schema] of Object.entries(schemas)) {
+    const tool = catalog.tools.find((entry: any) => entry.method === "POST" && entry.path === path);
+    assert.ok(tool?.examples.length, path);
+    for (const example of tool.examples) assert.equal(preflightKnownGenericToolBody({method:"POST",path,request_schema}, example.request), null, `${path}: ${example.name}`);
+  }
+  const validate = (path: string, body: unknown) => preflightKnownGenericToolBody({method:"POST",path,request_schema:schemas[path]}, body);
+  const rotation = {ids:[123],angleDegrees:30,axis:{mode:"zThroughPoint",pointX:0,pointY:0,pointZ:0}};
+  assert.equal(validate("/revit/rotate-elements", rotation), null);
+  assert.ok(validate("/revit/rotate-elements", {...rotation,axis:{...rotation.axis,mode:"throughPoints"}}));
+  assert.equal(validate("/revit/rotate-elements", {...rotation,axis:{...rotation.axis,mode:"throughPoints",endPointX:0,endPointY:0,endPointZ:1}}), null);
+  assert.ok(validate("/revit/rotate-elements", {...rotation,axis:null}));
+  assert.equal(validate("/revit/export-view-region", {region:{mode:"center",centerX:0,centerY:0,halfWidth:1,halfHeight:1}}), null);
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"center",centerX:0,centerY:0}}));
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"focusElements",focusElementIds:null}}));
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"focusElements",focusElementIds:[]}}));
+  assert.equal(validate("/revit/transaction-validate", {checks:[{kind:"exists",elementId:123},{kind:"parameterEquals",elementId:123,parameterName:"Mark",expectedValue:""}]}), null);
+  assert.ok(validate("/revit/transaction-validate", {checks:[{kind:"parameterEquals",elementId:123}]}));
+  assert.ok(validate("/revit/transaction-validate", {checks:[]}));
+  assert.ok(validate("/revit/transaction-validate", {checks:[{kind:"madeUp",elementId:123}]}));
 });

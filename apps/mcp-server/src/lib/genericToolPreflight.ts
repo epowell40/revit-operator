@@ -15,7 +15,7 @@ export type GenericToolValidationIssue = {
   safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
   correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
   expected_constraint: Readonly<{
-    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds";
+    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds" | "schema_alternative";
     type?: string;
     allowed_values?: readonly (string | number | boolean | null)[];
     minimum?: number;
@@ -31,6 +31,9 @@ export type GenericToolValidationIssue = {
 const MAX_VALIDATION_ISSUES = 64;
 const MAX_SCHEMA_DEPTH = 24;
 const MAX_FIELD_PATH_LENGTH = 512;
+const MAX_SCHEMA_VISITS = 100_000;
+const MAX_SCHEMA_ALTERNATIVES = 16;
+type ValidationBudget = { remaining: number; exhausted: boolean };
 
 function boundedScalar(value: unknown): string | number | boolean | null | undefined {
   if (value === null || typeof value === "boolean") return value;
@@ -83,9 +86,12 @@ function actualType(value: unknown): string {
   return typeof value;
 }
 
-function schemaViolations(value: unknown, schemaValue: unknown, field: string, violations: GenericToolValidationIssue[], depth = 0): void {
+function schemaViolations(value: unknown, schemaValue: unknown, field: string, violations: GenericToolValidationIssue[], depth: number, budget: ValidationBudget): void {
+  if (budget.remaining-- <= 0) { budget.exhausted = true; return; }
+  if (field.length > MAX_FIELD_PATH_LENGTH) { budget.exhausted = true; return; }
   if (violations.length >= MAX_VALIDATION_ISSUES) return;
   if (depth > MAX_SCHEMA_DEPTH) {
+    budget.exhausted = true;
     pushIssue(violations, {
       field_path: field,
       expected_type: `schema_depth<=${MAX_SCHEMA_DEPTH}`,
@@ -99,6 +105,36 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
   }
   const schema = record(schemaValue);
   if (!schema) return;
+  for (const keyword of ["oneOf", "anyOf", "allOf"] as const) {
+    if (schema[keyword] === undefined) continue;
+    const alternatives = schema[keyword];
+    if (!Array.isArray(alternatives) || alternatives.length === 0 || alternatives.length > MAX_SCHEMA_ALTERNATIVES) {
+      budget.exhausted = true; return;
+    }
+    const results: GenericToolValidationIssue[][] = [];
+    for (const alternative of alternatives) {
+      if (!record(alternative)) { budget.exhausted = true; return; }
+      const issues: GenericToolValidationIssue[] = [];
+      schemaViolations(value, alternative, field, issues, depth + 1, budget);
+      results.push(issues);
+      if (budget.exhausted) return;
+    }
+    const matches = results.filter(issues => issues.length === 0).length;
+    if (keyword === "allOf") {
+      for (const issues of results) for (const issue of issues) pushIssue(violations, issue);
+    } else if (keyword === "oneOf" ? matches !== 1 : matches === 0) {
+      const descriptions = alternatives.map(alternative => {
+        const row = record(alternative)!;
+        return (Array.isArray(row.required) ? `required: ${row.required.join(", ")}` : `type: ${row.type ?? "schema-defined"}`).slice(0, 256);
+      });
+      pushIssue(violations, {
+        field_path: field, expected_type: keyword === "oneOf" ? "exactly_one_schema" : "at_least_one_schema",
+        actual_type: actualType(value), safe_correction_eligibility: "provider_corrected_arguments_required",
+        correction_action: "provider_resubmit", expected_constraint: { kind: "schema_alternative", type: keyword, allowed_values: descriptions },
+        message: `${field} must satisfy ${keyword === "oneOf" ? "exactly one" : "at least one"} published alternative (${descriptions.join("; ")}); matched ${matches}`
+      });
+    }
+  }
   const type = typeof schema.type === "string" ? schema.type : "";
   let typeMatches = true;
   if (type === "object") typeMatches = !!record(value);
@@ -177,12 +213,25 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
       pushIssue(violations, { field_path: field, expected_type: `maxItems:${maxItems}`, actual_type: "array", safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit", expected_constraint: { kind: "array_length", ...(minItems !== null ? { min_items: minItems } : {}), max_items: maxItems }, message });
     }
     if (schema.items !== undefined) {
-      value.forEach((item, index) => schemaViolations(item, schema.items, `${field}[${index}]`, violations, depth + 1));
+      for (let index = 0; index < value.length && !budget.exhausted && violations.length < MAX_VALIDATION_ISSUES; index++)
+        schemaViolations(value[index], schema.items, `${field}[${index}]`, violations, depth + 1, budget);
     }
   }
 
   const objectValue = record(value);
-  const properties = record(schema.properties);
+  const properties = record(schema.properties) ?? (schema.additionalProperties === false ? {} : null);
+  if (objectValue && Array.isArray(schema.required)) {
+    if (schema.required.length > MAX_VALIDATION_ISSUES || schema.required.some(name => typeof name !== "string" || name.length > MAX_FIELD_PATH_LENGTH - 5)) {
+      budget.exhausted = true; return;
+    }
+    for (const name of schema.required as string[]) {
+      if (!Object.prototype.hasOwnProperty.call(objectValue, name) || objectValue[name] === undefined) {
+        pushIssue(violations, { field_path: `${field}.${name}`, expected_type: "present", actual_type: "missing",
+          safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit",
+          expected_constraint: { kind: "required" }, message: `${field}.${name} is required` });
+      }
+    }
+  }
   if (objectValue && properties) {
     if (schema.additionalProperties === false) {
       const allowed = Object.keys(properties).sort();
@@ -199,8 +248,9 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
       }
     }
     for (const [name, propertySchema] of Object.entries(properties)) {
-      if (Object.prototype.hasOwnProperty.call(objectValue, name) && objectValue[name] !== undefined && objectValue[name] !== null) {
-        schemaViolations(objectValue[name], propertySchema, `${field}.${name}`, violations, depth + 1);
+      if (budget.exhausted || violations.length >= MAX_VALIDATION_ISSUES) break;
+      if (Object.prototype.hasOwnProperty.call(objectValue, name) && objectValue[name] !== undefined) {
+        schemaViolations(objectValue[name], propertySchema, `${field}.${name}`, violations, depth + 1, budget);
       }
     }
   }
@@ -253,7 +303,7 @@ export function preflightKnownGenericToolBody(
   const missing = required.filter(field => !root
     || !Object.prototype.hasOwnProperty.call(root, field)
     || root[field] === undefined
-    || root[field] === null);
+    || (root[field] === null && record(record(contract?.request_schema)?.properties)?.[field] === undefined));
   if (missing.length > 0) {
     const noun = missing.length === 1 ? "field" : "fields";
     return {
@@ -284,7 +334,13 @@ export function preflightKnownGenericToolBody(
   }
 
   const violations: GenericToolValidationIssue[] = [];
-  if (body !== undefined && body !== null) schemaViolations(body, contract?.request_schema, "body", violations);
+  const budget: ValidationBudget = { remaining: MAX_SCHEMA_VISITS, exhausted: false };
+  schemaViolations(body === undefined ? {} : body, contract?.request_schema, "body", violations, 0, budget);
+  if (budget.exhausted) {
+    violations.splice(0, violations.length, { field_path: "body", expected_type: "bounded_schema_validation", actual_type: "schema_contract_out_of_bounds",
+      safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit",
+      expected_constraint: { kind: "schema_bounds" }, message: "The published input contract exceeds bounded validation work or alternative limits." });
+  }
   if (violations.length === 0) return null;
   const invalidFields = [...new Set(violations.map((violation) => violation.field_path))];
   return {

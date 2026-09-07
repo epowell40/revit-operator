@@ -19,12 +19,27 @@ namespace RevitBridge.Common.Tests
         }
 
         [Theory]
-        [InlineData(typeof(string))]
         [InlineData(typeof(Dictionary<string, int>))]
         public void OrdinaryRequestContractsStillUseTheirTypedSchema(Type type)
         {
             Assert.False(OperatorJsonWireSchema.TryCreate(type, out var schema));
             Assert.Null(schema);
+        }
+
+        [Theory]
+        [InlineData(typeof(string), "string")]
+        [InlineData(typeof(bool), "boolean")]
+        [InlineData(typeof(long), "integer")]
+        [InlineData(typeof(int), "integer")]
+        [InlineData(typeof(short), "integer")]
+        [InlineData(typeof(double), "number")]
+        [InlineData(typeof(float), "number")]
+        [InlineData(typeof(decimal), "number")]
+        public void ScalarsKeepTheirWireTypeBeforeRecursiveSchemaExpansionIsTruncated(Type type, string expected)
+        {
+            Assert.True(OperatorJsonWireSchema.TryCreate(type, out var schema));
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(schema));
+            Assert.Equal(expected, json.RootElement.GetProperty("type").GetString());
         }
 
         [Theory]
