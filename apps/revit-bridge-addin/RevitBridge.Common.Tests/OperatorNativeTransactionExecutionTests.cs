@@ -22,6 +22,9 @@ namespace RevitBridge.Common.Tests
         [InlineData("/revit/duplicate-sheet", "Committed", "applied", true)]
         [InlineData("/revit/duplicate-sheet", "RolledBack", "none", false)]
         [InlineData("/revit/duplicate-sheet", "Pending", "unknown", false)]
+        [InlineData("/revit/create-drafting-view", "Committed", "applied", true)]
+        [InlineData("/revit/create-drafting-view", "RolledBack", "none", false)]
+        [InlineData("/revit/create-drafting-view", "Pending", "unknown", false)]
         [InlineData("/revit/create-sheet", "Committed", "applied", true)]
         [InlineData("/revit/create-sheet", "RolledBack", "none", false)]
         [InlineData("/revit/create-view", "Committed", "applied", true)]
@@ -223,6 +226,9 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void HistoricalDuplicateSuccessWithoutReceiptStaysUnknown()
         {
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                new { status = "Success", viewId = 1543005L, name = "OPERATOR HANDOFF CHECK", created = true },
+                "apply", "POST", "/revit/create-drafting-view").EffectState);
             Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
                 new { success = true, viewId = 1542917L, name = "M-COORDINATION COPY" },
                 "apply", "POST", "/revit/duplicate-view").EffectState);

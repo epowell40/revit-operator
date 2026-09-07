@@ -1326,28 +1326,39 @@ test("duplicated view creation receipts bind the new view even when the request 
 });
 
 test("sheet and view creation bind verification to native-created identities without replaying creation", () => {
-  for (const route of ["/revit/duplicate-sheet", "/revit/create-sheet", "/revit/create-view"]) workspace(() => {
+  for (const route of ["/revit/duplicate-sheet", "/revit/create-sheet", "/revit/create-view", "/revit/create-drafting-view"]) workspace(() => {
+    const isSheet = route.endsWith("sheet");
     const { snapshot } = setup("apply");
     const create = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "sheet-view-create", provider_turn_id: "creation-turn",
       capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1420963"],
       arguments: { method: "POST", path: route, body: route === "/revit/duplicate-sheet"
-        ? { sourceSheetId: 1420963, option: "views_and_detailing", newNumber: "TEMP-M000", newName: "COVER SHEET - WORKING COPY" }
-        : route === "/revit/create-sheet" ? { name: "COVER SHEET - WORKING COPY", number: "TEMP-M000" }
-          : { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName: "L2", discipline: "Mechanical" } } });
+        ? { sourceSheetId: 1420963, option: "views_and_detailing", newNumber: "TEMP-M000", newName: "Cover Sheet - Working Copy" }
+        : route === "/revit/create-sheet" ? { name: "Cover Sheet - Working Copy", number: "TEMP-M000" }
+          : route === "/revit/create-drafting-view" ? { name: "Working Draft", allowExisting: false }
+            : { action: "create_floor_plan", name: "Working Draft", levelName: "L2", discipline: "Mechanical" } } });
     markAssignmentKernelOperationDispatchStartedV2(create);
     const native = envelope(create.operation_id, create.binding, { ok: true, applied: true, verified: true,
-      sheet: { id: 1542977, number: "TEMP-M000", name: "COVER SHEET - WORKING COPY" } }, "applied");
+      ...(isSheet ? { sheet: { id: 1542977, number: "TEMP-M000", name: "COVER SHEET - WORKING COPY" } }
+        : { viewId: 1542977, name: "Working Draft", created: true }) }, "applied");
     native.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542977", "element_id:1542978"];
     settleAssignmentKernelOperationV2(create, native);
     const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
     const readNew = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-created-${id}`, provider_turn_id: "verify-created",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`],
-      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: ["Sheet Number", "Sheet Name"] } } });
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: isSheet ? ["Sheet Number", "Sheet Name"] : ["View Name"] } } });
     assert.throws(() => readNew(9999), /verification_target_unbound/);
     const read = readNew(1542977);
     const stored = getAssignmentKernelSnapshotV2(create.binding.assignment_id)!;
     assert.equal(stored.operations[read.operation_id]!.verification_of_operation_id, create.operation_id);
     assert.equal(Object.values(stored.operations).filter(op => op.requested_effect === "apply").length, 1);
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      { items: [{ id: 1542977, parameters: isSheet
+        ? { "Sheet Number": "TEMP-M000", "Sheet Name": "COVER SHEET - WORKING COPY" }
+        : { "View Name": "Working Draft" } }] })).snapshot;
+    assert.ok(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
+      .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), route);
+    assert.equal(Object.values(verified.operations).filter(op => op.requested_effect === "apply").length, 1);
   });
 });
 
@@ -2023,7 +2034,7 @@ test("Candidate 46 provider receipt cannot be overtaken by terminal settlement",
       success: true,
       response_status: "completed",
       error_code: null,
-      tokens: { input_tokens: 33_175, cached_input_tokens: 0, output_tokens: 92, reasoning_output_tokens: 10, total_tokens: 33_267 },
+      tokens: { input_tokens: 33_175, cached_input_tokens: 20_000, cache_write_input_tokens: 5_000, output_tokens: 92, reasoning_output_tokens: 10, total_tokens: 33_267 },
       turn_id: "candidate46-turn"
     };
     // Simulate a delayed raw-response notification: the end-of-turn ledger is
@@ -2032,6 +2043,11 @@ test("Candidate 46 provider receipt cannot be overtaken by terminal settlement",
     const retained = getAssignmentKernelSnapshotV2(goal.id)!;
     assert.equal(retained.provider_call_ids.length, 5);
     assert.ok(retained.provider_calls[currentReceipt.call_id]);
+    assert.equal(retained.provider_calls[currentReceipt.call_id]!.usage!.cached_input_tokens, 20_000);
+    assert.equal(retained.provider_calls[currentReceipt.call_id]!.usage!.cache_write_input_tokens, 5_000);
+    recorder.reconcile([currentReceipt]);
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.provider_call_ids.length, 5);
+    assert.throws(() => recorder.reconcile([{ ...currentReceipt, tokens: { ...currentReceipt.tokens, cache_write_input_tokens: 5_001 } }]), /provider_receipt_conflict/);
     assert.equal(retained.terminal, false);
     assert.throws(() => openAssignmentKernelOperationV2({
       snapshot: retained,

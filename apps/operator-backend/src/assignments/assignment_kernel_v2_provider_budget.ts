@@ -51,6 +51,8 @@ function providerAdmissionBasis(snapshot: AssignmentSnapshotV2): ProviderAdmissi
 function providerUsage(receipt: ModelCallReceipt): ProviderUsageV2 {
   return {
     input_tokens: receipt.tokens.input_tokens,
+    ...(receipt.tokens.cached_input_tokens == null ? {} : { cached_input_tokens: receipt.tokens.cached_input_tokens }),
+    ...(receipt.tokens.cache_write_input_tokens == null ? {} : { cache_write_input_tokens: receipt.tokens.cache_write_input_tokens }),
     output_tokens: receipt.tokens.output_tokens,
     reasoning_tokens: receipt.tokens.reasoning_output_tokens,
     total_tokens: receipt.tokens.total_tokens,
@@ -59,6 +61,12 @@ function providerUsage(receipt: ModelCallReceipt): ProviderUsageV2 {
 }
 
 function providerReceiptAgrees(call: ProviderCallV2, receipt: ModelCallReceipt): boolean {
+  const usage = providerUsage(receipt);
+  // Older journals did not retain cache counters. Replay must not rewrite that
+  // historical usage or reject the same receipt solely for newly retained fields.
+  for (const key of ["cached_input_tokens", "cache_write_input_tokens"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(call.usage ?? {}, key)) delete usage[key];
+  }
   return call.call_id === receipt.call_id
     && call.provider === receipt.provider
     && call.model === receipt.model
@@ -67,7 +75,7 @@ function providerReceiptAgrees(call: ProviderCallV2, receipt: ModelCallReceipt):
     && (call.provider_duration_ms ?? null) === receipt.duration_ms
     && call.success === receipt.success
     && (!receipt.turn_id || call.controller_turn_id === receipt.turn_id)
-    && canonicalJsonV2(call.usage ?? null) === canonicalJsonV2(providerUsage(receipt));
+    && canonicalJsonV2(call.usage ?? null) === canonicalJsonV2(usage);
 }
 
 export type AssignmentKernelV2ModelReceiptRecorder = Readonly<{

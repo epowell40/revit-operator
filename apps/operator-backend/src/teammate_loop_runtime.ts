@@ -780,7 +780,7 @@ function resultSucceeded(result: ToolResult): boolean {
 
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
   if (requireExplicit && !explicitVerificationV2(evidence)) return false;
-  const observed = observedPostconditionValuesV2(evidence);
+  const observed = observedPostconditionValuesV2(evidence, { path: state.apply_call?.path });
   if (state.apply_expected_values.size > 0) return [...state.apply_expected_values].every(value => observed.has(value));
   return explicitVerificationV2(evidence) || (!requireExplicit && substantiveReadbackV2(evidence));
 }
@@ -939,7 +939,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of observedPostconditionValuesV2(verificationPayload)) state.verification_observed_values.add(value);
+    for (const value of observedPostconditionValuesV2(verificationPayload, { path: state.apply_call?.path })) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
     if (accumulatedReadbackMatches(state, verificationPayload)) {
       markVerified(state, "target_bound_readback", actionId, verificationPayload);

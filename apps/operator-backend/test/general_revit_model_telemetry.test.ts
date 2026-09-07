@@ -187,6 +187,35 @@ test("missing usage remains unknown and never becomes zero cost", () => {
   assert.equal(summary.cost_status, "incomplete");
 });
 
+test("cache accounting distinguishes measured reads and writes from missing or impossible counters", () => {
+  const summary = aggregateModelCallReceipts([receipt(), receipt()]);
+  assert.equal(summary.call_count, 1);
+  assert.equal(summary.cache_write_input_tokens, 10);
+  assert.equal(summary.cache_read_fraction, 0.6);
+  assert.equal(summary.cache_accounting_status, "complete");
+  for (const missing of ["cached_input_tokens", "cache_write_input_tokens"]) {
+    const tokens = { ...(receipt().tokens as Record<string, unknown>), [missing]: null };
+    const unknown = aggregateModelCallReceipts([receipt({ tokens })]);
+    assert.equal(unknown.cost_usd, null);
+    assert.equal(unknown.cost_status, "incomplete");
+    assert.equal(unknown.cache_read_fraction, null);
+  }
+  const invalid = aggregateModelCallReceipts([receipt({ tokens: {
+    input_tokens: 100, cached_input_tokens: 80, cache_write_input_tokens: 30, output_tokens: 40, total_tokens: 140
+  } })]);
+  assert.equal(invalid.cost_usd, null);
+  assert.equal(invalid.cache_read_fraction, null);
+});
+
+test("Astra pricing uses exact token buckets and the long context threshold", () => {
+  for (const [input, expected] of [[272000, 2.67125], [272001, 5.32252]] as const) {
+    const summary = aggregateModelCallReceipts([receipt({ model: "gpt-6-astra", requested_model: "gpt-6-astra", reasoning_effort: "medium",
+      tokens: { input_tokens: input, cached_input_tokens: 10000, cache_write_input_tokens: 500, output_tokens: 800, reasoning_output_tokens: 400, total_tokens: input + 800 } })]);
+    assert.ok(Math.abs(Number(summary.cost_usd) - expected) < 0.0000001, String(summary.cost_usd));
+    assert.equal(summary.long_context_call_count, input > 272000 ? 1 : 0);
+  }
+});
+
 test("benchmark telemetry recovers every provider call from the exact V2 publication ledger", () => {
   const calls = Object.fromEntries([1, 2, 3].map((index) => [`resp_${index}`, providerCall(`resp_${index}`, {
     admitted_at: `2026-09-02T00:00:0${index}.000Z`,
@@ -214,6 +243,22 @@ test("benchmark telemetry retains provider calls after downstream response trans
     }, "assignment-transported", 41)
   );
   assert.deepEqual(recovered.map((entry) => entry.call_id), ["resp-transported"]);
+});
+
+test("canonical publication preserves exact cache accounting and rejects impossible cache usage", () => {
+  const usage = { input_tokens: 1000, cached_input_tokens: 600, cache_write_input_tokens: 300,
+    output_tokens: 40, reasoning_tokens: 20, total_tokens: 1040, estimated_cost_usd: null };
+  const bundle = telemetryPublicationBundle({ "resp-cache": providerCall("resp-cache", { usage }) }, "assignment-cache", 20);
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(bundle);
+  assert.equal((recovered[0]!.tokens as Record<string, unknown>).cached_input_tokens, 600);
+  assert.equal((recovered[0]!.tokens as Record<string, unknown>).cache_write_input_tokens, 300);
+  assert.equal(aggregateModelCallReceipts(recovered).cache_read_fraction, 0.6);
+  assert.equal(aggregateModelCallReceipts(recovered).cost_status, "estimated_from_exact_provider_tokens");
+  for (const corrupt of [{ cached_input_tokens: -1 }, { cache_write_input_tokens: 401 }]) {
+    assert.throws(() => modelCallReceiptsFromAssignmentKernelPublicationsV2(telemetryPublicationBundle({
+      "resp-cache": providerCall("resp-cache", { usage: { ...usage, ...corrupt } })
+    }, "assignment-cache-invalid", 20)), /assignment_kernel_v2_telemetry_invalid/);
+  }
 });
 
 test("V2 telemetry never fabricates per-call provider durations from shared controller-turn admission", () => {

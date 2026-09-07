@@ -160,17 +160,19 @@ function completeSum(values: Array<number | null>): number | null {
 
 const PRICING_SNAPSHOT = {
   schema: "revit-operator.openai-pricing-snapshot.v1",
-  effective_date: "2026-08-21",
+  effective_date: "2026-09-06",
   currency: "USD",
   unit_tokens: 1_000_000,
   long_context_input_threshold_tokens: 272_000,
   rates: {
     "gpt-5.6-sol": { input: 4, cached_input: 0.4, cache_write_input: 5, output: 20 },
-    "gpt-5.6-luna": { input: 0.2, cached_input: 0.02, cache_write_input: 0.25, output: 1.2 }
+    "gpt-5.6-luna": { input: 0.2, cached_input: 0.02, cache_write_input: 0.25, output: 1.2 },
+    "gpt-6-astra": { input: 10, cached_input: 1, cache_write_input: 12.5, output: 50 }
   },
   sources: {
     "gpt-5.6-sol": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-    "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+    "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra"
   }
 } as const;
 
@@ -179,16 +181,37 @@ function receiptCostUsd(receipt: JsonRecord): number | null {
   const rates = PRICING_SNAPSHOT.rates[model as keyof typeof PRICING_SNAPSHOT.rates];
   const tokens = asRecord(receipt.tokens);
   const input = nonNegativeInteger(tokens.input_tokens);
-  const cached = nonNegativeInteger(tokens.cached_input_tokens) ?? 0;
-  const cacheWrite = nonNegativeInteger(tokens.cache_write_input_tokens) ?? 0;
+  const cached = nonNegativeInteger(tokens.cached_input_tokens);
+  const cacheWrite = nonNegativeInteger(tokens.cache_write_input_tokens);
   const output = nonNegativeInteger(tokens.output_tokens);
-  if (!rates || input === null || output === null || cached + cacheWrite > input) return null;
+  if (!rates || input === null || output === null || cached === null || cacheWrite === null || cached + cacheWrite > input) return null;
   const longContext = input > PRICING_SNAPSHOT.long_context_input_threshold_tokens;
   const inputMultiplier = longContext ? 2 : 1;
   const outputMultiplier = longContext ? 1.5 : 1;
   const uncached = input - cached - cacheWrite;
   return ((uncached * rates.input + cached * rates.cached_input + cacheWrite * rates.cache_write_input) * inputMultiplier
     + output * rates.output * outputMultiplier) / PRICING_SNAPSHOT.unit_tokens;
+}
+
+function cacheAccounting(tokens: JsonRecord[]): JsonRecord {
+  const valid = tokens.filter(entry => {
+    const input = nonNegativeInteger(entry.input_tokens);
+    const read = nonNegativeInteger(entry.cached_input_tokens);
+    const write = nonNegativeInteger(entry.cache_write_input_tokens);
+    return input !== null && read !== null && write !== null && read + write <= input;
+  });
+  const complete = tokens.length > 0 && valid.length === tokens.length;
+  const input = completeSum(valid.map(entry => nonNegativeInteger(entry.input_tokens)));
+  const read = completeSum(valid.map(entry => nonNegativeInteger(entry.cached_input_tokens)));
+  return {
+    cache_accounting_status: complete ? "complete" : valid.length > 0 ? "partial" : "missing_or_invalid",
+    calls_with_complete_cache_accounting: valid.length,
+    calls_missing_or_invalid_cache_accounting: tokens.length - valid.length,
+    cache_write_input_tokens: complete ? completeSum(valid.map(entry => nonNegativeInteger(entry.cache_write_input_tokens))) : null,
+    cache_read_fraction: complete && input !== null && input > 0 && read !== null ? read / input : null,
+    max_input_tokens: complete ? Math.max(...valid.map(entry => Number(entry.input_tokens))) : null,
+    long_context_call_count: complete ? valid.filter(entry => Number(entry.input_tokens) > PRICING_SNAPSHOT.long_context_input_threshold_tokens).length : null
+  };
 }
 
 export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
@@ -221,6 +244,7 @@ export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
         : durations.some((value) => value === null) ? "partial" : "complete",
       input_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.input_tokens))),
       cached_input_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.cached_input_tokens))),
+      ...cacheAccounting(tokens),
       output_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.output_tokens))),
       reasoning_output_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.reasoning_output_tokens))),
       total_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.total_tokens))),
@@ -247,6 +271,7 @@ export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
       : allDurations.some((value) => value === null) ? "partial" : "complete",
     input_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.input_tokens))),
     cached_input_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.cached_input_tokens))),
+    ...cacheAccounting(allTokens),
     output_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.output_tokens))),
     reasoning_output_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.reasoning_output_tokens))),
     total_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.total_tokens))),

@@ -451,6 +451,32 @@ test("malformed native affected target identities fail closed before settlement 
   );
 });
 
+test("drafting view legacy success stays unknown while committed identity survives failed readback", async () => {
+  for (const effect of ["unknown", "applied"] as const) {
+    const body = { name: "OPERATOR HANDOFF CHECK", allowExisting: false };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/create-drafting-view", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-drafting-view", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-drafting-view", {
+        ...(effect === "unknown" ? { status: "Success", viewId: 1543005, name: "OPERATOR HANDOFF CHECK", created: true }
+          : { success: false, applied: true, verified: false, error: "Committed drafting view readback failed" }),
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "native-drafting",
+          requested_effect: "apply", effect_state: effect,
+          effect_authority: effect === "unknown" ? "native_host" : "native_transaction",
+          effect_reason: effect === "unknown" ? "native_handler_returned_without_authoritative_settlement" : "native_transaction_committed",
+          request_dispatched: true, affected_target_identities: effect === "applied" ? ["element_id:1543005"] : []
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, effect);
+    assert.deepEqual(result.affected_target_identities ?? [], effect === "applied" ? ["element_id:1543005"] : []);
+    if (effect === "applied") assert.equal(result.status, "failed_after_dispatch");
+  }
+});
+
 test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
   const body = {
     elementId: 1421361,

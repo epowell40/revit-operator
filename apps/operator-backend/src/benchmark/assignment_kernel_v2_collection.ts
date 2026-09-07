@@ -82,7 +82,8 @@ export function modelCallReceiptsFromAssignmentKernelPublicationsV2(value: unkno
         error_code: call.error_class ?? null,
         tokens: {
           input_tokens: nonNegativeIntegerOrNull(usage.input_tokens),
-          cached_input_tokens: null,
+          cached_input_tokens: nonNegativeIntegerOrNull(usage.cached_input_tokens),
+          cache_write_input_tokens: nonNegativeIntegerOrNull(usage.cache_write_input_tokens),
           output_tokens: nonNegativeIntegerOrNull(usage.output_tokens),
           reasoning_output_tokens: nonNegativeIntegerOrNull(usage.reasoning_tokens),
           total_tokens: nonNegativeIntegerOrNull(usage.total_tokens)

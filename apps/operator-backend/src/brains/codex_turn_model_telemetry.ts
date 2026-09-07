@@ -23,14 +23,31 @@ export function createCodexTurnModelTelemetry(args: {
   settings: AgentModelSettings;
   startedAtUtc: string;
   onReceipt?: (receipt: ModelCallReceipt) => void;
-}): { receipts: ModelCallReceipt[]; observe: (notification: CodexNotification) => void } {
+}): { receipts: ModelCallReceipt[]; compactions: string[]; observe: (notification: CodexNotification) => void } {
   const receipts: ModelCallReceipt[] = [];
+  const compactions: string[] = [];
   let actualModel = args.settings.model;
   return {
     receipts,
+    compactions,
     observe(notification) {
       if (!notification || notification.threadId !== args.threadId) return;
       const params = notification.params || {};
+      if (notification.method === "item/completed" && params.turnId === args.turnId) {
+        const item = params.item as { type?: unknown; id?: unknown } | undefined;
+        if (item?.type === "contextCompaction" && typeof item.id === "string" && item.id.length > 0 && !compactions.includes(item.id)) {
+          compactions.push(item.id);
+          try {
+            appendEvent(args.sessionId, "assistant", "codex.context_compaction.completed", {
+              thread_id: args.threadId, turn_id: args.turnId, item_id: item.id,
+              completed_after_provider_calls: receipts.length
+            });
+          } catch {
+            // Diagnostic failure cannot alter the durable mutation ledger.
+          }
+        }
+        return;
+      }
       if (notification.method === "model/rerouted") {
         if (params.turnId && params.turnId !== args.turnId) return;
         const candidate = params.toModel ?? params.newModel ?? params.model ?? params.to;

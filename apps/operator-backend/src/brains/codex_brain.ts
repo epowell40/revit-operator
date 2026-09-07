@@ -1127,7 +1127,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       agent_model: agentSettings.model,
       agent_reasoning_effort: agentSettings.reasoning_effort,
       agent_turn_duration_ms: Date.now() - agentTurnStartedMs,
-      upstream_response_count: modelTelemetry.receipts.length
+      upstream_response_count: modelTelemetry.receipts.length,
+      context_compaction_count: modelTelemetry.compactions.length
     });
   } catch {
     // ignore

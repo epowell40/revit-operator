@@ -16,6 +16,40 @@ const applyText = (newText: string) => ({
   body: { elementId: 1478627, newText, apply: true }
 });
 
+test("sheet creation verifies actual native name policy and sheet parameter vocabulary", () => {
+  for (const path of ["/revit/duplicate-sheet", "/revit/create-sheet"]) {
+    const input = { path, body: path === "/revit/duplicate-sheet"
+      ? { sourceSheetNumber: "M000", newNumber: "TEMP-M000-CHECK", newName: "Cover Sheet - Working Copy" }
+      : { number: "TEMP-M000-CHECK", name: "Cover Sheet - Working Copy" } };
+    for (const [name, number, matches] of [
+      ["COVER SHEET - WORKING COPY", "TEMP-M000-CHECK", true],
+      ["Cover Sheet - Working Copy", "TEMP-M000-CHECK", false],
+      ["COVER SHEET - WORKING COPY", "M000", false],
+      ["OTHER SHEET", "TEMP-M000-CHECK", false]
+    ] as const) {
+      for (const row of [{ id: 1542977, name, number },
+        { id: 1542977, parameters: { "Sheet Number": number, "Sheet Name": name } }]) {
+        assert.equal(postconditionSatisfiedByPayloadV2(input, { items: [row] }), matches);
+        assert.equal(postconditionSatisfiedByPayloadV2(input, { request: { items: [row] } }), false);
+      }
+    }
+  }
+  // Neither arbitrary parameters nor view names acquire sheet casing semantics.
+  assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/set-parameter", body: { parameterName: "Comments", value: "Mixed Case" } },
+    { parameters: { Comments: "MIXED CASE" } }), false);
+});
+
+test("view creation verifies requested name and scale without sheet uppercasing", () => {
+  for (const path of ["/revit/create-view", "/revit/create-drafting-view"]) {
+    const input = { path, body: { name: " Working Draft ", scale: 50 } };
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { id: 1543005, name: "Working Draft", scale: 50 }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { items: [{ id: 1543005, parameters: { "View Name": "Working Draft", "View Scale": 50 } }] }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { name: "WORKING DRAFT", scale: 50 }), false);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { name: "Working Draft", scale: 100 }), false);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { success: true, created: true }), false);
+  }
+});
+
 test("posting project close after browser focus restoration is not proof that the document closed", () => {
   const input = { method: "POST", path: "/revit/close-active-model", body: { discardUnsavedChanges: true } };
   for (const restoredGraphicalFocus of [false, true]) {

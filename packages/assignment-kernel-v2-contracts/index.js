@@ -151,6 +151,9 @@ function validProviderUsage(value) {
   const usage = record(value);
   return Boolean(usage)
     && validOptionalNonNegativeInteger(usage.input_tokens)
+    && validOptionalNonNegativeInteger(usage.cached_input_tokens)
+    && validOptionalNonNegativeInteger(usage.cache_write_input_tokens)
+    && (usage.input_tokens == null || (usage.cached_input_tokens ?? 0) + (usage.cache_write_input_tokens ?? 0) <= usage.input_tokens)
     && validOptionalNonNegativeInteger(usage.output_tokens)
     && validOptionalNonNegativeInteger(usage.reasoning_tokens)
     && validOptionalNonNegativeInteger(usage.total_tokens)

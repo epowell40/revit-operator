@@ -57,7 +57,8 @@
     "tool_result_normalization.test.ts",
     "verification_capability_admission_v2.test.ts",
     "verified_work_packet.test.ts",
-    "general_revit_fixture_preconditions.test.ts"
+    "general_revit_fixture_preconditions.test.ts",
+    "codex_turn_model_telemetry.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -98,9 +99,34 @@
     "TextNoteCanonicalizationTests",
     "OperatorProjectCloseFocusTests",
     "OperatorWriteGrantRenewalTests",
-    "OperatorWriteGrantAdmissionTests"
+    "OperatorWriteGrantAdmissionTests",
+    "RevitTextCasePolicyTests"
   ],
   "failure_families": [
+    {
+      "id": "sheet-creation-readback-native-name-policy-and-parameter-vocabulary",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "dotnet:RevitTextCasePolicyTests"
+      ]
+    },
+    {
+      "id": "drafting-view-legacy-completion-without-native-transaction-authority",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "provider-cache-accounting-lost-at-durable-ledger-and-summary",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:general_revit_model_telemetry.test.ts",
+        "backend:codex_turn_model_telemetry.test.ts"
+      ]
+    },
     {
       "id": "disabled-dryrun-option-misclassified-as-preview-at-ui-admission",
       "coverage": [

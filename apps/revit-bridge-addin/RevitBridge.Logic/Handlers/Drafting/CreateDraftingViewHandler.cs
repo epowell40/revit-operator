@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -28,10 +29,10 @@ namespace RevitBridge.Logic.Handlers.Drafting
 
             var allowExisting = p.allowExisting ?? true;
 
-            using (var t = new Transaction(doc, "Create Drafting View"))
+            ElementId? outputId = null;
+            var modified = new HashSet<long>();
+            var result = NativeSingleTransaction.Execute(app, doc, "Create Drafting View", nativeCreated =>
             {
-                t.Start();
-
                 if (allowExisting)
                 {
                     var existing = new FilteredElementCollector(doc)
@@ -41,9 +42,11 @@ namespace RevitBridge.Logic.Handlers.Drafting
 
                     if (existing != null)
                     {
+                        var previousScale = existing.Scale;
                         TrySetScale(existing, p.scale);
-                        t.Commit();
-                        return Task.FromResult<object>(new { status = "Success", viewId = RevitBridge.Common.ElementIdCompat.GetValue(existing.Id), name = existing.Name, created = false });
+                        if (existing.Scale != previousScale) modified.Add(ElementIdCompat.GetValue(existing.Id));
+                        outputId = existing.Id;
+                        return new Dictionary<string, object?> { ["created"] = false };
                     }
                 }
 
@@ -57,9 +60,22 @@ namespace RevitBridge.Logic.Handlers.Drafting
                 dv.Name = EnsureUniqueViewName(doc, name);
                 TrySetScale(dv, p.scale);
 
-                t.Commit();
-                return Task.FromResult<object>(new { status = "Success", viewId = RevitBridge.Common.ElementIdCompat.GetValue(dv.Id), name = dv.Name, created = true });
-            }
+                outputId = dv.Id;
+                nativeCreated.Add(ElementIdCompat.GetValue(dv.Id));
+                return new Dictionary<string, object?> { ["created"] = true };
+            }, () => modified);
+            return Task.FromResult<object>(OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var view = outputId == null ? null : doc.GetElement(outputId) as ViewDrafting;
+                if (view == null) throw new InvalidOperationException("Committed drafting view was not found during readback.");
+                if (p.scale.HasValue && view.Scale != p.scale.Value)
+                    throw new InvalidOperationException("Drafting view committed, but its actual scale does not match the requested scale.");
+                return new Dictionary<string, object?>
+                {
+                    ["status"] = "Success", ["viewId"] = ElementIdCompat.GetValue(view.Id),
+                    ["name"] = view.Name, ["scale"] = view.Scale, ["viewType"] = view.ViewType.ToString()
+                };
+            }));
         }
 
         private static void TrySetScale(View view, int? scale)
