@@ -1,4 +1,5 @@
 import type { ActionCall, HttpMethod } from "./contracts.js";
+import { isSupportedNativeTool } from "./capabilities/supported_tool_inventory.js";
 
 export type Allowlist = Record<HttpMethod, Set<string>>;
 
@@ -218,8 +219,6 @@ const defaultAllowed: Allowlist = {
     "/revit/fire-alarm-visualizer",
 
     "/revit/ensure-spaces",
-    "/revit/create-zones",
-    "/revit/create-zone-visuals",
     "/revit/query-zone-data",
 
     "/revit/set-selection",
@@ -232,7 +231,8 @@ const defaultAllowed: Allowlist = {
 
 export function isAllowlisted(method: string, path: string, allowlist: Allowlist = defaultAllowed): method is HttpMethod {
   const m = method.toUpperCase() as HttpMethod;
-  return (m === "GET" || m === "POST") && allowlist[m].has(path);
+  return (m === "GET" || m === "POST") && allowlist[m].has(path)
+    && (!path.startsWith("/revit/") && !path.startsWith("/ui/") || isSupportedNativeTool(m, path));
 }
 
 export function filterAllowlistedActions(actions: ActionCall[], allowlist?: Allowlist): ActionCall[] {

@@ -372,7 +372,14 @@ namespace RevitBridge.Common.Tests
 
             Assert.Contains("OperatorNativeTransactionReceipt.NotStarted", handler);
             Assert.Contains("OperatorNativeTransactionReceipt.RolledBack", handler);
-            Assert.Contains("OperatorNativeTransactionReceipt.Committed", handler);
+            Assert.Contains("changeInventory.CommittedReceipt()", handler);
+            Assert.Contains("changeTracking = changeInventory.Diagnostics()", handler);
+            Assert.Contains("app.Application.DocumentChanged += Changed", handler);
+            Assert.Contains("finally { app.Application.DocumentChanged -= Changed; }", handler);
+            Assert.Contains("args.GetAddedElementIds()", handler);
+            Assert.Contains("args.GetModifiedElementIds()", handler);
+            Assert.Contains("args.GetDeletedElementIds()", handler);
+            Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(changedElementIds)", handler);
             Assert.Contains("OperatorNativeTransactionReceipt.Unknown", handler);
             Assert.Contains("transaction = transactionReceipt", handler);
         }

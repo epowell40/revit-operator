@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { requireSupportedToolRoute, isSupportedMcpAlias, UnsupportedProductToolError } from "./supported_tool_inventory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,7 +16,7 @@ import {
   type ValidatedCertifiedRequestFamilyAdmission
 } from "./certified_request_family_admission.js";
 
-export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:ff3327e4c725ac01ab767595d4b6528315a85de386bcdcf00cd8c49c8dc49083";
+export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:fd22fbed4fe7ee64de42d1040bd194382a6efbfe9e47ab50e6c000e4efbcd82d";
 
 const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -281,6 +282,8 @@ export function evaluateTrustedToolExposurePolicy(input: {
   /** Opaque process-local result of the reviewed deterministic validator. */
   requestFamilyAdmission?: ValidatedCertifiedRequestFamilyAdmission;
 }): TrustedToolExposureEvaluation {
+  requireSupportedToolRoute(input.method, input.path);
+  if (input.alias && !isSupportedMcpAlias(input.alias)) throw new UnsupportedProductToolError(input.method, input.path);
   if (input.requestFamilyAdmission) {
     try { assertValidatedCertifiedRequestFamilyAdmission(input.requestFamilyAdmission); }
     catch { throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Parameterized request-family admission was not locally validated."); }

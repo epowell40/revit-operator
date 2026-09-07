@@ -43,18 +43,6 @@ namespace RevitBridge.Handlers
             new RevitBridge.Logic.Handlers.EnsureSpacesHandler().Handle(app, jsonData);
     }
 
-    public class CreateZonesHandler : IRequestHandler
-    {
-        public Task<object> Handle(UIApplication app, string jsonData) =>
-            new RevitBridge.Logic.Handlers.CreateZonesHandler().Handle(app, jsonData);
-    }
-
-    public class CreateZoneVisualsHandler : IRequestHandler
-    {
-        public Task<object> Handle(UIApplication app, string jsonData) =>
-            new RevitBridge.Logic.Handlers.CreateZoneVisualsHandler().Handle(app, jsonData);
-    }
-
     public class QueryZoneDataHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData) =>

@@ -2788,11 +2788,22 @@ namespace RevitBridge.Handlers
 
                     try
                     {
+#if NET10_0_OR_GREATER
+                        using var intersection = c1.Intersect(c2, CurveIntersectResultOption.Detailed);
+                        if (intersection.Result != SetComparisonResult.Overlap) continue;
+                        var overlaps = intersection.GetOverlaps();
+                        foreach (var overlap in overlaps)
+                        {
+                            // Grid candidates require isolated crossings, not overlap intervals.
+                            if (overlap.Type != CurveOverlapPointType.Intersection) continue;
+                            var ip = overlap.Point;
+#else
                         var relation = c1.Intersect(c2, out var ira);
                         if (relation != SetComparisonResult.Overlap || ira == null || ira.Size == 0) continue;
                         for (int k = 0; k < ira.Size; k++)
                         {
                             var ip = ira.get_Item(k)?.XYZPoint;
+#endif
                             if (ip == null) continue;
                             var p = new XYZ(ip.X, ip.Y, z);
                             if (!IsPointInsideSpatial(spatial, p)) continue;

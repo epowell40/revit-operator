@@ -48,7 +48,8 @@ function Disable-DuplicateRevitBridgeManifests {
 
   $roots = @(
     (Join-Path $env:APPDATA ("Autodesk/Revit/Addins/{0}" -f $RevitYear)),
-    (Join-Path $env:ProgramData ("Autodesk/Revit/Addins/{0}" -f $RevitYear))
+    (Join-Path $env:ProgramData ("Autodesk/Revit/Addins/{0}" -f $RevitYear)),
+    (Join-Path $env:ProgramFiles ("Autodesk/Revit/Addins/{0}" -f $RevitYear))
   ) | Where-Object { Test-Path $_ }
 
   $duplicates = foreach ($root in $roots) {

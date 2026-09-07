@@ -95,6 +95,7 @@ namespace RevitBridge.Operator
 
         public static object GetToolExamples(string method, string path)
         {
+            OperatorSupportedToolInventory.RequireSupportedTool((method ?? "").Trim().ToUpperInvariant(), (path ?? "").Trim());
             var ex = FindExamples(method, path);
             return new
             {
@@ -152,6 +153,7 @@ namespace RevitBridge.Operator
         {
             var m = (method ?? "").Trim().ToUpperInvariant();
             var p = (path ?? "").Trim();
+            OperatorSupportedToolInventory.RequireSupportedTool(m, p);
 
             var info = OperatorToolManifest.Tools.FirstOrDefault(x =>
                 string.Equals(x.Method, m, StringComparison.OrdinalIgnoreCase) &&
@@ -347,8 +349,6 @@ namespace RevitBridge.Operator
                 { "/revit/quantify", typeof(RevitBridge.Logic.Handlers.QuantifyElementsHandler.QuantifyRequest) },
                 { "/revit/quantify-visualize", typeof(RevitBridge.Logic.Handlers.QuantifyVisualizeHandler.Params) },
                 { "/revit/ensure-spaces", typeof(RevitBridge.Logic.Handlers.EnsureSpacesHandler.Params) },
-                { "/revit/create-zones", typeof(RevitBridge.Logic.Handlers.CreateZonesHandler.Params) },
-                { "/revit/create-zone-visuals", typeof(RevitBridge.Logic.Handlers.CreateZoneVisualsHandler.Params) },
                 { "/revit/query-zone-data", typeof(RevitBridge.Logic.Handlers.QueryZoneDataHandler.Params) },
                 { "/revit/place-families", typeof(RevitBridge.Logic.Handlers.PlaceFamiliesHandler.PlacementRequest) },
                 { "/revit/place-family-instance-on-host", typeof(RevitBridge.Logic.Handlers.PlaceFamilyInstanceOnHostHandler.Params) },

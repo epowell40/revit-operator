@@ -48,7 +48,7 @@ export type ProviderDynamicProgramV1 = {
   operation_budget: number;
   worker_deadline_ms: number;
   apply_deadline_ms: number;
-  target_revit_year: "2023" | "2024" | "2025" | "2026";
+  target_revit_year: "2023" | "2024" | "2025" | "2026" | "2027";
 };
 
 export const PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA = {
@@ -70,7 +70,7 @@ export const PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA = {
     operation_budget: { type: "integer", minimum: 1, maximum: 256 },
     worker_deadline_ms: { type: "integer", minimum: 1000, maximum: 120000 },
     apply_deadline_ms: { type: "integer", minimum: 100, maximum: 5000 },
-    target_revit_year: { type: "string", enum: ["2023", "2024", "2025", "2026"] }
+    target_revit_year: { type: "string", enum: ["2023", "2024", "2025", "2026", "2027"] }
   }
 } as const;
 
@@ -90,7 +90,7 @@ export type ProviderDynamicProgramExecutionReceipt = {
   supervisor_package_sha256?: string | null;
   worker_runtime_package_sha256?: string | null;
   evidence_binding_sha256?: string | null;
-  target_revit_year?: "2023" | "2024" | "2025" | "2026" | null;
+  target_revit_year?: "2023" | "2024" | "2025" | "2026" | "2027" | null;
   affected_target_identities?: string[];
 };
 
@@ -171,7 +171,7 @@ export function normalizeProviderDynamicProgram(value: unknown): ProviderDynamic
   if (new Set(parameters).size !== parameters.length) {
     throw new Error("dynamic_program.parameters must be unique");
   }
-  if (raw.target_revit_year !== "2023" && raw.target_revit_year !== "2024" && raw.target_revit_year !== "2025" && raw.target_revit_year !== "2026") {
+  if (raw.target_revit_year !== "2023" && raw.target_revit_year !== "2024" && raw.target_revit_year !== "2025" && raw.target_revit_year !== "2026" && raw.target_revit_year !== "2027") {
     throw new Error("dynamic_program.target_revit_year is unsupported");
   }
   return {

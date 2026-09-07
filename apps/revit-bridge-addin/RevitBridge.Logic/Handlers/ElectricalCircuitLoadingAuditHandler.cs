@@ -200,7 +200,11 @@ namespace RevitBridge.Logic.Handlers
             var breaker = ReadNumeric(system, "Rating", null);
             var poles = SafeInt(() => system.PolesNumber);
             var wireSize = ReadText(system, "Wire Size");
+#if !NET10_0_OR_GREATER
             if (string.IsNullOrWhiteSpace(wireSize)) wireSize = SafeString(() => system.WireSizeString);
+#endif
+            // Revit 2027 removed WireSizeString. Missing native wire size remains unverified;
+            // cable sizing requires separate qualification before substituting cable data.
             var matchingProfiles = wireProfiles.Where(profile =>
                 ElectricalWireSizeProfilePolicy.Matches(wireSize, profile.wireSizeToken)).ToList();
             var conductorAmpacity = matchingProfiles.Count == 1 ? matchingProfiles[0].ampacityAmps : (double?)null;

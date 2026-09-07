@@ -1256,8 +1256,10 @@ test("blocked after applied edit and failed readback keeps packet trust uncertai
   assert.equal(packet.actions.find(action => action.attempt_id === read.operation_id)?.verification.state, "inconclusive");
   assert.ok(packet.issues.some(issue => issue.kind === "verification_uncertainty" && issue.affected_attempt_ids.includes(apply.operation_id)));
   const markdown = renderVerifiedWorkPacketMarkdown(packet);
-  assert.match(markdown, /Blocked Truthfully/);
-  assert.match(markdown, /\*\*Blocked Truthfully\*\* \[uncertain \/ missing\]/);
+  assert.match(markdown, /\*\*Blocked Truthfully\*\*/);
+  assert.match(markdown, /Acceptance evidence: \[uncertain \/ missing\]/);
+  assert.match(markdown, /Other changes not assessed\. No collateral checks were recorded\./);
+  assert.doesNotMatch(markdown, /\*\*Requested result verified\*\*/);
   assert.match(markdown, /This change was applied, but no successful linked readback proves its postcondition/);
 }));
 

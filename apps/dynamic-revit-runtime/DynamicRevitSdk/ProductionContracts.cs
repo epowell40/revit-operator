@@ -795,7 +795,7 @@ internal static class DynamicCanonical
         => !string.IsNullOrWhiteSpace(value) && value!.Length <= maximumLength && value.All(character => character >= 0x20 && character != '\r' && character != '\n');
 
     internal static bool RevitVersion(string? value)
-        => value == "2023" || value == "2024" || value == "2025";
+        => value == "2023" || value == "2024" || value == "2025" || value == "2026" || value == "2027";
 
     internal static void RequireDistinct(IEnumerable<string>? values, int maximumCount, int maximumLength, string label)
     {

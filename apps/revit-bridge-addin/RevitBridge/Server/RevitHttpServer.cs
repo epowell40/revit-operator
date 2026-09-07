@@ -200,8 +200,6 @@ namespace RevitBridge.Server
                 { "/revit/quantify", new QuantifyElementsHandler() },
                 { "/revit/quantify-visualize", new QuantifyVisualizeHandler() },
                 { "/revit/ensure-spaces", new EnsureSpacesHandler() },
-                { "/revit/create-zones", new CreateZonesHandler() },
-                { "/revit/create-zone-visuals", new CreateZoneVisualsHandler() },
                 { "/revit/query-zone-data", new QueryZoneDataHandler() },
                 { "/revit/place-families", new PlaceFamiliesHandler() },
                 { "/revit/place-family-instance-on-host", new PlaceFamilyInstanceOnHostActionHandler() },
@@ -813,6 +811,7 @@ namespace RevitBridge.Server
                 // is no longer the only approval gate.
                 // GET is always treated as read-only here.
                 var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
+                OperatorSupportedToolInventory.RequireSupportedTransport(effectiveMethod, path);
                 actionMethod = effectiveMethod;
                 actionPath = path;
                 requestedEffect = OperatorApprovalPolicy.GetEffectWireValue(effectiveMethod, path, requestBody);
@@ -1022,9 +1021,9 @@ namespace RevitBridge.Server
                                 correlationId,
                                 "http:" + effectiveMethod + ":" + path);
                         }
-                        catch (OperationCanceledException) when (localDeadline.IsCancellationRequested)
+                        catch (OperationCanceledException ex) when (localDeadline.IsCancellationRequested)
                         {
-                            throw deadline.CreateTimeoutException(correlationId);
+                            throw deadline.ClassifyCancellation(ex, correlationId);
                         }
                     }
                     responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(

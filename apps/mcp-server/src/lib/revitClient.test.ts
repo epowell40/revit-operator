@@ -464,7 +464,7 @@ test("callRevit marks a timed-out mutating request as non-retryable with an unkn
   const started = Date.now();
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_timeout");
@@ -472,7 +472,7 @@ test("callRevit marks a timed-out mutating request as non-retryable with an unkn
         assert.equal(error.retryable, false);
         assert.equal(error.outcome_unknown, true);
         assert.equal(error.outcomeUnknown, true);
-        assert.match(error.message, /POST \/revit\/walls exceeded 250 ms/);
+        assert.match(error.message, /POST \/revit\/create-view exceeded 250 ms/);
         assert.match(error.message, /may already have started/);
         return true;
       },
@@ -507,7 +507,7 @@ test("callRevit preserves structured outcome-unknown bridge errors", async () =>
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_http_error");
@@ -570,7 +570,7 @@ for (const status of [500, 502, 503]) {
     const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
     try {
       await assert.rejects(
-        callRevit("/revit/walls", "POST", { action: "create" }),
+        callRevit("/revit/create-view", "POST", { action: "create" }),
         (error: unknown) => {
           assert.ok(error instanceof RevitBridgeCallError);
           assert.equal(error.status, status);
@@ -598,7 +598,7 @@ test("callRevit does not replay an unstructured mutation rejection", async () =>
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.status, 403);
@@ -633,7 +633,7 @@ test("known pre-dispatch busy requests retry identical bytes; edits require nati
     assert.equal(requests.length, 2);
     assert.equal(requests[0], requests[1]);
     requests.length = 0;
-    await assert.rejects(callRevit("/revit/walls", "POST", { action: "create" }));
+    await assert.rejects(callRevit("/revit/create-view", "POST", { action: "create" }));
     assert.equal(requests.length, 1, "an edit without native no-effect settlement is never retried");
     busy.canonical_attempt_settlement = { request_dispatched: false, effect_state: "none", effect_authority: "native_host" };
     for (const body of [
@@ -680,7 +680,7 @@ test("callRevit honors a structured pre-dispatch rejection for a mutation", asyn
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.status, 422);
@@ -700,7 +700,7 @@ test("callRevit honors a structured pre-dispatch rejection for a mutation", asyn
           request_dispatched: false,
           outcome_unknown: false,
           method: "POST",
-          path: "/revit/walls",
+          path: "/revit/create-view",
           status: 422,
           error: error.message
         });
@@ -726,7 +726,7 @@ test("callRevit settles a truncated mutation error body as outcome unknown", asy
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_http_error");
@@ -811,12 +811,7 @@ test("callRevit classifies conditional POST bodies and never retries an unknown 
   try {
     await assert.rejects(
       callRevit("/revit/fire-damper-audit", "POST", { command: "audit" }),
-      (error: unknown) => {
-        assert.ok(error instanceof RevitBridgeCallError);
-        assert.equal(error.retryable, true);
-        assert.equal(error.outcome_unknown, false);
-        return true;
-      },
+      (error: unknown) => error instanceof ToolExposurePolicyError && error.code === "PRODUCT_TOOL_NOT_SUPPORTED",
     );
     await assert.rejects(
       callRevit("/revit/move-elements", "POST", { dryRun: true }),
@@ -829,12 +824,7 @@ test("callRevit classifies conditional POST bodies and never retries an unknown 
     );
     await assert.rejects(
       callRevit("/revit/fire-damper-audit", "POST", { command: "fix", dryRun: true }),
-      (error: unknown) => {
-        assert.ok(error instanceof RevitBridgeCallError);
-        assert.equal(error.retryable, false);
-        assert.equal(error.outcome_unknown, true);
-        return true;
-      },
+      (error: unknown) => error instanceof ToolExposurePolicyError && error.code === "PRODUCT_TOOL_NOT_SUPPORTED",
     );
     await assert.rejects(
       callRevit("/revit/list-element-types", "POST", JSON.stringify({ action: "list" })),
@@ -876,7 +866,7 @@ test("callRevit treats a pre-connect refusal for a mutation as proven safe to re
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_unavailable");
@@ -902,7 +892,7 @@ test("callRevit marks a mutation socket reset after the server reads its body as
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_unavailable");
@@ -954,7 +944,7 @@ test("callRevit marks invalid 2xx JSON for a mutation as outcome unknown", async
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_invalid_response");
@@ -984,7 +974,7 @@ test("callRevit marks truncated 2xx JSON for a mutation as outcome unknown", asy
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     await assert.rejects(
-      callRevit("/revit/walls", "POST", { action: "create" }),
+      callRevit("/revit/create-view", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_invalid_response");

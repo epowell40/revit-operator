@@ -51,7 +51,10 @@ test("metadata and native discovery bypass the Revit event queue while actions p
   assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId,\s*"courier:" \+ method \+ ":" \+ path\)\.ConfigureAwait\(false\)/);
   assert.match(server, /localDeadline\.Token,\s*correlationId,\s*"http:" \+ effectiveMethod \+ ":" \+ path/);
   assert.match(server, /X-Operator-Correlation-Id/);
-  assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
+  for (const boundary of [server, runner, courier]) {
+    assert.match(boundary, /catch \(OperationCanceledException ex\)/);
+    assert.match(boundary, /deadline\.ClassifyCancellation\(ex, correlationId\)/);
+  }
   assert.match(server, /root is RevitEventQueueException/);
   assert.match(courier, /OperatorCourierBusyRetryExecutor\.ExecuteAsync/);
   assert.match(courierBusyRetry, /failure\.Code, "revit_external_event_busy"/);

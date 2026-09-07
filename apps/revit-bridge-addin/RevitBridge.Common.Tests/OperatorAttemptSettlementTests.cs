@@ -10,6 +10,18 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorAttemptSettlementTests
     {
         [Fact]
+        public void ExactQueuedCancellationSurvivesDeadlineMappingAsNoDispatchForMutation()
+        {
+            var deadline = OperatorActionDeadlinePolicy.Resolve("POST", "/revit/set-parameter", "high");
+            var failure = OperatorCourierFailureClassifier.Classify(deadline.ClassifyCancellation(
+                new RevitEventCanceledBeforeDispatchException("queued-mutation-1"), "queued-mutation-1"));
+            var settlement = OperatorAttemptFailureSettlement.FromFailure(failure, "apply", "POST", "/revit/set-parameter");
+            Assert.False(settlement.RequestDispatched);
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("revit_action_deadline_elapsed_before_dispatch", settlement.EffectReason);
+        }
+
+        [Fact]
         public void PreDispatchFailureIsAuthoritativeNone()
         {
             var failure = OperatorCourierFailureClassifier.Classify(

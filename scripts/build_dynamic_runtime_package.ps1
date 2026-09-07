@@ -2,7 +2,8 @@
 param(
     [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
     [Parameter(Mandatory = $true)][string]$OutputRoot,
-    [string]$PackageVersion = "0.1.0-lab"
+    [string]$PackageVersion = "0.1.0-lab",
+    [string]$DotNetPath = "dotnet"
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,10 +31,12 @@ $required = @(
     "C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll",
     "C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll",
     "C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll",
-    "C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll"
+    "C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll",
+    "C:\Program Files\Autodesk\Revit 2027\RevitAPI.dll",
+    "C:\Program Files\Autodesk\Revit 2027\RevitAPIUI.dll"
 )
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
-if ($missing.Count) { throw "Dynamic Runtime packaging requires installed Revit 2023/2024/2025/2026 API files: $($missing -join ', ')" }
+if ($missing.Count) { throw "Dynamic Runtime packaging requires installed Revit 2023/2024/2025/2026/2027 API files: $($missing -join ', ')" }
 
 New-Item -ItemType Directory -Path $output | Out-Null
 $supervisorOutput = Join-Path $output "supervisor"
@@ -41,22 +44,24 @@ $workerOutput = Join-Path $output "worker"
 $manifestOutput = Join-Path $output "manifests"
 New-Item -ItemType Directory -Path $manifestOutput | Out-Null
 
-dotnet publish (Join-Path $runtimeRoot "DynamicRevitSandboxSupervisor\DynamicRevitSandboxSupervisor.csproj") -c Release -r win-x64 --self-contained false -o $supervisorOutput
+& $DotNetPath publish (Join-Path $runtimeRoot "DynamicRevitSandboxSupervisor\DynamicRevitSandboxSupervisor.csproj") -c Release -r win-x64 --self-contained false -o $supervisorOutput
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 # LPAC cannot depend on the user or machine-wide dotnet host. Ship the bounded worker
 # with its exact runtime so the zero-capability process can start without broad reads.
-dotnet publish (Join-Path $runtimeRoot "DynamicRevitWorker\DynamicRevitWorker.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $workerOutput
+& $DotNetPath publish (Join-Path $runtimeRoot "DynamicRevitWorker\DynamicRevitWorker.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $workerOutput
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 $hostBuilds = @(
     @{ Year = "2023"; Framework = "net48" },
     @{ Year = "2024"; Framework = "net48" },
     @{ Year = "2025"; Framework = "net8.0-windows" },
-    @{ Year = "2026"; Framework = "net8.0-windows" }
+    @{ Year = "2026"; Framework = "net8.0-windows" },
+    @{ Year = "2027"; Framework = "net10.0-windows" }
 )
 foreach ($hostBuild in $hostBuilds) {
     $apiPath = "C:\Program Files\Autodesk\Revit $($hostBuild.Year)"
-    dotnet build $hostProject -c Release -f $hostBuild.Framework -p:RevitYear=$($hostBuild.Year) -p:RevitApiPath=$apiPath
+    $lockArgs = if ($hostBuild.Year -eq "2027") { @('-p:NuGetLockFilePath=obj/Revit2027/packages.lock.json', '-p:RestorePackagesWithLockFile=true') } else { @() }
+    & $DotNetPath build $hostProject -c Release -f $hostBuild.Framework -p:RevitYear=$($hostBuild.Year) -p:RevitApiPath=$apiPath @lockArgs
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
     $source = Join-Path (Split-Path -Parent $hostProject) "bin\Revit$($hostBuild.Year)\Release\$($hostBuild.Framework)\DynamicRevitHost.dll"
     $destination = Join-Path $output "hosts\$($hostBuild.Year)"
@@ -80,14 +85,14 @@ function New-Artifact([string]$RelativePath) {
 }
 function New-DirectoryIdentity([string]$RelativePath) {
     $native = $RelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)
-    $hashOutput = @(dotnet run --project $verifierProject -c Release -- --directory-hash (Join-Path $output $native))
+    $hashOutput = @(& $DotNetPath run --project $verifierProject -c Release -- --directory-hash (Join-Path $output $native))
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
     $hash = @($hashOutput | Where-Object { $_ -match '^sha256:[0-9a-f]{64}$' } | Select-Object -Last 1)
     if ($hash.Count -ne 1) { throw "Directory identity hash was not produced for $RelativePath." }
     [ordered]@{ relativePath = $RelativePath; sha256 = $hash[0] }
 }
 
-$sdkHashOutput = @(dotnet run --project $verifierProject -c Release -- --sdk-manifest-hash)
+$sdkHashOutput = @(& $DotNetPath run --project $verifierProject -c Release -- --sdk-manifest-hash)
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 $sdkManifestHashes = @($sdkHashOutput | Where-Object { $_ -match '^sha256:[0-9a-f]{64}$' })
 if ($sdkManifestHashes.Count -ne 1) { throw "Trusted SDK manifest identity was not produced exactly once." }
@@ -118,6 +123,6 @@ $packageManifest = [ordered]@{
 $packageManifestPath = Join-Path $output "dynamic-revit-runtime-package.v1.json"
 $packageManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $packageManifestPath -Encoding utf8NoBOM
 
-dotnet run --project $verifierProject -c Release -- --verify $output $packageManifestPath $capabilitiesSource
+& $DotNetPath run --project $verifierProject -c Release -- --verify $output $packageManifestPath $capabilitiesSource
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 Write-Output $packageManifestPath

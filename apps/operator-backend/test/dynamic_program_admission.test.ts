@@ -91,3 +91,21 @@ test("durable replay authority prunes expired entries without making the current
     assert.equal(new DurableDynamicAdmissionReplayAuthority(file).consume(h("old"), now() + 90, now() + 3), true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const year of ["2023", "2024", "2025", "2026", "2027"] as const) {
+  test(`dynamic admission binds Revit ${year} and rejects cross-year substitution`, () => {
+    const key = randomBytes(32); const trusted = facts({ target_revit_version: year });
+    const admission = issueDynamicProgramAdmission(trusted, key);
+    const accepted = validateAndConsumeDynamicProgramAdmission({ admission, trusted_facts: trusted, trusted_key: key, replay_authority: memoryReplay() });
+    assert.equal(accepted.target_revit_version, year);
+    assert.throws(() => validateAndConsumeDynamicProgramAdmission({ admission, trusted_facts: facts({target_revit_version: year === "2024" ? "2027" : "2024"}), trusted_key: key, replay_authority: memoryReplay() }));
+  });
+}
+for (const year of ["2028", "2027.2"]) {
+  test(`dynamic admission rejects unsupported year ${year}`, () => {
+    const key = randomBytes(32); const trusted = facts({target_revit_version: year as any});
+    const admission = issueDynamicProgramAdmission(trusted,key); let consumed = false;
+    assert.throws(() => validateAndConsumeDynamicProgramAdmission({ admission, trusted_facts: trusted, trusted_key: key, replay_authority: {consume(){consumed=true; return true;}} }), (error: any) => error.code === "DYNAMIC_ADMISSION_VERSION_DENIED");
+    assert.equal(consumed,false);
+  });
+}

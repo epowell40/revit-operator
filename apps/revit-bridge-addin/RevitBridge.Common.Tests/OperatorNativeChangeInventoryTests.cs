@@ -82,5 +82,20 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(!failCapture, inventory.Exhaustive);
             Assert.Equal(!failCapture, settlement.AffectedTargetIdentities.Contains("element_id:9946"));
         }
+
+        [Fact]
+        public void ParameterMutationInventoryIncludesCollateralInsteadOfOnlyRequestedTarget()
+        {
+            var doc = new DocumentWrapper("parameter-document");
+            var inventory = new OperatorNativeChangeInventory(doc);
+            inventory.Observe(() => new DocumentWrapper("parameter-document"), () => new long[] { 200 },
+                () => new long[] { 1365188, 49831 }, () => new long[] { 300 });
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new { transaction = inventory.CommittedReceipt() },
+                "apply", "POST", "/revit/set-parameter");
+            Assert.True(inventory.Exhaustive);
+            Assert.Equal("applied", settlement.EffectState);
+            foreach (var id in new[] { "element_id:1365188", "element_id:49831", "element_id:200", "element_id:300" })
+                Assert.Contains(id, settlement.AffectedTargetIdentities);
+        }
     }
 }

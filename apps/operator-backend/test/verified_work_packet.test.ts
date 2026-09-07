@@ -199,6 +199,34 @@ test("verified read-only result is complete without inventing a persistent effec
   const packet = generateVerifiedWorkPacket(goal(successfulReadEvents(), { workBudget: { requested_effect: "read" } }));
   assert.equal(packet.status, "verified_complete");
   assert.equal(packet.actions.every(action => action.effect.state === "none"), true);
+  assert.match(renderVerifiedWorkPacketMarkdown(packet), /No model changes recorded/);
+  assert.doesNotMatch(renderVerifiedWorkPacketMarkdown(packet), /Other changes not assessed/);
+});
+
+test("generated applied packet scopes acceptance verification separately from collateral assessment", () => {
+  const packet = generateVerifiedWorkPacket(goal(successfulApplyEvents()));
+  assert.equal(packet.status, "verified_complete");
+  assert.deepEqual(packet.collateral_checks, []);
+  const before = JSON.stringify(packet);
+  const markdown = renderVerifiedWorkPacketMarkdown(packet);
+  assert.match(markdown, /Requested result verified/);
+  assert.match(markdown, /Acceptance evidence: \[independently verified\]/);
+  assert.match(markdown, /Other changes not assessed/);
+  assert.match(markdown, /No collateral assertion recorded \| not assessed/);
+  assert.doesNotMatch(markdown, /\*\*Verified Complete\*\*/);
+  assert.equal(JSON.stringify(packet), before);
+  assert.equal(verifyVerifiedWorkPacketHash(packet), true);
+  for (const [status, trust, expected] of [
+    ["pass", "independently_verified", /recorded checks passed/],
+    ["fail", "native_execution_evidence", /a recorded check failed/],
+    ["pass", "agent_reported", /assessment incomplete/],
+    ["not_applicable", "independently_verified", /Other changes not assessed/]
+  ] as const) {
+    const check = { invariant: "Other elements unchanged", status, trust, authority: "target_readback", observed_value: null, expected_value: null, evidence_references: [], reason: "Recorded comparison" };
+    assert.match(renderVerifiedWorkPacketMarkdown({ ...packet, collateral_checks: [check] }), expected);
+  }
+  assert.match(renderVerifiedWorkPacketMarkdown({ ...packet, status: "blocked_truthfully" }), /Blocked Truthfully/);
+  assert.match(renderVerifiedWorkPacketMarkdown({ ...packet, status: "verified_no_op", actions: [] }), /No model changes recorded/);
 });
 
 test("verified no-op requires and exposes two fresh observations", () => {

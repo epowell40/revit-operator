@@ -344,3 +344,21 @@ test("dynamic runner distinguishes source repair from transient retry and caps t
     } }, env), /limited to five/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("dynamic runner binds2027 to supervisor config and rejects unsupported direct input before dispatch", async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"dynamic-2027-"));
+ try {
+  const supervisor=path.join(root,"supervisor.exe"),token=path.join(root,"token"),worker=path.join(root,"worker");
+  fs.writeFileSync(supervisor,"stub");fs.writeFileSync(token,"0123456789abcdef");fs.mkdirSync(worker);
+  const env={...process.env,REVIT_OPERATOR_MODE:"development",OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH:supervisor,OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY:worker,OPERATOR_TOKEN_FILE:token};
+  let calls=0;
+  const execute=async(_file:string,args:string[])=>{calls++; const config=JSON.parse(fs.readFileSync(args[1]!,"utf8"));assert.equal(config.targetRevitYear,"2027");
+   fs.writeFileSync(config.evidencePath,JSON.stringify({ok:true,workerOutput:{sourceHash:sha256("public class Program {}"),executionStatus:"completed",diagnostics:[],diagnosticBundleHash:emptyDiagnosticBundle}}));
+   return {exitCode:0,stdout:"",stderr:""};
+  };
+  const result=await runDynamicRevitProgram({source:"public class Program {}",mode:"preview",target_revit_year:"2027"},env,execute);
+  assert.equal(result.execution_ok,true);assert.equal(calls,1);
+  for(const year of ["2028","2027.2"])await assert.rejects(()=>runDynamicRevitProgram({source:"public class Program {}",mode:"preview",target_revit_year:year as any},env,execute),/Revit year/);
+  assert.equal(calls,1);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

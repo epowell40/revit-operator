@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { requireSupportedToolRoute } from "../capabilities/supported_tool_inventory.js";
+import { admitCourierJobClaim } from "./revit_tool_job_claim_support.js";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -945,15 +947,8 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
       });
       continue;
     }
-    if (job.version === REVIT_COURIER_JOB_VERSION
-      && job.general_agent_admission === undefined
-      && !isRevitCourierDevelopmentLaboratory()) {
-      writeCertificationTerminal(job, new RevitCourierCertificationError(
-        "CERTIFICATION_LEGACY_V1_DENIED",
-        "Legacy v1 Revit courier jobs require an authenticated General Agent admission or the exact development laboratory profile."
-      ));
-      continue;
-    }
+    if (!admitCourierJobClaim(job, REVIT_COURIER_JOB_VERSION,
+      error => { writeCertificationTerminal(job, error); })) continue;
     if (!validCertifiedJobForClaim(job)) continue;
     if (job.status === "running") {
       const leaseExpires = Date.parse(job.claim?.lease_expires_at ?? "");
@@ -1133,6 +1128,7 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
     throw new Error("Revit courier job is already terminal and cannot be authorized for execution.");
   }
   if (fs.existsSync(resultPath(job.id))) throw new Error("Revit courier result receipt is invalid or mismatched; refusing execution authorization.");
+  requireSupportedToolRoute(job.method, job.path);
   if (job.status !== "running") throw new Error("Revit courier job is not running under this executor.");
   if (job.version !== REVIT_COURIER_V2_JOB_VERSION) {
     throw new Error("Legacy Revit courier jobs do not have a certified final-execution authorization receipt.");

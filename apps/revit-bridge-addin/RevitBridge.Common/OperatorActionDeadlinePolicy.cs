@@ -23,6 +23,11 @@ namespace RevitBridge.Common
 
         public OperatorActionDeadlineExceededException CreateTimeoutException(string? correlationId)
             => new OperatorActionDeadlineExceededException(DeadlineClass, BudgetMilliseconds, correlationId);
+
+        public Exception ClassifyCancellation(OperationCanceledException error, string? correlationId)
+            => error is RevitEventCanceledBeforeDispatchException
+                ? error
+                : CreateTimeoutException(correlationId);
     }
 
     public static class OperatorActionDeadlinePolicy

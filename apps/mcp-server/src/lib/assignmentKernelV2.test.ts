@@ -9,6 +9,50 @@ import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
+test("queued native cancellation and started timeout retain distinct mutation authority", async () => {
+  for (const started of [false, true]) {
+    const route = "/revit/set-parameter", body = { changes: [{ elementId: 1365188, parameterName: "Mark", value: "TEST-AHU-01" }] };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        ok: false, code: started ? "revit_action_deadline_elapsed_outcome_unknown" : "revit_action_deadline_elapsed_before_dispatch",
+        phase: started ? "revit_external_event" : "pre_dispatch", retryable: !started, outcome_unknown: started,
+        request_dispatched: started, error: "Action deadline elapsed",
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+          effect_state: started ? "unknown" : "none", effect_authority: "native_host", request_dispatched: started }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, started ? "unknown" : "none");
+    assert.equal(result.dispatch_state, started ? "dispatched" : "not_dispatched");
+    assert.equal(result.status, started ? "failed_after_dispatch" : "failed_before_dispatch");
+  }
+});
+
+test("parameter change inventory carries collateral identities beyond the requested edit", async () => {
+  const route = "/revit/set-parameter", body = { changes: [{ elementId: 1365188, parameterName: "Mark", value: "TEST-AHU-01" }] };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      status: "Applied and Verified", changedElementIds: [1365188],
+      transaction: { status: "committed", committed: true, modified_element_ids: [1365188, 49831], added_element_ids: [200],
+        deleted_element_ids: [300], affected_element_ids: [200,300,49831,1365188] },
+      changeTracking: { exhaustiveChangeInventory: true, matchingEventCount: 1, captureFailureCount: 0 },
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        effect_state: "applied", effect_authority: "native_transaction", request_dispatched: true,
+        affected_target_identities: ["element_id:200","element_id:300","element_id:49831","element_id:1365188"] }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.persistent_effect, "applied");
+  for (const id of [200,300,49831,1365188]) assert.ok(result.affected_target_identities.includes(`element_id:${id}`));
+  assert.equal(decorated.structuredContent.observation.raw_payload.changeTracking.exhaustiveChangeInventory, true);
+});
+
 test("drafting summary readback preserves native scale without inventing it for historical payloads", async () => {
   const replay = JSON.parse(readFileSync(new URL("../../../operator-backend/test/fixtures/drafting-view-summary-readback.json", import.meta.url), "utf8"));
   for (const payload of [replay.retained_read, replay.repaired_read]) {

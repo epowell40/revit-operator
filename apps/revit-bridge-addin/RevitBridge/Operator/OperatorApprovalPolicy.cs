@@ -379,7 +379,6 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/create-revision-cloud", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/create-dimension", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
-                if (string.Equals(p, "/revit/create-zone-visuals", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/fire-alarm-visualizer", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/create-print-set", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/create-revision", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

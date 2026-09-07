@@ -9552,44 +9552,6 @@
     },
     {
       "method": "POST",
-      "path": "/revit/create-zones",
-      "examples": [
-        {
-          "name": "Create thermal zones on one resolved level",
-          "request": {
-            "levelName": "Level 1"
-          },
-          "expected_response_shape": {
-            "zones": [],
-            "warnings": []
-          },
-          "notes": [
-            "Resolve the exact existing level name first. This tool applies changes directly and has no dryRun input."
-          ]
-        }
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/revit/create-zone-visuals",
-      "examples": [
-        {
-          "name": "Create zone visuals on one resolved level",
-          "request": {
-            "levelName": "Level 1"
-          },
-          "expected_response_shape": {
-            "viewName": "M-TZ-Level 1",
-            "success": true
-          },
-          "notes": [
-            "Resolve the exact existing level name first. This tool applies changes directly and has no dryRun input."
-          ]
-        }
-      ]
-    },
-    {
-      "method": "POST",
       "path": "/revit/query-zone-data",
       "examples": [
         {

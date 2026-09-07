@@ -89,6 +89,18 @@ test("context-free courier claims skip document-bound work while Revit is on Hom
   assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, documentBoundId);
 });
 
+test("excluded pending courier work is denied while running outcome evidence remains untouched", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-supported-scope-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const pending = writeJob(root, { path: "/revit/fire-alarm-layout", method: "POST" });
+  const running = writeJob(root, { path: "/revit/fire-alarm-layout", method: "POST", status: "running" });
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+  const read = (id: string) => JSON.parse(fs.readFileSync(path.join(root, "artifacts/revit-courier/jobs", id, "job.json"), "utf8"));
+  assert.equal(read(pending).status, "failed");
+  assert.match(read(pending).error, /fixed supported product inventory/);
+  assert.equal(read(running).status, "running", "An existing in-flight operation cannot be reclassified as no effect.");
+});
+
 test("empty courier polling scans terminal history once and discovers only new active jobs", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-active-index-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
@@ -164,9 +176,9 @@ function writeCertifiedPolicy(root: string, options: { exposed?: boolean; policy
 } {
   const recordBase = {
     method: "POST",
-    path: "/revit/ping",
-    typed_mcp_aliases: ["revit_ping"],
-    request_hash: computeRequestHash("POST", "/revit/ping", { a: 1, z: "raw" }),
+    path: "/revit/get-parameters",
+    typed_mcp_aliases: ["revit_get_parameters"],
+    request_hash: computeRequestHash("POST", "/revit/get-parameters", { a: 1, z: "raw" }),
     effect_hash: `sha256:${"2".repeat(64)}`,
     evidence_record_hash: `sha256:${"3".repeat(64)}`,
     highest_cumulative_level: "L4",
@@ -224,11 +236,11 @@ function writeCertifiedV2Job(
     request_hash: policy.record.request_hash,
     effect_hash: policy.record.effect_hash,
     method: "POST",
-    path: "/revit/ping",
+    path: "/revit/get-parameters",
     body_present: true,
     body_sha256: bodyHash,
     channel: "typed_mcp",
-    alias: "revit_ping",
+    alias: "revit_get_parameters",
     runtime_mode: "local",
     exposure_profile: "certified",
     policy_trust_source: "deployment"
@@ -248,7 +260,7 @@ function writeCertifiedV2Job(
     target_document_title: targetDocumentTitle,
     target_document_path: targetDocumentPath,
     method: "POST",
-    path: "/revit/ping",
+    path: "/revit/get-parameters",
     body_present: true,
     body_sha256: bodyHash,
     certification_envelope_hash: envelope.envelope_hash
@@ -265,7 +277,7 @@ function writeCertifiedV2Job(
     correlation_id: id,
     idempotency_key: id,
     method: "POST",
-    path: "/revit/ping",
+    path: "/revit/get-parameters",
     target_executor_id: targetExecutorId,
     target_document_title: targetDocumentTitle,
     target_document_path: targetDocumentPath,

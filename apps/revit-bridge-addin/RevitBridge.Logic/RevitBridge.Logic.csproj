@@ -2,11 +2,15 @@
 
   <PropertyGroup>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <TargetFrameworks Condition="'$(RevitYear)'=='2027'">net10.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <UseWPF Condition="'$(TargetFramework)'=='net10.0-windows'">true</UseWPF>
+    <UseWindowsForms Condition="'$(TargetFramework)'=='net10.0-windows'">true</UseWindowsForms>
     <UseWindowsForms>true</UseWindowsForms>
     <RevitApiPathNet48 Condition="'$(RevitApiPathNet48)'==''">C:\Program Files\Autodesk\Revit 2024</RevitApiPathNet48>
     <RevitApiPathNet8 Condition="'$(RevitApiPathNet8)'==''">C:\Program Files\Autodesk\Revit 2025</RevitApiPathNet8>
+    <RevitApiPathNet10 Condition="'$(RevitApiPathNet10)'==''">C:\Program Files\Autodesk\Revit 2027</RevitApiPathNet10>
   </PropertyGroup>
 
   <ItemGroup>
@@ -41,8 +45,19 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows'">
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitApiPathNet10)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitApiPathNet10)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" Condition="'$(TargetFramework)'!='net10.0-windows'" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.11" Condition="'$(TargetFramework)'=='net8.0-windows'" />
   </ItemGroup>
 

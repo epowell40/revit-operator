@@ -38,7 +38,7 @@ test("direct bridge transport forwards auth and JSON body and parses the respons
     return new Response(JSON.stringify({ ok: true, count: 2 }), { status: 200 });
   };
 
-  const result = await __testOnlyRequestBridgeJson("POST", "/revit/test", { ids: [1, 2] }, {
+  const result = await __testOnlyRequestBridgeJson("POST", "/revit/get-parameters", { ids: [1, 2] }, {
     baseUrl: "http://bridge.local:5000",
     token: "test-token",
     timeoutMs: 100,
@@ -47,7 +47,7 @@ test("direct bridge transport forwards auth and JSON body and parses the respons
   });
 
   assert.deepEqual(result, { ok: true, count: 2 });
-  assert.equal(seenUrl, "http://bridge.local:5000/revit/test");
+  assert.equal(seenUrl, "http://bridge.local:5000/revit/get-parameters");
   assert.equal(seenInit?.method, "POST");
   assert.equal(new Headers(seenInit?.headers).get("X-Operator-Token"), "test-token");
   assert.equal(new Headers(seenInit?.headers).get("Content-Type"), "application/json");

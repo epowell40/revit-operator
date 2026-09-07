@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isSupportedMcpAlias, requireSupportedToolRoute } from "./lib/supportedToolInventory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -29,12 +30,8 @@ import {
   resolvePathUnderWorkspaceArtifacts,
 } from "./lib/workspaceFiles.js";
 import { runRoomAudit } from "./skills/roomAudit.js";
-import { runLoadCalcSnapshot } from "./skills/loadCalc.js";
 import { runDoorFireRatingCheck } from "./skills/doorFireRatingCheck.js";
 import { runQuantify } from "./skills/quantify.js";
-import { runThermalZoning } from "./skills/thermalZoning.js";
-import { runPlaceVAVs } from "./skills/placeVAVs.js";
-import { runCodeCompliance } from "./skills/codeCompliance.js";
 import { runAutoDimFloorPlan } from "./skills/autoDimFloorPlanRunner.js";
 import { runFireAlarmLayout } from "./skills/fireAlarmLayoutRunner.js";
 import { fireDamperAudit, fireDamperAuditInputSchema, handleFireDamperAudit } from "./skills/fireDamperAudit.js";
@@ -167,6 +164,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
 ]);
 
 function isRegisteredMcpToolExposed(name: string): boolean {
+  if (!isSupportedMcpAlias(name)) return false;
   if (!isCertifiedToolExposureMode()) return true;
   if (CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES.has(name)) return true;
   if (name.startsWith("revit_")) return isMcpToolAliasExposed(name);
@@ -616,7 +614,7 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
 server.tool("operator_run_dynamic_revit_program", "Authenticated General Agent and development laboratory: compile and execute generated C# on the user's trusted workstation through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Five evidence-bound attempts form one diagnostic loop. A committed_verified apply emits a separate checkpoint; continue_from_checkpoint starts the next design step against that exact persisted document/session, allowing up to 64 verified steps while preserving explicit discard-or-compensation restoration. Certified-only exposure remains fail-closed, while an authenticated hosted General Agent has the same execution substrate as local development.", {
   source: z.string().min(1).max(128_000).describe("Exactly one public IDynamicRevitProgram or IDynamicResultReferenceProgram implementation using RevitOperator.DynamicRevitSdk. Result-reference programs should cite c.Fact(...), record c.TraceStep(...), assert with c.Require(...), and either return c.NeedFacts(...) or c.Complete()."),
   mode: z.enum(["preview", "apply"]),
-  target_revit_year: z.enum(["2023", "2024", "2025", "2026"]).optional(),
+  target_revit_year: z.enum(["2023", "2024", "2025", "2026", "2027"]).optional(),
   category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
   parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
   snapshot_limit: z.number().int().min(1).max(1000).optional(),
@@ -1384,6 +1382,7 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       const pathInput = String(args.path ?? "").trim();
       if (!method) throw new Error("method must be GET or POST.");
       assertRevitBridgePath(pathInput);
+      requireSupportedToolRoute(method, pathInput);
 
       let registry: ToolRegistryPayload | null = null;
       let registryEntry: RegistryToolEntry | undefined;
@@ -3905,15 +3904,6 @@ server.tool("revit_run_room_audit", "Run a room audit on a specific level.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_run_load_calc", "Run a load calculation snapshot (V0).", 
-  { levelName: z.string(), ach: z.number().default(6) }, 
-  async ({ levelName, ach }) => {
-    try {
-      const result = await runLoadCalcSnapshot(levelName, ach);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
-});
-
 server.tool("revit_run_door_fire_rating_check", "Perform a project-wide fire rating audit (Rooms & Doors).", {}, async () => {
   try {
     const result = await runDoorFireRatingCheck();
@@ -3926,33 +3916,6 @@ server.tool("revit_quantify", "Count or list elements using natural language (e.
   async ({ query }) => {
     try {
       const result = await runQuantify(query);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
-});
-
-server.tool("revit_run_thermal_zoning", "Generate thermal zones and sheets (e.g. 'Create thermal zoning for Level 1').",
-  { query: z.string() },
-  async ({ query }) => {
-    try {
-      const result = await runThermalZoning(query);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
-});
-
-server.tool("revit_place_vavs", "Auto-place VAV boxes for thermal zones (e.g. 'Place VAVs on Level 1').",
-  { query: z.string() },
-  async ({ query }) => {
-    try {
-      const result = await runPlaceVAVs(query);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
-});
-
-server.tool("revit_run_code_check", "Run code compliance checks (ADA/FGI) on rooms (e.g. 'Check ADA compliance on Level 1').",
-  { query: z.string() },
-  async ({ query }) => {
-    try {
-      const result = await runCodeCompliance(query);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });

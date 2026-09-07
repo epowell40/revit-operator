@@ -66,7 +66,10 @@
     "general_revit_capability_report.test.ts",
     "general_revit_capability_acceptance.test.ts",
     "general_revit_campaign_memory.test.ts",
-    "revit_tool_contract_memory.test.ts"
+    "revit_tool_contract_memory.test.ts",
+    "supported_tool_inventory.test.ts",
+    "revit_courier_contract.test.ts",
+    "dynamic_program_admission.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -83,7 +86,8 @@
     "lib/toolExposurePolicy.test.ts",
     "lib/toolSearchRanking.test.ts",
     "lib/toolSearchRiskSemantics.test.ts",
-    "skills/quantify.test.ts"
+    "skills/quantify.test.ts",
+    "lib/supportedToolInventory.test.ts"
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
@@ -114,7 +118,10 @@
     "OperatorConditionalRequestContractsTests",
     "OperatorLevelLookupDiagnosticTests",
     "OperatorNativeChangeInventoryTests",
-    "TransactionTruthTests"
+    "TransactionTruthTests",
+    "OperatorActionDeadlinePolicyTests",
+    "OperatorSupportedToolInventoryTests",
+    "OperatorRetiredPrototypeToolTests"
   ],
   "failure_families": [
     {
@@ -846,6 +853,55 @@
       "coverage": [
         "backend:general_revit_campaign_memory.test.ts",
         "backend:revit_tool_contract_memory.test.ts"
+      ]
+    },
+    {
+      "id": "queued-cancellation-metadata-survives-nested-deadline-boundaries",
+      "coverage": [
+        "dotnet:OperatorActionDeadlinePolicyTests",
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "set-parameter-native-collateral-inventory-beyond-request-targets",
+      "coverage": [
+        "dotnet:OperatorNativeChangeInventoryTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "approved-enum-correction-survives-memory-redaction",
+      "coverage": [
+        "backend:revit_tool_contract_memory.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "supported-tool-surface-denied-before-mode-and-transport-bypass",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "backend:direct_revit_execution_authorization.test.ts",
+        "backend:revit_courier_contract.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests",
+        "dotnet:OperatorRetiredPrototypeToolTests"
+      ]
+    },
+    {
+      "id": "acceptance-verification-does-not-imply-collateral-verification",
+      "coverage": [
+        "backend:verified_work_packet.test.ts",
+        "backend:assignment_kernel_v2_publication.test.ts"
+      ]
+    },
+    {
+      "id": "revit-year-bound-across-dynamic-admission-and-supervisor-dispatch",
+      "coverage": [
+        "backend:dynamic_program_admission.test.ts",
+        "backend:provider_dynamic_program.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
       ]
     }
   ]

@@ -9,7 +9,7 @@ export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-progra
 export type DynamicRevitProgramRunInput = {
   source: string;
   mode: "preview" | "apply";
-  target_revit_year?: "2023" | "2024" | "2025" | "2026";
+  target_revit_year?: "2023" | "2024" | "2025" | "2026" | "2027";
   category?: string;
   parameters?: string[];
   snapshot_limit?: number;
@@ -91,7 +91,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const supervisor = requiredFile(env.OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH, "OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH");
   const workerDirectory = requiredDirectory(env.OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY, "OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY");
   const tokenFile = requiredFile(env.OPERATOR_TOKEN_FILE, "OPERATOR_TOKEN_FILE");
-  const year = input.target_revit_year ?? boundedYear(env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR || "2024");
+  const year = boundedYear(input.target_revit_year ?? env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR ?? "2024");
   const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
   const workspaceRoot = getWorkspaceRoot();
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
@@ -814,4 +814,4 @@ function requiredDirectory(value: string | undefined, label: string): string { c
 function boundedInteger(value: number | undefined, minimum: number, maximum: number, fallback: number): number { const result = value ?? fallback; if (!Number.isSafeInteger(result) || result < minimum || result > maximum) throw new Error("Dynamic runtime numeric bound is invalid."); return result; }
 function boundedText(value: string, maximum: number, label: string): string { if (typeof value !== "string" || value.length < 1 || value.length > maximum || value.includes("\0")) throw new Error(`Dynamic ${label} is invalid.`); return value; }
 function boundedStrings(value: string[], maximumItems: number, maximumChars: number, label: string): string[] { if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`Dynamic ${label} exceeds its item bound.`); const result = value.map(item => boundedText(item, maximumChars, label)); if (new Set(result).size !== result.length) throw new Error(`Dynamic ${label} contains duplicates.`); return result; }
-function boundedYear(value: string): "2023" | "2024" | "2025" | "2026" { if (value !== "2023" && value !== "2024" && value !== "2025" && value !== "2026") throw new Error("Dynamic runtime Revit year must be 2023, 2024, 2025, or 2026."); return value; }
+function boundedYear(value: string): "2023" | "2024" | "2025" | "2026" | "2027" { if (value !== "2023" && value !== "2024" && value !== "2025" && value !== "2026" && value !== "2027") throw new Error("Dynamic runtime Revit year must be 2023, 2024, 2025, 2026, or 2027."); return value; }

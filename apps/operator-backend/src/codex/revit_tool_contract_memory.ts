@@ -148,6 +148,9 @@ function compactContractValue(value: unknown, key = "", depth = 0): unknown {
   if (typeof value === "number") return "<number>";
   if (typeof value === "string") {
     const text = cleanString(value, 120);
+    // Preserve only published enum values; free-form names and invalid values
+    // stay redacted. Otherwise a corrected planType looks like an identical retry.
+    if (key === "planType" && ["floor", "ceiling", "engineering", "structural"].includes(value)) return value;
     if (CONTRACT_LITERAL_KEY_PATTERN.test(key) && /^[A-Za-z0-9_./:-]{1,120}$/.test(text)) return text;
     return "<string>";
   }

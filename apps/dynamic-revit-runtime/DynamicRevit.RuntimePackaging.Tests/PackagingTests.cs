@@ -16,6 +16,7 @@ public sealed class PackagingTests : IDisposable
     [InlineData("2024", "net48")]
     [InlineData("2025", "net8.0-windows")]
     [InlineData("2026", "net8.0-windows")]
+    [InlineData("2027", "net10.0-windows")]
     public void Trusted_manifest_selects_exact_host_identity(string year, string framework)
     {
         var path = WriteCapabilitiesManifest();
@@ -30,8 +31,26 @@ public sealed class PackagingTests : IDisposable
     public void Trusted_manifest_fails_closed_for_unknown_year()
     {
         var manifest = RevitHostCapabilityManifest.LoadTrusted(WriteCapabilitiesManifest());
-        var error = Assert.Throws<InvalidOperationException>(() => manifest.Select("2027"));
+        var error = Assert.Throws<InvalidOperationException>(() => manifest.Select("2028"));
         Assert.Contains("not present", error.Message);
+    }
+
+    [Theory]
+    [InlineData("net48")]
+    [InlineData("net8.0-windows")]
+    public void Trusted_manifest_rejects_wrong_2027_framework(string framework)
+    {
+        var manifest = RevitHostCapabilityManifest.LoadTrusted(WriteCapabilitiesManifest());
+        manifest.Select("2027").TargetFramework = framework;
+        Assert.Throws<InvalidDataException>(() => manifest.Validate());
+    }
+
+    [Fact]
+    public void Trusted_manifest_rejects_missing_2027_host()
+    {
+        var manifest = RevitHostCapabilityManifest.LoadTrusted(WriteCapabilitiesManifest());
+        manifest.Hosts = manifest.Hosts.Where(host => host.RevitYear != "2027").ToArray();
+        Assert.Throws<InvalidDataException>(() => manifest.Validate());
     }
 
     [Fact]
@@ -44,7 +63,7 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(17, result.VerifiedArtifacts.Count);
+        Assert.Equal(18, result.VerifiedArtifacts.Count);
         Assert.Contains("manifests/dynamic-revit-execution-protocol.v1.json", result.VerifiedArtifacts);
         Assert.Contains("manifests/dynamic-revit-annotation-operations.v1.json", result.VerifiedArtifacts);
         Assert.Contains("manifests/dynamic-revit-mep-mutations.v1.json", result.VerifiedArtifacts);
@@ -229,7 +248,8 @@ public sealed class PackagingTests : IDisposable
                 new() { RevitYear = "2023", TargetFramework = "net48", Artifact = Artifact("hosts/2023/DynamicRevitHost.dll", "host-2023") },
                 new() { RevitYear = "2024", TargetFramework = "net48", Artifact = Artifact("hosts/2024/DynamicRevitHost.dll", "host-2024") },
                 new() { RevitYear = "2025", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2025/DynamicRevitHost.dll", "host-2025") },
-                new() { RevitYear = "2026", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2026/DynamicRevitHost.dll", "host-2026") }
+                new() { RevitYear = "2026", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2026/DynamicRevitHost.dll", "host-2026") },
+                new() { RevitYear = "2027", TargetFramework = "net10.0-windows", Artifact = Artifact("hosts/2027/DynamicRevitHost.dll", "host-2027") }
             ]
         };
     }

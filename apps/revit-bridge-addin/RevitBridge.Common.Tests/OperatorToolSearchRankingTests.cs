@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using Xunit;
 
@@ -34,9 +35,14 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void Candidate22QueryFindsQuantifyFirstAcrossTheCertifiedNativeManifest()
+        public void Candidate22QueryFindsQuantifyFirstAcrossTheHistoricalImplementedCatalog()
         {
-            var ranked = OperatorToolManifest.Tools
+            // Preserve the exact historical ranking regression even when the product
+            // inventory excludes its target. A type catalog is not an element count.
+            var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(field);
+            var implemented = Assert.IsAssignableFrom<IEnumerable<OperatorToolInfo>>(field!.GetValue(null));
+            var ranked = implemented
                 .Where(tool => string.Equals(tool.Method, "POST", StringComparison.Ordinal))
                 .Select(tool => new
                 {
@@ -51,6 +57,35 @@ namespace RevitBridge.Common.Tests
 
             Assert.NotEmpty(ranked);
             Assert.Equal("/revit/quantify", ranked[0].Tool.Path);
+        }
+
+        [Fact]
+        public void HistoricalQuantityRankingCannotReadmitAnExcludedProductRoute()
+        {
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/quantify"));
+            Assert.DoesNotContain(OperatorToolManifest.Tools, tool => tool.Path == "/revit/quantify");
+            Assert.All(OperatorToolManifest.Tools, tool =>
+                Assert.True(OperatorSupportedToolInventory.IsSupportedTool(tool.Method, tool.Path)));
+        }
+
+        [Fact]
+        public void Candidate22ProductSearchFindsPlacedInstancesInsteadOfLoadedTypes()
+        {
+            var ranked = OperatorToolManifest.Tools
+                .Where(tool => tool.Method == "POST")
+                .Select(tool => new
+                {
+                    Tool = tool,
+                    Score = OperatorToolSearchRanking.Score(Candidate22Query, tool.Path, tool.Title, tool.Group, tool.Description, tool.Example, tool.Method)
+                })
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.Tool.RiskLevel)
+                .ThenBy(candidate => candidate.Tool.Path, StringComparer.Ordinal)
+                .ToList();
+            Assert.Equal("/revit/find-elements", ranked[0].Tool.Path);
+            Assert.Contains("itemsComplete is true", ranked[0].Tool.Description);
+            Assert.Contains("truncated result is not a complete inventory", ranked[0].Tool.Description);
+            Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Tool.Path == "/revit/list-element-types").Score);
         }
 
         [Fact]

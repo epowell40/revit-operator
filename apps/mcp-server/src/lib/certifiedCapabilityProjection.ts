@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isSupportedToolRoute, isSupportedMcpAlias } from "./supportedToolInventory.js";
 import { loadToolExposurePolicy, type ToolExposurePolicy, type ToolExposurePolicyRecord } from "./toolExposurePolicy.js";
 
 export const CERTIFIED_CAPABILITY_PROJECTION_V1 = "revit-operator.certified-capability-projection.v1";
@@ -56,8 +57,10 @@ function descriptor(records: ToolExposurePolicyRecord[], alias: string): Capabil
 export function projectCertifiedCapabilities(policy: ToolExposurePolicy): Capability[] {
   const grouped = new Map<string, { alias: string; records: ToolExposurePolicyRecord[] }>();
   for (const record of policy.records) {
+    if (!isSupportedToolRoute(record.method, record.path)) continue;
     if (record.visibility === "workflow_only" || !record.channels.typed_mcp.exposed) continue;
     for (const alias of record.typed_mcp_aliases) {
+      if (!isSupportedMcpAlias(alias)) continue;
       const key = groupKey(record, alias);
       const current = grouped.get(key);
       if (current) current.records.push(record);

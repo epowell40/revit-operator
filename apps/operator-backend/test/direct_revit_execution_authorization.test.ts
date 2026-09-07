@@ -24,6 +24,15 @@ const MOVE_PREVIEW_EFFECT_HASH = "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c025
 const MOVE_APPLY_EFFECT_HASH = "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b";
 const REQUEST_ID = "0123456789abcdef0123456789abcdef";
 
+test("fixed product support denies excluded direct routes before every deployment authorization branch", () => {
+  for (const mode of ["development", "hosted", "production", "local"]) {
+    assert.throws(() => authorizeDirectRevitExecution(directRequest({ path: "/revit/fire-alarm-layout" }), {
+      REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_BRAIN: "codex",
+      OPERATOR_OPENAI_API_KEY: "test-only", OPERATOR_AUTH_MODE: "shared_token"
+    }), error => error instanceof DirectRevitExecutionAuthorizationError && error.code === "PRODUCT_TOOL_NOT_SUPPORTED");
+  }
+});
+
 function rawSha256(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
@@ -33,7 +42,7 @@ function directRequest(overrides: Record<string, unknown> = {}): Record<string, 
     schema: "revit-operator.revit-direct-admission-request.v2",
     request_id: REQUEST_ID,
     method: "POST",
-    path: "/revit/ping",
+    path: "/revit/get-parameters",
     body_present: true,
     body_json: "{}",
     channel: "generic_call",
@@ -58,11 +67,11 @@ function writePolicy(root: string, options: {
 } = {}): PolicyFixture {
   const request = options.request ?? {};
   const method = options.method ?? "POST";
-  const toolPath = options.path ?? "/revit/ping";
+  const toolPath = options.path ?? "/revit/get-parameters";
   const recordBase = {
     method,
     path: toolPath,
-    typed_mcp_aliases: ["revit_ping"],
+    typed_mcp_aliases: ["revit_get_parameters"],
     request_hash: computeRequestHash(method, toolPath, request as never),
     effect_hash: options.requestFamily ? MOVE_PREVIEW_EFFECT_HASH : `sha256:${"2".repeat(64)}`,
     evidence_record_hash: `sha256:${"3".repeat(64)}`,
@@ -327,7 +336,7 @@ test("direct authorization derives every generic-call binding from one exact exp
   assert.equal(authorization.valid_for_ms, 30_000);
   assert.equal(authorization.request_id, REQUEST_ID);
   assert.equal(authorization.method, "POST");
-  assert.equal(authorization.path, "/revit/ping");
+  assert.equal(authorization.path, "/revit/get-parameters");
   assert.equal(authorization.body_present, true);
   assert.equal(authorization.source_body_sha256, rawSha256(bodyJson));
   assert.equal(authorization.canonical_body_json, "{\"a\":1,\"z\":\"raw\"}");
@@ -531,9 +540,9 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   expectDirectError(() => authorizeDirectRevitExecution({ ...directV1Request(), runtime_mode: "local" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, request_id: "A".repeat(32) }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, method: "post" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
-  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, path: "/revit/ping/" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, path: "/revit/get-parameters/" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "typed_mcp", alias: "revit_call_tool" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
-  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "generic_call", alias: "revit_ping" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "generic_call", alias: "revit_get_parameters" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "deterministic_workflow" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, runtime_mode: "Production" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, runtime_mode: "local-mode" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");

@@ -24,10 +24,23 @@ function heading(value: string): string {
 }
 
 export function renderVerifiedWorkPacketMarkdown(packet: VerifiedWorkPacketV1): string {
+  const changes = packet.actions.some(action => ["applied", "unknown"].includes(action.effect.state));
+  const checks = packet.collateral_checks.filter(check => check.status !== "not_applicable");
+  const collateralSummary = checks.some(check => check.status === "fail")
+    ? "Other changes: a recorded check failed."
+    : checks.length && checks.every(check => check.status === "pass" && ["independently_verified", "native_execution_evidence"].includes(check.trust))
+      ? "Other changes: recorded checks passed. This covers only the listed checks."
+      : checks.length ? "Other changes: assessment incomplete."
+        : changes ? "Other changes not assessed. No collateral checks were recorded."
+          : "No model changes recorded; no collateral assessment is claimed.";
   const lines: string[] = [
     `# Verified Work Packet`,
     "",
-    `**${heading(packet.status)}** ${badge(packet.trust_presentation.overall)}`,
+    `**${packet.status === "verified_complete" ? "Requested result verified" : heading(packet.status)}**`,
+    "",
+    `Acceptance evidence: ${badge(packet.trust_presentation.overall)}. This label applies to the recorded acceptance criteria.`,
+    "",
+    collateralSummary,
     "",
     packet.status_reason,
     "",
@@ -72,7 +85,7 @@ export function renderVerifiedWorkPacketMarkdown(packet: VerifiedWorkPacketV1): 
     `| ${cell(action.attempt_id)} | ${cell(`${action.purpose}: ${action.action_path || action.tool_identity}`)} | ${cell(action.dispatch.state)} | ${cell(`${action.effect.state}: ${action.effect.reason}`)} | ${cell(action.verification.state)} | ${badge(action.trust)} | ${cell(action.retry_of_attempt_id ? `retry of ${action.retry_of_attempt_id} (${action.retry_delta})` : action.reconciliation_of_attempt_id ? `reconciles ${action.reconciliation_of_attempt_id}` : null)} |`
   );
   lines.push("", "## Collateral checks", "", "| Invariant | Status | Trust | Evidence | Reason |", "| --- | --- | --- | --- | --- |");
-  if (!packet.collateral_checks.length) lines.push("| No collateral assertion recorded | not applicable | [uncertain / missing] | — | The packet makes no unchanged-target claim. |");
+  if (!packet.collateral_checks.length) lines.push(`| No collateral assertion recorded | ${changes ? "not assessed" : "not applicable"} | [uncertain / missing] | — | The packet makes no unchanged-target claim. |`);
   for (const check of packet.collateral_checks) lines.push(`| ${cell(check.invariant)} | ${check.status} | ${badge(check.trust)} | ${cell(refs(check.evidence_references))} | ${cell(check.reason)} |`);
   lines.push("", "## Artifacts", "");
   if (!packet.artifacts.length) lines.push("No artifacts recorded.");

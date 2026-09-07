@@ -20,9 +20,6 @@ const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
 const certifiedPolicyHash = (JSON.parse(fs.readFileSync(certifiedPolicyPath, "utf8")) as { policy_hash: string }).policy_hash;
 const certifiedSafeNonRevitAliases = [
-  "audit_lpd",
-  "check_photometrics",
-  "fire_damper_audit",
   "operator_discover_capabilities",
   "operator_evaluate_assignment_criteria",
   "operator_request_assignment_input",
@@ -33,12 +30,10 @@ const certifiedSafeNonRevitAliases = [
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "operator_runtime_probe",
-  "print_sheets",
   "read_excel",
   "read_pdf_text",
   "read_word",
   "revit_get_context",
-  "validate_ies_files",
   "web_fetch_evidence",
   "workspace_pdf_merge",
   "workspace_pdf_reorder",
@@ -229,8 +224,8 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 135, "Exact development laboratory mode must preserve the complete catalog plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 110, "Exact development laboratory mode must preserve all Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
+  assert.equal(laboratoryNames.length, 93, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
@@ -294,7 +289,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
         version: "operator.tool_registry.v1",
         tools: [
           { method: "GET", path: "/revit/context", group: "Core", risk: "low", title: "Context", description: "Current context" },
-          { method: "POST", path: "/revit/test-write", group: "Test", risk: "medium", title: "Test Write", description: "Smoke write" }
+          { method: "POST", path: "/revit/create-view", group: "Test", risk: "medium", title: "Test Write", description: "Smoke write" }
         ]
       }));
       return;
@@ -363,7 +358,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       }));
       return;
     }
-    if (requestUrl.pathname === "/revit/test-write") {
+    if (requestUrl.pathname === "/revit/create-view") {
       if (grant !== "grant-token") {
         res.statusCode = 403;
         res.end(JSON.stringify({ error: "missing grant" }));
@@ -423,10 +418,26 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 135, "Laboratory mode must preserve the complete catalog plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 110, "Laboratory mode must preserve all revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
+  assert.equal(tools.tools.length, 93, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 74, "Laboratory mode must preserve retained revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
-  assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
+  // Retirement must remove discovery and executable aliases before either transport.
+  const retiredPrototypeAliases = [
+    "revit_place_vavs", "revit_run_thermal_zoning", "revit_run_load_calc", "revit_run_code_check"
+  ];
+  const requestsBeforeRetiredCalls = { backend: backendRequests, bridge: bridgeRequests.length };
+  for (const name of retiredPrototypeAliases) {
+    assert.equal(names.has(name), false, `Retired prototype must not be advertised: ${name}`);
+    const denied = await withTimeout(client.callTool({ name, arguments: { query: "Level 1", levelName: "Level 1" } }), `rejecting retired alias ${name}`);
+    assert.equal(denied.isError, true);
+    assert.match(JSON.stringify(denied.content), /not found/i);
+  }
+  assert.deepEqual({ backend: backendRequests, bridge: bridgeRequests.length }, requestsBeforeRetiredCalls,
+    "Retired aliases must fail before backend or native transport, without fallback execution.");
+  for (const retained of ["revit_query_elements", "revit_place_families", "revit_get_parameters", "revit_set_parameters"])
+    assert.equal(names.has(retained), true, `General primitive must survive wrapper retirement: ${retained}`);
+
+  assert.equal(names.has("titleblock_update_text"), false, "Laboratory mode cannot restore an excluded composite alias.");
   for (const name of [
     "operator_runtime_probe",
     "operator_plan_semantic_mep_route",
@@ -438,23 +449,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_submit_noop_completion",
     "operator_submit_read_completion",
     "operator_run_dynamic_revit_program",
-    "fire_damper_audit",
-    "validate_ies_files",
-    "check_photometrics",
-    "audit_lpd",
-    "revit_repair_mep_connectors",
-    "revit_dry_run_repair_mep_connectors",
     "revit_list_schedules",
     "revit_get_parameters",
     "revit_count_sheets_certified",
     "revit_update_schedule_cell",
-    "revit_replace_schedule_values",
     "revit_set_parameters"
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
-  const connectorRepairTool = tools.tools.find(tool => tool.name === "revit_repair_mep_connectors");
-  const dryConnectorRepairTool = tools.tools.find(tool => tool.name === "revit_dry_run_repair_mep_connectors");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
@@ -481,15 +483,6 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal((findTextNotesTool?.inputSchema as any)?.properties?.max?.maximum, 500);
   assert.equal((schedulesTool?.inputSchema as any)?.properties?.maxRows?.maximum, 500);
   assert.equal((schedulesTool?.inputSchema as any)?.properties?.maxColumns?.maximum, 100);
-  for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
-    const connectorRepairSchema = JSON.stringify(tool?.inputSchema ?? {});
-    assert.doesNotMatch(connectorRepairSchema, /"\$ref"/);
-    assert.doesNotMatch(connectorRepairSchema, /"anyOf"/);
-    assert.doesNotMatch(connectorRepairSchema, /"items":\[/);
-  }
-  assert.equal(dryConnectorRepairTool?.annotations?.readOnlyHint, true);
-  assert.equal(dryConnectorRepairTool?.annotations?.destructiveHint, false);
-  assert.equal(connectorRepairTool?.annotations?.destructiveHint, true);
   const runtimeProbe = await withTimeout(client.callTool({ name: "operator_runtime_probe", arguments: {} }), "probing MCP runtime");
   assert.match((runtimeProbe as any).content[0].text, /operator\.mcp\.runtime\.v1/);
   const discovery = await withTimeout(client.callTool({
@@ -503,23 +496,12 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(discoveryPayload.status, "available");
   assert.ok(discoveryPayload.capabilities.some((capability: any) =>
     capability.method === "GET" && capability.path === "/revit/context"));
-  const connectorRepair = await withTimeout(client.callTool({
-    name: "revit_dry_run_repair_mep_connectors",
-    arguments: {
-      expectedModelPath: "C:\\benchmarks\\synthetic_mep_fixture.rvt",
-      disconnectOnlyPairs: [{
-        a: { elementId: 101, connectorId: 2, expectedOriginXyz: [1, 2, 3] },
-        b: { elementId: 102, connectorId: 0, expectedOriginXyz: [1, 2, 3] }
-      }],
-      dryRun: true,
-      verify: true
-    }
-  }), "calling typed connector repair");
-  assert.match((connectorRepair as any).content[0].text, /DryRunReady/);
-  assert.deepEqual(connectorRepairBodies[0].disconnectOnlyPairs[0], {
-    first: { elementId: 101, connectorId: 2, expectedOriginXyz: [1, 2, 3] },
-    second: { elementId: 102, connectorId: 0, expectedOriginXyz: [1, 2, 3] }
-  });
+  for (const name of ["revit_repair_mep_connectors", "revit_dry_run_repair_mep_connectors"]) {
+    const denied = await client.callTool({ name, arguments: {} });
+    assert.equal(denied.isError, true);
+    assert.match(JSON.stringify(denied.content), /disabled/i);
+  }
+  assert.equal(connectorRepairBodies.length, 0, "Excluded connector convenience tools cannot execute through laboratory mode.");
 
   const ping = await withTimeout(client.callTool({ name: "revit_ping", arguments: {} }), "calling Revit ping over stdio");
   assert.match((ping as any).content[0].text, /stdio-smoke/);
@@ -572,9 +554,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     name: "revit_replace_schedule_values",
     arguments: { sheetNumbers: ["P6.01"], fieldNames: ["DESIG"], valueContains: "-G-", replaceFrom: "-G-", replaceTo: "-0-" }
   }), "dry-running a schedule value replacement over stdio");
-  assert.match((scheduleReplacement as any).content[0].text, /planHash/);
-  assert.equal(scheduleReplacementBodies[0].apply, false);
-  assert.equal(scheduleReplacementBodies[0].dryRun, true);
+  assert.equal(scheduleReplacement.isError, true);
+  assert.match(JSON.stringify(scheduleReplacement.content), /disabled/i);
+  assert.equal(scheduleReplacementBodies.length, 0);
 
   const setParameter = await withTimeout(client.callTool({
     name: "revit_set_parameters",
@@ -587,11 +569,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const write = await withTimeout(client.callTool({
     name: "revit_call_tool",
-    arguments: { method: "POST", path: "/revit/test-write", body: { apply: true }, requireKnownPath: true }
+    arguments: { method: "POST", path: "/revit/create-view", body: { apply: true }, requireKnownPath: true }
   }), "calling a grant-backed generic bridge write over stdio");
   assert.match((write as any).content[0].text, /"applied": true/);
   assert.equal(bridgeRequests.every(request => request.token === "mcp-stdio-smoke-token"), true);
-  assert.equal(bridgeRequests.some(request => request.path === "/revit/test-write" && request.grant === "grant-token"), true);
+  assert.equal(bridgeRequests.some(request => request.path === "/revit/create-view" && request.grant === "grant-token"), true);
 
   for (const writeControl of ["apply", "write"] as const) {
     const result = await withTimeout(client.callTool({

@@ -10,6 +10,35 @@ namespace DynamicRevitSdk.Tests;
 
 public sealed class ProductionContractsTests
 {
+    [Theory]
+    [InlineData("2023")]
+    [InlineData("2024")]
+    [InlineData("2025")]
+    [InlineData("2026")]
+    [InlineData("2027")]
+    public void AdmissionBindsSupportedYearAndRejectsCrossYearSubstitution(string year)
+    {
+        var admission = Admission(); admission.TargetRevitVersion = year;
+        var expected = Expectations(admission); var key = RandomNumberGenerator.GetBytes(32);
+        admission.AdmissionSignature = DynamicProgramAdmissionV1Policy.Sign(admission, key);
+        DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true);
+        expected.TargetRevitVersion = year == "2024" ? "2027" : "2024";
+        Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
+    }
+
+    [Theory]
+    [InlineData("2028")]
+    [InlineData("2027.2")]
+    public void AdmissionRejectsUnsupportedYearBeforeReplayConsumption(string year)
+    {
+        var admission = Admission(); admission.TargetRevitVersion = year;
+        var key = RandomNumberGenerator.GetBytes(32);
+        admission.AdmissionSignature = DynamicProgramAdmissionV1Policy.Sign(admission, key);
+        var consumed = false;
+        Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, Expectations(admission), key, Now(), _ => { consumed = true; return true; }));
+        Assert.False(consumed);
+    }
+
     [Fact]
     public void AdmissionV1BindsEveryTrustedFieldAndConsumesReplayOnce()
     {

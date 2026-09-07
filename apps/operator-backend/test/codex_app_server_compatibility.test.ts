@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
+import { recordRevitToolOutcome, formatRevitToolContractMemoryForPrompt } from "../src/codex/revit_tool_contract_memory.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,31 @@ import {
 } from "../src/brains/authoritative_web_evidence.js";
 import { CodexMcpToolRuntime, EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
+
+test("dynamic tool enum rejection and successful correction produce reusable redacted guidance", { concurrency: false }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-enum-memory-"));
+  const previous = process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+  process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = path.join(root, "memory.json");
+  try {
+    for (const success of [false, true]) {
+      const item = adaptDynamicToolCompletedItem({ type: "dynamicToolCall", tool: "revit_call_tool", success,
+        arguments: { method: "POST", path: "/revit/create-view", body: { action: "create_floor_plan",
+          name: "Confidential project sheet", planType: success ? "engineering" : "private-invalid-value" } },
+        contentItems: [{ type: "inputText", text: success ? '{"transaction":{"status":"committed"}}'
+          : '{"code":"mcp_request_validation_failed","validation_issues":[{"field_path":"body.planType","expected_type":"enum","expected_constraint":{"allowed_values":["floor","ceiling","engineering","structural"]}}]}' }] });
+      assert.ok(item);
+      recordRevitToolOutcome({ sessionId: "enum-session", threadId: "enum-thread", tool: item.tool,
+        arguments: item.arguments, success: item.success, error: item.error });
+    }
+    const guidance = formatRevitToolContractMemoryForPrompt();
+    assert.match(guidance, /"planType":"engineering"/);
+    assert.doesNotMatch(guidance, /Confidential project|private-invalid-value/);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+    else process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("canonical assignment defers provider success deltas until the authoritative final handoff", () => {
   for (const deferAssistantOutput of [false, true]) {

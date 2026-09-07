@@ -93,6 +93,22 @@ test("non-contract failures and identical retry arguments do not become correcti
   });
 });
 
+test("approved plan-type corrections survive redaction without retaining project data", { concurrency: false }, () => {
+  withStore(() => {
+    const args = (planType: string) => ({ method: "POST", path: "/revit/create-view", body: {
+      action: "create_floor_plan", planType, name: "Private project coordination", levelName: "Private level", levelId: 9946, dryRun: false
+    } });
+    recordRevitToolOutcome({ tool: "revit_call_tool", arguments: args("private-invalid-plan-type"), success: false,
+      error: 'body.planType must be one of "floor", "ceiling", "engineering", "structural"' });
+    const correction = recordRevitToolOutcome({ tool: "revit_call_tool", arguments: args("engineering"), success: true });
+    assert.ok(correction);
+    assert.match(JSON.stringify(correction.accepted_arguments), /"planType":"engineering"/);
+    assert.match(JSON.stringify(correction.failed_arguments), /"planType":"<string>"/);
+    assert.doesNotMatch(JSON.stringify(readRevitToolContractStoreForTests()), /Private project|Private level|private-invalid|9946/);
+    assert.match(formatRevitToolContractMemoryForPrompt(), /"planType":"engineering"/);
+  });
+});
+
 test("failure classifier preserves the required operational categories", () => {
   assert.equal(classifyRevitToolFailure("request body must be an object"), "contract");
   assert.equal(classifyRevitToolFailure("route not found (404)"), "routing");
