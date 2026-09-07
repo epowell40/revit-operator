@@ -63,8 +63,10 @@ namespace RevitBridge.Handlers
                     // selection. Restore the actual drawing before posting File Close.
                     var graphicalView = uiDocument.ActiveGraphicalView
                         ?? throw new InvalidOperationException("No graphical view is available to close the active project.");
-                    uiDocument.ActiveView = graphicalView;
-                    OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView);
+                    OperatorProjectCloseFocus.RestoreDrawingFocus(
+                        uiDocument.ActiveView?.Id == graphicalView.Id,
+                        () => uiDocument.ActiveView = graphicalView,
+                        () => OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView));
                 },
                 () =>
                 {

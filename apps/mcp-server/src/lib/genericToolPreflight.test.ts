@@ -282,6 +282,54 @@ test("Candidate 12 replace-text-note preview requires only the actual mutation i
   assert.deepEqual(missingTarget?.missing_required_fields, ["elementId"]);
 });
 
+test("installed drafting-view activation permits omitted nullable selectors and default Boolean controls", () => {
+  const contract = {
+    method: "POST", path: "/revit/activate-view", required_fields: [],
+    request_schema: {
+      type: "object", additionalProperties: false,
+      properties: {
+        viewId: { type: "integer" }, viewName: { type: "string" },
+        query: { type: "string" }, viewType: { type: "string" },
+        exact: { type: "boolean" }, zoomToFit: { type: "boolean" }
+      }, required: []
+    }
+  };
+  // Exact installed request: the native handler resolves this ID without names.
+  assert.equal(preflightKnownGenericToolBody(contract, { viewId: 1542917, exact: true, zoomToFit: true }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { viewName: "OPERATOR HANDOFF CHECK", exact: true }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { query: "OPERATOR HANDOFF CHECK" }), null);
+  const wrongType = preflightKnownGenericToolBody(contract, { viewId: "1542917", zoomToFit: "yes" });
+  assert.deepEqual(wrongType?.invalid_fields, ["body.viewId", "body.zoomToFit"]);
+  assert.equal(wrongType?.request_dispatched, false);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { viewId: 1542917, madeUpSelector: true })?.invalid_fields,
+    ["body.madeUpSelector"]);
+  assert.deepEqual(preflightKnownGenericToolBody({ ...contract, required_fields: ["viewId"] }, {})?.missing_required_fields,
+    ["viewId"]);
+});
+
+test("native arbitrary JSON values admit geometry arrays and deferred scalar bindings without opening the request envelope", () => {
+  const contract = {
+    method: "POST", path: "/revit/import-zippybim-geometry", required_fields: ["geometry"],
+    request_schema: {
+      type: "object", additionalProperties: false, required: ["geometry"],
+      properties: {
+        geometry: { type: "object", additionalProperties: false, properties: {
+          elements: { type: "array", items: { type: "object", additionalProperties: false,
+            properties: { path: { type: "array", items: {} }, binding: {} } } }
+        } }
+      }
+    }
+  };
+  assert.equal(preflightKnownGenericToolBody(contract, { geometry: { elements: [
+    { path: [[0, 0, 0], [1, 2, 3]], binding: { created_by_action: "draft-1", output: "elementId" } },
+    { path: [], binding: "draft-1" }
+  ] } }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { geometry: { elements: [ { path: 4 } ] } })?.invalid_fields,
+    ["body.geometry.elements[0].path"]);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { geometry: {}, invented: true })?.invalid_fields,
+    ["body.invented"]);
+});
+
 test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
   const tooMany = preflightKnownGenericToolBody({
     method: "POST",

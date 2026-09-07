@@ -1781,17 +1781,8 @@ namespace RevitBridge.Operator
                     props[p.Name] = WithHeuristicDescription(p.Name, pt, schema);
 
                     var defaultVal = instance != null ? SafeGet(p, instance) : null;
-                    var isNullable = !pt.IsValueType || Nullable.GetUnderlyingType(pt) != null;
-                    if (!isNullable && IsDefaultValue(pt, defaultVal))
-                    {
-                        // Non-nullable value type with default(T): require for correctness.
+                    if (OperatorRequestPropertyPresence.IsRequired(p, defaultVal, IsDefaultValue(pt, defaultVal)))
                         required.Add(p.Name);
-                    }
-                    else if (pt == typeof(string) && defaultVal == null)
-                    {
-                        // Strings default to null when omitted; most handlers expect them.
-                        required.Add(p.Name);
-                    }
                 }
 
                 return Obj(props, required.ToArray(), additionalProps: false);

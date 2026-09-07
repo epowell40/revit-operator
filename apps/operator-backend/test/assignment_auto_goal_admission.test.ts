@@ -17,6 +17,10 @@ import { setAgentGoal } from "../src/goals/service.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 
 for (const [effect, prompt, facts] of [
+  ["read", "Please check the drafting view we just created. Keep the existing view and report its name and scale.", ["task.result_available"]],
+  ["read", "Inspect the current view scale.", ["task.result_available"]],
+  ["apply", "Check the view scale, then set it to 100.", ["task.result_available"]],
+  ["apply", "Report its name and scale the view to 100.", ["task.result_available"]],
   ["read", "Count all air devices in the project and break the total down by family and type. Do not change the model.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["read", "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.", ["task.result_available"]],
   ["read", "What size is this?", ["task.result_available"]],

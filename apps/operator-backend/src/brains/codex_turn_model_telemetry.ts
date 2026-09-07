@@ -10,6 +10,29 @@ type CodexNotification = {
   params?: Record<string, unknown>;
 };
 
+type UsageBreakdown = {
+  inputTokens: number; cachedInputTokens: number; outputTokens: number;
+  reasoningOutputTokens: number; totalTokens: number; cacheWriteInputTokens: number | null;
+};
+
+export type CodexUsageSnapshot = { last: UsageBreakdown; total: UsageBreakdown };
+
+function usageBreakdown(value: unknown): UsageBreakdown | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const keys = ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens", "totalTokens"] as const;
+  if (!keys.every(key => Number.isSafeInteger(row[key]) && Number(row[key]) >= 0)) return null;
+  if (Number(row.cachedInputTokens) > Number(row.inputTokens)
+    || Number(row.reasoningOutputTokens) > Number(row.outputTokens)) return null;
+  const cacheWrite = row.cacheWriteInputTokens;
+  if (cacheWrite != null && (!Number.isSafeInteger(cacheWrite) || Number(cacheWrite) < 0)) return null;
+  return {
+    inputTokens: Number(row.inputTokens), cachedInputTokens: Number(row.cachedInputTokens),
+    outputTokens: Number(row.outputTokens), reasoningOutputTokens: Number(row.reasoningOutputTokens),
+    totalTokens: Number(row.totalTokens), cacheWriteInputTokens: cacheWrite == null ? null : Number(cacheWrite)
+  };
+}
+
 export function codexTelemetryThreadKey(profile: CodexThreadStartProfile): string {
   // Thread resume cannot opt an old thread into raw Responses API events.
   // Versioning the key starts one telemetry-capable durable thread per profile.
@@ -23,16 +46,42 @@ export function createCodexTurnModelTelemetry(args: {
   settings: AgentModelSettings;
   startedAtUtc: string;
   onReceipt?: (receipt: ModelCallReceipt) => void;
-}): { receipts: ModelCallReceipt[]; compactions: string[]; observe: (notification: CodexNotification) => void } {
+}): {
+  receipts: ModelCallReceipt[]; compactions: string[];
+  usageSnapshot: () => CodexUsageSnapshot | null;
+  observe: (notification: CodexNotification) => void;
+} {
   const receipts: ModelCallReceipt[] = [];
   const compactions: string[] = [];
   let actualModel = args.settings.model;
+  let latestUsage: CodexUsageSnapshot | null = null;
   return {
     receipts,
     compactions,
+    usageSnapshot: () => latestUsage === null ? null : structuredClone(latestUsage),
     observe(notification) {
       if (!notification || notification.threadId !== args.threadId) return;
       const params = notification.params || {};
+      if (notification.method === "thread/tokenUsage/updated" && params.turnId === args.turnId) {
+        const usage = params.tokenUsage as Record<string, unknown> | undefined;
+        const last = usageBreakdown(usage?.last);
+        const total = usageBreakdown(usage?.total);
+        if (!last || !total) return;
+        const snapshot = { last, total };
+        if (JSON.stringify(snapshot) === JSON.stringify(latestUsage)) return;
+        latestUsage = snapshot;
+        try {
+          appendEvent(args.sessionId, "assistant", "codex.token_usage.updated", {
+            thread_id: args.threadId, turn_id: args.turnId,
+            usage_source: "app_server_thread_token_usage_snapshot", ...snapshot
+          });
+        } catch {
+          // The last snapshot is also retained in the turn completion event.
+        }
+        // Cumulative snapshots may reset at compaction and have no response ID.
+        // Never sum them or impersonate raw provider receipts/budget admissions.
+        return;
+      }
       if (notification.method === "item/completed" && params.turnId === args.turnId) {
         const item = params.item as { type?: unknown; id?: unknown } | undefined;
         if (item?.type === "contextCompaction" && typeof item.id === "string" && item.id.length > 0 && !compactions.includes(item.id)) {

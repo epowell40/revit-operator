@@ -11,6 +11,7 @@ namespace RevitBridge.Common.Tests
         [Theory]
         [InlineData(typeof(JsonElement))]
         [InlineData(typeof(JsonDocument))]
+        [InlineData(typeof(object))]
         public void JsonContainersPublishTheirWireSchemaInsteadOfClrValueKind(Type type)
         {
             Assert.True(OperatorJsonWireSchema.TryCreate(type, out var schema));

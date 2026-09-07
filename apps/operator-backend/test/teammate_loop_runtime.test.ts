@@ -25,6 +25,20 @@ type AcceptanceCase = {
   expected_effect: "read" | "preview" | "apply";
 };
 
+test("inspection of an existing view's name and scale does not authorize creation", () => {
+  const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
+  assert.equal(classifyAgentTurn(prompt), "inspection");
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(prompt));
+  try {
+    const result = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/create-drafting-view", body: { name: "OPERATOR HANDOFF CHECK", allowExisting: true }
+    } });
+    assert.equal(result.allowed, false);
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test("verified mutation stages may continue while retries and unverified chaining remain blocked", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

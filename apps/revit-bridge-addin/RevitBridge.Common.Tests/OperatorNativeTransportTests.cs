@@ -637,6 +637,15 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NativeRequestSchemaUsesNullablePresenceAndJsonWireOwners()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var introspection = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+            Assert.Contains("OperatorRequestPropertyPresence.IsRequired(p, defaultVal, IsDefaultValue(pt, defaultVal))", introspection, StringComparison.Ordinal);
+            Assert.Contains("OperatorJsonWireSchema.TryCreate(t, out var jsonSchema)", introspection, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void CloseActiveModelPostsProjectCloseWithoutExitingRevitAfterExplicitDiscardAuthorization()
         {
             var root = FindRevitBridgeAddinRoot();
@@ -650,6 +659,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("app.CanPostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("app.PostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("OperatorProjectCloseFocus.PrepareAndPost(", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorProjectCloseFocus.RestoreDrawingFocus(", handler, StringComparison.Ordinal);
+            Assert.Contains("uiDocument.ActiveView?.Id == graphicalView.Id", handler, StringComparison.Ordinal);
             Assert.Contains("uiDocument.ActiveGraphicalView", handler, StringComparison.Ordinal);
             Assert.Contains("uiDocument.ActiveView = graphicalView", handler, StringComparison.Ordinal);
             Assert.Contains("OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView)", handler, StringComparison.Ordinal);

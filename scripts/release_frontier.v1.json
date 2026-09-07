@@ -102,9 +102,39 @@
     "OperatorWriteGrantRenewalTests",
     "OperatorWriteGrantAdmissionTests",
     "RevitTextCasePolicyTests",
-    "OperatorJsonWireSchemaTests"
+    "OperatorJsonWireSchemaTests",
+    "OperatorRequestPropertyPresenceTests"
   ],
   "failure_families": [
+    {
+      "id": "nullable-view-selectors-and-default-flags-required-by-reflection",
+      "coverage": [
+        "dotnet:OperatorRequestPropertyPresenceTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "inspection-scale-noun-admits-an-unrequested-repeat-apply",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "fixture-close-reactivates-an-already-active-drawing",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "resumed-provider-usage-missing-is-not-zero-cost",
+      "coverage": [
+        "backend:codex_turn_model_telemetry.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
     {
       "id": "json-action-wire-schema-reflected-as-clr-valuekind",
       "coverage": [
