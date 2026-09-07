@@ -11,10 +11,11 @@ export function createGeneralRevitRequest(expected: () => JsonRecord | null, fet
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error(`${pathname} exceeded ${timeoutMs}ms.`)), timeoutMs);
     try {
-      const origin = new URL(baseUrl).origin;
+      const headers = new Headers(options.headers);
+      if (!headers.has("content-type")) headers.set("content-type", "application/json");
       const response = await fetchImpl(new URL(pathname, `${baseUrl}/`), {
         ...options,
-        headers: { "content-type": "application/json", origin, ...(options.headers || {}) },
+        headers,
         signal: controller.signal
       });
       const text = await response.text();

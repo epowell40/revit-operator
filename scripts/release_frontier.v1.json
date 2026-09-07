@@ -74,7 +74,8 @@
     "codex_app_server_lifecycle.test.ts",
     "general_revit_instruction_preflight.test.ts",
     "benchmark_protocol_v2_instruction_evidence.test.ts",
-    "instruction_binding_http.test.ts"
+    "instruction_binding_http.test.ts",
+    "general_revit_request.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -924,6 +925,13 @@
         "backend:benchmark_protocol_v2_instruction_evidence.test.ts",
         "backend:codex_instruction_binding.test.ts",
         "backend:instruction_binding_http.test.ts"
+      ]
+    },
+    {
+      "id": "native-benchmark-admission-preserves-browser-origin-and-freshness-boundaries",
+      "coverage": [
+        "backend:general_revit_request.test.ts",
+        "backend:general_revit_instruction_preflight.test.ts"
       ]
     }
   ]
