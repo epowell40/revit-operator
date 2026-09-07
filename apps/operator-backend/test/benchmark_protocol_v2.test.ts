@@ -1181,3 +1181,74 @@ test("raw writer/consumer preserve pending and unverified collateral despite run
   const { report_sha256: _old, ...unsigned } = forged; forged.report_sha256 = sha256Value(unsigned);
   assert.throws(() => writeBenchmarkRawReportV2(path.join(tmp, "forged.json"), forged), /qualification disagrees/);
 });
+
+test("applied partial work with failed trusted verification cannot become first-pass verified", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase);
+  const subject = { operation_id: "write-1", requested_effect: "apply", purpose: "work", fulfillment_role: "primary_requested_effect",
+    persistent_effect: "applied", dispatch_state: "dispatched", target: { target_id: "id:7" },
+    verification_operation_ids: [] as string[], result: { status: "succeeded", authority: "native-host", receipt_id: "commit-1" } };
+  const failed = { operation_id: "verify-1", purpose: "verification", requested_effect: "read", persistent_effect: "none",
+    verification_of_operation_id: "write-1", result: { status: "failed_after_dispatch", error_code: "assignment_kernel_v2_trusted_verification_postcondition_not_satisfied" } };
+  const snapshot = { schema: "revit-operator.assignment-snapshot/v2", current_binding: { assignment_id: "a1" },
+    operations: { "write-1": subject, "verify-1": failed } as JsonRecord, outcome: "blocked", terminal: true, quiescent: true,
+    in_flight_operation_ids: [], unresolved_unknown_operation_ids: [], progress_epochs: [],
+    progress_blocker: { code: "reasoning_turn_budget_exhausted", gap_ids: ["verification:write-1"] } };
+  const results = trace.tool_results as JsonRecord;
+  delete results.raw_sidecar_response;
+  const storedEvaluation = (trace.verification_results as JsonRecord).evaluation as JsonRecord;
+  Object.assign(storedEvaluation, { tier: "verified", completed: true, verified: true, verification_basis: "canonical_target_readback" });
+  const projection = results.durable_assignment_projection as JsonRecord;
+  const assignments = projection.assignments as JsonRecord[];
+  assignments[0]!.assignment_snapshot_v2 = snapshot;
+  const build = () => buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase, trace, rawTraceRef: "trace#blocked", judgedAt: FINISH });
+  const blocked = build();
+  assert.equal(blocked.execution_truth.effect_state, "applied");
+  assert.equal(blocked.assignment_outcome, "blocked");
+  assert.equal(blocked.delivery_verdict, "verification_evidence_failure");
+  assert.equal(blocked.stages.find(stage => stage.stage === "postcondition_read_back")?.status, "fail");
+  assert.ok([blocked.primary_failure_cause, ...blocked.contributing_failure_causes].includes("verification_failure"));
+  assert.equal(summarizeBenchmarkLanesV2([blocked]).find(lane => lane.lane === "committed_apply")?.verified_committed_completion, 0);
+  const later = { operation_id: "verify-2", purpose: "verification", verification_of_operation_id: "write-1", result: { status: "succeeded" } };
+  snapshot.operations["verify-2"] = later;
+  assert.equal(build().delivery_verdict, "verification_evidence_failure", "unacknowledged generic read cannot repair a trusted failure");
+  subject.verification_operation_ids.push("verify-2");
+  assert.notEqual(build().delivery_verdict, "verification_evidence_failure", "acknowledged successful readback can resolve prior failure");
+  delete snapshot.operations["verify-1"];
+  delete snapshot.operations["verify-2"];
+  subject.verification_operation_ids.length = 0;
+  assert.equal(build().execution_truth.effect_state, "applied");
+  assert.notEqual(build().delivery_verdict, "verification_evidence_failure", "blocked for an unrelated reason must not erase valid partial work");
+});
+import { hasUnresolvedTrustedVerificationFailureV2 } from "../src/benchmark/trusted_verification_state.js";
+
+test("top evaluation shares unresolved-verifier state and later snapshots supersede failed history", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase);
+  const raw = (trace.tool_results as JsonRecord).raw_sidecar_response as JsonRecord;
+  const initial = evaluateGeneralRevitCapabilityAttempt(testCase, raw);
+  const subject = { operation_id: "apply", purpose: "work", persistent_effect: "applied", verification_operation_ids: [] as string[] };
+  const failure = { operation_id: "fail", purpose: "verification", verification_of_operation_id: "apply",
+    result: { status: "failed_after_dispatch", error_code: "assignment_kernel_v2_trusted_verification_postcondition_not_satisfied" } };
+  const before = { schema: "revit-operator.assignment-snapshot/v2", assignment_version: 1,
+    current_binding: { assignment_id: "a" }, operations: { apply: subject, fail: failure } };
+  const projection = raw.assignment_projection as JsonRecord;
+  const assignments = projection.assignments as JsonRecord[];
+  assignments[0]!.assignment_snapshot_v2 = before;
+  const failed = evaluateGeneralRevitCapabilityAttempt(testCase, raw);
+  assert.equal(failed.verified, false);
+  assert.equal(failed.completed, initial.completed, "retain independently represented completion/effect");
+  assert.equal(failed.verification_basis, "none");
+  assert.match(failed.summary, /canonical target-bound verification failed/);
+  const after = structuredClone(before) as JsonRecord;
+  after.assignment_version = 2;
+  const afterOperations = after.operations as JsonRecord;
+  (afterOperations.apply as JsonRecord).verification_operation_ids = ["recovered"];
+  afterOperations.recovered = { operation_id: "recovered", purpose: "verification", verification_of_operation_id: "apply", result: { status: "succeeded" } };
+  const toolResults = { durable_assignment_projection: { assignments: [{ assignment_snapshot_v2: before }, { assignment_snapshot_v2: after }] } };
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), false);
+  toolResults.durable_assignment_projection.assignments.reverse();
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), false, "arrival order cannot resurrect an older failure");
+  after.assignment_version = 1;
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), true, "equal-version disagreement remains conservative");
+});

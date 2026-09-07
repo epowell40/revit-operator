@@ -1384,6 +1384,35 @@ test("sheet and view creation bind verification to native-created identities wit
   });
 });
 
+test("exact batch view rename survives restart and settles only from the renamed target readback", () => {
+  for (const variant of ["exact", "wrong_id", "old_name", "echo"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const name = "TEST LEVEL 2 HVAC COORDINATION";
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "rename-view", provider_turn_id: "rename",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:9948"],
+      arguments: { method: "POST", path: "/revit/create-view", body: { action: "rename_batch", viewIds: [9948],
+        findText: "L2", replaceText: name, exact: true, max: 1, dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { changed: [{ id: 9948, oldName: "L2", newName: name }] }, "applied");
+    commit.structuredContent.operation_result_v2.affected_target_identities = ["id:9948"];
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.operations[apply.operation_id]!.persistent_effect, "applied");
+    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "read-renamed-view", provider_turn_id: "verify",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:9948"],
+      arguments: { method: "POST", path: "/revit/views", body: { action: "list", viewIds: [9948], includeTemplates: false, offset: 0, limit: 1 } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const views = [{ id: variant === "wrong_id" ? 9949 : 9948, name: variant === "old_name" ? "L2" : name }];
+    settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      variant === "echo" ? { request: { views } } : { views }));
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.equal(Object.values(final.operations).filter(op => op.requested_effect === "apply").length, 1);
+    assert.equal(final.operations[apply.operation_id]!.persistent_effect, "applied");
+  });
+});
+
 test("drafting scale verification preserves the committed edit and requires complete target-bound summary", () => {
   const replay = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
   for (const variant of ["retained", "repaired", "wrong_scale", "wrong_id"]) workspace(() => {

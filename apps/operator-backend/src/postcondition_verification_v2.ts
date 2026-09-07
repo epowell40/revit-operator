@@ -110,6 +110,52 @@ function viewCreationOperation(path: string): boolean {
   return path === "/revit/create-view" || path === "/revit/create-drafting-view";
 }
 
+function exactViewRenameValues(value: unknown): readonly string[] {
+  const row = objectValue(value);
+  // A substring replacement or selector-only request needs trusted before-name
+  // evidence. Never treat replaceText alone as the entire resulting view name.
+  if (row.exact !== true || typeof row.findText !== "string" || !row.findText.length
+    || !Array.isArray(row.viewIds) || !row.viewIds.length
+    || row.viewIds.some(id => !/^[1-9][0-9]*$/.test(String(id)))
+    || (row.replaceText !== undefined && row.replaceText !== null && typeof row.replaceText !== "string")
+    || [row.prefix, row.suffix].some(v => v !== undefined && v !== null && typeof v !== "string")) return [];
+  const candidate = `${String(row.prefix ?? "").trim()}${row.replaceText ?? ""}${String(row.suffix ?? "").trim()}`.trim();
+  const name = (candidate || "View").slice(0, 120).trim();
+  return [...new Set(row.viewIds.map(id => targetPropertyValueToken(String(id), "name", name)))].sort();
+}
+
+function observedTargetViewNames(value: unknown): readonly string[] {
+  const values = new Set<string>();
+  const visit = (node: unknown, depth = 0): void => {
+    if (depth > 8 || node === null || node === undefined) return;
+    const parsed = structuredValue(node);
+    if (parsed !== node) { visit(parsed, depth + 1); return; }
+    if (Array.isArray(node)) { for (const child of node) visit(child, depth + 1); return; }
+    const row = objectValue(node);
+    // Identity must be on the observation itself; a parent's requested viewIds
+    // must not bind a nameless/unidentified row or another view's parameter.
+    const ids = [...new Set([row.id, row.elementId, row.element_id, row.viewId, row.view_id]
+      .filter(id => id !== undefined && id !== null).map(String))];
+    if (ids.length === 1 && /^[1-9][0-9]*$/.test(ids[0]!)) {
+      for (const [key, name] of Object.entries(row)) {
+        if (["name", "viewname", "currentname"].includes(normalizedEvidenceKeyV2(key)) && typeof name === "string")
+          values.add(targetPropertyValueToken(ids[0]!, "name", name));
+      }
+      for (const [key, parameter] of Object.entries(objectValue(row.parameters))) {
+        if (normalizedEvidenceKeyV2(key) === "viewname") {
+          for (const name of scalarParameterRepresentations(parameter))
+            if (typeof name === "string") values.add(targetPropertyValueToken(ids[0]!, "name", name));
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(row)) {
+      if (!isExcludedEvidenceContainerV2(key) && key !== "parameters") visit(child, depth + 1);
+    }
+  };
+  visit(value);
+  return [...values];
+}
+
 // Match the ASCII portion of native RevitTextCasePolicy.NormalizeSheetName.
 // Keep other characters exact: JavaScript's Unicode expansion (e.g. sharp s)
 // is not equivalent to .NET ToUpperInvariant on every supported Revit runtime.
@@ -302,6 +348,8 @@ export function expectedPostconditionValuesV2(
   const useRevitTextSemantics = textNoteOperation(value, contract);
   const operationPath = operationContractPath(value, contract);
   const semanticInput = semanticApplyInput(value);
+  if (operationPath === "/revit/create-view" && objectValue(semanticInput).action === "rename_batch")
+    return exactViewRenameValues(semanticInput);
   if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
   const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
     if (depth > 6 || values.size >= 32) return;
@@ -396,6 +444,8 @@ export function expectedPostconditionValuesV2(
 
 export function observedPostconditionValuesV2(value: unknown, contract: PostconditionOperationContractV2 = {}): ReadonlySet<string> {
   const values = new Set<string>();
+  if (operationContractPath({}, contract) === "/revit/create-view")
+    for (const token of observedTargetViewNames(value)) values.add(token);
   for (const token of visibilityObservedValuesV2(value)) values.add(token);
   for (const token of observedScheduleContractTokens(value)) values.add(token);
   const controlLeaves = new Set([

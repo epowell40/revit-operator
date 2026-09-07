@@ -16,6 +16,39 @@ const applyText = (newText: string) => ({
   body: { elementId: 1478627, newText, apply: true }
 });
 
+const renameView = (body: Record<string, unknown> = {}) => ({ path: "/revit/create-view", body: {
+  action: "rename_batch", viewIds: [9948], findText: "L2", replaceText: "TEST LEVEL 2 HVAC COORDINATION", exact: true, max: 1, dryRun: false, ...body
+} });
+
+test("exact rename_batch verifies the retained b09 full-name request against the same view", () => {
+  const name = "TEST LEVEL 2 HVAC COORDINATION";
+  for (const row of [{ id: 9948, name }, { elementId: 9948, parameters: { "View Name": name } }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), { result: { views: [row] } }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), { request: { views: [row] } }), false);
+  }
+  for (const payload of [{ views: [{ id: 9949, name }] }, { views: [{ name }] },
+    { views: [{ id: 9948, name: "L2" }, { id: 9949, name }] }, { success: true },
+    { viewIds: [9948], views: [{ name }] }, { views: [{ id: 9948, viewId: 9949, name }] },
+    { views: [{ id: 9948, name: name.toLowerCase() }] }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), payload), false);
+  }
+  assert.equal(postconditionSatisfiedByPayloadV2({ body: JSON.stringify(renameView().body) },
+    JSON.stringify({ views: [{ id: 9948, name }] }), { path: "/revit/create-view" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ viewIds: [9948, 9949] }),
+    { views: [{ id: 9948, name }, { id: 9949, name: name + " (2)" }] }), false);
+});
+
+test("rename_batch full replacements normalize native prefix/suffix but never infer partial or unbound renames", () => {
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ prefix: " A ", suffix: " B ", replaceText: "x" }), { id: 9948, name: "AxB" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ replaceText: " " }), { id: 9948, name: "View" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ replaceText: "x".repeat(130) }), { id: 9948, name: "x".repeat(120) }), true);
+  for (const body of [{ exact: false }, { findText: "" }, { viewIds: [], nameContains: "L2" },
+    { viewIds: [9948, 9949] }, { replaceText: "new", name: "new", exact: false }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(body), { id: 9948, name: body.replaceText ?? "TEST LEVEL 2 HVAC COORDINATION" }), false);
+  }
+  assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/set-parameter", body: renameView().body }, { id: 9948, name: "TEST LEVEL 2 HVAC COORDINATION" }), false);
+});
+
 test("drafting summary must read the requested scale instead of only confirming creation identity", () => {
   const replay = JSON.parse(readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
   assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, replay.retained_read), false);

@@ -1,3 +1,4 @@
+import { hasUnresolvedTrustedVerificationFailureV2 } from "./trusted_verification_state.js";
 import {
   evaluateGeneralRevitCapabilityAttempt,
   type GeneralRevitCapabilityCase,
@@ -256,9 +257,10 @@ function stagesFor(
   const expectedObserved = evaluation.expected_path_observed;
   const previewRequired = truth.requested_effect === "preview";
   const verificationBasis = evaluation.verification_basis;
-  const readback = truth.requested_effect === "read"
+  const trustedVerificationFailed = hasUnresolvedTrustedVerificationFailureV2(trace.tool_results);
+  const readback = !trustedVerificationFailed && (truth.requested_effect === "read"
     ? hasAuthoritativeCanonicalRead(trace)
-    : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis);
+    : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis));
   const admissionRejected = canonicalAttempts(trace).some(({ attempt }) => String(record(attempt.admission).state) === "rejected");
   const substantiveError = String(record(trace.errors_retries_recoveries).error || "").trim();
   const semanticStatus: BenchmarkStageStatusV2 = evaluation.answer_assertion_passed === false ? "fail"
@@ -280,7 +282,9 @@ function stagesFor(
     stage("effect_classified", truth.effect_state === "unknown" ? "uncertain" : "pass",
       `Authoritative effect state is ${truth.effect_state} (${truth.authority}).`),
     stage("postcondition_read_back", readback ? "pass" : truth.effect_state === "applied" || evaluation.completed ? "fail" : "not_applicable",
-      readback ? `Independent evidence basis: ${verificationBasis}.` : "No qualifying independent postcondition readback was retained."),
+      readback ? `Independent evidence basis: ${verificationBasis}.` : trustedVerificationFailed
+        ? "Canonical target-bound verification failed and has no acknowledged successful recovery."
+        : "No qualifying independent postcondition readback was retained."),
     stage("task_semantics_satisfied", semanticStatus,
       evaluation.answer_assertion_passed === false ? "Fixture-grounded semantic assertions failed." : "Semantic status follows authoritative assertions and verification."),
     presentationStatus(trace, truth, evaluation)
@@ -341,6 +345,7 @@ function deliveryVerdict(
       && stages.find((entry) => entry.stage === "preview_correct_where_required")?.status === "pass") {
     return "verified_preview_completion";
   }
+  if (truth.effect_state === "applied" && hasUnresolvedTrustedVerificationFailureV2(trace.tool_results)) return "verification_evidence_failure";
   if (truth.effect_state === "applied" && evaluation.verified) {
     const recovered = canonicalAttempts(trace).some(({ attempt }) => Boolean(attempt.retry_of_attempt_id || attempt.reconciliation_of_attempt_id));
     return recovered ? "recovered_verified" : "first_pass_verified";

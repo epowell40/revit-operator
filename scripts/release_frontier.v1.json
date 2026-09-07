@@ -940,6 +940,20 @@
         "backend:benchmark_protocol_v2.test.ts",
         "backend:general_revit_acceptance_review.test.ts"
       ]
+    },
+    {
+      "id": "view-rename-exact-replacement-requires-target-bound-full-name",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "applied-mutation-with-unresolved-trusted-verification-is-not-first-pass-verified",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts"
+      ]
     }
   ]
 }

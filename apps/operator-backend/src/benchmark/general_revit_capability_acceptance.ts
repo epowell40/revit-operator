@@ -1,3 +1,4 @@
+import { hasUnresolvedTrustedVerificationFailureV2, verificationChecksPass } from "./trusted_verification_state.js";
 import { generalRevitCapabilityManifestPath, readJsonFile } from "./files.js";
 export { generalRevitCapabilityManifestPath } from "./files.js";
 import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
@@ -831,20 +832,6 @@ function answerEvidenceFailures(
   ];
 }
 
-function verificationChecksPass(value: unknown): boolean {
-  const rows = Array.isArray(value) ? value : [value];
-  if (rows.length === 0) return false;
-  return rows.every((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-    const row = entry as Record<string, unknown>;
-    const named = typeof row.name === "string" && row.name.trim().length > 0;
-    const grounded = Object.prototype.hasOwnProperty.call(row, "expected")
-      || Object.prototype.hasOwnProperty.call(row, "actual")
-      || (Array.isArray(row.evidence_refs) && row.evidence_refs.length > 0);
-    return row.ok === true && named && grounded;
-  });
-}
-
 function hasModelStateReadbackEvidence(value: unknown, depth = 0): boolean {
   if (value === null || value === undefined || depth > 8) return false;
   if (typeof value === "string") {
@@ -1136,7 +1123,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable,
     canonicalV2.verified && canonicalV2.requested_effects.includes(testCase.expected_effect));
-  const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
+  const trustedVerificationFailed = hasUnresolvedTrustedVerificationFailureV2({
+    durable_assignment_kernel_v2: attempt.assignment_kernel_v2, durable_assignment_projection: attempt.assignment_projection
+  });
+  const verified = completed && !trustedVerificationFailed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (effectiveMissingTargetClarification && attemptSucceeded && !effectiveSubstantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
@@ -1167,8 +1157,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     fixture_blocker_assertion_passed: fixtureBlockerAssertionPassed,
     fixture_blocker_assertion_failures: fixtureBlockerAssertionFailures,
     fixture_blocker_accepted: fixtureBlockerAccepted,
-    verification_basis: basis,
-    summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
+    verification_basis: trustedVerificationFailed ? "none" : basis,
+    summary: trustedVerificationFailed ? "Applied work is retained, but canonical target-bound verification failed without acknowledged recovery."
+      : tier === "refused" ? "Agent refused an in-scope Revit capability."
       : tier === "failed" ? answerAssertionPassed === false
         ? "Tool-backed execution completed, but the fixture-grounded answer assertions failed."
         : targetBoundPreviewVerificationMissing
