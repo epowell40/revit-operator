@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using RevitBridge.Common;
 using RevitBridge.Logic.Handlers;
 using Xunit;
 
@@ -8,6 +9,50 @@ namespace RevitBridge.Common.Tests
 {
     public class TransactionTruthTests
     {
+        [Fact]
+        public void CommittedGroupProjectsNativeIdentityAndDiffDespitePostCommitFailure()
+        {
+            var phase = new TransactionApplyPhaseState();
+            var assimilate = SuccessfulReceipt("Committed");
+            var rollback = new TransactionActionRunner.TransactionOperationReceipt();
+            var impact = new TransactionActionRunner.Impact();
+            impact.Added.Add(1542918);
+            var diff = new TransactionDiffRecorder.TransactionDiffScopeResult
+            {
+                created = new[] { new TransactionDiffRecorder.TransactionDiffElementRef { elementId = 1542919 } },
+                modified = new[] { new TransactionDiffRecorder.TransactionDiffModifiedElement { elementId = 49831 } }
+            };
+            phase.ResolveFailure(new Exception("Artifact readback failed after commit"), assimilate, rollback,
+                () => throw new Exception("Committed group must not be rolled back"));
+            var native = phase.NativeReceipt(rollback, impact, diff);
+            var wire = TransactionApplyPhaseState.BuildWireReceipt(SuccessfulReceipt("Started"),
+                Array.Empty<object>(), assimilate, rollback, phase.WireName, native);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new { transaction = wire }, "apply", "POST", "/revit/transaction-apply");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Equal(new long[] { 1542918, 1542919 }, native.AddedElementIds);
+            Assert.Contains("element_id:49831", settlement.AffectedTargetIdentities);
+        }
+
+        [Theory]
+        [InlineData("RolledBack", true, "none")]
+        [InlineData("RolledBack", false, "unknown")]
+        [InlineData("Pending", true, "unknown")]
+        [InlineData("NotAttempted", false, "unknown")]
+        public void InnerActionResultsCannotReplaceOuterGroupRollbackProof(string status, bool verified, string effect)
+        {
+            var phase = new TransactionApplyPhaseState();
+            var impact = new TransactionActionRunner.Impact();
+            impact.Added.Add(1542918); // An inner create can have committed before an outer failure.
+            var rollback = new TransactionActionRunner.TransactionOperationReceipt { Status = status, VerifiedRolledBack = verified };
+            var native = phase.NativeReceipt(rollback, impact, null);
+            var wire = TransactionApplyPhaseState.BuildWireReceipt(SuccessfulReceipt("Started"),
+                Array.Empty<object>(), new TransactionActionRunner.TransactionOperationReceipt(), rollback, phase.WireName, native);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new { transaction = wire }, "apply", "POST", "/revit/transaction-apply");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Empty(native.AddedElementIds);
+            Assert.Empty(native.ModifiedElementIds);
+        }
+
         [Theory]
         [InlineData("null")]
         [InlineData("{}")]

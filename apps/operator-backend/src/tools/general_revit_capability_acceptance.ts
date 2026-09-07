@@ -20,7 +20,8 @@ import { aggregateModelCallReceipts, aggregateCoveredModelCallReceipts, deduplic
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
-import { GeneralRevitExportIsolation, assertGeneralRevitCaseSettled, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
+import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
+import { finishGeneralRevitCampaignCase, generalRevitCampaignCompletion, generalRevitSuiteTiming, retainedGeneralRevitCampaignStop, type GeneralRevitCampaignStop } from "../benchmark/general_revit_campaign_completion.js";
 import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
@@ -65,12 +66,8 @@ function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function healthDocumentTitle(health: JsonRecord): string {
-  return revitHealthDocumentTitle(health);
-}
-
 function fixtureApplicability(preferredFixture: string, preferredDocumentTitle: string, health: JsonRecord): JsonRecord {
-  const observedDocumentTitle = healthDocumentTitle(health);
+  const observedDocumentTitle = revitHealthDocumentTitle(health);
   return {
     preferred_fixture: preferredFixture,
     preferred_document_title: preferredDocumentTitle,
@@ -327,7 +324,7 @@ async function ensureFixtureActive(
       error: message
     };
   }
-  if (healthDocumentTitle(before) === fixture.document_title && !forceReopen) {
+  if (revitHealthDocumentTitle(before) === fixture.document_title && !forceReopen) {
     const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
     return {
       fixture: fixtureKey,
@@ -369,7 +366,7 @@ async function ensureFixtureActive(
       }
     }
     const after = asRecord(deterministic.health);
-    if (healthDocumentTitle(after) !== fixture.document_title) {
+    if (revitHealthDocumentTitle(after) !== fixture.document_title) {
       throw new Error(`Deterministic fixture transition ${fixtureKey} returned without the exact authoritative target title.`);
     }
     const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
@@ -429,7 +426,7 @@ async function ensureFixtureActive(
       } catch (error) {
         healthObservationErrors.push(error instanceof Error ? error.message : String(error));
       }
-      if (after && healthDocumentTitle(after) === fixture.document_title) {
+      if (after && revitHealthDocumentTitle(after) === fixture.document_title) {
         // Opening a document invalidates the old document-bound teammate turn.
         // Once an independent live health read proves the exact new title, stop
         // the now-redundant turn instead of waiting for it to verify against its
@@ -449,14 +446,14 @@ async function ensureFixtureActive(
     throw new Error(`Fixture transition ${fixtureKey} did not own the observed computer-use run; refusing to grade another runner's state.`);
   }
   if (transportError && !String(computerState.error || "").trim()) transportError = "";
-  after = after && healthDocumentTitle(after) === fixture.document_title
+  after = after && revitHealthDocumentTitle(after) === fixture.document_title
     ? after
     : await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
-  while (healthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
+  while (revitHealthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
   }
-  const observedTitle = healthDocumentTitle(after);
+  const observedTitle = revitHealthDocumentTitle(after);
   if (observedTitle !== fixture.document_title) {
     const stateError = String(computerState.error || "").trim();
     throw new Error(
@@ -866,6 +863,8 @@ async function main(): Promise<void> {
   const resumePath = flag("--resume");
   const resumedCheckpoint = resumePath ? readJsonFile<JsonRecord>(path.resolve(resumePath)) : null;
   const rescoreOnly = process.argv.includes("--rescore-only");
+  const retainedStop = retainedGeneralRevitCampaignStop(resumedCheckpoint);
+  if (retainedStop && !rescoreOnly) throw new Error("Stopped campaign requires independent recovery and a fresh run; only evidence rescoring is permitted.");
   const allowCorpusDrift = rescoreOnly && process.argv.includes("--allow-corpus-drift");
   if (rescoreOnly && !resumedCheckpoint) throw new Error("--rescore-only requires --resume CHECKPOINT.");
   if (!rescoreOnly && !requestedFixture && !orchestrateFixtures && selectedFixtureKeys.size > 1) {
@@ -1061,19 +1060,8 @@ async function main(): Promise<void> {
   }
   let activeFixtureKey = "";
   const fixtureRoot = generalRevitProtocolFixtureRootV2(protocolInputs, flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
-  const suiteTimingSnapshot = (finishedAt: string | null = null): JsonRecord => {
-    const nowMs = Date.now();
-    const parsedStart = Date.parse(suiteStartedAt);
-    return {
-      schema: "revit-operator.benchmark-suite-timing.v1",
-      started_at_utc: suiteStartedAt,
-      finished_at_utc: finishedAt,
-      last_checkpoint_at_utc: finishedAt || nowIso(),
-      wall_clock_ms: Number.isFinite(parsedStart) ? Math.max(0, nowMs - parsedStart) : null,
-      active_wall_clock_ms: priorActiveWallClockMs + Math.max(0, nowMs - invocationStartedMs),
-      resumed: resumedCheckpoint !== null
-    };
-  };
+  const suiteTimingSnapshot = (finishedAt: string | null = null): JsonRecord => generalRevitSuiteTiming(
+    suiteStartedAt, invocationStartedMs, priorActiveWallClockMs, resumedCheckpoint !== null, finishedAt);
   if (isolateExports && !rescoreOnly && (resumedCheckpoint || !protocolDraft || !resolvedOutputDir || !isolateCases
       || !(orchestrateFixtures || requestedFixture) || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(sidecar).hostname))) {
     throw new Error("Export isolation requires a fresh local protocol campaign with isolated fixtures and an output directory; interrupted exports must be recovered before a new run.");
@@ -1083,7 +1071,9 @@ async function main(): Promise<void> {
   if (exportIsolation) suiteContext.export_isolation = { enabled: true, root: exportIsolation.root, retained: exportIsolation.retained,
     policy: "empty default native export directories per case; retain outputs after quiescence and restore originals after the campaign",
     limits: "Custom destinations outside the recorded folders require independent starting-state review." };
+  let campaignStop: GeneralRevitCampaignStop | null = retainedStop ?? null;
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
+    try {
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
     for (const fixture of protocolDraft?.fixture_adapter.fixtures || []) assertGeneralRevitFixtureBytes(fixtureRoot, fixtureConfig.fixtures[fixture.identity].sample_filename, fixture.rvt_sha256);
     if ((orchestrateFixtures || requestedFixture) && (isolateCases || preferredFixture !== activeFixtureKey)) {
@@ -1120,14 +1110,13 @@ async function main(): Promise<void> {
       benchmarkInteractionCaseV1(interactionManifest, testCase.case_id),
       directVariant
     ));
-    let exportIsolationError: unknown = null;
     if (protocolDraft || exportIsolation) {
-      const trace = traces[traces.length - 1]!;
-      try {
-        assertGeneralRevitCaseSettled(trace);
-        if (exportIsolation) trace.export_artifacts = exportIsolation.finish(testCase.case_id, true);
-      } catch (error) { trace.export_isolation_error = String(error); exportIsolationError = error; }
+      campaignStop = finishGeneralRevitCampaignCase(traces[traces.length - 1]!, exportIsolation);
     }
+    } catch (error) {
+      campaignStop = { case_id: testCase.case_id, reason: String(error), recovery_required: true };
+    }
+    (suiteContext as JsonRecord).campaign_stop = campaignStop;
     writeJsonFile(checkpointOutput, {
       schema: "revit-operator.general-revit-capability-checkpoint/v1",
       run_id: runId,
@@ -1139,10 +1128,18 @@ async function main(): Promise<void> {
       completed_case_ids: traces.map((trace) => trace.case_id),
       task_traces: traces
     });
-    if (exportIsolationError) throw exportIsolationError;
+    if (campaignStop) break;
   }
-  exportIsolation?.restore();
-  if (exportIsolation) asRecord(suiteContext.export_isolation).originals_restored = true;
+  if (exportIsolation && !campaignStop) {
+    try {
+      exportIsolation.restore();
+      asRecord(suiteContext.export_isolation).originals_restored = true;
+    } catch (error) {
+      campaignStop = { case_id: null, reason: String(error), recovery_required: true };
+    }
+  }
+  (suiteContext as JsonRecord).campaign_stop = campaignStop;
+  const campaignCompletion = generalRevitCampaignCompletion([...selectedIds], traces, campaignStop);
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
   const modelCallTelemetry = aggregateCoveredModelCallReceipts(suiteModelCallReceipts, traces);
   const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
@@ -1183,7 +1180,8 @@ async function main(): Promise<void> {
     suite_id: corpus.suite_id,
     suite,
     representative_not_exhaustive: true,
-    qualification_status: independentReview ? "pending_independent_review" : "runtime_evaluated",
+    qualification_status: !campaignCompletion.complete ? "incomplete_requires_review" : independentReview ? "pending_independent_review" : "runtime_evaluated",
+    campaign_completion: campaignCompletion,
     runtime_score_is_provisional: independentReview !== null,
     suite_context: suiteContext,
     summary,
@@ -1203,7 +1201,7 @@ async function main(): Promise<void> {
     model_telemetry_coverage: modelTelemetryCoverage,
     fixture_precondition_coverage: fixturePreconditionCoverage,
     latency_telemetry: latencyTelemetry,
-    telemetry_valid_for_model_comparison: requestedSpeedSettings !== null
+    telemetry_valid_for_model_comparison: campaignCompletion.complete && requestedSpeedSettings !== null
       && requestedVsObserved.comparable_configuration === true
       && modelTelemetryCoverage.complete === true
       && fixturePreconditionCoverage.complete === true
@@ -1215,7 +1213,7 @@ async function main(): Promise<void> {
   writeJsonFile(output, report);
   if (independentReview) writeJsonFile(output.replace(/\.json$/i, ".independent-review.json"), independentReview);
   writeTextFile(summaryOutput, markdownReport(report));
-  const protocolV2Output = rescoreOnly ? null : writeGeneralRevitProtocolReportV2({ draft: protocolDraft,
+  const protocolV2Output = rescoreOnly || !campaignCompletion.complete ? null : writeGeneralRevitProtocolReportV2({ draft: protocolDraft,
     envelopePath: protocolEnvelopePath, legacyReportPath: output, corpus, inputs: protocolInputs, releaseCanary });
   if (resolvedOutputDir) {
     writeJsonFile(path.join(resolvedOutputDir, "latest.json"), {
@@ -1229,6 +1227,7 @@ async function main(): Promise<void> {
   }
   console.log(JSON.stringify({ output, protocol_v2_output: protocolV2Output, summary_output: summaryOutput, latest: resolvedOutputDir ? path.join(resolvedOutputDir, "latest.md") : null, summary }, null, 2));
   const requireCompletion = process.argv.includes("--require-completion");
+  if (!campaignCompletion.complete) process.exitCode = 1;
   if (requestedSpeedSettings && report.telemetry_valid_for_model_comparison !== true) process.exitCode = 1;
   if (summary.refusal_count > 0 || summary.failure_count > 0 || (requireCompletion && summary.completed_count !== summary.total)) process.exitCode = 1;
 }

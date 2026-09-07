@@ -43,6 +43,11 @@ export function markdownReport(report: JsonRecord): string {
   const lines = [
     "# General Revit benchmark result",
     "",
+    ...(asRecord(report.campaign_completion).complete === false ? [
+      "**Incomplete campaign: the figures below describe recorded cases only. This is not a campaign grade or a valid model comparison.**",
+      `Stop: ${String(asRecord(asRecord(report.campaign_completion).stop).reason || "Selected cases are missing")}`,
+      `Unrecorded cases: ${JSON.stringify(asRecord(report.campaign_completion).unrecorded_case_ids || [])}`, ""
+    ] : []),
     ...(report.runtime_score_is_provisional === true ? [
       "**Provisional runtime results: independent review of delivery and collateral effects is still required. These percentages are not the final task-delivery grade.**", ""
     ] : []),

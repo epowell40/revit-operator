@@ -228,7 +228,8 @@ namespace RevitBridge.Logic.Handlers
                             actionReceipts,
                             assimilateReceipt,
                             rollbackReceipt,
-                            phaseState.WireName);
+                            phaseState.WireName,
+                            phaseState.NativeReceipt(rollbackReceipt, impact, sessionDiff));
 
                         artifact = TryWriteDiffArtifact(
                             transactionId: transactionId,
@@ -316,7 +317,8 @@ namespace RevitBridge.Logic.Handlers
                 actionReceipts,
                 assimilateReceipt,
                 rollbackReceipt,
-                phaseState.WireName);
+                phaseState.WireName,
+                phaseState.NativeReceipt(rollbackReceipt, impact, sessionDiff));
 
             var artifact = TryWriteDiffArtifact(
                 transactionId: transactionId,
@@ -563,19 +565,13 @@ namespace RevitBridge.Logic.Handlers
             IReadOnlyList<ActionReceipt> actions,
             TransactionActionRunner.TransactionOperationReceipt assimilate,
             TransactionActionRunner.TransactionOperationReceipt rollback,
-            string phase)
+            string phase,
+            OperatorNativeTransactionReceipt nativeReceipt)
         {
             var actionWire = new List<object>(actions.Count);
             foreach (var action in actions) actionWire.Add(action.ToWireObject());
 
-            return new
-            {
-                phase,
-                start = groupStart.ToWireObject(),
-                actions = actionWire,
-                assimilate = assimilate.ToWireObject(),
-                rollback = rollback.ToWireObject()
-            };
+            return TransactionApplyPhaseState.BuildWireReceipt(groupStart, actionWire, assimilate, rollback, phase, nativeReceipt);
         }
 
         private static TransactionDiffRecorder.CaptureOptions BuildDiffOptions(DiffOptions? diff)

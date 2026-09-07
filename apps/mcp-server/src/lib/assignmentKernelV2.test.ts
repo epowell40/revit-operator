@@ -1587,6 +1587,30 @@ test("visibility category rejection retains native rollback truth and pending re
   }
 });
 
+test("transaction group canonical authority retains committed view and collateral identities without trusting phase hints", async () => {
+  for (const authoritative of [true, false]) {
+    const body = { actions: [{ kind: "duplicateView", sourceViewId: 9948, duplicateOption: "withDetailing",
+      newName: "M-LEVEL 2 COORDINATION", resultRef: "coord_view" }] };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/transaction-apply", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/transaction-apply", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/transaction-apply", {
+        success: true, impactState: "committed", transaction: { phase: "committed", assimilate: { status: "Committed", succeeded: true } },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "group-commit-replay",
+          requested_effect: "apply", effect_state: authoritative ? "applied" : "unknown",
+          effect_authority: authoritative ? "native_transaction" : "native_host",
+          effect_reason: authoritative ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+          request_dispatched: true, affected_target_identities: authoritative ? ["element_id:1542918", "element_id:49831"] : [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, authoritative ? "applied" : "unknown");
+    assert.equal(result.native_transaction_state, authoritative ? "committed" : "unknown");
+    assert.deepEqual(result.affected_target_identities, authoritative ? ["element_id:1542918", "element_id:49831"] : []);
+  }
+});
+
 test("visibility settlement distinguishes pretransaction rejection, commit, and unknown preview", async () => {
   for (const [effect, requested, authority, reason, state] of [
     ["none", "apply", "native_host", "native_transaction_not_started", "not_applicable"],

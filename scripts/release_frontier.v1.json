@@ -61,7 +61,10 @@
     "codex_turn_model_telemetry.test.ts",
     "codex_brain_spatial_guidance.test.ts",
     "teammate_canonical_settlement.test.ts",
-    "provider_turn_usage.test.ts"
+    "provider_turn_usage.test.ts",
+    "general_revit_campaign_completion.test.ts",
+    "general_revit_capability_report.test.ts",
+    "general_revit_capability_acceptance.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -108,7 +111,8 @@
     "OperatorRequestPropertyPresenceTests",
     "OperatorConditionalRequestContractsTests",
     "OperatorLevelLookupDiagnosticTests",
-    "OperatorNativeChangeInventoryTests"
+    "OperatorNativeChangeInventoryTests",
+    "TransactionTruthTests"
   ],
   "failure_families": [
     {
@@ -803,6 +807,21 @@
         "mcp:lib/assignmentKernelV2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts",
         "backend:codex_brain_spatial_guidance.test.ts"
+      ]
+    },
+    {
+      "id": "outer-transaction-group-authoritative-settlement-and-diff-identities",
+      "coverage": [
+        "dotnet:TransactionTruthTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "stopped-campaign-retains-final-report-without-advancing-unknown-effect",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_export_isolation.test.ts",
+        "backend:general_revit_capability_report.test.ts"
       ]
     }
   ]

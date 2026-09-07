@@ -35,7 +35,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:61a38dfbfac676760af6cc1bcbe5fd9f1c6a5bcb60b714a3990f05b1303bc01e"
+      "sha256": "sha256:46eac9877b8901a8f325228577697bb7b13394a35f8117ee2d8d89a65131c363"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -799,6 +799,10 @@
       "sha256": "sha256:246815642e75a669413c5a687d7e607202365480282dc042438952a5549047ac"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/general_revit_campaign_completion.ts",
+      "sha256": "sha256:13057a86acf27820b76ad5cbf0935a7e1cb85e3a711a6fde1f755fb6b02fb560"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/general_revit_candidate_identity_preflight.ts",
       "sha256": "sha256:24c78d58432789f5663f8e9307b2950d13830eb44f3b210a97fa4aeaf9f7ab88"
     },
@@ -808,7 +812,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_report.ts",
-      "sha256": "sha256:ca43d0b4b1a9800373a6a5f3e135b4470d7550e210ef58cb94e240eba83629e8"
+      "sha256": "sha256:5c7adc7bc5f556e81b6e1afb287d79072ac80fdfc3c4f974eee01bac3dbc3011"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_computer_turn.ts",
@@ -2677,7 +2681,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:031edf93fdd86216e689e6587b81d70b26febc5c6231440feb1fc445e8901c22"
+      "sha256": "sha256:b1b780a30a215fe6b5777e91e700ca0038b64abd07386aedf76a160a477f2986"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -3636,12 +3640,16 @@
       "sha256": "sha256:ae73ba6a667bfcc933aeb4914b2baf25fc025d4ef66fe54e20b664d954e5ad87"
     },
     {
+      "path": "apps/operator-backend/test/general_revit_campaign_completion.test.ts",
+      "sha256": "sha256:2df1fae38d30870e9156be00061052a6cc1305b1144d6c7238f9c616594a4431"
+    },
+    {
       "path": "apps/operator-backend/test/general_revit_candidate_identity_preflight.test.ts",
       "sha256": "sha256:7ee1cf3ef3364f4f12e212ac4967065d6148574869fbd780a552b539d7594f5d"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:40f42eebc5378e8838e45adf1c60b0382a544d6984e68e20b13ac252529209a3"
+      "sha256": "sha256:45a6c851655d3ada87c47a0fb8feb757bfe0956f323c52a08dc15741460217c5"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_report.test.ts",
@@ -4481,7 +4489,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/TransactionTruthTests.cs",
-      "sha256": "sha256:5baa20362384e90ba70369bcc8f3e5b4e6d93670fad0479a3d3259e579beb46b"
+      "sha256": "sha256:b13149b3f1e8e0e9557975b7e9d3c6753d61ee1b61f584c1d1a26f9aa8b10612"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ViewQueryPolicyTests.cs",
@@ -5602,11 +5610,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/TransactionApplyHandler.cs",
-      "sha256": "sha256:6deb574dc16233d68be6be8d49ce534aa631c444c3392d3805b1f0a7616240d5"
+      "sha256": "sha256:4ef6619e3fe38f6c9055b75d403b876ec66aaac90d61d6b532915c538ae65195"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/TransactionApplyPhaseState.cs",
-      "sha256": "sha256:0cd79ac5e8a091a7a22cfab4c33136fd53f0ffb8fdcd6ac4f7419f3f7a4cbe28"
+      "sha256": "sha256:35a92dcdd83abde64825bc8f0d4ba41e7d582b46d0fbc3023ff45f2714446899"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/TransactionDiffRecorder.cs",
@@ -6373,7 +6381,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:016b160215fe1e58b8e6a68008dd51bf68283628a34365b426d0cdb3bbdf2825",
+  "inputs_hash": "sha256:7be68037b02fe2e30c4f88c785ca02fb452f62ed18148aa196a9316c52110b90",
   "result": {
     "passed": true,
     "checks": [

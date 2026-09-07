@@ -154,7 +154,7 @@ test("benchmark groups cases by fixture and fails closed on an unpinned mixed-mo
   assert.match(runner, /await stopComputerRunBestEffort\(baseUrl\)/);
   assert.match(runner, /the abandoned Operator turn was stopped/);
   assert.match(runner, /targetVerifiedWhileAgentRunning/);
-  assert.match(runner, /healthDocumentTitle\(after\) === fixture\.document_title/);
+  assert.match(runner, /revitHealthDocumentTitle\(after\) === fixture\.document_title/);
   assert.match(runner, /stale pre-open binding until the fixture timeout expires/);
   assert.match(runner, /REVIT_CONTEXT_HOST_STARTING\|no fully opened model\|no active document/);
   assert.match(runner, /Revit Home is a valid fixture-transition starting point/);
