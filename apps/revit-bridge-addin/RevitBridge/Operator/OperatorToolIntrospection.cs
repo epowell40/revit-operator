@@ -443,6 +443,13 @@ namespace RevitBridge.Operator
                 if (OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema))
                     return conditionalSchema;
 
+                if (p == "/revit/create-duct" || p == "/revit/create-pipe" || p == "/revit/repair-mep-connectors")
+                {
+                    var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    OperatorConditionalRequestContracts.ApplyMepFragments(p, schema);
+                    return schema;
+                }
+
                 if (string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
                     return OperatorDuplicateSheetContract.RequestSchema();
 

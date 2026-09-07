@@ -39,6 +39,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Contracts\duplicate-sheet.request.v1.json" LogicalName="RevitBridge.Common.duplicate-sheet.request.v1.json" />
     <EmbeddedResource Include="Contracts\conditional-requests.v1.json" LogicalName="RevitBridge.Common.conditional-requests.v1.json" />
+    <EmbeddedResource Include="Contracts\conditional-request-fragments.v1.json" LogicalName="RevitBridge.Common.conditional-request-fragments.v1.json" />
     <EmbeddedResource Include="..\..\operator-backend\config\tool_exposure_policy.v1.json"
                       LogicalName="RevitBridge.Common.tool_exposure_policy.v1.json" />
   </ItemGroup>

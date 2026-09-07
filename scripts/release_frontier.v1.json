@@ -108,6 +108,13 @@
   ],
   "failure_families": [
     {
+      "id": "mep-alternate-points-and-operation-specific-required-fields",
+      "coverage": [
+        "dotnet:OperatorConditionalRequestContractsTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
       "id": "nested-wire-scalars-erased-at-reflection-depth-limit",
       "coverage": [
         "dotnet:OperatorJsonWireSchemaTests",

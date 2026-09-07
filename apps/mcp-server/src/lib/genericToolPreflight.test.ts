@@ -432,3 +432,42 @@ test("native conditional contracts accept bundled requests without fields from u
   assert.ok(validate("/revit/transaction-validate", {checks:[]}));
   assert.ok(validate("/revit/transaction-validate", {checks:[{kind:"madeUp",elementId:123}]}));
 });
+
+
+test("MEP fragments accept all bundled endpoint and repair modes and reject incomplete requests", () => {
+  const fragments = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  const validate = (path: string, body: unknown) => preflightKnownGenericToolBody({ method: "POST", path,
+    request_schema: path === "/revit/repair-mep-connectors"
+      ? { type: "object", properties: { repair: fragments.mep_repair_operation } }
+      : { type: "object", allOf: [fragments.mep_curve_endpoints] }
+  }, body);
+  for (const path of ["/revit/create-duct", "/revit/create-pipe", "/revit/repair-mep-connectors"]) {
+    const tool = catalog.tools.find((entry: any) => entry.method === "POST" && entry.path === path);
+    assert.ok(tool?.examples.length, path);
+    for (const example of tool.examples) assert.equal(validate(path, example.request), null, path + ": " + example.name);
+  }
+  for (const path of ["/revit/create-duct", "/revit/create-pipe"]) {
+    const flat = { startX: 0, startY: 0, startZ: 0, endX: 1, endY: 2, endZ: 3 };
+    const points = [{ xyz: [0, 0] }, { xyz: [0, 0, 0, 99] }, { x: 0, y: 0 }, { xIn: 0, yIn: 0 }, { xPx: 0, yPx: 0 }];
+    assert.equal(validate(path, flat), null);
+    for (const point of points) assert.equal(validate(path, { startPoint: point, endPoint: point, frameId: "frame" }), null);
+    for (const bad of [{}, { ...flat, endZ: undefined }, { startPoint: {}, endPoint: { xyz: [0, 0] } },
+      { startPoint: { xPx: 0, yPx: 0 }, endPoint: { xPx: 1, yPx: 1 } },
+      { startPoint: { xPx: 0.5, yPx: 0 }, endPoint: { xyz: [0, 0] }, frameId: "frame" },
+      { startPoint: { xyz: [0] }, endPoint: { xyz: [0, 0] } }])
+      assert.equal(validate(path, bad)?.request_dispatched, false);
+  }
+  const repairs = [
+    { kind: "move_elements_vector", elementIds: [1, 2], vectorX: 1, vectorY: 0, vectorZ: 0 },
+    { kind: "set_curve_line", elementId: 1, startXyz: [0, 0, 0], endXyz: [1, 1, 1] },
+    { kind: "set_flex_curve", elementId: 1, flexPoints: [[0, 0, 0], [1, 1, 1]], startTangent: null },
+    { kind: "resize_round_connectors", elementId: 1, connectorChanges: [{ connectorId: 0, expectedOriginXyz: [0, 0, 0], diameterFt: 0.5 }] }
+  ];
+  for (const repair of repairs) assert.equal(validate("/revit/repair-mep-connectors", { repair }), null);
+  for (const repair of [{ ...repairs[0], elementIds: [] }, { ...repairs[0], vectorZ: undefined },
+    { ...repairs[1], startXyz: null }, { ...repairs[1], startXyz: [0, 0] },
+    { ...repairs[2], flexPoints: [[0, 0, 0]] }, { ...repairs[3], connectorChanges: [] },
+    { ...repairs[3], elementId: 0 }, { ...repairs[0], invented: true }, { kind: "unknown" }])
+    assert.equal(validate("/revit/repair-mep-connectors", { repair })?.request_dispatched, false);
+});
