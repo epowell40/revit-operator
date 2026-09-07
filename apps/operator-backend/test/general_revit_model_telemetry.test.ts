@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createProviderUsageLedgerV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import {
   ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
   ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA,
@@ -12,6 +13,7 @@ import {
 } from "../src/benchmark/assignment_kernel_v2_collection.js";
 import {
   aggregateModelCallReceipts,
+  aggregateCoveredModelCallReceipts,
   modelCallReceiptsFromSources,
   modelCallReceiptsFromTraces,
   modelTelemetryCaseCoverage,
@@ -110,7 +112,14 @@ test("benchmark CLI accepts one model pair and rejects removed split flags", () 
 });
 
 test("model comparison coverage fails closed when any delegated case lacks receipts", () => {
-  const covered = { case_id: "covered", model_call_receipts: [receipt()] };
+  const exactReceipt = receipt({ turn_id: "turn-a" });
+  const ledger = createProviderUsageLedgerV1();
+  ledger.begin("session-a", "message-a");
+  ledger.observe("session-a", "message-a", { provider_turn_usage: {
+    schema: "revit-operator.provider-turn-usage/v1", session_id: "session-a", message_id: "message-a",
+    thread_id: "thread-a", turn_id: "turn-a", disposition: "completed", raw_response_ids: ["resp_1"]
+  } });
+  const covered = { case_id: "covered", model_call_receipts: [exactReceipt], provider_usage_turns: [ledger.snapshot([exactReceipt])] };
   assert.deepEqual(modelTelemetryCaseCoverage([covered]), {
     schema: "revit-operator.model-telemetry-case-coverage.v1",
     expected_case_count: 1,
@@ -119,11 +128,21 @@ test("model comparison coverage fails closed when any delegated case lacks recei
     no_model_invocation_case_ids: [],
     cases_missing_model_receipts: 0,
     missing_case_ids: [],
+    cases_missing_turn_coverage: 0,
+    missing_turn_coverage_case_ids: [],
     complete: true
   });
   const partial = modelTelemetryCaseCoverage([covered, { case_id: "timed_out", model_call_receipts: [] }]);
   assert.equal(partial.complete, false);
   assert.deepEqual(partial.missing_case_ids, ["timed_out"]);
+  const lostFollowup = { ...covered, provider_usage_turns: [...covered.provider_usage_turns, null] };
+  assert.equal(modelTelemetryCaseCoverage([lostFollowup]).complete, false);
+  const incompleteCost = aggregateCoveredModelCallReceipts([exactReceipt], [lostFollowup]);
+  assert.equal(incompleteCost.cost_usd, null);
+  assert.equal(incompleteCost.cost_status, "incomplete");
+  assert.equal(typeof incompleteCost.known_observed_cost_usd, "number");
+  assert.deepEqual(modelTelemetryCaseCoverage([lostFollowup]).missing_turn_coverage_case_ids, ["covered"]);
+  assert.equal(modelTelemetryCaseCoverage([{ ...covered, provider_usage_turns: undefined }]).complete, false);
 });
 
 test("raw Codex completion becomes an exact content-free provider receipt", () => {

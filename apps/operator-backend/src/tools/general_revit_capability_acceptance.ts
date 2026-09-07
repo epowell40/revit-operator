@@ -15,7 +15,7 @@ import {
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
 import { localRevitProcessGuardTarget, type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
-import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
+import { aggregateModelCallReceipts, aggregateCoveredModelCallReceipts, deduplicateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
   modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
@@ -583,6 +583,7 @@ async function runComputerCase(
     harness_context_loss_settlement: finalTurn.contextLossSettlement,
     harness_model_telemetry_recovery: finalTurn.modelTelemetryRecovery,
     model_call_receipts: interactionModelCallReceipts,
+    provider_usage_turns: turns.map(turn => turn.state.providerUsageCoverage ?? null),
     protocol_v2_interaction: interaction ? benchmarkInteractionTraceV1({
       interaction, directVariant, firstMessageId: first.messageId, firstPrompt, firstAssistant,
       finalMessageId: finalTurn.messageId, finalAssistant: assistantTextFromComputerState(state), clarificationId
@@ -732,6 +733,7 @@ async function runCase(
     },
     agent_reasoning_plan_representation: Array.isArray(attempt.rounds) ? attempt.rounds : [],
     model_call_receipts: modelCallReceipts,
+    provider_usage_turns: attempt.provider_usage_turns ?? null,
     tool_calls: toolCalls,
     tool_results: {
       response_effect_state: attempt.effect_state ?? "not_dispatched",
@@ -1142,7 +1144,7 @@ async function main(): Promise<void> {
   exportIsolation?.restore();
   if (exportIsolation) asRecord(suiteContext.export_isolation).originals_restored = true;
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
-  const modelCallTelemetry = aggregateModelCallReceipts(suiteModelCallReceipts);
+  const modelCallTelemetry = aggregateCoveredModelCallReceipts(suiteModelCallReceipts, traces);
   const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
   const requestedVsObserved = requestedVsObservedComputerAgent(requestedComputerAgent, modelCallTelemetry);
   const latencyTelemetry = summarizeGeneralRevitLatency(traces, suiteContext);

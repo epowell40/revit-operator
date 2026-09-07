@@ -301,7 +301,8 @@ namespace RevitBridge.Handlers
         private static ViewPlan CreateFloorPlan(Document doc, Params p)
         {
             var level = ResolveLevel(doc, p.levelId, p.levelName);
-            if (level == null) throw new InvalidOperationException("create-view(create_floor_plan) requires levelId or levelName.");
+            if (level == null) throw new InvalidOperationException(RevitBridge.Common.OperatorLevelLookupDiagnostic.Describe(
+                p.levelId, p.levelName, new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().Select(value => value.Name)));
 
             var planType = NormalizePlanType(p.planType);
             var vf = PlanTypeToViewFamily(planType);

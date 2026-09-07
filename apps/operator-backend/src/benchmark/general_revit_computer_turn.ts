@@ -161,10 +161,10 @@ export async function executeGeneralRevitComputerTurn(args: {
     if (state.running === true) throw new Error(`Case ${args.caseId} exceeded ${args.timeoutMs}ms and the timed-out Operator run did not become idle; the benchmark is stopping instead of contaminating later cases with live-context contention.`);
   }
   let modelTelemetryRecovery: JsonRecord | null = null;
-  if ((timeoutSettlement || contextLossSettlement) && modelCallReceiptsFromSources(state).length === 0) {
+  if (timeoutSettlement || contextLossSettlement) {
     try {
       modelTelemetryRecovery = await args.recoverTimedOutModelTelemetry(args.baseUrl, state);
-      const recoveredReceipts = modelCallReceiptsFromSources(modelTelemetryRecovery);
+      const recoveredReceipts = modelCallReceiptsFromSources(state, modelTelemetryRecovery);
       if (recoveredReceipts.length > 0) state = { ...state, modelCallReceipts: recoveredReceipts };
     } catch (error) {
       modelTelemetryRecovery = { status: "error", error: error instanceof Error ? error.message : String(error), model_call_receipts: [] };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { createProviderUsageLedgerV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import type { GoalRecord } from "../src/goals/service.js";
 import type { AssignmentSnapshotV2 } from "../src/domain/assignment-kernel/index.js";
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
@@ -62,16 +63,15 @@ function trace(snapshot = pausedSnapshot()) {
   };
 }
 
-test("paused clarification crosses packet and protocol receipt boundaries with explicit zero provider invocation", () => {
+test("retained paused clarification preserves delivery truth but lacks independent provider request coverage", () => {
   const t = trace();
   assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({ task_traces: [t] }, [t.case_id], { require_assignment_kernel_v2: true }));
   const coverage = modelTelemetryCaseCoverage([t]);
-  assert.equal(coverage.complete, true);
+  assert.equal(coverage.complete, false);
   assert.equal(coverage.cases_with_model_receipts, 0);
-  assert.equal(coverage.cases_without_model_invocation, 1);
-  assert.deepEqual(coverage.no_model_invocation_case_ids, [t.case_id]);
-  assert.equal(coverage.cases_missing_model_receipts, 0);
-  assert.match(markdownReport({ model_telemetry_coverage: coverage }), /no model invocation for 1 paused cases/);
+  assert.equal(coverage.cases_without_model_invocation, 0);
+  assert.deepEqual(coverage.no_model_invocation_case_ids, []);
+  assert.equal(coverage.cases_missing_turn_coverage, 1);
   const testCase: GeneralRevitCapabilityCase = { case_id: t.case_id, source: "user_basic", operation_family: "text_edit",
     prompt: "Replace the selected note with approved wording.", probe_prompt: "Inspect the selected note.",
     capability_paths: ["/revit/replace-text-note"], dispatch_any_of: ["/revit/replace-text-note"], expected_effect: "apply",
@@ -82,6 +82,20 @@ test("paused clarification crosses packet and protocol receipt boundaries with e
   assert.equal(result.original_runtime_verdict.verdict, "awaiting_user_input");
   assert.equal(result.delivery_verdict, "awaiting_user_input");
   assert.equal(result.execution_truth.effect_state, "none");
+});
+
+test("synthetic explicit host no-start receipt establishes no invocation independently of the canonical pause ledger", () => {
+  // New contract fixture, not retroactively added evidence for the retained UI run.
+  const ledger = createProviderUsageLedgerV1();
+  ledger.begin("synthetic-session", "synthetic-message");
+  ledger.observe("synthetic-session", "synthetic-message", { provider_turn_usage: {
+    schema: "revit-operator.provider-turn-usage/v1", session_id: "synthetic-session", message_id: "synthetic-message",
+    thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+  } });
+  const coverage = modelTelemetryCaseCoverage([{ ...trace(), provider_usage_turns: [ledger.snapshot([])] }]);
+  assert.equal(coverage.complete, true);
+  assert.equal(coverage.cases_without_model_invocation, 1);
+  assert.match(markdownReport({ model_telemetry_coverage: coverage }), /no model invocation for 1 paused cases/);
 });
 
 test("a forged observed provider call cannot use the deterministic pause exception", () => {
@@ -118,7 +132,8 @@ test("a pause after a completed provider call retains the real usage and is not 
   assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({ task_traces: [t] }, [t.case_id], { require_assignment_kernel_v2: true }));
   assert.equal(packet(snapshot).performance.total_tokens, 12);
   const coverage = modelTelemetryCaseCoverage([t]);
-  assert.equal(coverage.complete, true); assert.equal(coverage.cases_with_model_receipts, 1); assert.equal(coverage.cases_without_model_invocation, 0);
+  assert.equal(coverage.complete, false); assert.equal(coverage.cases_with_model_receipts, 1); assert.equal(coverage.cases_without_model_invocation, 0);
+  assert.equal(coverage.cases_missing_turn_coverage, 1);
   snapshot.provider_calls["completed-call"]!.state = "dispatched";
   assert.throws(() => packet(snapshot), /quiescent recorded user pause/);
 });

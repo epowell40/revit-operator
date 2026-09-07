@@ -93,3 +93,19 @@ The workstation's read-only `model/list` check on Codex CLI 0.149.0 on
 2026-09-07 listed Sol/medium and Luna/max but did not list Astra. Resolve
 supported runtime availability before a paid Astra turn. Do not enable an
 unreviewed compatibility override or treat model documentation as access proof.
+
+Request coverage is separate from receipt integrity. The Sidecar records each
+Codex delegation attempt before transport, and the backend returns a bound
+provider-turn record on normal and interrupted completion. The benchmark retains
+coverage across clarification turns and requires matching raw response IDs and
+turn IDs. Missing or contradictory turn records make comparison and total-cost
+accounting incomplete; previously observed cost is retained separately. Old
+traces lacking these records do not acquire completeness during rescoring.
+
+This detects missing whole turns and missing declared receipts. It cannot prove
+that the provider runtime emitted every internal response event. In particular,
+a resumed or compacted turn with no raw receipts remains unqualified even when
+cumulative usage snapshots exist. These snapshots are diagnostics, never
+synthetic response receipts, summed billable usage, or a zero-cost claim. This
+coverage currently qualifies the direct Codex delegation lane; it does not
+establish equivalent request coverage for other provider execution lanes.

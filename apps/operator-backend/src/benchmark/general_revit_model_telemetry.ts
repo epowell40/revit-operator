@@ -1,4 +1,4 @@
-import { canonicalPauseWithoutProviderCallV2 } from "./protocol_v2_kernel.js";
+import { buildProviderUsageCoverageV1, PROVIDER_USAGE_COVERAGE_V1_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -100,6 +100,7 @@ function mergeReceipt(left: JsonRecord, right: JsonRecord): JsonRecord {
   const rightTokens = asRecord(right.tokens);
   const conflicts = [
     ["route", left.route, right.route],
+    ["turn_id", left.turn_id, right.turn_id],
     ["model", left.model, right.model],
     ["reasoning_effort", left.reasoning_effort, right.reasoning_effort],
     ["started_at_utc", left.started_at_utc, right.started_at_utc],
@@ -308,7 +309,8 @@ export function modelCallReceiptsFromTraces(traces: unknown[]): JsonRecord[] {
 export function modelTelemetryCaseCoverage(traces: unknown[]): JsonRecord {
   const rows = traces.map(asRecord);
   const withoutReceipts = rows.filter(trace => modelCallReceiptsFromSources(trace).length === 0);
-  const noInvocation = withoutReceipts.filter(trace => canonicalPauseWithoutProviderCallV2(trace.tool_results));
+  const usage = rows.map(trace => providerUsageCoverageFromTrace(trace));
+  const noInvocation = withoutReceipts.filter(trace => providerUsageCoverageFromTrace(trace).no_provider_invocation);
   const missingCaseIds = withoutReceipts.filter(trace => !noInvocation.includes(trace))
     .map((trace) => String(trace.case_id || ""));
   return {
@@ -319,8 +321,26 @@ export function modelTelemetryCaseCoverage(traces: unknown[]): JsonRecord {
     no_model_invocation_case_ids: noInvocation.map(trace => String(trace.case_id || "")),
     cases_missing_model_receipts: missingCaseIds.length,
     missing_case_ids: missingCaseIds,
-    complete: missingCaseIds.length === 0
+    cases_missing_turn_coverage: usage.filter(row => !row.complete).length,
+    missing_turn_coverage_case_ids: rows.filter((_row, index) => !usage[index]!.complete).map(row => String(row.case_id || "")),
+    complete: rows.length > 0 && missingCaseIds.length === 0 && usage.every(row => row.complete)
   };
+}
+
+export function providerUsageCoverageFromTrace(trace: JsonRecord) {
+  const turns = Array.isArray(trace.provider_usage_turns) ? trace.provider_usage_turns.map(asRecord) : [];
+  const captured = turns.length > 0 && turns.every(turn => turn.schema === PROVIDER_USAGE_COVERAGE_V1_SCHEMA
+    && turn.overflow !== true && Array.isArray(turn.attempts) && turn.attempts.length > 0
+    && turn.request_count === turn.attempts.length);
+  const result = buildProviderUsageCoverageV1(turns.flatMap(turn => Array.isArray(turn.attempts) ? turn.attempts : []),
+    modelCallReceiptsFromSources(trace));
+  return { ...result, complete: captured && result.complete, no_provider_invocation: captured && result.no_provider_invocation };
+}
+
+export function aggregateCoveredModelCallReceipts(receipts: unknown[], traces: unknown[]): JsonRecord {
+  const summary = aggregateModelCallReceipts(receipts);
+  if (modelTelemetryCaseCoverage(traces).complete === true) return summary;
+  return { ...summary, known_observed_cost_usd: summary.cost_usd, cost_usd: null, cost_status: "incomplete" };
 }
 
 export function requestedVsObservedComputerAgent(

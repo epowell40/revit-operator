@@ -11,6 +11,10 @@
     ".": {
       "types": "./index.d.ts",
       "import": "./index.js"
+    },
+    "./provider-turn-usage": {
+      "types": "./provider-turn-usage.d.ts",
+      "import": "./provider-turn-usage.js"
     }
   },
   "files": [
@@ -20,6 +24,8 @@
     "completion-outbox.d.ts",
     "index.js",
     "index.d.ts",
-    "evidence-retrieval-selector-golden-vectors.json"
+    "evidence-retrieval-selector-golden-vectors.json",
+    "provider-turn-usage.js",
+    "provider-turn-usage.d.ts"
   ]
 }

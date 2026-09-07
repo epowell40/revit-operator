@@ -546,3 +546,51 @@ test("unknown mutation effects prevent resume even after the dispatch settles", 
   assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.unresolved_unknown_operation_ids.length, 1);
   assert.throws(() => controlAssignmentExecutionV2({ binding, command_id: "resume", expected_command_id: "pause", action: "resume" }), /reconciliation_required/);
 }));
+
+
+test("canonical rolled-back create-view releases the legacy guard for a corrected native request", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Make a Level 2 mechanical coordination plan called M-LEVEL 2 COORDINATION.");
+  let dispatches = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, args: any, context: any) => {
+      const lease = context.assignmentKernelV2;
+      context.onMcpAccepted();
+      const failed = ++dispatches === 1;
+      const payload = failed ? { success: false, error: "The requested level was not found.", transaction: { status: "rolled_back" } }
+        : { success: true, viewId: 123, name: args.body.name };
+      const receipt = "receipt:" + lease.operation_id;
+      return { isError: failed, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: "result:" + lease.operation_id,
+          operation_id: lease.operation_id, binding, status: failed ? "failed_after_dispatch" : "succeeded", dispatch_state: "dispatched",
+          persistent_effect: failed ? "none" : "applied", native_transaction_state: failed ? "rolled_back" : "committed", authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/create-view/v2", observation_required: true, receipt_id: receipt, native_correlation_id: receipt,
+          raw_payload_hash: payloadDigestV2(payload).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+        observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["task_result"], evidence_class: "task_result" }
+      } };
+    }
+  };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
+    context: { revit: { process_id: 4242, source: { live: true }, activeView: { id: 44, name: "L4" },
+      document: { title: "Mechanical model", projectIdentity: { fingerprint: "controls-model" } } } }
+  } as any, prepared));
+  try {
+    const run = (levelName: string, id: string) => handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "create-turn", tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/create-view",
+        body: { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName, planType: "engineering", discipline: "Mechanical", dryRun: false } }
+    } } as any);
+    await run("Level 2", "first");
+    const second = await run("L2", "corrected");
+    assert.equal(dispatches, 2, JSON.stringify(second));
+    const retained = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.equal(retained.unresolved_unknown_operation_ids.length, 0);
+    const operations = Object.values(retained.operations).filter(o => o.requested_effect === "apply");
+    assert.equal(operations.length, 2);
+    assert.equal(operations[0]!.result?.native_transaction_state, "rolled_back");
+    assert.equal(operations[1]!.persistent_effect, "applied");
+    const third = await run("L3", "unverified-next");
+    assert.equal(dispatches, 2, JSON.stringify(third));
+    assert.match(JSON.stringify(third), /prior apply verification required/);
+  } finally { endTeammateLoopOwner(owner); }
+}));

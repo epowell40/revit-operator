@@ -157,6 +157,7 @@ export type ChatResponse = {
   actions: ActionCall[];
   /** Provider-call metadata only. Never contains prompts or model output. */
   model_call_receipts?: ModelCallReceipt[];
+  provider_turn_usage?: import("@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage").ProviderTurnUsageV1;
   /** Exact authenticated Assignment outcome after the inner turn settles. */
   canonical_assignment_outcome?: CanonicalAssignmentOutcomeV1;
   /** Exact V2 journal projection; authoritative for V2 Assignments. */

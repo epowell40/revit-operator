@@ -6,6 +6,7 @@ import { findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js
 import {
   guardTeammateMcpCall,
   recordTeammateMcpResult,
+  reconcileTeammateCanonicalSettlementV2,
   teammateLoopSessionIdForOwner
 } from "../teammate_loop_runtime.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
@@ -221,6 +222,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
         trustedVerification && lease.purpose === "verification" && lease.fulfillment_role === "verification"
           ? { ...trustedVerification, operation_id: lease.operation_id } : null);
+      reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,

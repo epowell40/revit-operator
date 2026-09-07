@@ -34,10 +34,15 @@ test("resumed thread usage remains a bounded snapshot and cannot invent provider
     }
     assert.equal(telemetry.receipts.length, 0);
     assert.equal(callbacks, 0);
+    const missingCoverage = telemetry.finish("message-a", "interrupted");
+    assert.equal(missingCoverage.disposition, "interrupted");
+    assert.deepEqual(missingCoverage.raw_response_ids, []);
     telemetry.observe({ method: "rawResponse/completed", threadId: "thread-a", params: { turnId: "turn-a", responseId: "response-a", usage } });
     telemetry.observe(notification);
     assert.equal(telemetry.receipts.length, 1);
     assert.equal(callbacks, 1);
+    assert.deepEqual(telemetry.finish("message-a", "interrupted").raw_response_ids, ["response-a"]);
+    assert.equal(telemetry.finish("message-a", "failed").turn_id, "turn-a");
   } finally {
     if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previous;

@@ -455,6 +455,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: assistantMessage,
       actions: [],
+      ...(phase !== "provider_start" ? { provider_turn_usage: {
+        schema: "revit-operator.provider-turn-usage/v1" as const,
+        session_id: req.session_id, message_id: req.message_id,
+        thread_id: null, turn_id: null, disposition: "not_started" as const, raw_response_ids: []
+      } } : {}),
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {})
     };
@@ -885,7 +890,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (assignmentKernelV2Lease) mcpRuntime!.bindAssignmentKernelV2LeaseTurn(assignmentKernelV2Lease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
-    appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
+    appendEvent(req.session_id, "assistant", "codex.turn.start", { session_id: req.session_id,
+      message_id: req.message_id, thread_id: threadId, turn_id: turnId });
   } catch {
     // ignore
   }
@@ -945,6 +951,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     mcpRuntime?.clearAssignmentKernelV2TurnStop(turnId);
   };
   let turnCancelled = false;
+  let providerTurnDisposition: "completed" | "interrupted" | "failed" = "failed";
+  let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id ?? getActiveGoalForSession(req.session_id)?.id ?? null;
   try {
@@ -963,6 +971,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     });
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
+    providerTurnDisposition = turnCancelled ? "interrupted" : "completed";
   } catch (error) {
     if (!activeTurnAbort.signal.aborted) {
       if (!assignmentKernelV2 && assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
@@ -980,6 +989,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       throw error;
     }
     turnCancelled = true;
+    providerTurnDisposition = "interrupted";
   } finally {
     unsubscribeTurnNotifications();
     unsubscribeTurnNotifications = () => {};
@@ -992,6 +1002,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       }
     }
     reconcileStartedProviderTurn = null;
+    providerTurnUsage = modelTelemetry.finish(req.message_id, providerTurnDisposition);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     await releaseStartedProviderTurn(false);
   }
@@ -1029,6 +1040,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       assistant_message: budgetMessage,
       actions: [],
       model_call_receipts: modelTelemetry.receipts,
+      provider_turn_usage: providerTurnUsage,
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {}),
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
@@ -1138,6 +1150,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
+    provider_turn_usage: providerTurnUsage,
     ...(terminalSnapshot ? { assignment_snapshot_v2: terminalSnapshot } : {}),
     ...(terminalSnapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(terminalSnapshot) } : {}),
     ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),

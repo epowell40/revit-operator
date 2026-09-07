@@ -1,4 +1,5 @@
 import type { ModelCallReceipt } from "../contracts.js";
+import { parseProviderTurnUsageV1, PROVIDER_TURN_USAGE_V1_SCHEMA, type ProviderTurnUsageV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import { appendEvent } from "../memory/sqlite_store.js";
 import { createCodexRawModelCallReceipt } from "../model_call_telemetry.js";
 import type { AgentModelSettings } from "../speed_config.js";
@@ -49,6 +50,7 @@ export function createCodexTurnModelTelemetry(args: {
 }): {
   receipts: ModelCallReceipt[]; compactions: string[];
   usageSnapshot: () => CodexUsageSnapshot | null;
+  finish: (messageId: string, disposition: Exclude<ProviderTurnUsageV1["disposition"], "not_started">) => ProviderTurnUsageV1;
   observe: (notification: CodexNotification) => void;
 } {
   const receipts: ModelCallReceipt[] = [];
@@ -59,6 +61,20 @@ export function createCodexTurnModelTelemetry(args: {
     receipts,
     compactions,
     usageSnapshot: () => latestUsage === null ? null : structuredClone(latestUsage),
+    finish(messageId, disposition) {
+      const coverage = parseProviderTurnUsageV1({ schema: PROVIDER_TURN_USAGE_V1_SCHEMA,
+        session_id: args.sessionId, message_id: messageId, thread_id: args.threadId,
+        turn_id: args.turnId, disposition, raw_response_ids: receipts.map(receipt => receipt.call_id) });
+      try {
+        appendEvent(args.sessionId, "assistant", "codex.turn.usage_coverage", {
+          ...coverage, thread_usage_snapshot: latestUsage,
+          context_compaction_count: compactions.length
+        });
+      } catch {
+        // The returned host record still exposes missing receipts to the caller.
+      }
+      return coverage;
+    },
     observe(notification) {
       if (!notification || notification.threadId !== args.threadId) return;
       const params = notification.params || {};

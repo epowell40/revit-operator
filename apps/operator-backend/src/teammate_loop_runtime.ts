@@ -1,3 +1,6 @@
+import { clearVerification, clearKnownNoEffectApply } from "./teammate_verification_state.js";
+import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
+import { canonicalNativeRollbackForTeammate } from "./teammate_canonical_settlement.js";
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
@@ -55,7 +58,7 @@ type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
-type TeammateLoopState = {
+export type TeammateLoopState = {
   key: string;
   contract: TeammateTurnContract;
   expires_at_ms: number;
@@ -666,16 +669,6 @@ function stateFor(req: ChatRequest): TeammateLoopState {
   return state;
 }
 
-function clearVerification(state: TeammateLoopState): void {
-  state.verified = false;
-  state.verification_mode = "none";
-  state.verification_action_id = null;
-  state.verification_evidence_sha256 = null;
-  state.verification_observed_target_tokens.clear();
-  state.verification_observed_values.clear();
-  state.verification_has_substantive_readback = false;
-}
-
 function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
   return call.effect === "apply" && (call.path === "revit_open_model" || call.path === "/revit/open-model");
 }
@@ -859,20 +852,6 @@ function markVerified(
   state.verification_evidence_sha256 = `sha256:${payloadDigestV2(verificationObservationPayloadV2(evidence)).digest}`;
   if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
   state.contract.stage = "report";
-}
-
-function clearKnownNoEffectApply(state: TeammateLoopState): void {
-  state.stage_apply_attempts = Math.max(0, state.stage_apply_attempts - 1);
-  state.apply_action_id = null;
-  state.apply_succeeded = false;
-  state.apply_signature = "";
-  state.apply_target_tokens.clear();
-  state.apply_target_tokens_inferred = false;
-  state.apply_expected_values.clear();
-  state.apply_call = null;
-  clearVerification(state);
-  state.blocked_reason = null;
-  state.contract.stage = state.successful_preview_signatures.size > 0 ? "preview" : "apply";
 }
 
 function recordResult(state: TeammateLoopState, actionId: string, succeeded: boolean, evidence?: unknown): void {
@@ -1199,6 +1178,23 @@ function recoveredLiveContextIdentity(result: unknown): { state: TeammateContext
     } catch {}
   }
   return null;
+}
+
+/** Reconcile the compatibility guard only after the V2 authority has settled this exact call. */
+export function reconcileTeammateCanonicalSettlementV2(gate: TeammateMcpGate, operation: OperationV2 | undefined): boolean {
+  const state = gate.state;
+  const call = gate.call;
+  if (!gate.allowed || !state || !call || call.effect !== "apply" || state.apply_succeeded) return false;
+  const separator = call.path.indexOf("|");
+  if (separator < 0 || state.apply_action_id !== call.path.slice(0, separator)
+    || state.apply_signature !== call.signature) return false;
+  const sessionId = state.key.slice(0, state.key.lastIndexOf("::"));
+  if (!canonicalNativeRollbackForTeammate(operation, sessionId, call.path.slice(separator + 1))) return false;
+  const canonicalInput = operation!.input;
+  const canonicalBody = Object.prototype.hasOwnProperty.call(canonicalInput, "body") ? canonicalInput.body : canonicalInput;
+  if (actionSignature(call.path.slice(separator + 1), structuredActionBody(canonicalBody)) !== call.signature) return false;
+  clearKnownNoEffectApply(state); // Keep cumulative attempt/budget accounting; do not mark work verified.
+  return true;
 }
 
 export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, result: unknown): TeammateVerificationAssertionV2 | null {

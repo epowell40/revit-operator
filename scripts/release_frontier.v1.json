@@ -59,7 +59,9 @@
     "verified_work_packet.test.ts",
     "general_revit_fixture_preconditions.test.ts",
     "codex_turn_model_telemetry.test.ts",
-    "codex_brain_spatial_guidance.test.ts"
+    "codex_brain_spatial_guidance.test.ts",
+    "teammate_canonical_settlement.test.ts",
+    "provider_turn_usage.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -104,7 +106,8 @@
     "RevitTextCasePolicyTests",
     "OperatorJsonWireSchemaTests",
     "OperatorRequestPropertyPresenceTests",
-    "OperatorConditionalRequestContractsTests"
+    "OperatorConditionalRequestContractsTests",
+    "OperatorLevelLookupDiagnosticTests"
   ],
   "failure_families": [
     {
@@ -767,6 +770,22 @@
         "backend:verification_capability_admission_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts",
         "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "canonical-native-rollback-releases-legacy-apply-fence",
+      "coverage": [
+        "backend:teammate_canonical_settlement.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "dotnet:OperatorLevelLookupDiagnosticTests"
+      ]
+    },
+    {
+      "id": "interrupted-provider-turn-and-missing-followup-usage",
+      "coverage": [
+        "backend:provider_turn_usage.test.ts",
+        "backend:codex_turn_model_telemetry.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
       ]
     }
   ]
