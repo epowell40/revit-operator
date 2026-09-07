@@ -7,6 +7,33 @@ import { spawnSync } from "node:child_process";
 import { recoverRetainedAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
 import { completionOutboxKeyV2, readCompletionOutboxV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import type { NativeArtifactReceiptV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
+
+test("native supporting views discovery after registry survives journal reload as progress without completing an apply", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  let state = snapshot;
+  for (const route of ["/revit/tool-registry", "/revit/views"]) {
+    const before = state;
+    const lease = openAssignmentKernelOperationV2({ snapshot: state, controller_request_id: route, provider_turn_id: route,
+      capability_id: "revit_call_tool", classified_effect: "read", arguments: { method: "GET", path: route, body: null } });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const receipt = envelope(lease.operation_id, lease.binding, route.endsWith("views") ? { views: [{ id: 9948, name: "L2" }] } : { tools: [] });
+    receipt.structuredContent.observation.semantic_facts = [
+      { fact_id: "control.result_available", fact_class: "control", value: true },
+      { fact_id: "control.domain_succeeded", fact_class: "control", value: true }
+    ];
+    settleAssignmentKernelOperationV2(lease, receipt);
+    __testOnlyResetGoalListCache();
+    state = getAssignmentKernelSnapshotV2(goal.id)!;
+    const epoch = buildProgressEpochV2({ before, after: state, stated_gap_ids: deriveProgressGapsV2(before).map(gap => gap.gap_id), recorded_at: "2026-08-26T16:01:00.000Z" });
+    assert.equal(epoch.genuine_progress, true, route);
+    if (route.endsWith("views")) assert.deepEqual(epoch.new_fact_identities, []);
+    assert.ok(Object.values(state.observations).every(obs => obs.evidence_class === "control" && obs.eligible_criterion_ids?.length === 0));
+    state = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.notEqual(state.outcome, "complete");
+  }
+  assert.equal(Object.values(state.operations).filter(op => op.requested_effect === "apply").length, 0);
+}));
 
 function nativePdfReceipt(phase: "apply" | "preview" = "apply"): NativeArtifactReceiptV1 {
   return { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase,

@@ -1252,3 +1252,36 @@ test("top evaluation shares unresolved-verifier state and later snapshots supers
   after.assignment_version = 1;
   assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), true, "equal-version disagreement remains conservative");
 });
+
+test("no-progress discovery stop is planning failure, not an invented authorization denial", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase, { attempts: [], actionRows: [], assistant: "Blocked before changing the model." });
+  delete (trace.tool_results as JsonRecord).raw_sidecar_response;
+  const snapshot = { schema: "revit-operator.assignment-snapshot/v2", assignment_version: 1,
+    current_binding: { assignment_id: "discovery" }, operations: {},
+    terminal: true, quiescent: true, outcome: "blocked", progress_blocker: { code: "no_progress_budget_exhausted" } };
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: [{ assignment_snapshot_v2: snapshot }] };
+  const build = () => buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase,
+    trace, rawTraceRef: "trace.json", judgedAt: FINISH });
+  const stopped = build();
+  const causes = [stopped.primary_failure_cause, ...stopped.contributing_failure_causes];
+  assert.ok(causes.includes("planning_tool_selection_failure"));
+  assert.ok(!causes.includes("authorization_control_failure"));
+  assert.match(stopped.stages.find(stage => stage.stage === "plan_admissible")!.reason, /no_progress_budget_exhausted/);
+  const later = { ...snapshot, assignment_version: 2, outcome: "complete", progress_blocker: null };
+  const history = [{ assignment_snapshot_v2: snapshot }, { assignment_snapshot_v2: later }];
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: history };
+  for (const ordered of [history, [...history].reverse()]) {
+    (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: ordered };
+    assert.doesNotMatch(build().stages.find(stage => stage.stage === "plan_admissible")!.reason, /no_progress_budget_exhausted/);
+  }
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: [{ assignment_snapshot_v2: snapshot }] };
+  const evaluation = (trace.verification_results as JsonRecord).evaluation as GeneralRevitEvaluation;
+  evaluation.completed = true;
+  evaluation.expected_path_observed = true;
+  assert.equal(build().stages.find(stage => stage.stage === "plan_admissible")!.status, "pass", "delivered work must not acquire a planning failure from an unrelated budget stop");
+  const deniedTrace = traceFor(testCase, { attempts: [canonicalAttempt({ admission: { state: "rejected" } })] });
+  const denied = buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase,
+    trace: deniedTrace, rawTraceRef: "trace.json", judgedAt: FINISH });
+  assert.ok([denied.primary_failure_cause, ...denied.contributing_failure_causes].includes("authorization_control_failure"));
+});

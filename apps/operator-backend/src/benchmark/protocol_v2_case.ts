@@ -1,4 +1,4 @@
-import { hasUnresolvedTrustedVerificationFailureV2 } from "./trusted_verification_state.js";
+import { hasUnresolvedTrustedVerificationFailureV2, latestTrustedKernelSnapshotsV2 } from "./trusted_verification_state.js";
 import {
   evaluateGeneralRevitCapabilityAttempt,
   type GeneralRevitCapabilityCase,
@@ -263,6 +263,8 @@ function stagesFor(
     : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis));
   const admissionRejected = canonicalAttempts(trace).some(({ attempt }) => String(record(attempt.admission).state) === "rejected");
   const substantiveError = String(record(trace.errors_retries_recoveries).error || "").trim();
+  const discoveryBudgetExhausted = !evaluation.completed && latestTrustedKernelSnapshotsV2(trace.tool_results).some(snapshot =>
+    record(snapshot.progress_blocker).code === "no_progress_budget_exhausted");
   const semanticStatus: BenchmarkStageStatusV2 = evaluation.answer_assertion_passed === false ? "fail"
     : evaluation.answer_assertion_passed === true || evaluation.verified ? "pass" : "uncertain";
   return [
@@ -271,8 +273,10 @@ function stagesFor(
       refusal ? "Agent rejected an in-scope capability." : "Intent assessment follows the retained execution/evaluator trace."),
     stage("target_grounded", missingTarget ? "uncertain" : expectedObserved || truth.target_identities.length > 0 ? "pass" : "uncertain",
       missingTarget ? "Exact target remained ambiguous." : "Target grounding is bound to expected paths or canonical target identities."),
-    stage("plan_admissible", admissionRejected ? "fail" : expectedObserved ? "pass" : "uncertain",
-      admissionRejected ? "Canonical admission rejected the proposed action." : "Expected execution lane was selected without a retained schema rejection."),
+    stage("plan_admissible", admissionRejected || discoveryBudgetExhausted ? "fail" : expectedObserved ? "pass" : "uncertain",
+      admissionRejected ? "Canonical admission rejected the proposed action." : discoveryBudgetExhausted
+        ? "Canonical controller stopped with no_progress_budget_exhausted before completing the requested work."
+        : "Expected execution lane was selected without a retained schema rejection."),
     stage("authorization_admission_satisfied", admissionRejected ? "fail" : truth.dispatched || truth.requested_effect === "read" ? "pass" : "uncertain",
       admissionRejected ? "Authorization or admission was not satisfied." : "Dispatch/admission evidence determines this stage."),
     stage("preview_correct_where_required", previewRequired ? (evaluation.completed ? "pass" : truth.dispatched ? "fail" : "uncertain") : "not_applicable",
@@ -304,7 +308,7 @@ function failureCauses(
   if (failed.has("intent_understood")) out.push("intent_misunderstanding");
   if (failed.has("target_grounded")) out.push("target_grounding_failure");
   if (failed.has("plan_admissible")) out.push("planning_tool_selection_failure");
-  if (failed.has("authorization_admission_satisfied")) out.push("authorization_control_failure");
+  if (stages.some(entry => entry.stage === "authorization_admission_satisfied" && entry.status === "fail")) out.push("authorization_control_failure");
   if (/schema/i.test(JSON.stringify(record(trace.errors_retries_recoveries)))) out.push("schema_admission_failure");
   if (failed.has("action_dispatched")) out.push("dispatch_transaction_failure");
   if (truth.effect_state === "unknown") out.push("unknown_effect_reconciliation_failure");

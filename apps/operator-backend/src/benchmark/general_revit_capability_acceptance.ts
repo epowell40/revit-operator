@@ -6,6 +6,7 @@ import { canonicalAssignmentLifecycleTruth } from "./canonical_assignment_truth.
 import { assignmentKernelAcceptanceTruthV2 } from "./assignment_kernel_v2_acceptance.js";
 import { validateGeneralRevitAcceptanceReviewCase, type GeneralRevitAcceptanceCriteria } from "./general_revit_acceptance_review.js";
 import { validateGeneralRevitFixturePrecondition } from "./general_revit_fixture_preconditions.js";
+import { requestedViewArtifactEvidence } from "./view_artifact_evidence.js";
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
   "not_run", "accepted", "planned", "previewed", "completed", "verified", "refused", "failed"
@@ -920,6 +921,8 @@ function verificationBasis(
   durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }, canonicalV2Verified = false
 ): GeneralRevitVerificationBasis {
   if (!completed) return "none";
+  const viewArtifact = requestedViewArtifactEvidence(testCase, attempt);
+  if (viewArtifact !== null) return viewArtifact ? "artifact_evidence" : "none";
   if (testCase.answer_assertions && answerAssertionPassed === true) return "fixture_semantic_oracle";
   if (teammate.verified) return "target_bound_model_state";
   if (nestedEvidenceMatches(attempt, (key, child) =>

@@ -9,7 +9,7 @@ import {
   OPERATION_V2_SCHEMA,
   AssignmentJournalV2,
   assertOperationAdvancesProgressV2,
-  buildProgressEpochV2,
+  buildProgressEpochV2 as buildKernelProgressEpochV2,
   decideAssignmentProgressV2,
   type AssignmentBindingV2,
   type AssignmentEventV2,
@@ -22,6 +22,8 @@ import {
 } from "../src/domain/assignment-kernel/index.js";
 import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
+import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment-kernel/semantic_admissibility.js";
+import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -1011,4 +1013,81 @@ test("unknown effect blocks truthfully when bounded reconciliation is exhausted"
   const decision = decideAssignmentProgressV2({ snapshot, budget, now: "2026-08-26T20:00:10.000Z" });
   assert.equal(decision.decision, "blocked");
   if (decision.decision === "blocked") assert.equal(decision.reason, "reconciliation_budget_exhausted");
+});
+
+function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: string, path: string, body: unknown = null) {
+  const op: OperationV2 = { ...operation(id), capability_id: `native:GET:${path}`, purpose: "discovery",
+    fulfillment_role: "supporting_control", delegation_authority_id: undefined, advances_criterion_ids: [], eligible_criterion_ids: [],
+    input: { method: "GET", path, body }, dispatch_state: "dispatched", settlement_state: "settled",
+    observation_ids: [`obs-${id}`], result: result(id) };
+  const obs: ObservationV2 = { ...observation(id, `obs-${id}`), capability_id: op.capability_id,
+    fulfillment_role: "supporting_control", evidence_class: "control", eligible_criterion_ids: [],
+    facts: [{ fact_id: "control.result_available", fact_class: "control", value: true },
+      { fact_id: "control.domain_succeeded", fact_class: "control", value: true },
+      { fact_id: "control.native_call_count", fact_class: "control", value: 1 },
+      { fact_id: "control.payload_hash", fact_class: "control", value: `hash-${id}` }] };
+  return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
+}
+
+test("b09 registry then evidence reads then native views discovery adds progress once without fulfilling the edit", () => {
+  const initial = journal().snapshot();
+  initial.spec = { ...initial.spec, requested_effect: "apply" };
+  const registry = discoveryStep(initial, "registry", "/revit/tool-registry");
+  // Both evidence retrievals in the retained b09 precede the typed list wrapper.
+  // Evidence-store results cannot lend native authority to later reads.
+  const evidence = discoveryStep(registry, "evidence", "/revit/tool-registry");
+  evidence.observations["obs-evidence"] = { ...evidence.observations["obs-evidence"]!, authority: "operator-evidence-store" };
+  const evidenceRepeat = discoveryStep(evidence, "evidence-repeat", "/revit/tool-registry");
+  evidenceRepeat.observations["obs-evidence-repeat"] = { ...evidenceRepeat.observations["obs-evidence-repeat"]!, authority: "operator-evidence-store" };
+  const after = discoveryStep(evidenceRepeat, "views", "/revit/views");
+  after.operations.wrapper = { ...operation("wrapper"), purpose: "discovery", fulfillment_role: "supporting_control", capability_id: "revit_list_views" };
+  after.operations.views = { ...after.operations.views!, resolves_gap_ids: [], parent_operation_id: "wrapper" };
+  const input = { before: evidenceRepeat, after, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:10.000Z" };
+  const epoch = buildProgressEpochV2(input);
+  assert.equal(buildKernelProgressEpochV2(input).genuine_progress, false, "kernel cannot infer tool semantics without host-derived identities");
+  assert.deepEqual(epoch.new_fact_identities, []);
+  assert.deepEqual(epoch.progress_reasons, ["controller_knowledge_added"]);
+  assert.equal(epoch.genuine_progress, true);
+  assert.equal(observationAdmissibilityForCriterionV2({ snapshot: after, criterion: after.spec.criteria[0]!, observation: after.observations["obs-views"]! }).admissible, false);
+  assert.deepEqual(after.criteria, initial.criteria);
+  assert.deepEqual(buildProgressEpochV2(JSON.parse(JSON.stringify(input))), epoch, "restart re-derives the same progress without a replayed read");
+  const repeated = discoveryStep(after, "views-repeat", "/revit/views");
+  repeated.operations["views-repeat"]!.input = { path: "/revit/views", method: "POST", requireKnownPath: false,
+    body: { limit: 200, maxBytes: 9999, timestamp: "later", requestId: "new" } };
+  assert.equal(buildProgressEpochV2({ ...input, before: after, after: repeated }).genuine_progress, false);
+  const forged = { ...input, before: after, after: repeated,
+    supporting_discovery_read_identities: { before: {}, after: { "views-repeat": "provider-invented-new-identity" } } };
+  assert.equal(buildProgressEpochV2(forged).genuine_progress, false, "host adapter replaces externally supplied identity maps");
+  const resumed = structuredClone(after);
+  resumed.current_binding = { ...resumed.current_binding, generation: 2 };
+  const reread = discoveryStep(resumed, "views-resumed", "/revit/views");
+  reread.operations["views-resumed"]!.binding = resumed.current_binding;
+  reread.operations["views-resumed"]!.result!.binding = resumed.current_binding;
+  reread.observations["obs-views-resumed"]!.binding = resumed.current_binding;
+  assert.equal(buildProgressEpochV2({ ...input, before: resumed, after: reread }).genuine_progress, false,
+    "generation changes must not forget successful historical discovery identities");
+});
+
+test("supporting discovery counts changed selectors but rejects unbound, failed, stale, or nonnative observations", () => {
+  const initial = journal().snapshot();
+  const before = discoveryStep(initial, "filtered", "/revit/views", { action: "list", levelNames: ["Level 2"], semanticGroups: ["hvac"] });
+  const after = discoveryStep(before, "broader", "/revit/views", { action: "list", semanticGroups: ["hvac"] });
+  const compare = (candidate: typeof after) => buildProgressEpochV2({ before, after: candidate,
+    stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:10.000Z" });
+  assert.equal(compare(after).genuine_progress, true);
+  for (const variant of ["failed", "not_dispatched", "missing_result", "unlinked", "nonnative", "stale", "no_gap", "domain_failed", "oversized_selector"]) {
+    const bad = structuredClone(after), op = bad.operations.broader!, obs = bad.observations["obs-broader"]!;
+    if (variant === "failed") op.result = { ...op.result!, status: "failed_after_dispatch" };
+    if (variant === "not_dispatched") op.dispatch_state = "not_dispatched";
+    if (variant === "missing_result") op.result = undefined;
+    if (variant === "unlinked") op.observation_ids = [];
+    if (variant === "nonnative") obs.authority = "operator-mcp-transport";
+    if (variant === "stale") obs.binding = { ...obs.binding, generation: 0 };
+    if (variant === "no_gap") op.resolves_gap_ids = [];
+    if (variant === "domain_failed") obs.facts = obs.facts.map(f => f.fact_id === "control.domain_succeeded" ? { ...f, value: false } : f);
+    if (variant === "oversized_selector") op.input = { path: "/revit/views", body: { viewIds: Array(257).fill(9948) } };
+    assert.equal(compare(bad).genuine_progress, false, variant);
+  }
+  const reordered = discoveryStep(after, "reordered", "/revit/views", { semanticGroups: ["hvac"], action: "list", limit: 1 });
+  assert.equal(buildProgressEpochV2({ before: after, after: reordered, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:11.000Z" }).genuine_progress, false);
 });

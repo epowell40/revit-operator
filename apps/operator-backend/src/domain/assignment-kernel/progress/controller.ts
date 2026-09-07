@@ -3,6 +3,7 @@ import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
+import { sameAssignmentBindingV2 } from "../identity.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../outcome.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
 import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
@@ -445,12 +446,39 @@ function introducesExecutionStrategySelectionV2(input: Readonly<{
   });
 }
 
+function supportingDiscoveryReadIdentityV2(snapshot: AssignmentSnapshotV2, observationId: string, identities: Readonly<Record<string, string>> = {}): string | null {
+  const observation = snapshot.observations[observationId];
+  const operation = observation && snapshot.operations[observation.operation_id];
+  if (!observation || !operation || observation.evidence_class !== "control"
+    || observation.fulfillment_role !== "supporting_control"
+    || !["native-host", "dynamic-runtime"].includes(observation.authority)
+    || !sameAssignmentBindingV2(observation.binding, operation.binding)
+    || operation.binding.assignment_id !== snapshot.current_binding.assignment_id
+    || operation.binding.principal_id !== snapshot.current_binding.principal_id
+    || operation.binding.document_fingerprint !== snapshot.current_binding.document_fingerprint
+    || operation.requested_effect !== "read" || operation.purpose !== "discovery"
+    || operation.fulfillment_role !== "supporting_control" || operation.admission_state !== "admitted"
+    || operation.settlement_state !== "settled" || operation.dispatch_state !== "dispatched"
+    || operation.persistent_effect !== "none" || observation.capability_id !== operation.capability_id
+    || operation.result?.status !== "succeeded" || operation.result.dispatch_state !== "dispatched"
+    || operation.result.operation_id !== operation.operation_id
+    || operation.result.persistent_effect !== "none"
+    || !sameAssignmentBindingV2(operation.result.binding, operation.binding)
+    || !operation.observation_ids.includes(observationId)
+    || !observation.raw_payload_hash || operation.result.raw_payload_hash !== observation.raw_payload_hash
+    || !observation.facts.some(fact => fact.fact_id === "control.domain_succeeded" && fact.value === true)) return null;
+  // Host adapters supply semantic request identity; kernel owns evidence admission.
+  const identity = identities[operation.operation_id];
+  return typeof identity === "string" && identity.length > 0 && identity.length <= 100_000 ? identity : null;
+}
+
 export function buildProgressEpochV2(input: Readonly<{
   before: AssignmentSnapshotV2;
   after: AssignmentSnapshotV2;
   stated_gap_ids: readonly string[];
   admitted_reasoning_call_ids?: readonly string[];
   admitted_operation_ids?: readonly string[];
+  supporting_discovery_read_identities?: Readonly<{ before: Readonly<Record<string, string>>; after: Readonly<Record<string, string>> }>;
   recorded_at: string;
 }>): ProgressEpochV2 {
   const beforeFacts = new Set(Object.values(input.before.observations).flatMap((observation) => observation.facts.map(semanticFactIdentityV2)));
@@ -459,6 +487,27 @@ export function buildProgressEpochV2(input: Readonly<{
     input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
     .filter(({ identity }) => !beforeFacts.has(identity));
   const newFacts = unique(newFactRecords.map(({ identity }) => identity));
+  const previousDiscoveryReads = new Set(Object.keys(input.before.observations)
+    .map(id => supportingDiscoveryReadIdentityV2(input.before, id, input.supporting_discovery_read_identities?.before)).filter(identity => identity !== null));
+  const addsSupportingDiscovery = newObservations.some(id => {
+    let operation: OperationV2 | undefined = input.after.operations[input.after.observations[id]!.operation_id];
+    const seen = new Set<string>();
+    let resolvesCurrentGap = false;
+    // Typed read wrappers delegate native children without copying gap IDs.
+    // Follow only the admitted, same-binding discovery ancestry, never an
+    // arbitrary parent ID supplied outside the canonical operation graph.
+    while (operation && seen.size < 8 && !seen.has(operation.operation_id)) {
+      seen.add(operation.operation_id);
+      if (operation.admission_state !== "admitted" || operation.requested_effect !== "read"
+        || operation.purpose !== "discovery" || operation.fulfillment_role !== "supporting_control"
+        || !sameAssignmentBindingV2(operation.binding, input.after.current_binding)) break;
+      if (operation.resolves_gap_ids.some(gap => input.stated_gap_ids.includes(gap))) { resolvesCurrentGap = true; break; }
+      operation = operation.parent_operation_id ? input.after.operations[operation.parent_operation_id] : undefined;
+    }
+    if (!resolvesCurrentGap) return false;
+    const identity = supportingDiscoveryReadIdentityV2(input.after, id, input.supporting_discovery_read_identities?.after);
+    return identity !== null && !previousDiscoveryReads.has(identity);
+  });
   // Generic read facts deliberately do not encode every returned parameter.
   // A distinct authoritative read can therefore add needed answer data without
   // changing task.result_available. Count each admitted read shape once, never
@@ -489,7 +538,7 @@ export function buildProgressEpochV2(input: Readonly<{
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
   if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
-  if (newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
+  if (addsSupportingDiscovery || newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
   if (addsDeliveryRead || newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");

@@ -4,7 +4,7 @@ const row = (value: unknown): Row => value && typeof value === "object" && !Arra
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
 
 /** Same owner for top-level evaluation and ProtocolV2 stages; never infer verification from a commit alone. */
-export function hasUnresolvedTrustedVerificationFailureV2(toolResults: unknown): boolean {
+export function latestTrustedKernelSnapshotsV2(toolResults: unknown): Row[] {
   const snapshots = kernelPublicationsV2(toolResults).map(publication => row(publication.snapshot));
   const newest = new Map<string, number>();
   for (const snapshot of snapshots) {
@@ -12,8 +12,11 @@ export function hasUnresolvedTrustedVerificationFailureV2(toolResults: unknown):
     const version = Number(snapshot.assignment_version || 0);
     newest.set(id, Math.max(newest.get(id) ?? -1, version));
   }
-  return snapshots.filter(snapshot => Number(snapshot.assignment_version || 0) === newest.get(String(row(snapshot.current_binding).assignment_id || "")))
-    .some(snapshot => {
+  return snapshots.filter(snapshot => Number(snapshot.assignment_version || 0) === newest.get(String(row(snapshot.current_binding).assignment_id || "")));
+}
+
+export function hasUnresolvedTrustedVerificationFailureV2(toolResults: unknown): boolean {
+  return latestTrustedKernelSnapshotsV2(toolResults).some(snapshot => {
       const operations = Object.values(row(snapshot.operations)).map(row);
       return operations.some(failed => {
         const subjectId = String(failed.verification_of_operation_id || "");

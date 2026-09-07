@@ -1,7 +1,7 @@
+import { buildHostProgressEpochV2 } from "./supporting_discovery_progress.js";
 import { createHash } from "node:crypto";
 import {
   buildAssignmentEfficiencyTraceV2,
-  buildProgressEpochV2,
   canonicalJsonV2,
   criteriaPendingEvaluationV2,
   decideAssignmentProgressV2,
@@ -156,7 +156,7 @@ export function recordAssignmentProgressEpochV2(input: Readonly<{
   recorded_at?: string;
 }>): AssignmentSnapshotV2 {
   const recordedAt = input.recorded_at ?? new Date().toISOString();
-  const epoch = buildProgressEpochV2({ ...input, recorded_at: recordedAt });
+  const epoch = buildHostProgressEpochV2({ ...input, recorded_at: recordedAt });
   return appendCurrentAssignmentKernelEventV2({
     goal_id: input.after.current_binding.assignment_id,
     binding: input.after.current_binding,

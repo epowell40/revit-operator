@@ -75,7 +75,8 @@
     "general_revit_instruction_preflight.test.ts",
     "benchmark_protocol_v2_instruction_evidence.test.ts",
     "instruction_binding_http.test.ts",
-    "general_revit_request.test.ts"
+    "general_revit_request.test.ts",
+    "view_artifact_evidence.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -953,6 +954,28 @@
       "coverage": [
         "backend:benchmark_protocol_v2.test.ts",
         "backend:postcondition_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "useful-native-discovery-counts-once-without-fulfilling-edit",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "no-progress-stop-is-not-authorization-denial",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "visual-artifact-verification-requires-requested-view",
+      "coverage": [
+        "backend:general_revit_capability_acceptance.test.ts",
+        "backend:general_revit_acceptance_review.test.ts",
+        "backend:view_artifact_evidence.test.ts"
       ]
     }
   ]
