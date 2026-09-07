@@ -58,7 +58,8 @@
     "verification_capability_admission_v2.test.ts",
     "verified_work_packet.test.ts",
     "general_revit_fixture_preconditions.test.ts",
-    "codex_turn_model_telemetry.test.ts"
+    "codex_turn_model_telemetry.test.ts",
+    "codex_brain_spatial_guidance.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -100,9 +101,39 @@
     "OperatorProjectCloseFocusTests",
     "OperatorWriteGrantRenewalTests",
     "OperatorWriteGrantAdmissionTests",
-    "RevitTextCasePolicyTests"
+    "RevitTextCasePolicyTests",
+    "OperatorJsonWireSchemaTests"
   ],
   "failure_families": [
+    {
+      "id": "json-action-wire-schema-reflected-as-clr-valuekind",
+      "coverage": [
+        "dotnet:OperatorJsonWireSchemaTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "bundled-sheet-examples-disagree-with-native-request-fields",
+      "coverage": [
+        "dotnet:OperatorDuplicateSheetContractTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "drafting-summary-omits-requested-scale-after-confirmed-commit",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "graphical-active-view-does-not-prove-drawing-keyboard-focus",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
     {
       "id": "sheet-creation-readback-native-name-policy-and-parameter-vocabulary",
       "coverage": [

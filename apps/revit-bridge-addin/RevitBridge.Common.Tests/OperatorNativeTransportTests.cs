@@ -652,6 +652,13 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("OperatorProjectCloseFocus.PrepareAndPost(", handler, StringComparison.Ordinal);
             Assert.Contains("uiDocument.ActiveGraphicalView", handler, StringComparison.Ordinal);
             Assert.Contains("uiDocument.ActiveView = graphicalView", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView)", handler, StringComparison.Ordinal);
+            var focus = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorGraphicalViewFocus.cs"));
+            Assert.Contains("document.GetOpenUIViews()", focus, StringComparison.Ordinal);
+            Assert.Contains("view.ViewId == graphicalView.Id", focus, StringComparison.Ordinal);
+            Assert.Contains("processId != GetCurrentProcessId() || threadId != GetCurrentThreadId()", focus, StringComparison.Ordinal);
+            Assert.Contains("var focused = GetFocus()", focus, StringComparison.Ordinal);
+            Assert.DoesNotContain("SetForegroundWindow(", focus, StringComparison.Ordinal);
             Assert.Contains("messageContains = \"save changes\"", handler, StringComparison.Ordinal);
             Assert.Contains("button = \"no\"", handler, StringComparison.Ordinal);
             Assert.Contains("verificationRequired = true", handler, StringComparison.Ordinal);

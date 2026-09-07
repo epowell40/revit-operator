@@ -8800,20 +8800,24 @@
       "path": "/revit/duplicate-sheet",
       "examples": [
         {
-          "name": "Preview a sheet duplicate with detailing",
+          "name": "Inspect a sheet-copy plan without changing the model",
           "request": {
             "sourceSheetNumber": "M000",
             "option": "views_and_detailing",
-            "newSheetNumber": "M000-COPY",
-            "newSheetName": "Cover Sheet Copy",
+            "newNumber": "M000-COPY",
+            "newName": "Cover Sheet Copy",
             "dryRun": true
           },
           "expected_response_shape": {
-            "status": "Preview",
-            "sourceSheetId": 1420963,
-            "sourceSheetNumber": "M000",
-            "requestedOption": "views_and_detailing",
-            "dryRun": true
+            "ok": true,
+            "dryRun": true,
+            "plan": {
+              "sourceSheetNumber": "M000",
+              "option": "views_and_detailing",
+              "newNumber": "M000-COPY",
+              "newName": "COVER SHEET COPY"
+            },
+            "transaction": { "status": "not_started" }
           }
         },
         {
@@ -8821,16 +8825,20 @@
           "request": {
             "sourceSheetNumber": "M000",
             "option": "views_and_detailing",
-            "newSheetNumber": "M000-COPY",
-            "newSheetName": "Cover Sheet Copy",
-            "dryRun": false
+            "newNumber": "M000-COPY",
+            "newName": "Cover Sheet Copy",
+            "dryRun": false,
+            "verify": true
           },
           "expected_response_shape": {
-            "status": "Success",
-            "sourceSheetId": 1420963,
-            "createdSheetId": 1544000,
-            "sheetNumber": "M000-COPY",
-            "sheetName": "Cover Sheet Copy",
+            "success": true,
+            "applied": true,
+            "transaction": { "status": "committed", "committed": true },
+            "sheet": {
+              "id": 1544000,
+              "number": "M000-COPY",
+              "name": "COVER SHEET COPY"
+            },
             "verified": true
           }
         }

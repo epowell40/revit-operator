@@ -1362,6 +1362,33 @@ test("sheet and view creation bind verification to native-created identities wit
   });
 });
 
+test("drafting scale verification preserves the committed edit and requires complete target-bound summary", () => {
+  const replay = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
+  for (const variant of ["retained", "repaired", "wrong_scale", "wrong_id"]) workspace(() => {
+    const { snapshot } = setup("apply");
+    const create = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "drafting-create", provider_turn_id: "create",
+      capability_id: "revit_call_tool", classified_effect: "apply", arguments: replay.apply });
+    markAssignmentKernelOperationDispatchStartedV2(create);
+    const receipt = envelope(create.operation_id, create.binding,
+      { created: true, viewId: 1542917, name: "OPERATOR HANDOFF CHECK", scale: 100, viewType: "DraftingView" }, "applied");
+    receipt.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542917"];
+    settleAssignmentKernelOperationV2(create, receipt);
+    const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "drafting-summary", provider_turn_id: "read",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1542917"],
+      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1542917] } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const payload = structuredClone(variant === "retained" ? replay.retained_read : replay.repaired_read);
+    if (variant === "wrong_scale") payload.result[0].viewScale = 50;
+    if (variant === "wrong_id") payload.result[0].id = 9999;
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, payload)).snapshot;
+    assert.equal(settled.operations[create.operation_id]!.result?.persistent_effect, "applied");
+    assert.equal(Object.values(settled.operations).filter(op => op.requested_effect === "apply").length, 1);
+    assert.equal(Object.values(settled.observations).filter(observation => observation.operation_id === read.operation_id)
+      .some(observation => observation.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), variant === "repaired");
+  });
+});
+
 test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {
   const { goal, snapshot } = setup();
   const first = openAssignmentKernelOperationV2({

@@ -1740,6 +1740,7 @@ namespace RevitBridge.Operator
 
             private static object SchemaFromType(Type t, int depth)
             {
+                if (OperatorJsonWireSchema.TryCreate(t, out var jsonSchema)) return jsonSchema!;
                 if (depth > 4) return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
 
                 if (t == typeof(string)) return Str();

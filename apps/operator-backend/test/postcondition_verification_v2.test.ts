@@ -16,6 +16,18 @@ const applyText = (newText: string) => ({
   body: { elementId: 1478627, newText, apply: true }
 });
 
+test("drafting summary must read the requested scale instead of only confirming creation identity", () => {
+  const replay = JSON.parse(readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
+  assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, replay.retained_read), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, replay.repaired_read), true);
+  for (const scale of [null, 50]) {
+    const wrong = structuredClone(replay.repaired_read);
+    wrong.result[0].viewScale = scale;
+    wrong.request = replay.apply.body;
+    assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, wrong), false);
+  }
+});
+
 test("sheet creation verifies actual native name policy and sheet parameter vocabulary", () => {
   for (const path of ["/revit/duplicate-sheet", "/revit/create-sheet"]) {
     const input = { path, body: path === "/revit/duplicate-sheet"

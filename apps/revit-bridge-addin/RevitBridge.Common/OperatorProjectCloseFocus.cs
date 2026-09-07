@@ -9,12 +9,12 @@ namespace RevitBridge.Common
         {
             if (restoreGraphicalView == null) throw new ArgumentNullException(nameof(restoreGraphicalView));
             if (postClose == null) throw new ArgumentNullException(nameof(postClose));
-            var restore = string.Equals(activeViewType, "ProjectBrowser", StringComparison.Ordinal)
-                || string.Equals(activeViewType, "SystemBrowser", StringComparison.Ordinal);
+            // ActiveView can still report DrawingSheet/FloorPlan while keyboard
+            // focus remains in Project Browser. It is not a focus receipt.
             // A failed restoration must not arm a discard guard or post a close command.
-            if (restore) restoreGraphicalView();
+            restoreGraphicalView();
             postClose();
-            return restore;
+            return true;
         }
     }
 }

@@ -22,20 +22,22 @@ namespace RevitBridge.Common.Tests
         [InlineData("DrawingSheet")]
         [InlineData("Schedule")]
         [InlineData("ThreeD")]
-        public void OrdinaryViewsKeepTheirFocusAndPostExactlyOnce(string viewType)
+        public void GraphicalActiveViewDoesNotProveKeyboardFocusAndMustRestoreBeforePosting(string viewType)
         {
-            var posts = 0;
-            Assert.False(OperatorProjectCloseFocus.PrepareAndPost(viewType,
-                () => throw new Exception("An ordinary view must not be changed."), () => posts++));
-            Assert.Equal(1, posts);
+            var calls = new List<string>();
+            Assert.True(OperatorProjectCloseFocus.PrepareAndPost(viewType,
+                () => calls.Add("restore"), () => calls.Add("post")));
+            Assert.Equal(new[] { "restore", "post" }, calls);
         }
 
-        [Fact]
-        public void MissingOrUnavailableGraphicalViewCannotFallThroughToClose()
+        [Theory]
+        [InlineData("ProjectBrowser")]
+        [InlineData("DrawingSheet")]
+        public void MissingOrUnavailableGraphicalViewCannotFallThroughToClose(string viewType)
         {
             var posted = false;
             Assert.Throws<InvalidOperationException>(() => OperatorProjectCloseFocus.PrepareAndPost(
-                "ProjectBrowser", () => throw new InvalidOperationException("No graphical view is available."),
+                viewType, () => throw new InvalidOperationException("No graphical view is available."),
                 () => posted = true));
             Assert.False(posted);
         }

@@ -49,10 +49,12 @@ replace the canonical assignment ledger with a generated summary.
 - `codex_thread_lifecycle.ts` persists and resumes a session's thread. A loaded
   thread is reused rather than recreated for every continuation. Missing threads
   are recorded explicitly before replacement.
-- `codex_brain.ts` separates base instructions, reference guidance and per-turn
-  inputs. Its environment summary is appended to the base instructions. Audit
+- `codex_brain.ts` keeps changing environment summaries in per-turn input rather
+  than duplicating them in base instructions. A regression changes recorded
+  environment failures and verifies the base prefix remains identical. Audit
   changing reference-library content and tool ordering before assuming prefix
-  stability across restarts or different tasks.
+  stability across restarts or different tasks. Installed cache improvement
+  still needs measurement; a source-level stability check is not a savings claim.
 - `evidence/model_context_budget.ts` bounds projections to 8 KiB per item and
   32 KiB per request by default. Full evidence remains stored with focused
   retrieval. These byte limits are not the Codex context-compaction threshold.
@@ -86,3 +88,8 @@ Before Astra's full run, inspect the exact runtime-visible skills and instructio
 bundle, verify actual model selection on a small case, and retain that bundle's
 hash. Documentation review does not establish model access, live compatibility,
 cost savings, or readiness of the complete benchmark.
+
+The workstation's read-only `model/list` check on Codex CLI 0.149.0 on
+2026-09-07 listed Sol/medium and Luna/max but did not list Astra. Resolve
+supported runtime availability before a paid Astra turn. Do not enable an
+unreviewed compatibility override or treat model documentation as access proof.

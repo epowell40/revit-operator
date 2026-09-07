@@ -9,6 +9,25 @@ import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
+test("drafting summary readback preserves native scale without inventing it for historical payloads", async () => {
+  const replay = JSON.parse(readFileSync(new URL("../../../operator-backend/test/fixtures/drafting-view-summary-readback.json", import.meta.url), "utf8"));
+  for (const payload of [replay.retained_read, replay.repaired_read]) {
+    const body = { elementIds: [1542917] };
+    const decorated = await runWithAssignmentKernelV2(meta("read", "verification", { method: "POST", path: "/revit/get-element-summary", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/get-element-summary", body, { classified_effect: "read" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/get-element-summary", {
+        ...payload,
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "drafting-summary-read",
+          requested_effect: "read", effect_state: "none", effect_authority: "native_host", request_dispatched: true }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
+    assert.deepEqual(decorated.structuredContent.observation.raw_payload, payload);
+  }
+});
+
 function pdfArtifactReceipt(phase: "apply" | "preview" = "apply") {
   return { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase,
     status: phase === "apply" ? "complete" : "not_started", expected_output_paths: ["C:/fixture/M000.pdf"], expected_export_calls: 1,

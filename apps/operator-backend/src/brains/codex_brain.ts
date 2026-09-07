@@ -176,12 +176,9 @@ function codexTurnTimeoutMs(): number {
 }
 
 export function getOperatorAgentBaseInstructions(): string {
-  let environmentSummary = "";
-  try {
-    environmentSummary = formatEnvironmentSummaryForPrompt();
-  } catch {
-    environmentSummary = "";
-  }
+  // Changing machine state belongs in the turn input below. Including it here
+  // duplicates that context and invalidates the reusable instruction prefix
+  // when a persistent thread resumes after an environment update.
   // Keep this short: Codex will also read local files/skills under the Workspace root.
   return [
     "You are Revit Operator.",
@@ -241,8 +238,7 @@ export function getOperatorAgentBaseInstructions(): string {
     "If you need to locate visible annotation text by phrase in the active project or sheet, use `revit_call_tool` for `/revit/find-text-notes` before falling back to broader element scans.",
     "Static titleblock text (TextNotes) matching: do not trust exact string matching. If a contains query returns 0, broaden the search (shorter tokens), list candidates, and choose by meaning. Handle line breaks/punctuation automatically.",
     "When a tool call fails, include the exact error text returned by the tool (verbatim) so it's debuggable; don't replace it with a generic connection message.",
-    "Do not try to modify the repo checkout. You may write only under the per-user Workspace root.",
-    environmentSummary
+    "Do not try to modify the repo checkout. You may write only under the per-user Workspace root."
   ].join("\n");
 }
 

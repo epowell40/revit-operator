@@ -22,6 +22,40 @@ test("sheet duplication uses the native published schema to reject the live inva
   }
 });
 
+test("bundled sheet-copy examples pass the same native contract enforced before MCP dispatch", () => {
+  const schema = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  const entries = Array.isArray(catalog) ? catalog : catalog.tools;
+  const sheet = entries.find((entry: any) => entry.path === "/revit/duplicate-sheet");
+  assert.ok(sheet?.examples.length >= 2);
+  const contract = { method: "POST", path: sheet.path, request_schema: schema };
+  for (const example of sheet.examples) {
+    assert.equal(preflightKnownGenericToolBody(contract, example.request), null, example.name);
+  }
+  const stale = preflightKnownGenericToolBody(contract, { sourceSheetNumber: "M000", newSheetNumber: "M000-COPY", newSheetName: "Cover Sheet Copy" });
+  assert.equal(stale?.request_dispatched, false);
+  assert.ok(stale?.invalid_fields?.includes("body.newSheetNumber"));
+});
+
+test("JSON-valued transaction actions use their wire schema while typed outer fields remain strict", () => {
+  for (const route of ["/revit/transaction-plan", "/revit/transaction-apply"]) {
+    const contract = { method: "POST", path: route, request_schema: {
+      type: "object", properties: { actions: { type: "array", items: {} } }, additionalProperties: false
+    } };
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: [
+      { kind: "setViewScale", viewId: 1542917, scale: 100 },
+      { kind: "setParameters", changes: [{ elementId: 1542917, parameterName: "Comments", value: "Coordination" }] }
+    ] }), null);
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: "not an array" })?.request_dispatched, false);
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: [], inventedOuterField: true })?.request_dispatched, false);
+    // The old reflected CLR property bag rejected valid native action JSON.
+    const stale = { ...contract, request_schema: { ...contract.request_schema, properties: {
+      actions: { type: "array", items: { type: "object", properties: { ValueKind: { type: "integer" } }, additionalProperties: false } }
+    } } };
+    assert.equal(preflightKnownGenericToolBody(stale, { actions: [{ kind: "setViewScale", viewId: 1542917, scale: 100 }] })?.request_dispatched, false);
+  }
+});
+
 test("known generic tools reject missing required fields before dispatch with retry-safe truth", () => {
   const failure = preflightKnownGenericToolBody({
     method: "POST",

@@ -106,6 +106,11 @@ namespace RevitBridge.Logic.Handlers
                     fullClassName = elem.GetType().FullName,
                     category = elem.Category?.Name,
                     name = elem.Name,
+                    // Read properties from the requested element, not the
+                    // optional view used to evaluate its bounding box. Creation
+                    // verification needs the actual scale as well as identity.
+                    viewType = elem is View summaryView ? summaryView.ViewType.ToString() : null,
+                    viewScale = elem is View scaledView ? (int?)scaledView.Scale : null,
                     boundingBox = bboxObj,
                     location = locationObj,
                     viewIdUsed = viewForBbox != null ? (long?)RevitBridge.Common.ElementIdCompat.GetValue(viewForBbox.Id) : null

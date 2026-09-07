@@ -64,6 +64,7 @@ namespace RevitBridge.Handlers
                     var graphicalView = uiDocument.ActiveGraphicalView
                         ?? throw new InvalidOperationException("No graphical view is available to close the active project.");
                     uiDocument.ActiveView = graphicalView;
+                    OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView);
                 },
                 () =>
                 {
