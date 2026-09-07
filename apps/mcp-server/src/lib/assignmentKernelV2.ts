@@ -700,7 +700,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   }
   const nativeTransactionState = artifactEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
     : persistentEffect === "unknown" ? "unknown"
-      : confirmedNativeRollback || (call.lease.requested_effect === "preview" && !transportFailed && dispatched)
+      : confirmedNativeRollback
         ? "rolled_back" : "not_applicable";
   const provenance = transportFailed ? undefined : call.payload_provenance;
   if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
@@ -723,7 +723,9 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const resultSemanticReason = previewEvidence && !previewEvidence.admitted
     ? previewEvidence.recognized ? "preview_result_contract_invalid" : "preview_semantic_adapter_missing"
     : null;
-  const resultFailed = failed || resultSemanticReason !== null;
+  const previewAuthorityMissing = call.lease.requested_effect === "preview" && dispatched
+    && !transportFailed && !confirmedNativeRollback && artifactEffect === null;
+  const resultFailed = failed || resultSemanticReason !== null || previewAuthorityMissing;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
     result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed: resultFailed, result_semantic_reason: resultSemanticReason })}`,
@@ -760,6 +762,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     ...(transportFailed ? { error_code: "native_operation_failed" }
       : domainFailed ? { error_code: nativeDomainFailureCode(call.observation_payload) }
         : resultSemanticReason ? { error_code: resultSemanticReason }
+          : previewAuthorityMissing ? { error_code: "native_preview_execution_unproven" }
           : {})
   };
 }

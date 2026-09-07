@@ -9,6 +9,26 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorNativeTransactionExecutionTests
     {
+        [Theory]
+        [InlineData("Committed", "applied")]
+        [InlineData("RolledBack", "none")]
+        public void WrapperMatchedInventoryFlowsThroughTransactionSettlement(string status, string effect)
+        {
+            var document = new string(new[] { 'o', 'p', 'e', 'n' });
+            var inventory = new OperatorNativeChangeInventory(document);
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () =>
+                {
+                    inventory.Observe(() => new string(document.ToCharArray()),
+                        () => new long[] { 1542917 }, () => new long[] { 9946 }, () => new long[] { 70 });
+                    return status;
+                }, () => "RolledBack", () => status, () => new Dictionary<string, object?>(), inventory.CommittedReceipt);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/create-view");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(status == "Committed", settlement.AffectedTargetIdentities.Contains("element_id:9946"));
+            Assert.Equal(status == "Committed", settlement.AffectedTargetIdentities.Contains("element_id:70"));
+            Assert.Equal(1, inventory.DistinctWrapperMatchCount);
+        }
+
         [Fact]
         public void HistoricalSheetDuplicateBooleanSuccessCannotEstablishCommit()
         {

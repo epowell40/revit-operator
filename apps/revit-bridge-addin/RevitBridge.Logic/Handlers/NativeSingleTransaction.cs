@@ -15,18 +15,14 @@ namespace RevitBridge.Logic.Handlers
             Func<ISet<long>, Dictionary<string, object?>> mutate,
             Func<IEnumerable<long>>? nativeModifiedElements = null)
         {
-            var added = new HashSet<long>();
-            var modified = new HashSet<long>();
-            var deleted = new HashSet<long>();
+            var inventory = new OperatorNativeChangeInventory(doc);
             var nativeCreated = new HashSet<long>();
-            var documentChangedObserved = false;
             void Changed(object sender, DocumentChangedEventArgs args)
             {
-                if (!ReferenceEquals(args.GetDocument(), doc)) return;
-                added.UnionWith(args.GetAddedElementIds().Select(ElementIdCompat.GetValue));
-                modified.UnionWith(args.GetModifiedElementIds().Select(ElementIdCompat.GetValue));
-                deleted.UnionWith(args.GetDeletedElementIds().Select(ElementIdCompat.GetValue));
-                documentChangedObserved = true;
+                inventory.Observe(() => args.GetDocument(),
+                    () => args.GetAddedElementIds().Select(ElementIdCompat.GetValue),
+                    () => args.GetModifiedElementIds().Select(ElementIdCompat.GetValue),
+                    () => args.GetDeletedElementIds().Select(ElementIdCompat.GetValue));
             }
             using (var tx = new Transaction(doc, name))
             {
@@ -36,14 +32,9 @@ namespace RevitBridge.Logic.Handlers
                     var result = OperatorNativeTransactionExecution.Execute(
                         () => tx.Start().ToString(), () => tx.Commit().ToString(),
                         () => tx.RollBack().ToString(), () => tx.GetStatus().ToString(), () => mutate(nativeCreated),
-                        () => OperatorNativeTransactionReceipt.CommittedChanges(added, modified, deleted),
+                        inventory.CommittedReceipt,
                         () => nativeCreated, nativeModifiedElements);
-                    result["changeTracking"] = new
-                    {
-                        documentChangedObserved,
-                        // Known created IDs do not claim an exhaustive modified/deleted inventory.
-                        exhaustiveChangeInventory = documentChangedObserved
-                    };
+                    result["changeTracking"] = inventory.Diagnostics();
                     return result;
                 }
                 finally { app.Application.DocumentChanged -= Changed; }

@@ -118,7 +118,10 @@ namespace RevitBridge.Handlers
                     status = "Dry Run",
                     dryRun = true,
                     action,
-                    plan
+                    plan,
+                    // BuildPlan performs discovery only, not a rollback trial of view creation.
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                    previewExecuted = false
                 });
             }
 

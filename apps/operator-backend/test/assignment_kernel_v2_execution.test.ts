@@ -245,6 +245,26 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
   };
 }
 
+test("plan-only preview settles without invented rollback and permits the authorized apply", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  const args = { method: "POST", path: "/revit/create-view", body: { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName: "L2", dryRun: true } };
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "plan-only", provider_turn_id: "turn-plan",
+    capability_id: "revit_call_tool", classified_effect: "preview", arguments: args });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const result = envelope(lease.operation_id, lease.binding, { status: "Dry Run", previewExecuted: false, plan: { name: args.body.name } });
+  Object.assign(result.structuredContent.operation_result_v2, { status: "failed_after_dispatch", error_code: "native_preview_execution_unproven",
+    result_schema_id: "operator-native/POST:/revit/create-view/v2" });
+  result.structuredContent.observation.semantic_facts = [];
+  settleAssignmentKernelOperationV2(lease, result);
+  __testOnlyResetGoalListCache();
+  const retained = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(retained.operations[lease.operation_id]!.result!.native_transaction_state, "not_applicable");
+  assert.equal(retained.operations[lease.operation_id]!.persistent_effect, "none");
+  assert.notEqual(retained.outcome, "complete");
+  assert.doesNotThrow(() => openAssignmentKernelOperationV2({ snapshot: retained, controller_request_id: "real-edit", provider_turn_id: "turn-edit",
+    capability_id: "revit_call_tool", classified_effect: "apply", arguments: { ...args, body: { ...args.body, dryRun: false } } }));
+}));
+
 test("V2 operation identity survives admission, MCP acceptance, native result, evidence, and restart", () => workspace(() => {
   const { goal, snapshot } = setup();
   const lease = openAssignmentKernelOperationV2({

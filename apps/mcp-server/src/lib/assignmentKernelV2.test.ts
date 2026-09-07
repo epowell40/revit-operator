@@ -496,6 +496,32 @@ test("drafting view legacy success stays unknown while committed identity surviv
   }
 });
 
+test("plan-only view response cannot manufacture native rollback or preview completion", async () => {
+  for (const [effect, authority, reason, state] of [
+    ["none", "native_transaction", "native_transaction_not_started", "not_applicable"],
+    ["unknown", "native_host", "native_handler_returned_without_authoritative_settlement", "unknown"],
+    ["none", "native_receipt", "no_effect_reported", "not_applicable"]
+  ] as const) {
+    const body = { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName: "Level 2", dryRun: true };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: "/revit/create-view", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-view", body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-view", {
+        status: "Dry Run", dryRun: true, plan: { name: body.name }, previewExecuted: false,
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "view-plan-only",
+          requested_effect: "preview", effect_state: effect, effect_authority: authority, effect_reason: reason, request_dispatched: true }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.native_transaction_state, state);
+    assert.equal(result.persistent_effect, effect);
+    assert.equal(result.error_code, "native_preview_execution_unproven");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid" && f.value === true), false);
+  }
+});
+
 test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
   const body = {
     elementId: 1421361,
@@ -535,7 +561,7 @@ test("Candidate 39 explicit native domain failure is retained without becoming t
   assert.equal(result.status, "failed_after_dispatch");
   assert.equal(result.dispatch_state, "dispatched");
   assert.equal(result.persistent_effect, "none");
-  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(result.native_transaction_state, "not_applicable");
   assert.equal(result.observation_required, true);
   assert.equal(result.error_code, "expected_old_text_mismatch");
   assert.ok(facts.some((fact: any) => fact.fact_id === "control.domain_succeeded" && fact.value === false));
@@ -572,7 +598,8 @@ test("Candidate 48 shared classification lets an authoritative native preview cl
           attempt_id: "successful-preview-attempt",
           requested_effect: "preview",
           effect_state: "none",
-          effect_authority: "native_receipt",
+          effect_authority: "native_rollback",
+          effect_reason: "verified_native_rollback",
           request_dispatched: true
         }
       }, request);
@@ -632,7 +659,8 @@ test("Candidate 56 rolled-back preview without native proposal proof cannot sati
           attempt_id: "candidate56-preview-attempt",
           requested_effect: "preview",
           effect_state: "none",
-          effect_authority: "native_receipt",
+          effect_authority: "native_rollback",
+          effect_reason: "verified_native_rollback",
           request_dispatched: true
         }
       }, request);
@@ -688,7 +716,8 @@ test("text-note preview admits only an explicit native proposal matching the adm
           attempt_id: "proposal-bound-preview-attempt",
           requested_effect: "preview",
           effect_state: "none",
-          effect_authority: "native_receipt",
+          effect_authority: "native_rollback",
+          effect_reason: "verified_native_rollback",
           request_dispatched: true
         }
       }, request);

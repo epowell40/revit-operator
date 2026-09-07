@@ -107,7 +107,8 @@
     "OperatorJsonWireSchemaTests",
     "OperatorRequestPropertyPresenceTests",
     "OperatorConditionalRequestContractsTests",
-    "OperatorLevelLookupDiagnosticTests"
+    "OperatorLevelLookupDiagnosticTests",
+    "OperatorNativeChangeInventoryTests"
   ],
   "failure_families": [
     {
@@ -786,6 +787,22 @@
         "backend:provider_turn_usage.test.ts",
         "backend:codex_turn_model_telemetry.test.ts",
         "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "native-change-event-wrapper-identity-and-incomplete-inventory",
+      "coverage": [
+        "dotnet:OperatorNativeChangeInventoryTests",
+        "dotnet:OperatorNativeTransactionExecutionTests"
+      ]
+    },
+    {
+      "id": "plan-only-preview-must-not-fabricate-rollback-or-completion",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:codex_brain_spatial_guidance.test.ts"
       ]
     }
   ]

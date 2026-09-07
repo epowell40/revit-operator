@@ -141,6 +141,21 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ViewPlanWithoutTransactionIsNotACompletedRollbackPreview()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true, previewExecuted = false,
+                plan = new { action = "create_floor_plan", name = "M-LEVEL 2 COORDINATION" },
+                transaction = OperatorNativeTransactionReceipt.NotStarted()
+            }, "preview", "POST", "/revit/create-view");
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            Assert.Equal("native_transaction_not_started", settlement.EffectReason);
+            Assert.Empty(settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
         public void GenericParameterApplyCommitIsAuthoritativeApplied()
         {
             var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
