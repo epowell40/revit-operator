@@ -7,6 +7,8 @@ import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-
 import { GeneralRevitExportIsolation } from "../src/benchmark/general_revit_export_isolation.js";
 import { finishGeneralRevitCampaignCase, generalRevitCampaignCompletion, retainedGeneralRevitCampaignStop } from "../src/benchmark/general_revit_campaign_completion.js";
 import { markdownReport } from "../src/benchmark/general_revit_capability_report.js";
+import { createProviderUsageLedgerV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
+import { assertGeneralRevitCaseMeasurement, finishGeneralRevitCampaignExports, initializeGeneralRevitCampaignExports } from "../src/benchmark/general_revit_campaign_completion.js";
 
 function trace(unknown: string[]) {
   return { case_id: "b03_create_view", context_supplied: { session_id: "session" },
@@ -64,4 +66,76 @@ test("historical stopped checkpoints cannot acquire completion through evidence-
   assert.equal(generalRevitCampaignCompletion([recorded.case_id], [recorded], stop).complete, false);
   assert.deepEqual(retainedGeneralRevitCampaignStop({ ...checkpoint, suite_context: { campaign_stop: stop } }), stop);
   assert.equal(retainedGeneralRevitCampaignStop(null), null);
+});
+
+const requested = { agent_model: "gpt-5.6-sol", agent_reasoning_effort: "medium" };
+test("initialization failure retains its recovery reason and never opens a benchmark case", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-init-stop-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const retained = path.join(root, "existing");
+  fs.mkdirSync(retained);
+  fs.writeFileSync(path.join(retained, "keep.txt"), "retained evidence");
+  const state = initializeGeneralRevitCampaignExports(() => new GeneralRevitExportIsolation(root, retained));
+  assert.equal(state.isolation, null);
+  assert.ok(state.stop);
+  const completion = generalRevitCampaignCompletion(["b03_create_view"], [], state.stop);
+  assert.equal(completion.complete, false);
+  assert.match(markdownReport({ campaign_completion: completion, task_traces: [] }), /Incomplete campaign/);
+  assert.equal(fs.readFileSync(path.join(retained, "keep.txt"), "utf8"), "retained evidence");
+});
+function measuredTrace(noInvocation = false) {
+  const receipts = noInvocation ? [] : [{ schema: "revit-operator.model-call-receipt.v1", call_id: "resp-1",
+    turn_id: "turn", provider: "openai", route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium",
+    success: false, tokens: { input_tokens: 100, cached_input_tokens: 60, cache_write_input_tokens: 0,
+      output_tokens: 20, reasoning_output_tokens: 10, total_tokens: 120 } }];
+  const ledger = createProviderUsageLedgerV1();
+  ledger.begin("session", "message");
+  ledger.observe("session", "message", { provider_turn_usage: {
+    schema: "revit-operator.provider-turn-usage/v1", session_id: "session", message_id: "message",
+    thread_id: noInvocation ? null : "thread", turn_id: noInvocation ? null : "turn",
+    disposition: noInvocation ? "not_started" : "failed", raw_response_ids: noInvocation ? [] : ["resp-1"]
+  } });
+  return { ...trace([]), model_call_receipts: receipts, provider_usage_turns: [ledger.snapshot(receipts)] };
+}
+
+test("settled task failures are measurable, but lost receipts and model drift stop before the next case", () => {
+  const valid = measuredTrace();
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(valid, requested));
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(measuredTrace(true), requested));
+  const missing = { ...valid, provider_usage_turns: [] };
+  let archived = false;
+  const stop = finishGeneralRevitCampaignCase(missing, { finish: () => { archived = true; } } as never, requested);
+  assert.match(stop!.reason, /provider_coverage_incomplete/);
+  assert.equal(archived, false);
+  assert.equal(generalRevitCampaignCompletion([valid.case_id, "b04_duplicate_view"], [missing], stop).complete, false);
+  const drift = structuredClone(valid);
+  drift.model_call_receipts[0]!.model = "gpt-5.6-luna";
+  assert.throws(() => assertGeneralRevitCaseMeasurement(drift, requested), /configuration_mismatch/);
+  const incompleteCost = structuredClone(valid);
+  delete (incompleteCost.model_call_receipts[0]!.tokens as Record<string, unknown>).cached_input_tokens;
+  assert.throws(() => assertGeneralRevitCaseMeasurement(incompleteCost, requested), /cost_incomplete/);
+  assert.equal(valid.model_call_receipts[0]!.tokens.total_tokens, 120);
+});
+
+test("final export restore failure persists to a reloadable checkpoint and incomplete report", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-final-checkpoint-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const checkpointPath = path.join(root, "checkpoint.json");
+  const context = { export_isolation: {} };
+  const recorded = measuredTrace();
+  const persist = () => fs.writeFileSync(checkpointPath, JSON.stringify({ suite_context: context, task_traces: [recorded] }));
+  const stop = finishGeneralRevitCampaignExports({ restore: () => { throw new Error("export_isolation_originals_changed"); } }, null, context, persist);
+  const restored = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
+  assert.deepEqual(retainedGeneralRevitCampaignStop(restored), stop);
+  assert.equal(restored.suite_context.export_isolation.originals_restored, undefined);
+  const completion = generalRevitCampaignCompletion([recorded.case_id], [recorded], retainedGeneralRevitCampaignStop(restored));
+  assert.equal(completion.complete, false);
+  assert.match(markdownReport({ campaign_completion: completion, task_traces: [recorded] }), /Incomplete campaign/);
+  let restoreCalls = 0;
+  finishGeneralRevitCampaignExports({ restore: () => { restoreCalls++; } }, stop, context, persist);
+  assert.equal(restoreCalls, 0);
+  finishGeneralRevitCampaignExports({ restore: () => { restoreCalls++; } }, null, context, persist);
+  const success = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
+  assert.equal(success.suite_context.export_isolation.originals_restored, true);
+  assert.equal(success.suite_context.campaign_stop, null);
 });

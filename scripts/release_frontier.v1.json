@@ -64,7 +64,9 @@
     "provider_turn_usage.test.ts",
     "general_revit_campaign_completion.test.ts",
     "general_revit_capability_report.test.ts",
-    "general_revit_capability_acceptance.test.ts"
+    "general_revit_capability_acceptance.test.ts",
+    "general_revit_campaign_memory.test.ts",
+    "revit_tool_contract_memory.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -822,6 +824,28 @@
         "backend:general_revit_campaign_completion.test.ts",
         "backend:general_revit_export_isolation.test.ts",
         "backend:general_revit_capability_report.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-stops-before-next-case-on-provider-coverage-or-configuration-gap",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-final-cleanup-and-initialization-stop-survives-checkpoint-reload",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_export_isolation.test.ts",
+        "backend:general_revit_capability_report.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-effective-contract-memory-empty-start-and-checkpoint-binding",
+      "coverage": [
+        "backend:general_revit_campaign_memory.test.ts",
+        "backend:revit_tool_contract_memory.test.ts"
       ]
     }
   ]

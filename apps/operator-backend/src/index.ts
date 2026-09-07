@@ -1,4 +1,5 @@
 import http from "node:http";
+import { getRevitToolContractMemoryAttestation } from "./codex/revit_tool_contract_memory.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
@@ -3962,6 +3963,7 @@ const server = http.createServer(async (req, res) => {
         revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
         sidecar_agent_profile: getSidecarAgentProfileState(),
         assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(assignmentKernelV2Enabled()),
+        tool_contract_memory: getRevitToolContractMemoryAttestation(),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,

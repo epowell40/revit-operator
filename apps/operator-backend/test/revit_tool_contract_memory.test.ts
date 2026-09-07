@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   classifyRevitToolFailure,
+  getRevitToolContractMemoryAttestation,
   filterQuarantinedToolSearchResult,
   findActiveToolQuarantine,
   formatRevitToolContractMemoryForPrompt,
@@ -25,6 +26,23 @@ function withStore<T>(fn: (root: string) => T): T {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("memory runtime attestation does not mistake a missing or fallback store for a fresh campaign", { concurrency: false }, () => {
+  withStore(root => {
+    const target = path.join(root, "memory.json");
+    const empty = { version: "revit-operator.tool-contract-memory.v1", pending_failures: [], failure_receipts: [], corrections: [], quarantines: [] };
+    assert.equal(getRevitToolContractMemoryAttestation().initial_empty, false);
+    fs.writeFileSync(target, JSON.stringify(empty));
+    assert.equal(getRevitToolContractMemoryAttestation().initial_empty, true);
+    fs.copyFileSync(target, `${target}.bak`);
+    assert.equal(getRevitToolContractMemoryAttestation().initial_empty, false);
+    fs.writeFileSync(target, "{");
+    const fallback = getRevitToolContractMemoryAttestation();
+    assert.equal(fallback.effective_source, "backup");
+    assert.equal(fallback.initial_empty, false);
+    assert.deepEqual(readRevitToolContractStoreForTests(), empty);
+  });
+});
 
 test("contract memory persists a compact failed-then-successful correction", { concurrency: false }, () => {
   withStore(() => {

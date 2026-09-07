@@ -22,6 +22,7 @@ import {
   speedSettingsForRequestedConfig
 } from "../src/benchmark/general_revit_model_telemetry.js";
 import { createCodexRawModelCallReceipt } from "../src/model_call_telemetry.js";
+import { assertGeneralRevitCaseMeasurement } from "../src/benchmark/general_revit_campaign_completion.js";
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -120,6 +121,8 @@ test("model comparison coverage fails closed when any delegated case lacks recei
     thread_id: "thread-a", turn_id: "turn-a", disposition: "completed", raw_response_ids: ["resp_1"]
   } });
   const covered = { case_id: "covered", model_call_receipts: [exactReceipt], provider_usage_turns: [ledger.snapshot([exactReceipt])] };
+  const requested = { agent_model: "gpt-5.6-luna", agent_reasoning_effort: "max" };
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(covered, requested));
   assert.deepEqual(modelTelemetryCaseCoverage([covered]), {
     schema: "revit-operator.model-telemetry-case-coverage.v1",
     expected_case_count: 1,
@@ -136,6 +139,7 @@ test("model comparison coverage fails closed when any delegated case lacks recei
   assert.equal(partial.complete, false);
   assert.deepEqual(partial.missing_case_ids, ["timed_out"]);
   const lostFollowup = { ...covered, provider_usage_turns: [...covered.provider_usage_turns, null] };
+  assert.throws(() => assertGeneralRevitCaseMeasurement(lostFollowup, requested), /provider_coverage_incomplete/);
   assert.equal(modelTelemetryCaseCoverage([lostFollowup]).complete, false);
   const incompleteCost = aggregateCoveredModelCallReceipts([exactReceipt], [lostFollowup]);
   assert.equal(incompleteCost.cost_usd, null);

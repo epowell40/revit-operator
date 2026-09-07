@@ -1,7 +1,14 @@
 import { assertGeneralRevitCaseSettled, type GeneralRevitExportIsolation } from "./general_revit_export_isolation.js";
+import { aggregateModelCallReceipts, modelCallReceiptsFromTraces, providerUsageCoverageFromTrace,
+  requestedVsObservedComputerAgent, type RequestedComputerAgentConfig } from "./general_revit_model_telemetry.js";
 
 type RecordValue = Record<string, unknown>;
 export type GeneralRevitCampaignStop = { case_id: string | null; reason: string; recovery_required: true };
+
+export function initializeGeneralRevitCampaignExports(create: (() => GeneralRevitExportIsolation) | null) {
+  try { return { isolation: create?.() ?? null, stop: null as GeneralRevitCampaignStop | null }; }
+  catch (error) { return { isolation: null, stop: { case_id: null, reason: String(error), recovery_required: true } as GeneralRevitCampaignStop }; }
+}
 
 export function retainedGeneralRevitCampaignStop(checkpoint: RecordValue | null): GeneralRevitCampaignStop | null {
   const context = checkpoint?.suite_context as RecordValue | undefined;
@@ -23,15 +30,45 @@ export function generalRevitSuiteTiming(startedAt: string, invocationStartedMs: 
 }
 
 /** Stop before another fixture is opened; retain the trace and live artifacts for review. */
-export function finishGeneralRevitCampaignCase(trace: RecordValue, isolation: GeneralRevitExportIsolation | null): GeneralRevitCampaignStop | null {
+export function finishGeneralRevitCampaignCase(trace: RecordValue, isolation: GeneralRevitExportIsolation | null,
+  requested?: RequestedComputerAgentConfig | null): GeneralRevitCampaignStop | null {
   try {
     assertGeneralRevitCaseSettled(trace);
+    if (requested) assertGeneralRevitCaseMeasurement(trace, requested);
     if (isolation) trace.export_artifacts = isolation.finish(String(trace.case_id), true);
     return null;
   } catch (error) {
     trace.export_isolation_error = String(error);
     return { case_id: String(trace.case_id), reason: String(error), recovery_required: true };
   }
+}
+
+/** A measurable task failure is a valid score; missing usage or model drift invalidates the comparison. */
+export function assertGeneralRevitCaseMeasurement(trace: RecordValue, requested: RequestedComputerAgentConfig): void {
+  const coverage = providerUsageCoverageFromTrace(trace);
+  if (!coverage.complete) throw new Error(`benchmark_case_provider_coverage_incomplete:${trace.case_id}`);
+  if (coverage.no_provider_invocation) return;
+  const telemetry = aggregateModelCallReceipts(modelCallReceiptsFromTraces([trace]));
+  if (requestedVsObservedComputerAgent(requested, telemetry).comparable_configuration !== true)
+    throw new Error(`benchmark_case_provider_configuration_mismatch:${trace.case_id}`);
+  if (telemetry.cost_status !== "estimated_from_exact_provider_tokens")
+    throw new Error(`benchmark_case_provider_cost_incomplete:${trace.case_id}`);
+}
+
+/** Always checkpoint the final cleanup disposition, including a failed restore. */
+export function finishGeneralRevitCampaignExports(isolation: Pick<GeneralRevitExportIsolation, "restore"> | null,
+  stop: GeneralRevitCampaignStop | null, context: RecordValue, persist: () => void): GeneralRevitCampaignStop | null {
+  if (isolation && !stop) {
+    try {
+      isolation.restore();
+      (context.export_isolation as RecordValue).originals_restored = true;
+    } catch (error) {
+      stop = { case_id: null, reason: String(error), recovery_required: true };
+    }
+  }
+  context.campaign_stop = stop;
+  persist();
+  return stop;
 }
 
 export function generalRevitCampaignCompletion(selected: string[], traces: RecordValue[], stop: GeneralRevitCampaignStop | null) {

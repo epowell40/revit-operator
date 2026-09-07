@@ -21,9 +21,10 @@ import { aggregateModelCallReceipts, aggregateCoveredModelCallReceipts, deduplic
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
-import { finishGeneralRevitCampaignCase, generalRevitCampaignCompletion, generalRevitSuiteTiming, retainedGeneralRevitCampaignStop, type GeneralRevitCampaignStop } from "../benchmark/general_revit_campaign_completion.js";
+import { finishGeneralRevitCampaignCase, finishGeneralRevitCampaignExports, initializeGeneralRevitCampaignExports, generalRevitCampaignCompletion, generalRevitSuiteTiming, retainedGeneralRevitCampaignStop, type GeneralRevitCampaignStop } from "../benchmark/general_revit_campaign_completion.js";
 import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
+import { assertGeneralRevitCampaignMemoryStart, observeGeneralRevitCampaignMemory } from "../benchmark/general_revit_campaign_memory.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
@@ -931,6 +932,9 @@ async function main(): Promise<void> {
       requestJson(sidecar, "/api/backend/health", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
+  const campaignMemory = rescoreOnly ? priorSuiteContext.tool_contract_memory_current : protocolDraft
+    ? assertGeneralRevitCampaignMemoryStart(backendHealth, protocolDraft.feature_flags,
+      priorSuiteContext.tool_contract_memory_current, resumedCheckpoint !== null) : null;
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
   const assignmentKernelRuntime = rescoreOnly
     ? (Object.keys(asRecord(priorSuiteContext.assignment_kernel_runtime)).length > 0
@@ -959,6 +963,8 @@ async function main(): Promise<void> {
     sidecar,
     execution_surface: executionSurface(),
     runtime_profile: runtimeProfile,
+    tool_contract_memory_initial: priorSuiteContext.tool_contract_memory_initial ?? campaignMemory,
+    tool_contract_memory_current: campaignMemory,
     assignment_kernel_runtime: assignmentKernelRuntime,
     write_grant: safeGrant(grant),
     computer_agent: {
@@ -1062,18 +1068,25 @@ async function main(): Promise<void> {
   const fixtureRoot = generalRevitProtocolFixtureRootV2(protocolInputs, flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
   const suiteTimingSnapshot = (finishedAt: string | null = null): JsonRecord => generalRevitSuiteTiming(
     suiteStartedAt, invocationStartedMs, priorActiveWallClockMs, resumedCheckpoint !== null, finishedAt);
+  const persistCheckpoint = () => writeJsonFile(checkpointOutput, {
+    schema: "revit-operator.general-revit-capability-checkpoint/v1", run_id: runId, suite,
+    updated_at: nowIso(), suite_timing: suiteTimingSnapshot(), suite_context: suiteContext,
+    selected_case_ids: [...selectedIds], completed_case_ids: traces.map(trace => trace.case_id), task_traces: traces
+  });
   if (isolateExports && !rescoreOnly && (resumedCheckpoint || !protocolDraft || !resolvedOutputDir || !isolateCases
       || !(orchestrateFixtures || requestedFixture) || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(sidecar).hostname))) {
     throw new Error("Export isolation requires a fresh local protocol campaign with isolated fixtures and an output directory; interrupted exports must be recovered before a new run.");
   }
-  const exportIsolation = isolateExports && !rescoreOnly ? new GeneralRevitExportIsolation(
-    String(asRecord(backendHealth.backend).workspace_root || ""), path.join(path.dirname(output), "export-isolation")) : null;
+  const { isolation: exportIsolation, stop: initializationStop } = initializeGeneralRevitCampaignExports(isolateExports && !rescoreOnly
+    ? () => new GeneralRevitExportIsolation(String(asRecord(backendHealth.backend).workspace_root || ""), path.join(path.dirname(output), "export-isolation")) : null);
   if (exportIsolation) suiteContext.export_isolation = { enabled: true, root: exportIsolation.root, retained: exportIsolation.retained,
     policy: "empty default native export directories per case; retain outputs after quiescence and restore originals after the campaign",
     limits: "Custom destinations outside the recorded folders require independent starting-state review." };
-  let campaignStop: GeneralRevitCampaignStop | null = retainedStop ?? null;
-  for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
+  let campaignStop: GeneralRevitCampaignStop | null = retainedStop ?? initializationStop;
+  for (const testCase of rescoreOnly || campaignStop ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
     try {
+    if (protocolDraft) assertGeneralRevitCampaignMemoryStart(await requestJson(sidecar, "/api/backend/health", {}, 30_000),
+      protocolDraft.feature_flags, suiteContext.tool_contract_memory_current, true);
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
     for (const fixture of protocolDraft?.fixture_adapter.fixtures || []) assertGeneralRevitFixtureBytes(fixtureRoot, fixtureConfig.fixtures[fixture.identity].sample_filename, fixture.rvt_sha256);
     if ((orchestrateFixtures || requestedFixture) && (isolateCases || preferredFixture !== activeFixtureKey)) {
@@ -1110,34 +1123,20 @@ async function main(): Promise<void> {
       benchmarkInteractionCaseV1(interactionManifest, testCase.case_id),
       directVariant
     ));
+    if (protocolDraft) suiteContext.tool_contract_memory_current = observeGeneralRevitCampaignMemory(
+      await requestJson(sidecar, "/api/backend/health", {}, 30_000), protocolDraft.feature_flags);
     if (protocolDraft || exportIsolation) {
-      campaignStop = finishGeneralRevitCampaignCase(traces[traces.length - 1]!, exportIsolation);
+      campaignStop = finishGeneralRevitCampaignCase(traces[traces.length - 1]!, exportIsolation,
+        requestedSpeedSettings ? requestedComputerAgent : null);
     }
     } catch (error) {
       campaignStop = { case_id: testCase.case_id, reason: String(error), recovery_required: true };
     }
     (suiteContext as JsonRecord).campaign_stop = campaignStop;
-    writeJsonFile(checkpointOutput, {
-      schema: "revit-operator.general-revit-capability-checkpoint/v1",
-      run_id: runId,
-      suite,
-      updated_at: nowIso(),
-      suite_timing: suiteTimingSnapshot(),
-      suite_context: suiteContext,
-      selected_case_ids: [...selectedIds],
-      completed_case_ids: traces.map((trace) => trace.case_id),
-      task_traces: traces
-    });
+    persistCheckpoint();
     if (campaignStop) break;
   }
-  if (exportIsolation && !campaignStop) {
-    try {
-      exportIsolation.restore();
-      asRecord(suiteContext.export_isolation).originals_restored = true;
-    } catch (error) {
-      campaignStop = { case_id: null, reason: String(error), recovery_required: true };
-    }
-  }
+  if (!rescoreOnly) campaignStop = finishGeneralRevitCampaignExports(exportIsolation, campaignStop, suiteContext, persistCheckpoint);
   (suiteContext as JsonRecord).campaign_stop = campaignStop;
   const campaignCompletion = generalRevitCampaignCompletion([...selectedIds], traces, campaignStop);
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
