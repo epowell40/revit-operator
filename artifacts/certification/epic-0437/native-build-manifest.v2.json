@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:fd22fbed4fe7ee64de42d1040bd194382a6efbfe9e47ab50e6c000e4efbcd82d",
-  "source_inputs_hash": "sha256:6d909e4a603589fd39a977d7bcfa36c2aa2634b4e96c9028c04ebf92bd1c4175",
+  "policy_hash": "sha256:be3678514f25aba3c70dbb2aa92d52d69dabb5b517289cc4172b779b4570199c",
+  "source_inputs_hash": "sha256:92f4274b7d5dbdd0ff61c9a518067e357a47c06b4c34fe440f2d198defad8d2a",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -830,6 +830,10 @@
       "sha256": "sha256:2a10ad5644122ffc992a1786a69cdc988ec8fcd8ba5b889f1de96efb356371ef"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/general_revit_instruction_preflight.ts",
+      "sha256": "sha256:8782f5ef13509c73b786e5e7c41bac7c7f23bfae6e4d8cfb52bb38cb40b82bbe"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/general_revit_interaction_acceptance.ts",
       "sha256": "sha256:30ee04c6a9b7265aa21e0fc014a80ae3da13544311a4273f16cde01f055cee6d"
     },
@@ -844,6 +848,10 @@
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_qualification_preflight.ts",
       "sha256": "sha256:2abb98da6c04454973cd2c372c8599a971b06db0a87305d2b6c737dbe4f97963"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/general_revit_request.ts",
+      "sha256": "sha256:98e62b3b372aa002845fc06bfebf84e1f53b87fe4c2ffc6ffad68e9c2d104a6f"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -891,11 +899,15 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_hash.ts",
-      "sha256": "sha256:125c801ebc12be2cb7bf909b77d9cab70f6b73cea6640aab6c7e1e01b34f7b83"
+      "sha256": "sha256:e38e8c9eec1a4b0b1276aaeeb14435f4c41eef3de237893d45cbe302425b070d"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_holdout.ts",
       "sha256": "sha256:be207363270bd0e8b5f9572adb6e59751bb7e5789223420167fcecd2de03de87"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_instruction_evidence.ts",
+      "sha256": "sha256:2b94af555101d217580bccf4011dbc0b0e9b05a1d5acf42ea31514c9de060cca"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_interaction.ts",
@@ -919,7 +931,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:3d1d47ab7ce4ad54a746df552a0a8e2899600cbc49b4a6be94176ef64cfaeebc"
+      "sha256": "sha256:1ea0b7889a5f9cffbfd772fc4c7593ad7cf1d003fc9cd2e6b9f31160f83dddc4"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -1063,7 +1075,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:57649469333a8f845ee7da46fabdbef409fe94901b40195d17f18012c925e11e"
+      "sha256": "sha256:348a8033a80dcf04415191c0516172aced8717a3731e3a0b8a8b24124757089b"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1079,7 +1091,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_thread_lifecycle.ts",
-      "sha256": "sha256:73b57acd0d10f1ab4235ec4619fa7edcd6733245e34cac444da62b13bf3a95a2"
+      "sha256": "sha256:a4430b8c26f88f8c7c72e19c28bec766e1a9c79cdf99faf6a173e9951ad72e7d"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_tool_observation.ts",
@@ -1142,6 +1154,10 @@
       "sha256": "sha256:f1c5e0f830770477e1377a7573ac7daa8b699bdefac872ae5c572a5b1e86ddda"
     },
     {
+      "path": "apps/operator-backend/src/canonical_json_hash.ts",
+      "sha256": "sha256:5e3d122b19d2a62fb044456ce531b062385cf1a4d30a9fe3dc48f7303293ff21"
+    },
+    {
       "path": "apps/operator-backend/src/capabilities/certified_request_family_admission.ts",
       "sha256": "sha256:296e893de59a56c18c0a737ce0871f591a6eeef05526eedfebb19b4ae568d43c"
     },
@@ -1192,7 +1208,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/app_server.ts",
-      "sha256": "sha256:8d6261f72aee2183cac68f9cd2372edf789f63a60372d9848df63b82a559d4c0"
+      "sha256": "sha256:07b84475e7125b70c4a657e4ae15e9ee7afef86754f878b9c75f884d01ada37e"
     },
     {
       "path": "apps/operator-backend/src/codex/app_server_compatibility.ts",
@@ -1201,6 +1217,10 @@
     {
       "path": "apps/operator-backend/src/codex/assignment_kernel_v2_lease.ts",
       "sha256": "sha256:144301596a151b755052a15986e0b88b0d5d32d64dacd6f38b77b7c0ec411e1c"
+    },
+    {
+      "path": "apps/operator-backend/src/codex/benchmark_instruction_runtime.ts",
+      "sha256": "sha256:3c79d2e4568e5038198a941121d354e536643e5086b3e241ba1dadbb96d70d91"
     },
     {
       "path": "apps/operator-backend/src/codex/certified_mcp_status.ts",
@@ -1641,6 +1661,14 @@
     {
       "path": "apps/operator-backend/src/codex/generated_protocol_snapshot.ts",
       "sha256": "sha256:a50729aa567cf8d0e58b65e9ceb7367f8cafcdbb591bb8b10b111437b7b678c5"
+    },
+    {
+      "path": "apps/operator-backend/src/codex/instruction_binding.ts",
+      "sha256": "sha256:b58bdd5895097fd73e4644a365815edf1bf89f5ea08bbf112dff86b3ad488e4e"
+    },
+    {
+      "path": "apps/operator-backend/src/codex/instruction_binding_http.ts",
+      "sha256": "sha256:d6afd04358eb0f9f93d3ce9252fbc4d169a13c47ac3aad58f1db1993d9df7de7"
     },
     {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
@@ -2328,7 +2356,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:546ddaa2ead13e54e0982724b74d201a218398c440fb0734cbec412540a93b5a"
+      "sha256": "sha256:9b99cf4917f7798e3a8cf53793011b9d77192416410cb8314fa7a050c941ec9f"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -2380,7 +2408,7 @@
     },
     {
       "path": "apps/operator-backend/src/memory/sqlite_store.ts",
-      "sha256": "sha256:7dd3fec66fe9a2f0be6dace37887dedc8d03e9c2a7cff78018a85e57765900b5"
+      "sha256": "sha256:692e3a5c8dcd6f56b15204844f8a56c046551a58754dd369303358455311a0fc"
     },
     {
       "path": "apps/operator-backend/src/model_call_telemetry.ts",
@@ -2692,7 +2720,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:2c600552d674574674ce5bbc29a2c3434df4d99b824ab3fae578244934d22056"
+      "sha256": "sha256:001a198da1292cde6687a35af21210b30acdec958eacb7a3776b1ae5425c334b"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2996,7 +3024,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:3c230d1dc9776f041f19e80ad5194120ed6cd8a33eb23f0b8174b5b5a6225583"
+      "sha256": "sha256:c4e7f348b2c6536d978aa0df8ac0777c3e677404a32dad34ae14ab53935b6f3b"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -3112,7 +3140,11 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:3efb4c36e08a2c23bfc408b7872f0f91675a3e8648cda3deeffdb02879de7212"
+      "sha256": "sha256:0aa340b66c4c75d83afcf5054dc2c8b5daf414ba5c619a747de0c5450d9d7f91"
+    },
+    {
+      "path": "apps/operator-backend/test/benchmark_protocol_v2_instruction_evidence.test.ts",
+      "sha256": "sha256:573d9662bdb6cb58757ad7386a1d856417d10fe524053f7997f6f41b187a61b2"
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2_interaction.test.ts",
@@ -3168,11 +3200,15 @@
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
-      "sha256": "sha256:f54262b216942ececb230b72615ab97eebbe3ea6338f16dc6cc82a53ea7a40f7"
+      "sha256": "sha256:1da4cb798d5347bb3adf1bab1ea3fe9b72637d1623ef0f4dce38336371dde4f2"
     },
     {
       "path": "apps/operator-backend/test/codex_config.test.ts",
       "sha256": "sha256:aadeeeedbbd9a822057b3184004489aea9585f13aff6bf924aea16efb9c88645"
+    },
+    {
+      "path": "apps/operator-backend/test/codex_instruction_binding.test.ts",
+      "sha256": "sha256:b9837e39f4db24d22ed0b8d0d319ef9013b10f0f3b3712404847159491acc357"
     },
     {
       "path": "apps/operator-backend/test/codex_timeout_policy.test.ts",
@@ -3556,7 +3592,7 @@
     },
     {
       "path": "apps/operator-backend/test/fixtures/codex_app_server_fixture.js",
-      "sha256": "sha256:1b47adabc77aeec87258a4c1c960a8fbf6d802a9f67e6ce387cf1888a53dfc36"
+      "sha256": "sha256:088f21fb2847e63fc84595367207da3ff16543597fb377a14e571ef970ab28b4"
     },
     {
       "path": "apps/operator-backend/test/fixtures/commented_pdf.ts",
@@ -3683,6 +3719,10 @@
       "sha256": "sha256:4608d899baf67434af9324aafc94a6743f1cb30127389362e44f248fb6262a4d"
     },
     {
+      "path": "apps/operator-backend/test/general_revit_instruction_preflight.test.ts",
+      "sha256": "sha256:79af5849788046c8319422a519827e08142f39fad6c64e40703617a6155d8853"
+    },
+    {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
       "sha256": "sha256:901233c3a04e99f4833b6d4976b60c6e2215df35ed97697d2204eb1a774b0de3"
     },
@@ -3717,6 +3757,10 @@
     {
       "path": "apps/operator-backend/test/inline_images.test.ts",
       "sha256": "sha256:f39e99eeff9066ea46c445eac444c004283ef35a18c29bd1ff9bf2b442715c59"
+    },
+    {
+      "path": "apps/operator-backend/test/instruction_binding_http.test.ts",
+      "sha256": "sha256:f4489b142f1eedd3c087234d3b2d8d903b351a0d8f592d501a141f11faf776bd"
     },
     {
       "path": "apps/operator-backend/test/jsonl_atomic_append.test.ts",
@@ -6413,15 +6457,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:d8e8dbbab3f304bd50ba0a2ab924520827f3ca45bc8114e3d474591ea8bfdfe9"
+      "sha256": "sha256:f727681a479f5cfbdff163b7b69fb933298b616171ef1562f2d53724266ff722"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:40249a3f5de68a7123b4aee1065459395e3f84d040327d8e2c70435b84d36de8"
+      "sha256": "sha256:0d56b8cd1edf2abd9cb21ddebe8a8aef1cac19d1c991705b9716b9637ec64409"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:e92e59a0ef018e8782787177b6e77547d22964a93333dd0664a481e4ea54c688"
+      "sha256": "sha256:1360a4ddc1a1256d105a6f9e76c16c50e8f4f5b67ff270f019a12de541e6fc83"
     }
   },
   "runtime_dependencies": [
@@ -6468,19 +6512,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:d8e8dbbab3f304bd50ba0a2ab924520827f3ca45bc8114e3d474591ea8bfdfe9",
+      "sha256": "sha256:f727681a479f5cfbdff163b7b69fb933298b616171ef1562f2d53724266ff722",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:e92e59a0ef018e8782787177b6e77547d22964a93333dd0664a481e4ea54c688",
+      "sha256": "sha256:1360a4ddc1a1256d105a6f9e76c16c50e8f4f5b67ff270f019a12de541e6fc83",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:40249a3f5de68a7123b4aee1065459395e3f84d040327d8e2c70435b84d36de8",
+      "sha256": "sha256:0d56b8cd1edf2abd9cb21ddebe8a8aef1cac19d1c991705b9716b9637ec64409",
       "host": null
     },
     {
@@ -6568,6 +6612,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:1aa99990cbd050c956e9d952ceb69a147ac33ec4ee05cfb67d479c9b8371d54e",
-  "built_at_utc": "2026-09-07T13:37:36.512Z"
+  "runtime_dependencies_hash": "sha256:a6903426254ed43a7697b0fe2b9b597c40004f87ac833c7911822dbd25cbe77a",
+  "built_at_utc": "2026-09-07T15:37:10.042Z"
 }

@@ -8,6 +8,7 @@ import {
 import { buildBenchmarkCaseResultV2 } from "./protocol_v2_case.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "./protocol_v2_envelope.js";
 import { sha256File, sha256Value } from "./protocol_v2_hash.js";
+import { assertProtocolV2InstructionEvidence } from "./protocol_v2_instruction_evidence.js";
 import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
@@ -394,6 +395,8 @@ export function buildProtocolV2ReportFromFlight(args: {
       require_assignment_kernel_v2: args.draft.feature_flags.assignment_kernel_v2 === true
     });
   }
+  // Scoring never substitutes launcher declarations for the instructions acknowledged on each paid turn.
+  assertProtocolV2InstructionEvidence(args.draft, traces);
   for (const caseId of traceIds) {
     const testCase = byId.get(caseId);
     if (!testCase) throw new Error(`Flight contains case ${caseId}, which is absent from the bound corpus.`);

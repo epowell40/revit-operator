@@ -69,7 +69,12 @@
     "revit_tool_contract_memory.test.ts",
     "supported_tool_inventory.test.ts",
     "revit_courier_contract.test.ts",
-    "dynamic_program_admission.test.ts"
+    "dynamic_program_admission.test.ts",
+    "codex_instruction_binding.test.ts",
+    "codex_app_server_lifecycle.test.ts",
+    "general_revit_instruction_preflight.test.ts",
+    "benchmark_protocol_v2_instruction_evidence.test.ts",
+    "instruction_binding_http.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -902,6 +907,23 @@
         "backend:dynamic_program_admission.test.ts",
         "backend:provider_dynamic_program.test.ts",
         "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "loaded-thread-instruction-binding-before-provider-dispatch",
+      "coverage": [
+        "backend:codex_instruction_binding.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "scored-benchmark-requires-runtime-and-provider-turn-instruction-evidence",
+      "coverage": [
+        "backend:general_revit_instruction_preflight.test.ts",
+        "backend:benchmark_protocol_v2_instruction_evidence.test.ts",
+        "backend:codex_instruction_binding.test.ts",
+        "backend:instruction_binding_http.test.ts"
       ]
     }
   ]

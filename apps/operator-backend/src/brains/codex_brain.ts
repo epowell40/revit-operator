@@ -1,3 +1,4 @@
+import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
 import path from "node:path";
 import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
@@ -395,12 +396,14 @@ async function getOrCreateThreadId(
   req: ChatRequest,
   client: CodexAppServer,
   workspaceRoot: string,
-  agent = resolveAgentModelSettings(req.context)
+  agent: ReturnType<typeof resolveAgentModelSettings>,
+  profile: CodexThreadStartProfile,
+  monitoringOnly = false
 ): Promise<string> {
-  const profile = getCodexThreadStartProfileForTest(req);
   const profilePaths = getCodexProfilePaths(workspaceRoot, profile);
   return getOrCreateCodexThread({
     sessionId: req.session_id,
+    monitoringOnly,
     client,
     profile,
     cwd: profilePaths.cwd,
@@ -430,8 +433,22 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         generation: Number(req.assignment_generation)
       })
     : null;
-  const threadProfile = getCodexThreadStartProfileForTest(req);
+  const threadProfile = Object.freeze(getCodexThreadStartProfileForTest(req));
   const agentSettings = resolveAgentModelSettings(req.context);
+  const instructionBindingStop = (error: CodexInstructionBindingError): ChatResponse => {
+    cb.onDone?.(error.message);
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `[${error.code}] ${error.message}`,
+      actions: [],
+      provider_turn_usage: {
+        schema: "revit-operator.provider-turn-usage/v1",
+        session_id: req.session_id, message_id: req.message_id,
+        thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+      },
+      ...(assignmentKernelV2 ? { assignment_snapshot_v2: assignmentKernelV2.snapshot } : {})
+    };
+  };
   const stopBeforeProvider = (
     message: string,
     failureId: string,
@@ -720,7 +737,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       c = await getClient(workspaceRoot, threadProfile);
       threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile);
       });
     } catch (error) {
       mcpRuntime?.endBackendAuthLease(backendAuthLease);
@@ -733,6 +750,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       courierContext = null;
       endRequirementsPlanningLease(requirementsLease);
       requirementsLease = null;
+      if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);
       return stopBeforeProvider(
         "The provider connection could not be initialized. I stopped before planning or any Revit tool action.",
         `provider-start:${req.message_id}`,
@@ -760,27 +778,27 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
         bindTurnNotificationSource(activeClient);
-        return await activeClient.startTurn({
+        return await activeClient.startBoundTurn({
           threadId,
           input,
           model: agentSettings.model,
           effort: agentSettings.reasoning_effort
-        });
+        }, threadProfile);
       });
     } catch (error) {
       if (!isMissingCodexThreadError(error)) throw error;
       setCodexThreadId(codexTelemetryThreadKey(threadProfile), "");
       threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile);
       });
       bindTurnNotificationSource(c);
-      start = await c.startTurn({
+      start = await c.startBoundTurn({
         threadId,
         input,
         model: agentSettings.model,
         effort: agentSettings.reasoning_effort
-      });
+      }, threadProfile);
     }
   } catch (error) {
     endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier);
@@ -796,6 +814,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     endRevitCourierTurnContext(courierContext);
     courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
+    if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);
     throw error;
   }
 
@@ -891,8 +910,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (assignmentKernelV2Lease) mcpRuntime!.bindAssignmentKernelV2LeaseTurn(assignmentKernelV2Lease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
-    appendEvent(req.session_id, "assistant", "codex.turn.start", { session_id: req.session_id,
-      message_id: req.message_id, thread_id: threadId, turn_id: turnId });
+    const persisted = appendEvent(req.session_id, "assistant", "codex.turn.start", { session_id: req.session_id,
+      message_id: req.message_id, thread_id: threadId, turn_id: turnId,
+      host_instruction_binding: c.getTurnInstructionBinding(threadId, turnId) ?? null });
+    if (persisted) c.acknowledgePersistedTurnInstructionBinding(threadId, turnId);
   } catch {
     // ignore
   }
@@ -961,7 +982,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       c = activeClient;
       bindTurnNotificationSource(activeClient);
       if (!activeClient.hasLoadedThread(threadId)) {
-        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile, true);
         if (resumedThreadId !== threadId) throw new Error(`Codex active thread ${threadId} could not be resumed after reconnect.`);
       }
       return await activeClient.waitForTurnCompleted({

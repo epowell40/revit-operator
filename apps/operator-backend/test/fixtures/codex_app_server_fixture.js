@@ -57,7 +57,7 @@ input.on("line", line => {
     const threadId = `thread-fixture-${state.threads.length + 1}`;
     state.threads.push(threadId);
     saveState(state);
-    respond({ thread: { id: threadId } });
+    respond({ thread: { id: threadId, status: { type: "idle" } } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -66,7 +66,10 @@ input.on("line", line => {
       send({ id: message.id, error: { code: -32602, message: `thread not found: ${threadId}` } });
       return;
     }
-    respond({ thread: { id: threadId } });
+    const resumeStatus = process.env.CODEX_FIXTURE_RESUME_STATUS_PATH
+      ? fs.readFileSync(process.env.CODEX_FIXTURE_RESUME_STATUS_PATH, "utf8").trim()
+      : process.env.CODEX_FIXTURE_RESUME_ACTIVE === "1" ? "active" : "idle";
+    respond({ thread: { id: threadId, status: { type: resumeStatus } } });
     return;
   }
   if (message.method === "turn/start") {

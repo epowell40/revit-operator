@@ -696,6 +696,24 @@ test("canonical attempt effect accessor is backward compatible but rejects confl
   assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "unknown" }), null);
 });
 
+function addModeledInstructionAcknowledgement(trace: JsonRecord, draft: BenchmarkRunEnvelopeDraftV2): void {
+  trace.context_supplied = { ...trace.context_supplied as JsonRecord, session_id: "modeled-session" };
+  trace.model_call_receipts = [{ response_id: "response-1", turn_id: "modeled-turn",
+    session_id: "modeled-session", message_id: "modeled-message", thread_id: "modeled-thread" }];
+  trace.host_instruction_turns_complete = true;
+  trace.host_instruction_turns = [{ session_id: "modeled-session", message_id: "modeled-message",
+    thread_id: "modeled-thread", turn_id: "modeled-turn", host_instruction_binding: {
+      schema: "revit-operator.host-supplied-instructions/v1", source: "host_supplied_acknowledged",
+      prompt_sha256: draft.instruction_bundle_hashes.prompt_sha256,
+      system_instruction_sha256: draft.instruction_bundle_hashes.system_instruction_sha256,
+      benchmark_runtime: { schema: "revit-operator.benchmark-instruction-runtime/v1", configured: true,
+        backend_instance_id: "12345678-1234-1234-1234-123456789abc", process_id: 42,
+        envelope_sha256: sha256Value(draft), run_id: draft.identity.run_id,
+        prompt_sha256: draft.instruction_bundle_hashes.prompt_sha256,
+        system_instruction_sha256: draft.instruction_bundle_hashes.system_instruction_sha256 }
+    } }];
+}
+
 test("Protocol V2 accepts an exact-bound valid failure packet as measurable but non-promotable truth", () => {
   const testCase = benchmarkCase();
   const attempt = canonicalAttempt({
@@ -703,6 +721,7 @@ test("Protocol V2 accepts an exact-bound valid failure packet as measurable but 
     evidence_refs: ["evidence:unknown-effect"]
   });
   const trace = traceFor(testCase, { attempts: [attempt] });
+  addModeledInstructionAcknowledgement(trace, envelopeDraft(testCase));
   const projection = assignmentProjection([attempt], "canceled");
   const toolResults = trace.tool_results as JsonRecord;
   toolResults.durable_assignment_projection = projection;
@@ -748,6 +767,7 @@ test("Protocol V2 preserves typed failure artifacts and a timeout with recovered
       model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
       task_traces: [traceFor(testCase)]
     };
+    addModeledInstructionAcknowledgement(legacy.task_traces[0], draft);
     mutate(legacy, draft);
     const draftPath = path.join(tmp, "draft.json");
     const legacyPath = path.join(tmp, "legacy.json");

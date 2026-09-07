@@ -5,6 +5,7 @@ import type { AgentModelSettings } from "../speed_config.js";
 import { isMissingCodexThreadError } from "./codex_tool_observation.js";
 import { codexTelemetryThreadKey } from "./codex_turn_model_telemetry.js";
 import type { CodexThreadStartProfile } from "./codex_turn_profile.js";
+import { assertConfiguredBenchmarkInstructions } from "../codex/instruction_binding.js";
 
 export async function getOrCreateCodexThread(args: {
   sessionId: string;
@@ -13,12 +14,22 @@ export async function getOrCreateCodexThread(args: {
   cwd: string;
   settings: AgentModelSettings;
   getDynamicTools: () => Promise<DynamicToolSpec[]>;
+  monitoringOnly?: boolean;
 }): Promise<string> {
   const { client, profile, settings } = args;
+  if (!args.monitoringOnly) assertConfiguredBenchmarkInstructions(profile);
   const threadKey = codexTelemetryThreadKey(profile);
   const existing = getCodexThreadId(threadKey);
   if (existing) {
-    if (client.hasLoadedThread(existing)) return existing;
+    if (client.hasLoadedThread(existing)) {
+      if (args.monitoringOnly) return existing;
+      if (client.getThreadInstructionBinding(existing)) {
+        client.assertThreadInstructions(existing, profile);
+        return existing;
+      }
+      // Monitoring can load an active thread without establishing instruction
+      // identity. Retry only metadata resume; never replay its previous turn.
+    }
     try {
       const resumed = await client.resumeThread({
         threadId: existing,
@@ -32,11 +43,12 @@ export async function getOrCreateCodexThread(args: {
         excludeTurns: true
       });
       const resumedThreadId = resumed.thread.id;
+      if (!args.monitoringOnly) client.assertThreadInstructions(resumedThreadId, profile);
       setCodexThreadId(threadKey, resumedThreadId);
       try {
         appendEvent(args.sessionId, "assistant", "codex.thread.resume", profile.certified
-          ? { thread_id: resumedThreadId, certified: true }
-          : { thread_id: resumedThreadId });
+          ? { thread_id: resumedThreadId, certified: true, host_instruction_binding: client.getThreadInstructionBinding(resumedThreadId) ?? null }
+          : { thread_id: resumedThreadId, host_instruction_binding: client.getThreadInstructionBinding(resumedThreadId) ?? null });
       } catch {
         // The durable thread mapping remains authoritative.
       }
@@ -67,8 +79,8 @@ export async function getOrCreateCodexThread(args: {
   setCodexThreadId(threadKey, threadId);
   try {
     appendEvent(args.sessionId, "assistant", "codex.thread.start", profile.certified
-      ? { thread_id: threadId, certified: true }
-      : { thread_id: threadId });
+      ? { thread_id: threadId, certified: true, host_instruction_binding: client.getThreadInstructionBinding(threadId) ?? null }
+      : { thread_id: threadId, host_instruction_binding: client.getThreadInstructionBinding(threadId) ?? null });
   } catch {
     // The returned thread remains usable if event persistence is unavailable.
   }

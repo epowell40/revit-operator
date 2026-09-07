@@ -237,9 +237,9 @@ export function setCodexThreadId(sessionId: string, threadId: string): void {
   ).run(sessionId, threadId, ts, ts);
 }
 
-export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): void {
+export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): boolean {
   const d = openDb();
-  if (!d) return;
+  if (!d) return false;
   const payload_json = payload === undefined ? null : JSON.stringify(payload);
   d.prepare("INSERT INTO events(ts, session_id, role, kind, payload_json) VALUES(?,?,?,?,?)").run(
     nowIso(),
@@ -249,6 +249,33 @@ export function appendEvent(sessionId: string, role: string, kind: string, paylo
     payload_json
   );
   d.prepare("UPDATE sessions SET last_active_at=? WHERE session_id=?").run(nowIso(), sessionId);
+  return true;
+}
+
+export function readCodexInstructionTurns(sessionId: string, startedAt = ""): { turns: unknown[]; complete: boolean } {
+  const d = openDb();
+  if (!d) return { turns: [], complete: false };
+  const rows = d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind='codex.turn.start' AND ts>=? ORDER BY id ASC LIMIT 10001").all(sessionId, startedAt);
+  let complete = rows.length <= 10000;
+  const turns = rows.slice(0, 10000).flatMap((row: { payload_json: string }) => {
+    try {
+      const value = JSON.parse(row.payload_json);
+      const binding = value.host_instruction_binding;
+      const runtime = binding?.benchmark_runtime;
+      return [{ session_id: value.session_id, message_id: value.message_id, thread_id: value.thread_id, turn_id: value.turn_id,
+        host_instruction_binding: binding ? {
+          schema: binding.schema, source: binding.source, prompt_sha256: binding.prompt_sha256,
+          system_instruction_sha256: binding.system_instruction_sha256,
+          ...(runtime ? { benchmark_runtime: {
+            schema: runtime.schema, configured: runtime.configured, status: runtime.status,
+            backend_instance_id: runtime.backend_instance_id, process_id: runtime.process_id,
+            envelope_sha256: runtime.envelope_sha256, run_id: runtime.run_id,
+            prompt_sha256: runtime.prompt_sha256, system_instruction_sha256: runtime.system_instruction_sha256
+          } } : {})
+        } : null }];
+    } catch { complete = false; return []; }
+  });
+  return { turns, complete };
 }
 
 export type StoredMessage = { role: "user" | "assistant" | "tool"; text: string };

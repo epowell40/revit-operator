@@ -58,6 +58,9 @@ function Invoke-Composition([string]$Root, [string]$Label) {
   Invoke-External "$Label architecture authorities" {
     & (Join-Path $Root "scripts/check_assignment_kernel_boundary.ps1") -RepoRoot $Root
   }
+  Invoke-External "$Label benchmark/runtime separation" {
+    & (Join-Path $Root "scripts/check_benchmark_runtime_boundary.ps1") -RepoRoot $Root
+  }
 
   $backendRoot = Resolve-AppRoot $Root "operator-backend"
   $mcpRoot = Resolve-AppRoot $Root "mcp-server"

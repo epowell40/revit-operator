@@ -1,5 +1,7 @@
+import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
 import { getRevitToolContractMemoryAttestation } from "./codex/revit_tool_contract_memory.js";
+import { benchmarkInstructionRuntime } from "./codex/benchmark_instruction_runtime.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
@@ -682,6 +684,7 @@ function requiresOperatorToken(pathname: string): boolean {
   return (
     pathname === "/chat" ||
     pathname === "/chat/result" ||
+    pathname === "/codex/instruction-bindings" ||
     pathname === "/chat/stream" ||
     pathname === "/event" ||
     pathname === "/feedback" ||
@@ -2433,6 +2436,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/codex/instruction-bindings") {
+      return respondWithInstructionBindings(url, res, sessionId => sessionAccessAllowed(res, sessionId, auth.principal));
+    }
+
     if (req.method === "GET" && url.pathname === "/chat/result") {
       const session_id = (url.searchParams.get("session_id") ?? "").trim();
       const message_id = (url.searchParams.get("message_id") ?? "").trim();
@@ -3964,6 +3971,7 @@ const server = http.createServer(async (req, res) => {
         sidecar_agent_profile: getSidecarAgentProfileState(),
         assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(assignmentKernelV2Enabled()),
         tool_contract_memory: getRevitToolContractMemoryAttestation(),
+        benchmark_instruction_runtime: benchmarkInstructionRuntime(),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,

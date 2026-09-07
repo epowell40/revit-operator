@@ -1,3 +1,4 @@
+import { createGeneralRevitRequest } from "../benchmark/general_revit_request.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -24,6 +25,7 @@ import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, r
 import { finishGeneralRevitCampaignCase, finishGeneralRevitCampaignExports, initializeGeneralRevitCampaignExports, generalRevitCampaignCompletion, generalRevitSuiteTiming, retainedGeneralRevitCampaignStop, type GeneralRevitCampaignStop } from "../benchmark/general_revit_campaign_completion.js";
 import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
+import { assertGeneralRevitInstructionRuntime, benchmarkInstructionExpectation, loadCaseInstructionTurns } from "../benchmark/general_revit_instruction_preflight.js";
 import { assertGeneralRevitCampaignMemoryStart, observeGeneralRevitCampaignMemory } from "../benchmark/general_revit_campaign_memory.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
@@ -125,25 +127,8 @@ function executionSurface(): "operator_computer_general_agent" | "legacy_chat_di
     : "operator_computer_general_agent";
 }
 
-async function requestJson(baseUrl: string, pathname: string, options: RequestInit = {}, timeoutMs = 120_000): Promise<JsonRecord> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error(`${pathname} exceeded ${timeoutMs}ms.`)), timeoutMs);
-  try {
-    const origin = new URL(baseUrl).origin;
-    const response = await fetch(new URL(pathname, `${baseUrl}/`), {
-      ...options,
-      headers: { "content-type": "application/json", origin, ...(options.headers || {}) },
-      signal: controller.signal
-    });
-    const text = await response.text();
-    let body: unknown = {};
-    try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
-    if (!response.ok) throw new Error(`${options.method || "GET"} ${pathname} returned ${response.status}: ${text.slice(0, 1000)}`);
-    return asRecord(body);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+let scoredInstructionExpectation: JsonRecord | null = null;
+const requestJson = createGeneralRevitRequest(() => scoredInstructionExpectation);
 
 function selectCases(cases: GeneralRevitCapabilityCase[]): GeneralRevitCapabilityCase[] {
   const suite = flag("--suite", "full").toLowerCase();
@@ -605,6 +590,10 @@ async function runCase(
   const startedMs = Date.now();
   const applyRequested = suiteContext.apply_requested === true;
   const executionCase = generalRevitExecutionCaseWithInteractionV1(testCase, applyRequested, interaction);
+  const instructionExpected = asRecord(suiteContext.benchmark_instruction_expected);
+  if (Object.keys(instructionExpected).length > 0) {
+    assertGeneralRevitInstructionRuntime(await requestJson(baseUrl, "/api/backend/health", {}, 30_000), instructionExpected);
+  }
   const executionExpectedEffect = executionCase.expected_effect;
   const requestedSpeedSettings = asRecord(suiteContext.requested_speed_settings);
   const speedSettings = Object.keys(requestedSpeedSettings).length > 0 ? requestedSpeedSettings : null;
@@ -693,6 +682,9 @@ async function runCase(
     ...modelCallReceiptsFromAssignmentKernelPublicationsV2(assignmentKernelV2)
   ]);
   const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
+  const instructionTurns = Object.keys(instructionExpected).length > 0
+    ? await loadCaseInstructionTurns(baseUrl, sessionId, startedAt, requestJson)
+    : { host_instruction_turns: [], host_instruction_turns_complete: false };
   const computerState = asRecord(attempt.computer_state);
   const sidecarRequestedSpeedSettings = asRecord(computerState.requestedSpeedSettings);
   const finishedAt = nowIso();
@@ -731,6 +723,7 @@ async function runCase(
     },
     agent_reasoning_plan_representation: Array.isArray(attempt.rounds) ? attempt.rounds : [],
     model_call_receipts: modelCallReceipts,
+    ...instructionTurns,
     provider_usage_turns: attempt.provider_usage_turns ?? null,
     tool_calls: toolCalls,
     tool_results: {
@@ -877,6 +870,7 @@ async function main(): Promise<void> {
     legacyProtocol: process.argv.includes("--legacy-protocol-v1"), proposedRunId: runId, applyRequested,
     requestedFixture, orchestrateFixtures, laneFlag: flag("--lane"), inputs: protocolInputs });
   const protocolDraft = protocolRun.draft;
+  scoredInstructionExpectation = protocolDraft && !rescoreOnly ? benchmarkInstructionExpectation(protocolDraft) : null;
   const isolateExports = process.argv.includes("--isolate-exports");
   assertGeneralRevitExportIsolationPolicy(isolateExports, protocolDraft?.feature_flags.export_folder_isolation, rescoreOnly);
   const boundInteractionHash = String(protocolDraft?.feature_flags.benchmark_interaction_manifest_sha256 || "").trim();
@@ -932,6 +926,9 @@ async function main(): Promise<void> {
       requestJson(sidecar, "/api/backend/health", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
+  const instructionExpected = protocolDraft ? benchmarkInstructionExpectation(protocolDraft) : null;
+  const instructionRuntime = instructionExpected && !rescoreOnly
+    ? assertGeneralRevitInstructionRuntime(backendHealth, instructionExpected) : null;
   const campaignMemory = rescoreOnly ? priorSuiteContext.tool_contract_memory_current : protocolDraft
     ? assertGeneralRevitCampaignMemoryStart(backendHealth, protocolDraft.feature_flags,
       priorSuiteContext.tool_contract_memory_current, resumedCheckpoint !== null) : null;
@@ -960,6 +957,8 @@ async function main(): Promise<void> {
     fixturePreflightAttempts = readiness.attempts;
   }
   const suiteContext = {
+    benchmark_instruction_expected: instructionExpected,
+    benchmark_instruction_runtime: instructionRuntime,
     sidecar,
     execution_surface: executionSurface(),
     runtime_profile: runtimeProfile,

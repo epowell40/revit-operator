@@ -57,11 +57,14 @@ test("executable Codex turns bind backend auth before provider start and clean t
   const body = source.slice(start, end > start ? end : undefined);
   const authGuard = body.indexOf("if (threadProfile.startRevitTurnRuntime && !backendAuth)");
   const leaseOpen = body.indexOf("beginBackendAuthLease(req.session_id, backendAuth!)");
-  const providerStart = body.indexOf("return await activeClient.startTurn({");
+  const providerStart = body.indexOf("return await activeClient.startBoundTurn({");
+  const fallbackStart = body.indexOf("start = await c.startBoundTurn({");
   const leaseCleanup = body.lastIndexOf("endBackendAuthLease(backendAuthLease)");
   assert.ok(authGuard >= 0 && authGuard < providerStart, "missing auth must stop before provider call 1");
   assert.ok(leaseOpen > authGuard && leaseOpen < providerStart, "the turn-scoped auth lease must open before provider call 1");
   assert.ok(leaseCleanup > providerStart, "the credential lease must be removed during turn cleanup");
+  assert.ok(fallbackStart > providerStart && leaseCleanup > fallbackStart, "missing-thread recovery must retain the same auth lease until cleanup");
+  assert.doesNotMatch(body, /(?:activeClient|c)\.startTurn\(/, "provider starts must also enforce host instruction binding");
 });
 
 test("Codex persisted profile keys remain disjoint for adversarial session strings", () => {
