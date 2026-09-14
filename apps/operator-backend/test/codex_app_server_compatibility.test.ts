@@ -103,9 +103,9 @@ import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse,
 
 test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /View navigation:[^\n]*verify the active view with `revit_get_context`/);
-  assert.match(instructions, /fresh Observation in resultItems/);
-  assert.match(instructions, /Pending activation and capture\/control receipts cannot prove completion/);
+  assert.match(instructions, /Navigation: check revit_get_context after activation/);
+  assert.match(instructions, /Context is control evidence; resultItems require task_result Observations/);
+  assert.match(instructions, /capture the target and present its name\/number, not internal IDs or raw paths/);
 });
 import {
   extractCitedHttpUrls,

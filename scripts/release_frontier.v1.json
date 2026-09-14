@@ -1559,6 +1559,14 @@
         "backend:codex_app_server_compatibility.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
       ]
+    },
+    {
+      "id": "navigation-guidance-selects-control-context-for-result-delivery-and-leaks-internal-fields",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:result_delivery_diagnostics.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

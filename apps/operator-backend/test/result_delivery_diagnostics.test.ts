@@ -2,6 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateResultDeliveryV2, renderResultDeliveryV2 } from "../src/domain/assignment-kernel/result_delivery.js";
 
+test("navigation presents eligible sheet values while current-context control evidence remains ineligible", () => {
+  const binding={session_id:"session",assignment_id:"assignment",run_id:"run",generation:1,principal_id:"principal",document_fingerprint:"model"};
+  const snapshot:any={spec:{result_delivery_required:true,requested_effect:"read"},current_binding:binding,
+    observations:{context:{binding,operation_id:"context-read",authority:"native-host",evidence_class:"control",raw_payload_ref:"evidence:context",raw_payload_hash:"context-hash"},
+      capture:{binding,operation_id:"sheet-capture",authority:"native-host",evidence_class:"task_result",raw_payload_ref:"evidence:capture",raw_payload_hash:"capture-hash"}},
+    operations:{"context-read":{requested_effect:"read",settlement_state:"settled",result:{status:"succeeded",persistent_effect:"none"}},
+      "sheet-capture":{requested_effect:"read",settlement_state:"settled",result:{status:"succeeded",persistent_effect:"none"}}}};
+  const context:any={label:"Active Revit view",observation_id:"context",path:["document","activeView","name"],value:"HVAC L2 - Team Review",evidence_ref:"evidence:context",payload_hash:"context-hash"};
+  const sheet:any={label:"Sheet",observation_id:"capture",path:["sheetNumber"],value:"M102",evidence_ref:"evidence:capture",payload_hash:"capture-hash"};
+  const title={...sheet,label:"Title",path:["export","viewName"],value:"HVAC L2 - Team Review"};
+  for(const items of [[context],[sheet,context]])
+    assert.throws(()=>validateResultDeliveryV2(snapshot,{items}),/assignment_result_observation_ineligible/);
+  validateResultDeliveryV2(snapshot,{items:[sheet,title]});
+  assert.equal(renderResultDeliveryV2({items:[sheet,title]}),"- Sheet: M102\n- Title: HVAC L2 - Team Review");
+  assert.equal(snapshot.observations.context.evidence_class,"control", "presentation cannot promote native context into task evidence");
+});
+
 test("failed read diagnostics are reportable with explicit failure labels, while fabricated success, writes and foreign evidence remain ineligible", () => {
   const binding={session_id:"session",assignment_id:"assignment",run_id:"run",generation:1,principal_id:"principal",document_fingerprint:"model"};
   const snapshot:any={spec:{result_delivery_required:true,requested_effect:"read"},current_binding:binding,
