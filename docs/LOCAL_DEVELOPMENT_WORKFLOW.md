@@ -81,3 +81,21 @@ work retains its cost across restart; idle time does not consume allowance.
 Unsettled admitted work continues to count, and provider, token, operation, and
 no-progress limits remain cumulative. This does not grant automatic unlimited
 budget renewal or authorize replay of an operation with unknown effects.
+
+## Revit ribbon and the local desktop launcher
+
+When running a local Desktop checkout alongside an installed package, register
+the matching `launch_operator_desktop.ps1` with
+`scripts/register_local_desktop_launcher.ps1 -LauncherPath <absolute-path>`.
+This sets the existing per-user `OPERATOR_DESKTOP_LAUNCHER_PATH` override that
+Revit checks before the installed release shim. Registration validates the
+file before replacing the setting and does not launch or stop any process.
+The integration checkpoint script registers its successfully started default
+port 3907 launcher automatically. Custom-port sessions do not replace that
+default ribbon target.
+
+Use a new Revit process for deterministic first-click qualification: an
+already-open Revit session can use its cached path once before refreshing it.
+When deliberately returning to an installed package, clear the user override
+and restart Revit so normal installed-launcher discovery resumes. Do not relax
+Sidecar ownership checks to resolve a local-versus-installed path mismatch.
