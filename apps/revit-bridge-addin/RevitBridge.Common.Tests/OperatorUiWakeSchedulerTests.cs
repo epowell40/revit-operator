@@ -9,6 +9,51 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorUiWakeSchedulerTests
     {
         [Fact]
+        public void StalledDispatcherDoesNotSuppressIndependentHostMessages()
+        {
+            var callbacks = new List<Action>();
+            var pending = true;
+            var hostMessages = 0;
+            var eventSignals = 0;
+            var scheduler = new OperatorUiWakeScheduler(callbacks.Add, () => pending,
+                () => eventSignals++, wakeMessageLoop: () => hostMessages++);
+            Assert.True(scheduler.Request());
+            Assert.False(scheduler.Request());
+            Assert.Single(callbacks);
+            Assert.Equal(2, hostMessages);
+            Assert.Equal(0, eventSignals);
+            callbacks[0]();
+            Assert.Equal(1, eventSignals);
+            pending = false;
+            Assert.False(scheduler.Request());
+            Assert.Equal(2, hostMessages);
+            pending = true;
+            scheduler.Stop();
+            Assert.False(scheduler.Request());
+            Assert.Equal(2, hostMessages);
+        }
+
+        [Fact]
+        public void OneWakeFailureDoesNotSuppressTheOtherSignalOrRunWorkInline()
+        {
+            var messages = 0;
+            var scheduler = new OperatorUiWakeScheduler(_ => throw new InvalidOperationException("dispatcher closed"),
+                () => true, () => throw new Exception("must never run"), wakeMessageLoop: () => messages++);
+            Assert.Throws<InvalidOperationException>(() => scheduler.Request());
+            Assert.Equal(1, messages);
+            Action? callback = null;
+            var signals = 0;
+            var errors = 0;
+            scheduler = new OperatorUiWakeScheduler(action => callback = action, () => true, () => signals++,
+                _ => errors++, () => throw new InvalidOperationException("window gone"));
+            Assert.True(scheduler.Request());
+            Assert.Equal(1, errors);
+            Assert.Equal(0, signals);
+            callback!();
+            Assert.Equal(1, signals);
+        }
+
+        [Fact]
         public void StalledHostCoalescesRetriesWithoutRunningWorkOnRequester()
         {
             var callbacks = new List<Action>();

@@ -63,6 +63,7 @@ namespace RevitBridge.Services
         private readonly OperatorUiWakeScheduler _uiWake;
         private int _stopping;
         private long _lastWakeDiagnosticTicks;
+        private long _lastMessageWakeDiagnosticTicks;
 
         private static readonly TimeSpan BackgroundWakeInterval = TimeSpan.FromMilliseconds(250);
         private const uint WmNull = 0x0000;
@@ -93,7 +94,8 @@ namespace RevitBridge.Services
                         OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "ui_wake_" + request, Volatile.Read(ref _diagnosticOwner));
                     }
                 }, error => OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
-                    "ui_wake_failed_" + error.GetType().Name, Volatile.Read(ref _diagnosticOwner)));
+                    "ui_wake_failed_" + error.GetType().Name, Volatile.Read(ref _diagnosticOwner)),
+                wakeMessageLoop: PostHostWakeMessage);
         }
 
         public Task<T> Run<T>(Func<UIApplication, T> action)
@@ -234,20 +236,36 @@ namespace RevitBridge.Services
 
         private void SignalHostMessageLoop()
         {
-            // A coalesced dispatcher message wakes WPF's pump even when a plain
-            // WM_NULL to the top-level HWND does not lead to an idle callback.
-            // No focus/input simulation and no model code runs in this callback.
-            try { _uiWake.Request(); return; }
-            catch { /* Fall back to a command-free Win32 wake if dispatch fails. */ }
+            // The scheduler sends both independent signals. A successful WPF
+            // post alone does not prove Revit serviced the ExternalEvent.
+            try { _uiWake.Request(); }
+            catch (Exception error)
+            {
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
+                    "ui_wake_post_failed_" + error.GetType().Name, Volatile.Read(ref _diagnosticOwner));
+            }
+        }
+
+        private void PostHostWakeMessage()
+        {
             // ExternalEvent.Raise can leave its signal acknowledged but unserviced when Revit
             // is minimized. WM_NULL carries no command or input; it only wakes the existing
             // Revit UI message pump so the host can reach Idling/ExternalEvent dispatch without
             // activation, focus stealing, restoring the window, or Revit API access off-thread.
             try
             {
-                var windowHandle = Process.GetCurrentProcess().MainWindowHandle;
-                if (windowHandle != IntPtr.Zero)
-                    PostMessage(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero);
+                using (var process = Process.GetCurrentProcess())
+                {
+                    var windowHandle = process.MainWindowHandle;
+                    var posted = windowHandle != IntPtr.Zero && PostMessage(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero);
+                    var now = DateTime.UtcNow.Ticks;
+                    if (now - Interlocked.Read(ref _lastMessageWakeDiagnosticTicks) >= TimeSpan.TicksPerSecond * 5)
+                    {
+                        Interlocked.Exchange(ref _lastMessageWakeDiagnosticTicks, now);
+                        OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
+                            posted ? "ui_message_wake_posted" : "ui_message_wake_unavailable", Volatile.Read(ref _diagnosticOwner));
+                    }
+                }
             }
             catch
             {

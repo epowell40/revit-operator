@@ -1312,6 +1312,21 @@
         "backend:assignment_status_projection.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
       ]
+    },
+    {
+      "id": "compound-model-view-question-enters-agent-and-omits-model-name",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:session_history_recovery.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "successful-dispatcher-wake-suppresses-native-window-message-while-event-pending",
+      "coverage": [
+        "dotnet:OperatorUiWakeSchedulerTests",
+        "backend:revit_control_plane_contract.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

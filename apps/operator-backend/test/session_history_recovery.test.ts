@@ -48,7 +48,7 @@ test("conversation HTTP history survives backend restart and rejects another pri
   const createdResponse = await fetch(base + "/session/new", { method: "POST", headers: headers("alice") });
   assert.equal(createdResponse.status, 200);
   const created = await createdResponse.json() as { session_id: string };
-  const body = { version: "operator.backend.v1", session_id: created.session_id, message_id: "native-question", user_text: "what view is active?",
+  const body = { version: "operator.backend.v1", session_id: created.session_id, message_id: "native-question", user_text: "Can you see the open model? What view is active?",
     ui_observation: { ok: true, data: { document: { title: "Pilot", activeView: { name: "L2" } } } } };
   const written = await fetch(base + "/session/ui-context", { method: "POST", headers: headers("alice"), body: JSON.stringify(body) });
   assert.equal(written.status, 200, await written.text());
@@ -64,7 +64,12 @@ test("conversation HTTP history survives backend restart and rejects another pri
   const history = await restored.json() as { messages: Array<{ text: string }> };
   assert.equal(history.messages.length, 2);
   assert.equal(history.messages[0].text, body.user_text);
-  assert.match(history.messages[1].text, /L2.*Pilot/);
+  assert.match(history.messages[1].text, /Pilot.*L2/);
+  const mixed = await fetch(base + "/session/ui-context", { method: "POST", headers: headers("alice"), body: JSON.stringify({
+    ...body, message_id: "mixed-instruction", user_text: "Can you see the open model? What view is active? Rename it."
+  }) });
+  assert.equal(mixed.status, 400);
+  assert.equal(((await (await fetch(historyUrl, { headers: headers("alice") })).json()) as { messages: unknown[] }).messages.length, 2);
 });
 
 test("first new turn after a cold session preserves the earlier durable conversation", async () => {

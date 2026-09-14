@@ -12,23 +12,26 @@ namespace RevitBridge.Common
         private readonly Func<bool> _hasPendingWork;
         private readonly Action _wake;
         private readonly Action<Exception>? _onError;
+        private readonly Action? _wakeMessageLoop;
         private int _queued;
         private int _stopped;
 
-        public OperatorUiWakeScheduler(Action<Action> post, Func<bool> hasPendingWork, Action wake, Action<Exception>? onError = null)
+        public OperatorUiWakeScheduler(Action<Action> post, Func<bool> hasPendingWork, Action wake, Action<Exception>? onError = null, Action? wakeMessageLoop = null)
         {
             _post = post ?? throw new ArgumentNullException(nameof(post));
             _hasPendingWork = hasPendingWork ?? throw new ArgumentNullException(nameof(hasPendingWork));
             _wake = wake ?? throw new ArgumentNullException(nameof(wake));
             _onError = onError;
+            _wakeMessageLoop = wakeMessageLoop;
         }
 
         public bool Request()
         {
             if (Volatile.Read(ref _stopped) != 0 || !_hasPendingWork()) return false;
-            if (Interlocked.CompareExchange(ref _queued, 1, 0) != 0) return false;
+            var ownsSlot = Interlocked.CompareExchange(ref _queued, 1, 0) == 0;
             try
             {
+                if (!ownsSlot) return false;
                 _post(() =>
                 {
                     try
@@ -48,6 +51,17 @@ namespace RevitBridge.Common
             {
                 Interlocked.Exchange(ref _queued, 0);
                 throw;
+            }
+            finally
+            {
+                // WPF can service the dispatcher while the native host remains
+                // outside its idle cycle. A separate command-free message is
+                // also needed while a dispatcher callback is already queued.
+                if (Volatile.Read(ref _stopped) == 0 && _hasPendingWork())
+                {
+                    try { _wakeMessageLoop?.Invoke(); }
+                    catch (Exception error) { try { _onError?.Invoke(error); } catch { } }
+                }
             }
         }
 

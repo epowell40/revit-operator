@@ -48,6 +48,10 @@ test("background wake posts a coalesced UI signal without executing model work o
   assert.match(constructor, /_externalEvent\.Raise\(\)/);
   assert.doesNotMatch(constructor, /item\.Action|Execute\(|ActiveUIDocument|Transaction\(/);
   assert.match(source, /_uiWake\.Request\(\)/);
+  assert.match(constructor, /wakeMessageLoop: PostHostWakeMessage/);
+  const messageWake = source.slice(source.indexOf("private void PostHostWakeMessage"), source.indexOf("private void CancelQueuedItem"));
+  assert.match(messageWake, /PostMessage\(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero\)/);
+  assert.doesNotMatch(messageWake, /SetForegroundWindow|SendInput|ActiveUIDocument|item\.Action|Execute\(/);
   assert.match(app, /_eventService\?\.StopBackgroundWake\(\)/);
   assert.match(source, /internal void StopBackgroundWake\(\)[\s\S]{0,140}_uiWake\.Stop\(\)/);
 });

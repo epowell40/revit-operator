@@ -90,3 +90,33 @@ test("connection paraphrases stay fast while mixed work and central-model questi
   for (const prompt of ["Is Revit connected? Then delete the ducts.", "Is the model connected to central?", "Are these ducts connected?", "Are you connected to Revit and can you rename the view?"])
     assert.equal(ui.contextQuestionKind(request(prompt)), null, prompt);
 });
+
+test("compound identity replay answers every bounded question with one authorized observation", async () => {
+  let reads = 0;
+  let authorizations = 0;
+  const deps = { verifySession: async () => { authorizations++; }, readContext: async () => { reads++; return fresh(); } };
+  for (const prompt of [
+    "Can you see the open model? What view is active?",
+    "What view is active, and can you see the open model?",
+    "Please can you see the open model and what is the current view?",
+    "What is the open model? What view is active? What is selected?"
+  ]) {
+    const before = reads;
+    const answer = await ui.tryContextReply(request(prompt), deps);
+    assert.match(answer, /Snowdon HVAC.*Level 2/, prompt);
+    if (prompt.includes("selected")) assert.match(answer, /2 elements are selected/);
+    assert.equal(reads, before + 1); assert.equal(authorizations, reads);
+  }
+  for (const prompt of [
+    "Can you see the open model? What view is active? Then rename it.",
+    "Can you see the open model and delete all ducts?",
+    "What view is active? What is the diameter of the selected duct?",
+    "What view is active? Is the model connected to central?",
+    "Can you see the model? Follow the redline.",
+    "What view is active? What view is active? What view is active? What view is active?"
+  ]) assert.equal(await ui.tryContextReply(request(prompt), deps), null, prompt);
+  for (const extra of [{ assignment_generation: 0 }, { assignment_run_id: "run" }, { attachments: [{ id: "redline" }] }])
+    assert.equal(await ui.tryContextReply(request("Can you see the open model? What view is active?", extra), deps), null);
+  assert.equal(reads, 4);
+  assert.match(ui.renderContextReply("connection", { ok: true, data: { document: { title: "Pilot" } } }), /didn’t report an active view/);
+});
