@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 
 import {
   claimNextRevitBatchItem,
+  hasAvailableRevitBatchWork,
   approveRevitBatchJob,
   cancelRevitBatchJob,
   completeRevitBatchItem,
@@ -21,6 +22,30 @@ import {
 } from "../src/revit_batch/service.js";
 
 type AnyMap = Record<string, any>;
+
+test("idle batch availability is owner/session scoped and never claims or reconciles work", () => {
+  const root = mkWorkspace();
+  const access = boundAccess("alice", "session-idle", "executor-a", fingerprintA);
+  const probe = { session_id: access.session_id!, owner: access.owner };
+  assert.equal(hasAvailableRevitBatchWork(probe), false);
+  const job = createBoundJob(access);
+  const before = fs.readFileSync(jobRecordPath(root, job.id), "utf8");
+  assert.equal(hasAvailableRevitBatchWork(probe), true);
+  assert.equal(hasAvailableRevitBatchWork({ ...probe, session_id: "other-session" }), false);
+  assert.equal(hasAvailableRevitBatchWork({ ...probe, owner: { user_id: "bob", tenant_id: "tenant-1" } }), false);
+  assert.equal(hasAvailableRevitBatchWork({ ...probe, owner: null }), false);
+  assert.equal(hasAvailableRevitBatchWork({ ...probe, executor_kind: "another-kind" }), false);
+  assert.equal(fs.readFileSync(jobRecordPath(root, job.id), "utf8"), before);
+  claimNextRevitBatchItem({ executor_id: "executor-a", access });
+  assert.equal(hasAvailableRevitBatchWork(probe), false, "an unexpired running claim does not require polling Revit");
+  editStoredJob(root, job.id, stored => { stored.items[0].claim.lease_expires_at = "2000-01-01T00:00:00Z"; });
+  const expired = fs.readFileSync(jobRecordPath(root, job.id), "utf8");
+  assert.equal(hasAvailableRevitBatchWork(probe), true, "expired outcomes reach existing reconciliation");
+  assert.equal(fs.readFileSync(jobRecordPath(root, job.id), "utf8"), expired);
+  const reconciled = claimNextRevitBatchItem({ executor_id: "executor-a", access }) as AnyMap;
+  assert.equal(reconciled.item, null, "an expired possible write is never replayed");
+  assert.equal(hasAvailableRevitBatchWork(probe), false);
+});
 
 test("batch approval binds the exact server preview hash and approving principal", () => {
   const root = mkWorkspace();

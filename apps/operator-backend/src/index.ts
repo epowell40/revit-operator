@@ -24,6 +24,7 @@ import {
   upsertStepPlanned
 } from "./memory/sqlite_store.js";
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
+import { assistantContextPolicy } from "./goals/assistant_context_policy.js";
 import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
@@ -98,6 +99,7 @@ import {
   approveRevitBatchJob,
   cancelRevitBatchJob,
   claimNextRevitBatchItem,
+  hasAvailableRevitBatchWork,
   completeRevitBatchItem,
   createRevitBatchJob,
   failRevitBatchItem,
@@ -689,6 +691,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/chat/result" ||
     pathname === "/codex/instruction-bindings" ||
     pathname === "/chat/stream" ||
+    pathname === "/chat/context-policy" ||
     pathname === "/event" ||
     pathname === "/feedback" ||
     pathname === "/config/cloud-upload" ||
@@ -711,6 +714,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/teach/skills/register" ||
     pathname === "/api/teach/skills/usage" ||
     pathname === "/api/revit-batch/templates" ||
+    pathname === "/api/revit-batch/availability" ||
     pathname === "/api/revit-batch/plan-delegated" ||
     pathname === "/api/revit-batch/jobs" ||
     pathname === "/api/revit-batch/claim-next" ||
@@ -1634,6 +1638,30 @@ const server = http.createServer(async (req, res) => {
         planner_fallback_used: usedFallback,
         ...(usedFallback ? { assistant_message: decision.assistant_message || "", repaired_assistant_message: repairedAssistantMessage || "" } : {})
       });
+    }
+
+    if (req.method === "POST" && url.pathname === "/chat/context-policy") {
+      const body = await readJson(req, 5_000_000) as Partial<ChatRequest> | null;
+      if (!body || body.version !== OPERATOR_BACKEND_CONTRACT_VERSION
+        || typeof body.session_id !== "string" || !body.session_id.trim()
+        || typeof body.message_id !== "string" || !body.message_id.trim()
+        || typeof body.user_text !== "string"
+        || (body.tool_results !== undefined && !Array.isArray(body.tool_results))) {
+        return writeJson(res, 400, { error: "Invalid chat context policy request." });
+      }
+      if (!sessionAccessAllowed(res, body.session_id, auth.principal)) return;
+      return writeJson(res, 200, assistantContextPolicy(body));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/revit-batch/availability") {
+      const sessionId = url.searchParams.get("session_id") || "";
+      if (!sessionId.trim() || sessionId.length > 200) return writeJson(res, 400, { error: "Batch availability requires session_id." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      const owner = sessionOwnerForPrincipal(auth.principal);
+      return writeJson(res, 200, { schema: "revit-operator.batch-availability.v1", ok: true,
+        available: hasAvailableRevitBatchWork({ session_id: sessionId,
+          owner: owner ? { user_id: owner.owner_user_id, tenant_id: owner.owner_license_id } : null,
+          executor_kind: url.searchParams.get("executor_kind") || undefined }) });
     }
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/jobs") {

@@ -1,6 +1,7 @@
 import { compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
 import { modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
+import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 
 function parseToolArguments(value: unknown): any {
   if (typeof value !== "string") return value && typeof value === "object" ? value : {};
@@ -13,6 +14,12 @@ function parseToolArguments(value: unknown): any {
 }
 
 function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
+  if (tool === "operator_evaluate_assignment_criteria" || tool === "operator_request_assignment_input") {
+    try {
+      const projected = projectAssignmentStatusForModel(JSON.parse(text));
+      return projected ? JSON.stringify(projected) : text;
+    } catch { return text; }
+  }
   if (typeof tool !== "string" || tool.trim() !== "revit_call_tool") return text;
   const args = parseToolArguments(rawArguments);
   const path = typeof args.path === "string" ? args.path.trim().toLowerCase() : "";

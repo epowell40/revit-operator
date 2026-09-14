@@ -33,6 +33,7 @@ import { appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignm
 import { deriveAndSettleAssignmentKernelV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { McpInputValidator } from "../src/codex/mcp_input_validation.js";
 import { generatedParameterPayload, generatedParameterSource } from "./generated_parameter_postcondition.fixtures.js";
+import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dynamic_result_adapter.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -215,6 +216,13 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
     assert.equal(response.status, 200, await response.clone().text());
     const result = (await response.json()) as any;
     assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
+    const canonicalBeforeProjection = JSON.stringify(getAssignmentKernelSnapshotV2(binding.assignment_id));
+    const modelReply = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(result) }] },
+      { tool: "operator_evaluate_assignment_criteria" });
+    const modelStatus = JSON.parse((modelReply.contentItems[0] as any).text).assignment_status;
+    assert.deepEqual(modelStatus.result_delivery, result.assignment_snapshot_v2.result_delivery);
+    assert.equal(modelStatus.terminal, result.assignment_snapshot_v2.terminal);
+    assert.equal(JSON.stringify(getAssignmentKernelSnapshotV2(binding.assignment_id)), canonicalBeforeProjection);
     const published = parseAssignmentKernelPublicationV2(getAssignmentKernelPublicationV2(binding.assignment_id)!);
     assert.deepEqual((published.snapshot as any).result_delivery, result.assignment_snapshot_v2.result_delivery);
     assert.equal((await send(body)).status, 200);
@@ -790,5 +798,31 @@ test("canonical rolled-back create-view releases the legacy guard for a correcte
     const third = await run("L3", "unverified-next");
     assert.equal(dispatches, 2, JSON.stringify(third));
     assert.match(JSON.stringify(third), /prior apply verification required/);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
+test("dynamic criterion handoff projects status after canonical evaluation", () => workspace(async () => {
+  const { prepared, binding, snapshot } = start();
+  let canonicalResponse: any;
+  const runtime = { assignmentKernelV2Binding: () => binding,
+    queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (tool: string, args: any, context: any) => {
+      assert.equal(tool, "operator_evaluate_assignment_criteria");
+      assert.deepEqual(context.assignmentKernelV2Binding, binding);
+      canonicalResponse = { ok: true, assignment_snapshot_v2: evaluateAssignmentObservationCriteriaV2({ binding, claims: args.claims }) };
+      return { content: [{ type: "text", text: JSON.stringify(canonicalResponse) }] };
+    } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request } as any, prepared));
+  try {
+    const result: any = await handleCodexDynamicToolCall(runtime as any, { id: "criterion-handoff", method: "item/tool/call",
+      params: { namespace: "revit_operator", turnId: "criterion-turn", tool: "operator_evaluate_assignment_criteria",
+        arguments: { claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id, observation_ids: [] }] } } } as any);
+    assert.equal(result.success, true, JSON.stringify(result));
+    const status = JSON.parse(result.contentItems[0].text).assignment_status;
+    assert.equal(status.outcome, canonicalResponse.assignment_snapshot_v2.outcome);
+    assert.equal(status.terminal, canonicalResponse.assignment_snapshot_v2.terminal);
+    assert.notEqual(status.criteria[0].status, "pass", "no evidence cannot become successful completion");
+    assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), canonicalResponse.assignment_snapshot_v2);
   } finally { endTeammateLoopOwner(owner); }
 }));
