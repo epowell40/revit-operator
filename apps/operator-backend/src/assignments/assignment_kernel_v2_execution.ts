@@ -50,6 +50,7 @@ import {
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
+import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
 
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
@@ -692,12 +693,14 @@ function commitInput(
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
       && deterministicallyTargetBound
-      && postconditionSatisfiedByPayloadV2(
+      && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
+        ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,
         { capability_id: verificationSubject.capability_id, path: verificationSubject.request_identity?.path,
           native_artifact_receipt: verificationSubject.result?.native_artifact_receipt }
-      )
+      ))
   );
   if (trustedVerification) {
     if (lease.purpose !== "verification"

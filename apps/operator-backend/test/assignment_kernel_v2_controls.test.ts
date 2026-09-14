@@ -32,6 +32,7 @@ import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, gua
 import { appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { McpInputValidator } from "../src/codex/mcp_input_validation.js";
+import { generatedParameterPayload, generatedParameterSource } from "./generated_parameter_postcondition.fixtures.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -342,19 +343,27 @@ test("generated read report satisfies the canonical read task and delivers retai
   } finally { endTeammateLoopOwner(owner); }
 }));
 
-test("generated committed task checkpoint crosses evidence storage without becoming an unknown effect", () => workspace(async () => {
-  const { binding, snapshot, prepared } = start("Use a custom C# program to set Comments to PILOT on one duct and verify the edit.");
-  const payload = { schema: "revit-operator.dynamic-revit-program-run.v1", requested_mode: "apply", execution_ok: true,
-    execution_status: "completed", checkpoint: { task_session_id: "task-289013d60cff4ff0a782e5a1e7ac2ce6", outcome: "committed_verified" },
-    report: { Changed: "1" } };
+test("generated committed checkpoint retains evidence and completes only after exact native parameter readback", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Use a custom C# program to set Comments to PILOT-42 on one duct and verify the edit.");
+  const payload = generatedParameterPayload(binding.document_fingerprint!);
   let calls = 0;
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
     callTool: async (_tool: string, _args: unknown, context: any) => {
       calls++; const lease = context.assignmentKernelV2; context.onMcpAccepted();
+      if (_tool === "revit_call_tool") {
+        const raw = { items: [{ id: 42, parameters: { Comments: "PILOT-42" } }] };
+        return { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+          operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `read:${lease.operation_id}`,
+            operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none",
+            native_transaction_state: "not_applicable", authority: "native-host", result_schema_id: "operator-native/test/v2",
+            observation_required: true, raw_payload_hash: payloadDigestV2(raw).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+          observation: { raw_payload: raw, semantic_facts: [], verification_relevance: ["verification"], evidence_class: "verification" } } };
+      }
       return { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
         operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `dynamic:${lease.operation_id}`,
           operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "applied",
           native_transaction_state: "committed", authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
+          affected_target_identities: ["element_id:42", "element_id:99"],
           observation_required: true, raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: `dynamic-evidence:${lease.operation_id}`,
           request_identity: lease.request_identity, completed_at: new Date().toISOString() },
         observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
@@ -367,7 +376,7 @@ test("generated committed task checkpoint crosses evidence storage without becom
   try {
   const response: any = await handleCodexDynamicToolCall(runtime as any, { id: "checkpoint", method: "item/tool/call",
     params: { namespace: "revit_operator", turnId: "checkpoint", tool: "operator_run_dynamic_revit_program",
-      arguments: { source: "public class Edit {}", mode: "apply", category: "OST_DuctCurves", snapshot_limit: 20 } } } as any);
+      arguments: { source: generatedParameterSource, mode: "apply", category: "OST_DuctCurves", snapshot_limit: 20 } } } as any);
   assert.equal(response.success, true, JSON.stringify(response));
   const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
   assert.equal(calls, 1);
@@ -377,6 +386,17 @@ test("generated committed task checkpoint crosses evidence storage without becom
   const observation = Object.values(after.observations).find(o => o.authority === "dynamic-runtime")!;
   assert.ok(observation);
   assert.equal(observation.raw_payload_hash, payloadDigestV2(payload).digest);
+  assert.equal(after.terminal, false, "a committed receipt alone does not waive independent verification");
+  const verified: any = await handleCodexDynamicToolCall(runtime as any, { id: "read-checkpoint", method: "item/tool/call",
+    params: { namespace: "revit_operator", turnId: "checkpoint", tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], names: ["Comments"] } } } } as any);
+  assert.equal(verified.success, true, JSON.stringify(verified));
+  const final = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+  assert.equal(final.outcome, "complete");
+  assert.equal(calls, 2, "verification cannot repeat the generated apply");
+  assert.ok(canonicalTeammateFinalVerification(request));
+  const presentation = guardGenericTeammateDecision(request, { assistant_message: renderTerminalResultV2(final), actions: [] } as any);
+  assert.doesNotMatch(presentation.assistant_message, /post apply verification required|has not finished/);
   } finally { endTeammateLoopOwner(owner); }
 }));
 

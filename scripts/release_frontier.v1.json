@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "generated_parameter_postcondition_v2.test.ts",
     "mcp_input_validation.test.ts",
     "codex_turn_input.test.ts",
     "codex_research_config.test.ts",
@@ -141,6 +142,10 @@
     "OperatorRetiredPrototypeToolTests"
   ],
   "failure_families": [
+    {
+      "id": "generated-parameter-commit-requires-graph-bound-fresh-native-verification",
+      "coverage": ["backend:generated_parameter_postcondition_v2.test.ts", "backend:assignment_kernel_v2_controls.test.ts", "backend:postcondition_verification_v2.test.ts"]
+    },
     {
       "id": "generated-failure-feedback-preserves-cause-without-changing-authority",
       "coverage": ["mcp:lib/dynamicProgramPresentation.test.ts", "mcp:lib/dynamicAssignmentIntegration.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"]
