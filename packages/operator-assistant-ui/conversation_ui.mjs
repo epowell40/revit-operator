@@ -54,6 +54,28 @@ export function appendInlineText(container, text) {
   }
 }
 
+function tableCells(line) {
+  if (line.length > 12000 || !line.includes("|")) return null;
+  const input = line.trim(), cells = [];
+  let value = "", codeTicks = 0;
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    if (char === "\\" && input[i + 1] === "|") { value += "|"; i++; continue; }
+    if (char === "`") {
+      let count = 1;
+      while (input[i + count] === "`") count++;
+      if (!codeTicks) codeTicks = count; else if (codeTicks === count) codeTicks = 0;
+      value += "`".repeat(count); i += count - 1; continue;
+    }
+    if (char === "|" && !codeTicks) { cells.push(value.trim()); value = ""; }
+    else value += char;
+  }
+  cells.push(value.trim());
+  if (input.startsWith("|") && cells[0] === "") cells.shift();
+  if (input.endsWith("|") && cells.at(-1) === "") cells.pop();
+  return cells.length > 0 && cells.length <= 24 ? cells : null;
+}
+
 /** A small DOM renderer: all content stays text; model HTML is never executed. */
 export function renderAssistantBlocks(container, text, renderInline = appendInlineText) {
   container.replaceChildren();
@@ -69,6 +91,29 @@ export function renderAssistantBlocks(container, text, renderInline = appendInli
       while (++i < lines.length && !/^\s*```/.test(lines[i])) codeLines.push(lines[i]);
       const pre = document.createElement("pre"), code = document.createElement("code");
       code.textContent = codeLines.join("\n"); pre.appendChild(code); target.appendChild(pre); continue;
+    }
+    const header = tableCells(line), separators = i + 1 < lines.length ? tableCells(lines[i + 1]) : null;
+    if (header && separators && header.length === separators.length && separators.every(cell => /^:?-{3,}:?$/.test(cell))) {
+      flush(); list = null;
+      const wrapper = document.createElement("div"), table = document.createElement("table");
+      wrapper.className = "assistantTable";
+      const head = document.createElement("thead"), body = document.createElement("tbody");
+      const appendRow = (parent, values, tag) => {
+        const row = document.createElement("tr");
+        values.forEach((value, index) => {
+          const cell = document.createElement(tag);
+          cell.className = separators[index].endsWith(":") ? (separators[index].startsWith(":") ? "alignCenter" : "alignRight") : "alignLeft";
+          renderInline(cell, value); row.appendChild(cell);
+        });
+        parent.appendChild(row);
+      };
+      appendRow(head, header, "th"); i++;
+      for (let rowCount = 0; rowCount < 200 && i + 1 < lines.length; rowCount++) {
+        const values = tableCells(lines[i + 1]);
+        if (!values || values.length !== header.length) break;
+        appendRow(body, values, "td"); i++;
+      }
+      table.appendChild(head); table.appendChild(body); wrapper.appendChild(table); target.appendChild(wrapper); continue;
     }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
     if (heading) {

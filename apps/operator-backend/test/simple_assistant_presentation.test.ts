@@ -87,3 +87,30 @@ test("assessment evidence is expandable while limitations and questions remain v
   ui.renderAssistantBlocks(root,fence+"text\n## Model evidence\nkeep literal\n"+fence);
   assert.deepEqual(root.children.map((n:any)=>n.tag),["pre"],"fenced examples are not disclosure directives");
 });
+
+test("reported tables render real cells with alignment and inert values; fences and malformed tables retain text", () => {
+  const document:any={createTextNode:(text:string)=>({tag:"text",textContent:text}),createElement:(tag:string)=>({tag,children:[] as any[],ownerDocument:document,textContent:"",
+    appendChild(child:any){this.children.push(child);},replaceChildren(){this.children=[];}})};
+  const root=document.createElement("div");
+  const flatten=(node:any):any[]=>[node,...(node.children??[]).flatMap(flatten)];
+  ui.renderAssistantBlocks(root,"| Duct type | Count |\n|---|---:|\n| Mitered Elbows / Taps | 2 |\n| Taps | 8 |\n| Tees | 10 |\n| **Total** | **20** |");
+  assert.equal(root.children[0].className,"assistantTable");
+  assert.equal(flatten(root).filter(n=>n.tag==="th").length,2);
+  assert.equal(flatten(root).filter(n=>n.tag==="td").length,8);
+  assert.equal(flatten(root).filter(n=>n.tag==="td")[1].className,"alignRight");
+  assert.ok(flatten(root).some(n=>n.tag==="strong"&&n.textContent==="20"));
+  ui.renderAssistantBlocks(root,"A | B\n:---: | ---\n`a|b` | escaped \\| value\n<img onerror=run()> | <script>bad()</script>");
+  assert.equal(flatten(root).filter(n=>n.tag==="td").length,4);
+  assert.ok(flatten(root).some(n=>n.tag==="code"&&n.textContent==="a|b"));
+  assert.ok(flatten(root).some(n=>n.textContent==="escaped | value"));
+  assert.equal(flatten(root).some(n=>["img","script"].includes(n.tag)),false);
+  const fence=String.fromCharCode(96).repeat(3);
+  ui.renderAssistantBlocks(root,fence+"\n| A | B |\n|---|---|\n|1|2|\n"+fence);
+  assert.deepEqual(root.children.map((n:any)=>n.tag),["pre"]);
+  ui.renderAssistantBlocks(root,"| A | B |\n|---|\n|1|2|");
+  assert.equal(flatten(root).some(n=>n.tag==="table"),false);
+  assert.ok(flatten(root).some(n=>n.textContent?.includes("| A | B |")));
+  ui.renderAssistantBlocks(root,"A | B\n--- | ---\n"+Array.from({length:205},(_,i)=>`${i} | value`).join("\n"));
+  assert.equal(flatten(root).filter(n=>n.tag==="td").length,400);
+  assert.ok(flatten(root).some(n=>n.tag==="text"&&n.textContent.includes("204 | value")),"overflow rows stay visible as text");
+});

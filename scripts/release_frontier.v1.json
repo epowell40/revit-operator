@@ -1534,6 +1534,13 @@
         "backend:assignment_kernel_v2_controls.test.ts",
         "backend:agent_response_policy.test.ts"
       ]
+    },
+    {
+      "id": "valid-assistant-table-renders-as-unreadable-pipe-delimited-prose",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

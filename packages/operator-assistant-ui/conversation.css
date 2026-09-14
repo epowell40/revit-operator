@@ -47,6 +47,13 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .bubble li { margin: 4px 0; }
 .bubble pre { overflow-x: auto; padding: 12px; background: #f6f6f6; border-radius: 5px; white-space: pre; font-size: 12px; }
 .bubble blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid #ddd; color: #555; }
+.assistantTable { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.assistantTable table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.45; }
+.assistantTable th, .assistantTable td { padding: 8px 7px; border-bottom: 1px solid #e6e6e6; vertical-align: top; }
+.assistantTable th { font-weight: 600; background: #f7f7f7; }
+.assistantTable .alignLeft { text-align: left; }
+.assistantTable .alignRight { text-align: right; }
+.assistantTable .alignCenter { text-align: center; }
 .composer { margin: 12px 30px 22px; padding: 12px 14px; gap: 6px; border: 1px solid #c9c9c9; border-radius: 8px; background: #fff; box-shadow: none; }
 .composer:focus-within { border-color: #777; }
 #composerNotice { display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; line-height: 1.4; }
