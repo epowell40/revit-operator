@@ -1541,6 +1541,15 @@
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/conversation_rendering.test.js"
       ]
+    },
+    {
+      "id": "retained-answer-context-column-labels-create-fresh-model-obligation",
+      "coverage": [
+        "backend:assistant_context_policy.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "backend:codex_turn_input.test.ts",
+        "backend:team_assistant_live_regressions.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

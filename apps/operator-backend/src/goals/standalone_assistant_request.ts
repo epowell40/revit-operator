@@ -8,7 +8,15 @@ function isRetainedResultDiscussion(request: string): boolean {
   // These clauses ask for new work or current-state verification, even if a
   // previous report is also mentioned. History grants no model authority.
   if (/\b(?:inspect|check|verify|refresh|query|collect|requery|rescan|rerun|re-run|run|execute|implement|perform|make|continue|resume|retry|add|adjust|change|correct|fix|create|place|move|delete|remove|rename|resize|replace|set|route|connect|disconnect|update|modify|edit|apply|commit|export|print|open|save|close|activate|select|highlight|zoom|email|send|contact|publish|submit)\b|\b(?:carry out|go ahead|do (?:it|that|what|the work|the tasks))\b/i.test(request)) return false;
-  if (/\b(?:current|active|selected|live|latest)\b|\b(?:this|our|the)\s+model\b|\bin\s+revit\b/i.test(request)) return false;
+  // A column label can name a live-context field without requesting a new
+  // observation. Admit this only with an explicit retained-only source. Keep
+  // other clauses intact so a neighboring fresh question still owns a task.
+  const retainedOnly = /\b(?:using|from)\s+only\s+(?:the\s+)?(?:results?|reports?|answers?|data)\s+(?:(?:that|which)\s+)?(?:you|we)\s+(?:already\s+)?(?:collected|gathered|reported|returned|found)\b/i.test(request)
+    || /\b(?:using|from)\s+only\s+(?:the\s+)?(?:previous|earlier|prior|retained)\s+(?:results?|reports?|answers?|data)\b/i.test(request);
+  const label = '["\'`]?';
+  const contextColumns = new RegExp(`\\b(?:table|columns?|fields?)\\s+(?:with|named|labeled|called)\\s+(?:${label}model${label}\\s*(?:and|,|/)\\s*${label}active view${label}|${label}active view${label}\\s*(?:and|,|/)\\s*${label}model${label})(?=\\s|[,.;!?]|$)`, 'gi');
+  const scopeRequest = retainedOnly ? request.replace(contextColumns, 'table columns') : request;
+  if (/\b(?:current|active|selected|live|latest)\b|\b(?:this|our|the)\s+model\b|\bin\s+revit\b/i.test(scopeRequest)) return false;
   return true;
 }
 

@@ -16,10 +16,12 @@ const request = (extra: Partial<ChatRequest> = {}): ChatRequest => ({ version: "
 
 test("retained-result discussion enters the actual provider turn without fresh model obligations", async t => {
   fixture(t);
-  const input = await buildCodexTurnInput(request({ user_text: retainedResultQuestions[0], context: { revit: {} } }), []);
-  const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
-  assert.match(text, /STANDALONE ASSISTANT TURN/);
-  assert.match(text, /without a Revit bootstrap/);
+  for (const user_text of retainedResultQuestions) {
+    const input = await buildCodexTurnInput(request({ user_text, context: { revit: {} } }), []);
+    const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
+    assert.match(text, /STANDALONE ASSISTANT TURN/, user_text);
+    assert.match(text, /without a Revit bootstrap/, user_text);
+  }
   const mixed = await buildCodexTurnInput(request({ user_text: retainedResultQuestions[0] + " Inspect the selected duct too." }), []);
   assert.doesNotMatch(mixed.filter(item => item.type === "text").map(item => item.text).join("\n"), /STANDALONE ASSISTANT TURN/);
 });
