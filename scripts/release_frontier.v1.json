@@ -1,6 +1,10 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "codex_turn_input.test.ts",
+    "codex_research_config.test.ts",
+    "chat_stream_attachment_parity.test.ts",
+    "inline_images.test.ts",
     "external_provider_brain.test.ts",
     "agent_response_policy.test.ts",
     "general_revit_export_isolation.test.ts",
@@ -131,6 +135,21 @@
     "OperatorRetiredPrototypeToolTests"
   ],
   "failure_families": [
+    {
+      "id": "visual-attachments-and-empty-continuations-lose-pixels-or-current-evidence",
+      "coverage": [
+        "backend:codex_turn_input.test.ts",
+        "backend:chat_stream_attachment_parity.test.ts",
+        "backend:inline_images.test.ts"
+      ]
+    },
+    {
+      "id": "research-settings-must-survive-thread-start-and-resume-without-policy-bypass",
+      "coverage": [
+        "backend:codex_research_config.test.ts",
+        "backend:codex_instruction_binding.test.ts"
+      ]
+    },
     {
       "id": "mep-alternate-points-and-operation-specific-required-fields",
       "coverage": [

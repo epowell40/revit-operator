@@ -6,6 +6,7 @@ import { isMissingCodexThreadError } from "./codex_tool_observation.js";
 import { codexTelemetryThreadKey } from "./codex_turn_model_telemetry.js";
 import type { CodexThreadStartProfile } from "./codex_turn_profile.js";
 import { assertConfiguredBenchmarkInstructions } from "../codex/instruction_binding.js";
+import { codexResearchConfig } from "../codex/research_config.js";
 
 export async function getOrCreateCodexThread(args: {
   sessionId: string;
@@ -37,7 +38,7 @@ export async function getOrCreateCodexThread(args: {
         sandbox: profile.sandbox,
         approvalPolicy: profile.approvalPolicy,
         model: settings.model,
-        config: { model_reasoning_effort: settings.reasoning_effort },
+        config: { model_reasoning_effort: settings.reasoning_effort, ...codexResearchConfig(profile.certified) },
         baseInstructions: profile.baseInstructions,
         developerInstructions: profile.developerInstructions,
         excludeTurns: true
@@ -69,7 +70,7 @@ export async function getOrCreateCodexThread(args: {
     sandbox: profile.sandbox,
     approvalPolicy: profile.approvalPolicy,
     model: settings.model,
-    config: { model_reasoning_effort: settings.reasoning_effort },
+    config: { model_reasoning_effort: settings.reasoning_effort, ...codexResearchConfig(profile.certified) },
     baseInstructions: profile.baseInstructions,
     developerInstructions: profile.developerInstructions,
     dynamicTools: await args.getDynamicTools(),

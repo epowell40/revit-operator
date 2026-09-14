@@ -14,7 +14,17 @@ import { getCodexThreadId } from "../src/memory/sqlite_store.js";
 const a = { baseInstructions: "base A", developerInstructions: "skills A" };
 const b = { baseInstructions: "base A", developerInstructions: "skills B" };
 
-test("loaded A rejects B before provider dispatch while matching reuse preserves durable thread", async () => {
+test("loaded A rejects B before provider dispatch while matching reuse preserves durable thread", async t => {
+  const oldResearch = process.env.OPERATOR_WEB_RESEARCH_MODE;
+  const oldDenylist = process.env.OPERATOR_WEB_RESEARCH_DENYLIST_DOMAINS;
+  process.env.OPERATOR_WEB_RESEARCH_MODE = "unrestricted";
+  delete process.env.OPERATOR_WEB_RESEARCH_DENYLIST_DOMAINS;
+  t.after(() => {
+    if (oldResearch === undefined) delete process.env.OPERATOR_WEB_RESEARCH_MODE;
+    else process.env.OPERATOR_WEB_RESEARCH_MODE = oldResearch;
+    if (oldDenylist === undefined) delete process.env.OPERATOR_WEB_RESEARCH_DENYLIST_DOMAINS;
+    else process.env.OPERATOR_WEB_RESEARCH_DENYLIST_DOMAINS = oldDenylist;
+  });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-instruction-binding-"));
   const previousWorkspace = process.env.OPERATOR_WORKSPACE_ROOT;
   process.env.OPERATOR_WORKSPACE_ROOT = root;
@@ -89,6 +99,10 @@ test("loaded A rejects B before provider dispatch while matching reuse preserves
     trace = fs.readFileSync(tracePath, "utf8");
     assert.equal((trace.match(/"method":"turn\/start"/g) ?? []).length, 3, "only the requested new turn may start after idle acknowledgement");
     assert.equal((trace.match(/"method":"thread\/start"/g) ?? []).length, 1, "recovery preserves the original thread");
+    const threadRequests = trace.trim().split(/\r?\n/).map(line => JSON.parse(line)).filter(row => ["thread/start", "thread/resume"].includes(row.method) && row.params?.config);
+    assert.ok(threadRequests.some(row => row.method === "thread/start"));
+    assert.ok(threadRequests.some(row => row.method === "thread/resume"));
+    for (const row of threadRequests) assert.equal(row.params.config.web_search, "live", "live research survives creation and process resume");
     assert.equal((trace.match(/"method":"turn\/interrupt"/g) ?? []).length, 0);
   } finally {
     first.stop(); second.stop(); activeRejoin.stop();

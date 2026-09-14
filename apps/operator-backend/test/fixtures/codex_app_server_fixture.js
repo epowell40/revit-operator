@@ -40,7 +40,7 @@ let initialized = false;
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", line => {
   const message = JSON.parse(line);
-  trace("in", message.method);
+  trace("in", message.method, { params: message.params });
   if (message.method === "initialized") return;
   const respond = result => send({ id: message.id, result });
   if (message.method === "initialize") {

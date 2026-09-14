@@ -63,7 +63,7 @@ function decodeStrictBase64(value: string, maxBytes: number): Buffer | null {
   return data;
 }
 
-export function readLocalImageAsDataUrl(localPath: string, maxBytes: number, hooks: InlineImageReadHooks = {}): string | null {
+export function readLocalWorkspaceFile(localPath: string, maxBytes: number, hooks: InlineImageReadHooks = {}): Buffer | null {
   let fd: number | null = null;
   try {
     const p = localPath.trim();
@@ -97,11 +97,7 @@ export function readLocalImageAsDataUrl(localPath: string, maxBytes: number, hoo
     if (!samePath(currentRealPath, targetRealPath) || !realRoots.some(root => isUnderDir(currentRealPath, root))) return null;
     const currentStat = fs.statSync(candidate, { bigint: true });
     if (!sameFileIdentity(openedStat, currentStat)) return null;
-    const data = readOpenedFile(fd, openedStat, maxBytes);
-    if (!data) return null;
-    const mime = sniffImageMime(data);
-    if (!mime) return null;
-    return `data:${mime};base64,${data.toString("base64")}`;
+    return readOpenedFile(fd, openedStat, maxBytes);
   } catch {
     return null;
   } finally {
@@ -109,6 +105,12 @@ export function readLocalImageAsDataUrl(localPath: string, maxBytes: number, hoo
       try { fs.closeSync(fd); } catch { /* ignore */ }
     }
   }
+}
+
+export function readLocalImageAsDataUrl(localPath: string, maxBytes: number, hooks: InlineImageReadHooks = {}): string | null {
+  const data = readLocalWorkspaceFile(localPath, maxBytes, hooks);
+  const mime = data && sniffImageMime(data);
+  return data && mime ? `data:${mime};base64,${data.toString("base64")}` : null;
 }
 
 export function toolAttachmentToDataUrl(attachment: ToolAttachment | unknown, maxBytes: number): string | null {
