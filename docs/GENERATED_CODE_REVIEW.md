@@ -22,7 +22,11 @@ Operator is **not unrestricted arbitrary Revit API execution**. Its sandbox is u
 
 The EPIC-0462 audit reproduced rejection of a valid report string containing `System.IO` and `dynamic`. Admission now compares executable token sequences, allowing prose and ordinary identifiers while reporting exact ranges for prohibited syntax. Semantic symbol checks, metadata checks and operating-system isolation remain in place; a text denylist is not the security boundary. Runtime diagnostics now preserve exception types and deduplicate the two replay tasks' root causes.
 
+The MCP launcher now locates the installed add-in's bundled supervisor and worker for the selected Revit year on Windows, using the existing workspace token file. Explicit paired runtime paths remain supported. Missing packages, incomplete overrides and unavailable years fail before dispatch. This discovery does not replace native package authentication or make a remote Linux MCP process able to execute a Windows runtime. The model-facing result-reference interface name is corrected to the actual SDK type.
+
 The largest capability opportunity is Revit API breadth. Extend trusted operations for concrete team tasks that fail the pilot, with native transactions, target scope, rollback and readback. Do not advertise unimplemented graph operations, turn off admission to make a demo pass, or place raw code in Revit's UI thread without an explicit runtime design. A hung arbitrary in-process API call cannot be safely killed like the isolated worker.
+
+Current result-reference execution also selects one activated primitive family per graph. A combined MEP-and-annotation job needs separate verified steps; it is not one atomic cross-domain program. Qualify the handoff and final completeness of such jobs before treating that composition as dependable team automation.
 
 Prioritize useful feedback next: retain bounded partial reports on program failure, map runtime exceptions to generated source, and expose an exact installed SDK reference with working examples. These reduce correction turns without broadening write authority. Keep long tasks in verified steps: a 30-second worker computation and a short Revit transaction can participate in an hours-long assignment; an hours-long UI-thread transaction prevents normal Revit work.
 

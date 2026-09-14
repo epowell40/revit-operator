@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getWorkspaceRoot } from "./workspace.js";
+import { resolveDynamicRuntimeInstallation } from "./dynamicRuntimeInstallation.js";
 
 export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-program-run.v1" as const;
 
@@ -88,12 +89,10 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const normalizedSource = input.source.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   const sourceHash = sha256(Buffer.from(normalizedSource, "utf8"));
   const resultReference = input.result_reference === undefined ? undefined : normalizeResultReference(input.result_reference);
-  const supervisor = requiredFile(env.OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH, "OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH");
-  const workerDirectory = requiredDirectory(env.OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY, "OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY");
-  const tokenFile = requiredFile(env.OPERATOR_TOKEN_FILE, "OPERATOR_TOKEN_FILE");
   const year = boundedYear(input.target_revit_year ?? env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR ?? "2024");
-  const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
   const workspaceRoot = getWorkspaceRoot();
+  const { supervisor, workerDirectory, tokenFile } = resolveDynamicRuntimeInstallation(year, workspaceRoot, env);
+  const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
   ensureRunsRoot(workspaceRoot, runsRoot);
   const compilationCacheDirectory = path.join(workspaceRoot, "artifacts", "dynamic-runtime-compilation-cache");
@@ -809,8 +808,6 @@ function executeFile(file: string, args: string[], timeoutMs: number): Promise<{
   return new Promise(resolve => execFile(file, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) =>
     resolve({ exitCode: typeof (error as NodeJS.ErrnoException | null)?.code === "number" ? (error as unknown as { code: number }).code : error ? 1 : 0, stdout, stderr })));
 }
-function requiredFile(value: string | undefined, label: string): string { const resolved = value ? path.resolve(value) : ""; if (!resolved || !fs.statSync(resolved, { throwIfNoEntry: false })?.isFile()) throw new Error(`${label} must identify an existing trusted file.`); return resolved; }
-function requiredDirectory(value: string | undefined, label: string): string { const resolved = value ? path.resolve(value) : ""; if (!resolved || !fs.statSync(resolved, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${label} must identify an existing trusted directory.`); return resolved; }
 function boundedInteger(value: number | undefined, minimum: number, maximum: number, fallback: number): number { const result = value ?? fallback; if (!Number.isSafeInteger(result) || result < minimum || result > maximum) throw new Error("Dynamic runtime numeric bound is invalid."); return result; }
 function boundedText(value: string, maximum: number, label: string): string { if (typeof value !== "string" || value.length < 1 || value.length > maximum || value.includes("\0")) throw new Error(`Dynamic ${label} is invalid.`); return value; }
 function boundedStrings(value: string[], maximumItems: number, maximumChars: number, label: string): string[] { if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`Dynamic ${label} exceeds its item bound.`); const result = value.map(item => boundedText(item, maximumChars, label)); if (new Set(result).size !== result.length) throw new Error(`Dynamic ${label} contains duplicates.`); return result; }

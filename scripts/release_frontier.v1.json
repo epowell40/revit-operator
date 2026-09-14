@@ -98,7 +98,8 @@
     "lib/toolSearchRanking.test.ts",
     "lib/toolSearchRiskSemantics.test.ts",
     "skills/quantify.test.ts",
-    "lib/supportedToolInventory.test.ts"
+    "lib/supportedToolInventory.test.ts",
+    "lib/dynamicRuntimeInstallation.test.ts"
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
@@ -996,6 +997,24 @@
         "backend:general_revit_acceptance_review.test.ts",
         "backend:view_artifact_evidence.test.ts"
       ]
+    },
+    {
+      "id": "generated-code-admission-distinguishes-prose-from-executable-api",
+      "coverage": [
+        "dynamic:GeneratedCodeAdmissionTests",
+        "dynamic:RuntimeWorkspaceTests"
+      ]
+    },
+    {
+      "id": "bundled-generated-runtime-is-reachable-without-manual-paths",
+      "coverage": [
+        "mcp:lib/dynamicRuntimeInstallation.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
     }
+  ],
+  "dynamic_runtime_test_classes": [
+    "GeneratedCodeAdmissionTests",
+    "RuntimeWorkspaceTests"
   ]
 }

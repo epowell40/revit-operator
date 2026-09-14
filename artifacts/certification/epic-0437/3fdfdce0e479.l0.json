@@ -107,7 +107,15 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.ts",
-      "sha256": "sha256:e0a4a7cb1a9caa6590504a77f8dd5cb15fbd87dececa00b6390d9eda01262cf6"
+      "sha256": "sha256:1ca2454146a49b0bf0b3270f27c81ca1c7afd20b838cfa236b5142d61e6c81e4"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/dynamicRuntimeInstallation.test.ts",
+      "sha256": "sha256:8c748e05f069d4a866a01295728419d58e6eada42f8dc562e031f9b4dc534989"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/dynamicRuntimeInstallation.ts",
+      "sha256": "sha256:6559c6fdf1313d4b7f74f1e104da327c75f34a45e206c70ecca864fe5e3e2fc9"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
@@ -400,7 +408,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:92809556bb3da1ba3a4da94696ef09b4e0e877a7946002fc7fb39c5ee498ba6f"
+      "sha256": "sha256:7fae1461be7d0b3d310bf3c943e6cc0146ce92bd4d24fe4008b7e7ed259a5554"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -1100,7 +1108,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:7abe7d77684959caadf7f04b2c2c01448a1d6aa029a59f1927d10991df9bc673"
+      "sha256": "sha256:6bdd0d710c1bb84bf225fca685ac5d4cf5eb63b97413ffd6dd89a307d357eb11"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -6505,7 +6513,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:e25794dafecd92d8f1ae05cf24ff1026d98ffe4272850aee37dd363c21fa3e53",
+  "inputs_hash": "sha256:a627ff69312835d257c930b68f1e218e669dd84e787a50328032b1581ddead28",
   "result": {
     "passed": true,
     "checks": [
