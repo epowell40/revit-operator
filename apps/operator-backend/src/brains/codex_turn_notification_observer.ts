@@ -48,6 +48,7 @@ export function createCodexTurnNotificationObserver(args: {
   webEvidenceRequirement: AuthoritativeWebEvidenceRequirement;
   mcpRuntime: Pick<CodexMcpToolRuntime, "flushAssignmentKernelV2TurnStop"> | null;
   onDelta?: (delta: string) => void;
+  onProgress?: (text: string) => void;
   deferAssistantOutput?: boolean;
 }): {
   observe(notification: CodexNotificationEnvelope): void;
@@ -55,6 +56,9 @@ export function createCodexTurnNotificationObserver(args: {
 } {
   let assistantText = "";
   let assistantDeltas = "";
+  const messagePhases = new Map<string, string>();
+  const messageDeltas = new Map<string, string>();
+  const canStream = !args.deferAssistantOutput && !args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required;
   let hasFreshRevitEvidence = !args.freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !args.webEvidenceRequirement.required;
 
@@ -62,12 +66,20 @@ export function createCodexTurnNotificationObserver(args: {
     try {
       if (!notification || notification.threadId !== args.threadId) return;
       args.modelTelemetry.observe(notification);
+      if (notification.method === "item/started" && notification.params?.turnId === args.turnId) {
+        const item = notification.params?.item;
+        if (item?.type === "agentMessage" && typeof item.id === "string") messagePhases.set(item.id, item.phase ?? "unknown");
+      }
       if (notification.method === "item/agentMessage/delta") {
         if (notification.params?.turnId !== args.turnId) return;
         const delta = typeof notification.params?.delta === "string" ? notification.params.delta : "";
         if (delta) {
-          assistantDeltas += delta;
-          if (!args.deferAssistantOutput && !args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required) args.onDelta?.(delta);
+          const id = String(notification.params?.itemId ?? "unknown");
+          messageDeltas.set(id, (messageDeltas.get(id) ?? "") + delta);
+          if (messagePhases.get(id) === "final_answer") {
+            assistantDeltas = messageDeltas.get(id)!;
+            if (canStream) args.onDelta?.(delta);
+          }
         }
       }
 
@@ -75,7 +87,14 @@ export function createCodexTurnNotificationObserver(args: {
       const item = notification.params?.item;
       if (item?.type === "agentMessage") {
         const full = typeof item.text === "string" ? item.text : "";
-        if (full) assistantText = full;
+        const phase = item.phase ?? messagePhases.get(String(item.id));
+        if (phase === "commentary") {
+          if (full) args.onProgress?.(full.replace(/\s+/g, " ").trim().slice(0, 240));
+        } else if (full) {
+          assistantText = full; assistantDeltas = full;
+          if (canStream && messagePhases.get(String(item.id)) !== "final_answer") args.onDelta?.(full);
+        }
+        messageDeltas.delete(String(item.id)); messagePhases.delete(String(item.id));
       }
 
       const dynamicTool = adaptDynamicToolCompletedItem(item);

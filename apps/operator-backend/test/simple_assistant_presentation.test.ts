@@ -41,6 +41,19 @@ test("inline formatting treats model names and HTML as inert text", () => {
   assert.ok(nodes.some(n => n.textContent.includes("<img onerror=run()>")));
 });
 
+test("document answers render semantic headings, lists and inert code instead of a wall of markdown", () => {
+  const document:any={createTextNode:(text:string)=>({tag:"text",textContent:text}),createElement:(tag:string)=>({tag,children:[] as any[],ownerDocument:document,textContent:"",
+    appendChild(child:any){this.children.push(child);},replaceChildren(){this.children=[];}})};
+  const root=document.createElement("div");
+  ui.renderAssistantBlocks(root,"## Coverage\nBoth documents inspected.\n\n- **Page 3:** red underline.\n- No model edits.\n\n1. Check loads\n2. Ask for hours\n\n```html\n<script>run()</script>\n```");
+  assert.deepEqual(root.children.map((n:any)=>n.tag),["h3","p","ul","ol","pre"]);
+  assert.equal(root.children[2].children.length,2);assert.equal(root.children[3].children.length,2);
+  assert.ok(root.children[2].children[0].children.some((n:any)=>n.tag==="strong"&&n.textContent==="Page 3:"));
+  assert.equal(root.children[4].children[0].tag,"code");assert.equal(root.children[4].children[0].textContent,"<script>run()</script>");
+  ui.renderAssistantBlocks(root,"## Replacement\nFinal only.");
+  assert.deepEqual(root.children.map((n:any)=>n.tag),["h3","p"],"stream rerender replaces prior nodes");
+});
+
 test("restoring history preserves a simultaneous live reply and avoids duplicate messages", () => {
   const live = { id: "new", role: "assistant", text: "Current streaming reply" };
   const result = ui.mergeConversationHistory([live], [

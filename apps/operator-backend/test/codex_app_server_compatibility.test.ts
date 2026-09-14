@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
+
+test("provider commentary is a progress update and never concatenates into final answer deltas", () => {
+  const deltas: string[] = [], progress: string[] = [];
+  const observer = createCodexTurnNotificationObserver({sessionId:"phase-test",threadId:"thread",turnId:"turn",
+    modelTelemetry:{observe(){}},assignmentObserver:{observe(){}},freshEvidenceRequirement:{required:false,kind:"none"} as any,
+    webEvidenceRequirement:{required:false} as any,mcpRuntime:null,onDelta:text=>deltas.push(text),onProgress:text=>progress.push(text)});
+  const emit = (method:string,params:any) => observer.observe({method,threadId:"thread",params:{turnId:"turn",...params}} as any);
+  emit("item/started",{item:{type:"agentMessage",id:"progress",phase:"commentary"}});
+  emit("item/agentMessage/delta",{itemId:"progress",delta:"Reviewing the remaining pages."});
+  emit("item/completed",{item:{type:"agentMessage",id:"progress",phase:"commentary",text:"Reviewing the remaining pages."}});
+  assert.deepEqual(deltas,[]);assert.deepEqual(progress,["Reviewing the remaining pages."]);
+  emit("item/started",{item:{type:"agentMessage",id:"answer",phase:"final_answer"}});
+  emit("item/agentMessage/delta",{itemId:"answer",delta:"## Findings\n"});
+  emit("item/agentMessage/delta",{turnId:"other",itemId:"answer",delta:"Wrong turn"});
+  emit("item/agentMessage/delta",{itemId:"answer",delta:"- Red marks on page 3."});
+  emit("item/completed",{item:{type:"agentMessage",id:"answer",phase:"final_answer",text:"## Findings\n- Red marks on page 3."}});
+  assert.equal(deltas.join(""),"## Findings\n- Red marks on page 3.");
+  assert.equal(observer.snapshot().assistantText,deltas.join(""));
+  assert.equal(observer.snapshot().assistantDeltas,deltas.join(""));
+});
+
+test("unknown-phase messages wait for authoritative completion and deferred final output stays buffered", () => {
+  for(const deferAssistantOutput of [false,true]) {
+    const deltas:string[]=[];
+    const observer=createCodexTurnNotificationObserver({sessionId:"phase-fallback",threadId:"thread",turnId:"turn",deferAssistantOutput,
+      modelTelemetry:{observe(){}},assignmentObserver:{observe(){}},freshEvidenceRequirement:{required:false} as any,webEvidenceRequirement:{required:false} as any,mcpRuntime:null,onDelta:t=>deltas.push(t)});
+    observer.observe({method:"item/agentMessage/delta",threadId:"thread",params:{turnId:"turn",itemId:"old",delta:"Old partial"}} as any);
+    assert.deepEqual(deltas,[]);
+    observer.observe({method:"item/completed",threadId:"thread",params:{turnId:"turn",item:{type:"agentMessage",id:"old",text:"Complete answer"}}} as any);
+    assert.deepEqual(deltas,deferAssistantOutput?[]:["Complete answer"]);
+    assert.equal(observer.snapshot().assistantText,"Complete answer");
+  }
+});
 import { recordRevitToolOutcome, formatRevitToolContractMemoryForPrompt } from "../src/codex/revit_tool_contract_memory.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -52,8 +85,11 @@ test("canonical assignment defers provider success deltas until the authoritativ
       modelTelemetry: { observe: () => {} }, assignmentObserver: { observe: () => {} }, mcpRuntime: null,
       freshEvidenceRequirement: { required: false } as any, webEvidenceRequirement: { required: false } as any,
       deferAssistantOutput, onDelta: text => deltas.push(text) });
+    observer.observe({ threadId: "thread", method: "item/started", params: {
+      turnId: "turn", item: { type: "agentMessage", id: "answer", phase: "final_answer" }
+    } } as any);
     observer.observe({ threadId: "thread", method: "item/agentMessage/delta", params: {
-      turnId: "turn", delta: "Created M-COORDINATION COPY."
+      turnId: "turn", itemId: "answer", delta: "Created M-COORDINATION COPY."
     } } as any);
     assert.equal(observer.snapshot().assistantDeltas, "Created M-COORDINATION COPY.");
     assert.deepEqual(deltas, deferAssistantOutput ? [] : ["Created M-COORDINATION COPY."]);

@@ -39,6 +39,14 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .msg.error .bubble { padding: 12px; background: #fff4f3; border: 1px solid #f0cbc8; border-radius: 6px; }
 .bubble p:first-child { margin-top: 0; }
 .bubble p:last-child { margin-bottom: 0; }
+.msg.assistant .bubble { white-space: normal; }
+.bubble p { margin: 0 0 12px; white-space: pre-line; }
+.bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { margin: 20px 0 8px; font-size: 15px; line-height: 1.4; font-weight: 600; }
+.bubble > :first-child { margin-top: 0; }
+.bubble ul, .bubble ol { margin: 8px 0 14px; padding-left: 22px; }
+.bubble li { margin: 4px 0; }
+.bubble pre { overflow-x: auto; padding: 12px; background: #f6f6f6; border-radius: 5px; white-space: pre; font-size: 12px; }
+.bubble blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid #ddd; color: #555; }
 .composer { margin: 12px 30px 22px; padding: 12px 14px; gap: 6px; border: 1px solid #c9c9c9; border-radius: 8px; background: #fff; box-shadow: none; }
 .composer:focus-within { border-color: #777; }
 #composerNotice { display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; line-height: 1.4; }
@@ -78,9 +86,9 @@ textarea:focus { outline: none; }
 @media (max-width: 640px) {
   .bar { padding: 10px 12px; min-height: 56px; gap: 6px; }
   .titleName { font-size: 16px; }
-  .productControls { gap: 2px; }
+  .productControls { gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
   .productControls > button, .advancedPanel > summary { padding: 7px; font-size: 12px; }
-  .statusPill { position: absolute; top: 62px; left: 18px; z-index: 2; max-width: calc(100vw - 36px); background: #fff; }
+  .statusPill { position: static; order: 3; flex-basis: 100%; margin: 2px 0 0; justify-content: flex-end; max-width: 100%; background: transparent; }
   #chatScroll { padding: 36px 18px 16px; }
   .composer { margin: 8px 12px 12px; }
   .assignmentCompact { margin: 0 16px; }

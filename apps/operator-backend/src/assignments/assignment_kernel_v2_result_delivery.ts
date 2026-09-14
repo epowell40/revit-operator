@@ -53,7 +53,9 @@ export function buildAssignmentResultDeliveryV2(
       label: typeof selection.label === "string" ? selection.label.trim() : "",
       observation_id: selection.observation_id, path: [...selection.path],
       value: selectValue(payload, selection.path), evidence_ref: observation.raw_payload_ref,
-      payload_hash: observation.raw_payload_hash
+      payload_hash: observation.raw_payload_hash,
+      ...(snapshot.operations[observation.operation_id]?.result?.status === "failed_after_dispatch"
+        ? { presentation_kind: "diagnostic" as const } : {})
     };
   }) };
   validateResultDeliveryV2(snapshot, delivery);

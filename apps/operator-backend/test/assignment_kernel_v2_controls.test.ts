@@ -418,6 +418,55 @@ test("generated read report satisfies the canonical read task and delivers retai
   } finally { endTeammateLoopOwner(owner); }
 }));
 
+test("intentional read failure and repaired success retain both outcomes through the controller and HTTP answer delivery", () => workspace(async () => {
+  const {binding,snapshot,prepared}=start('Test custom C# diagnostics without changing the model. Log "diagnostic probe reached", throw InvalidOperationException "diagnostic probe failure", then repair it and report both outcomes. Do not change any elements or parameters.');
+  let calls=0;
+  const runtime={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop:()=>{},callTool:async(_tool:string,_args:any,context:any)=>{
+    const lease=context.assignmentKernelV2;context.onMcpAccepted(); const failed=++calls===1;
+    const payload=failed?{execution_status:"failed",diagnostics:[{code:"PROGRAM_EXCEPTION",message:"diagnostic probe failure",line:8},{code:"PROGRAM_PARTIAL_OUTPUT",message:'{"logs":["diagnostic probe reached"]}'}]}
+      :{execution_status:"completed",report:{Result:"diagnostic probe repaired"},logs:["diagnostic probe reached"]};
+    return {content:[],isError:failed,structuredContent:{schema:ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2:{schema:"revit-operator.operation-result/v2",result_id:`result:${lease.operation_id}`,operation_id:lease.operation_id,binding,
+        status:failed?"failed_after_dispatch":"succeeded",dispatch_state:"dispatched",persistent_effect:"none",native_transaction_state:"not_applicable",authority:"dynamic-runtime",
+        result_schema_id:"operator-dynamic-runtime/mcp-program/v2",observation_required:true,raw_payload_hash:payloadDigestV2(payload).digest,receipt_id:`receipt:${lease.operation_id}`,
+        request_identity:lease.request_identity,completed_at:new Date().toISOString()},
+      observation:{raw_payload:payload,semantic_facts:failed?[]:[{fact_id:"task.result_available",fact_class:"domain",value:true}],verification_relevance:["task_result"],evidence_class:"task_result"}}};
+  }};
+  const owner=beginTeammateLoopOwner(runtime,bindPreparedAssignmentToRequest({version:"operator.backend.v1",session_id:binding.session_id,user_text:snapshot.spec.source_user_request,
+    context:{revit:{process_id:4242,source:{live:true},document:{title:"Fixture",projectIdentity:{fingerprint:"controls-model"}}}}} as any,prepared));
+  try {
+    const run=(id:string)=>handleCodexDynamicToolCall(runtime as any,{id,method:"item/tool/call",params:{namespace:"revit_operator",turnId:"diagnostics",tool:"operator_run_dynamic_revit_program",arguments:{source:`public class ${id} {}`,mode:"read"}}} as any);
+    await run("Fail");
+    const failed=advanceAssignmentKernelProgressV2({binding}).snapshot;
+    const failure=Object.values(failed.observations).find(o=>o.authority==="dynamic-runtime")!;
+    assert.ok(failure); assert.equal(failed.terminal,false);
+    assert.notEqual(failed.criteria[snapshot.spec.criteria[0]!.criterion_id]?.status,"pass","diagnostic presence must not satisfy work");
+    const selection={label:"Exception source line",observation_id:failure.observation_id,path:["diagnostics",0,"line"]};
+    assert.equal(buildAssignmentResultDeliveryV2(failed,[selection]).items[0]!.value,8);
+    await run("Repair");
+    const after=advanceAssignmentKernelProgressV2({binding}).snapshot;
+    const success=Object.values(after.observations).find(o=>o.authority==="dynamic-runtime"&&o.observation_id!==failure.observation_id)!;
+    const body={...binding,claims:[{criterion_id:snapshot.spec.criteria[0]!.criterion_id,observation_ids:[success.observation_id]}],result_items:[selection,
+      {label:"Exception",observation_id:failure.observation_id,path:["diagnostics",0,"message"]},
+      {label:"Retained log",observation_id:failure.observation_id,path:["diagnostics",1,"message"]},
+      {label:"Repair result",observation_id:success.observation_id,path:["report","Result"]}]};
+    const server=http.createServer((req,res)=>{void runWithRequestContext({operator_backend_auth:createOperatorBackendAuth("shared_token","test-only")},async()=>{
+      await handleAssignmentHttpRoute(req,res,new URL(req.url!,"http://localhost"),session=>{if(session===binding.session_id)return true;res.writeHead(403);res.end();return false;});});});
+    await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+    try {
+      const address=server.address() as import("node:net").AddressInfo;
+      const response=await fetch(`http://127.0.0.1:${address.port}/api/assignments/v2/criteria/evaluate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      assert.equal(response.status,200,await response.clone().text());
+      const final=(await response.json()) as any;
+      assert.equal(final.assignment_snapshot_v2.outcome,"complete");
+      const answer=renderTerminalResultV2(final.assignment_snapshot_v2);
+      assert.match(answer,/Exception source line \(failed run\): 8/);assert.match(answer,/diagnostic probe failure/);
+      assert.match(answer,/diagnostic probe reached/);assert.match(answer,/diagnostic probe repaired/);
+      assert.equal(calls,2);assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.result_delivery!.items.length,4);
+    } finally {await new Promise<void>(resolve=>server.close(()=>resolve()));}
+  } finally {endTeammateLoopOwner(owner);}
+}));
+
 test("generated committed checkpoint retains evidence and completes only after exact native parameter readback", () => workspace(async () => {
   const { binding, snapshot, prepared } = start("Use a custom C# program to set Comments to PILOT-42 on one duct and verify the edit.");
   const payload = generatedParameterPayload(binding.document_fingerprint!);

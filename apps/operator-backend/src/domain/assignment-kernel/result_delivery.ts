@@ -9,6 +9,8 @@ export interface AssignmentResultItemV2 {
   value: unknown;
   evidence_ref: string;
   payload_hash: string;
+  /** Failed read diagnostics can be reported, but never establish success. */
+  presentation_kind?: "result" | "diagnostic";
 }
 
 export interface AssignmentResultDeliveryV2 {
@@ -25,14 +27,21 @@ export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, deliver
   for (const item of delivery.items) {
     const observation = snapshot.observations[item.observation_id];
     const operation = observation ? snapshot.operations[observation.operation_id] : undefined;
-    if (!item.label?.trim() || item.label.length > 160 || item.value === undefined
+    const diagnostic = item.presentation_kind === "diagnostic"
+      && observation?.authority === "dynamic-runtime"
+      && operation?.result?.status === "failed_after_dispatch"
+      && operation.result.persistent_effect === "none"
+      && ["execution_status", "diagnostics", "logs"].includes(String(item.path?.[0]));
+    if ((item.presentation_kind === "diagnostic" && !diagnostic)
+        || (item.presentation_kind !== undefined && !["result", "diagnostic"].includes(item.presentation_kind))
+        || !item.label?.trim() || item.label.length > 160 || item.value === undefined
         || !Array.isArray(item.path) || item.path.length < 1 || item.path.length > 24) {
       throw new Error("assignment_result_item_invalid");
     }
     if (!observation || !sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
         || observation.evidence_class !== "task_result"
         || !["native-host", "dynamic-runtime"].includes(observation.authority)
-        || operation?.result?.status !== "succeeded" || operation.requested_effect !== "read"
+        || (!diagnostic && operation?.result?.status !== "succeeded") || operation?.requested_effect !== "read"
         || operation.settlement_state !== "settled"
         || item.evidence_ref !== observation.raw_payload_ref || item.payload_hash !== observation.raw_payload_hash) {
       throw new Error("assignment_result_observation_ineligible");
@@ -41,5 +50,5 @@ export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, deliver
 }
 
 export function renderResultDeliveryV2(delivery: AssignmentResultDeliveryV2): string {
-  return delivery.items.map(item => `- ${item.label}: ${typeof item.value === "string" ? item.value : JSON.stringify(item.value)}`).join("\n");
+  return delivery.items.map(item => `- ${item.label}${item.presentation_kind === "diagnostic" ? " (failed run)" : ""}: ${typeof item.value === "string" ? item.value : JSON.stringify(item.value)}`).join("\n");
 }

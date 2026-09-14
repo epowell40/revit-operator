@@ -2346,6 +2346,7 @@ const server = http.createServer(async (req, res) => {
           boundCanonicalRequest,
           {
             abortSignal: streamAbort.signal,
+            onProgress: text => send("assistant.progress", { text }),
             onDelta: delta => {
               const d = (delta ?? "").toString();
               if (!d) return;

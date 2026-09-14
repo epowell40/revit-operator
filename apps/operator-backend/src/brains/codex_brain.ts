@@ -7,6 +7,7 @@ import { appendEvent, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { buildCodexTurnInput } from "./codex_turn_input.js";
+import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
@@ -78,6 +79,7 @@ import { formatToolResultsForCodex } from "./codex_tool_result_formatting.js";
 import { createCodexTurnNotificationObserver } from "./codex_turn_notification_observer.js";
 
 export type StreamCallbacks = {
+  onProgress?: (text: string) => void;
   onDelta?: (textDelta: string) => void;
   onDone?: (fullText: string) => void;
   abortSignal?: AbortSignal;
@@ -780,7 +782,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         bindTurnNotificationSource(activeClient);
         return await activeClient.startBoundTurn({
           threadId,
-          input,
+          input: withCodexCapabilityHandoff(input, threadId),
           model: agentSettings.model,
           effort: agentSettings.reasoning_effort
         }, threadProfile);
@@ -795,7 +797,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       bindTurnNotificationSource(c);
       start = await c.startBoundTurn({
         threadId,
-        input,
+        input: withCodexCapabilityHandoff(input, threadId),
         model: agentSettings.model,
         effort: agentSettings.reasoning_effort
       }, threadProfile);
@@ -931,7 +933,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     webEvidenceRequirement,
     mcpRuntime: mcpRuntime ?? null,
     deferAssistantOutput: Boolean(assignmentKernelV2),
-    onDelta: cb.onDelta
+    onDelta: cb.onDelta,
+    onProgress: cb.onProgress
   });
   liveTurnNotificationHandler = turnNotificationObserver.observe;
   for (const notification of earlyTurnNotifications.splice(0)) turnNotificationObserver.observe(notification);

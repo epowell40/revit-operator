@@ -48,3 +48,34 @@ export function appendInlineText(container, text) {
     } else container.appendChild(document.createTextNode(part));
   }
 }
+
+/** A small DOM renderer: all content stays text; model HTML is never executed. */
+export function renderAssistantBlocks(container, text, renderInline = appendInlineText) {
+  container.replaceChildren();
+  const document = container.ownerDocument;
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  let paragraph = [], list = null, listType = null;
+  const block = (tag, content) => { const node = document.createElement(tag); renderInline(node, content); container.appendChild(node); return node; };
+  const flush = () => { if (paragraph.length) block("p", paragraph.join("\n")); paragraph = []; };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flush(); list = null; const codeLines = [];
+      while (++i < lines.length && !/^\s*```/.test(lines[i])) codeLines.push(lines[i]);
+      const pre = document.createElement("pre"), code = document.createElement("code");
+      code.textContent = codeLines.join("\n"); pre.appendChild(code); container.appendChild(pre); continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
+    if (heading) { flush(); list = null; block(`h${Math.min(heading[1].length + 1, 6)}`, heading[2]); continue; }
+    const item = line.match(/^\s*(?:([-*+])\s+|(\d+)[.)]\s+)(.+)$/);
+    if (item) {
+      flush(); const tag = item[2] ? "ol" : "ul";
+      if (!list || listType !== tag) { list = document.createElement(tag); listType = tag; if (tag === "ol") list.start = Number(item[2]); container.appendChild(list); }
+      const li = document.createElement("li"); renderInline(li, item[3]); list.appendChild(li); continue;
+    }
+    if (!line.trim()) { flush(); list = null; continue; }
+    if (/^>\s?/.test(line)) { flush(); list = null; block("blockquote", line.replace(/^>\s?/, "")); continue; }
+    list = null; paragraph.push(line);
+  }
+  flush();
+}

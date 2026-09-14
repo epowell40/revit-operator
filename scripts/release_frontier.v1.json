@@ -98,7 +98,9 @@
     "document_review_routing.test.ts",
     "mep_route_redline_resolver.test.ts",
     "composer_recovery.test.ts",
-    "read_attachment.test.ts"
+    "read_attachment.test.ts",
+    "codex_tool_catalog.test.ts",
+    "result_delivery_diagnostics.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -128,7 +130,8 @@
     "test/runtime_source_freshness.test.js",
     "test/browser_asset_freshness.test.js",
     "test/idle_batch_worker.test.js",
-    "test/composer_intake.test.js"
+    "test/composer_intake.test.js",
+    "test/conversation_rendering.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -1365,6 +1368,34 @@
       "coverage": [
         "mcp:lib/dynamicAssignmentIntegration.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "resumed-provider-keeps-old-tool-catalog-and-cannot-read-deferred-pdf-pages",
+      "coverage": [
+        "backend:codex_tool_catalog.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "failed-read-diagnostics-disappear-from-successful-repair-answer",
+      "coverage": [
+        "backend:result_delivery_diagnostics.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "provider-progress-concatenates-into-final-document-answer",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "narrow-assistant-reply-overlaps-header-and-renders-raw-markdown",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
       ]
     }
   ],

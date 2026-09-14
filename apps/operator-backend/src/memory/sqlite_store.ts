@@ -8,6 +8,7 @@ type SqliteDb = {
   exec: (s: string) => unknown;
   prepare: (s: string) => { run: (...args: any[]) => any; get: (...args: any[]) => any; all: (...args: any[]) => any };
   close: () => void;
+  transaction: <T>(fn: () => T) => () => T;
 };
 
 type DbState = {
@@ -86,6 +87,12 @@ function openDb(): SqliteDb | null {
         thread_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS codex_thread_capabilities (
+        thread_id TEXT PRIMARY KEY,
+        tool_sha256 TEXT NOT NULL,
+        previous_thread_id TEXT,
+        handoff_text TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,6 +243,31 @@ export function setCodexThreadId(sessionId: string, threadId: string): void {
   d.prepare(
     "INSERT INTO codex_threads(session_id, thread_id, created_at, updated_at) VALUES(?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET thread_id=excluded.thread_id, updated_at=excluded.updated_at"
   ).run(sessionId, threadId, ts, ts);
+}
+
+export function getCodexThreadCapabilities(threadId: string): { tool_sha256: string; previous_thread_id: string | null; handoff_text: string } | null {
+  const d = openDb();
+  if (!d) throw new Error("Provider capability binding storage is unavailable.");
+  return d.prepare("SELECT tool_sha256, previous_thread_id, handoff_text FROM codex_thread_capabilities WHERE thread_id=?").get(threadId) ?? null;
+}
+
+/** Commit the acknowledged tool catalog and conversation mapping together. */
+export function bindCodexThreadCapabilities(key: string, threadId: string, toolSha256: string, previousThreadId: string | null, handoffText: string): void {
+  const d = openDb();
+  if (!d) throw new Error("Provider capability binding storage is unavailable.");
+  const ts = nowIso();
+  d.transaction(() => {
+    d.prepare("INSERT INTO codex_thread_capabilities(thread_id,tool_sha256,previous_thread_id,handoff_text) VALUES(?,?,?,?)").run(threadId, toolSha256, previousThreadId, handoffText);
+    d.prepare("INSERT INTO codex_threads(session_id,thread_id,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at").run(key,threadId,ts,ts);
+  })();
+}
+
+export function getPendingCodexThreadHandoff(threadId: string): string {
+  const binding = getCodexThreadCapabilities(threadId);
+  if (!binding?.handoff_text) return "";
+  const d = openDb()!;
+  const started = d.prepare("SELECT 1 FROM events WHERE kind='codex.turn.start' AND json_valid(payload_json) AND json_extract(payload_json,'$.thread_id')=? LIMIT 1").get(threadId);
+  return started ? "" : binding.handoff_text;
 }
 
 export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): boolean {

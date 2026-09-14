@@ -315,7 +315,7 @@ function finalizeGenericDecision(req: ChatRequest, decision: ChatResponse): Chat
 
 function genericStreamGate(req: ChatRequest, cb: StreamCallbacks): { buffered: boolean; callbacks: StreamCallbacks } {
   const buffered = buildTeammateTurnContract(req).turn_kind === "mutation";
-  return { buffered, callbacks: buffered ? { abortSignal: cb.abortSignal } : cb };
+  return { buffered, callbacks: buffered ? { abortSignal: cb.abortSignal, onProgress: cb.onProgress } : cb };
 }
 
 function emitBufferedGenericDecision(cb: StreamCallbacks, decision: ChatResponse): void {
