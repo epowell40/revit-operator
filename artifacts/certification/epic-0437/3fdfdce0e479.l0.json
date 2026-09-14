@@ -115,7 +115,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitSdkGuide.ts",
-      "sha256": "sha256:12a049a7577c8e904decec9f633f4ac4f6998c79f8e33ffee21919985d815112"
+      "sha256": "sha256:903c268f75f7f716353d4a306a6d9e1536f7e5664c9949edf7b7719c7e6228d1"
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRuntimeInstallation.test.ts",
@@ -1128,7 +1128,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:4c82d5f004ce0db2c94233cea556730ac2d1b5eb8a5b5561f89a782b4d90ad75"
+      "sha256": "sha256:6202161bb72645c37e97e085f77d3b0805d4b4d9004a90823304f33aa24400b8"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1724,8 +1724,12 @@
       "sha256": "sha256:d6afd04358eb0f9f93d3ce9252fbc4d169a13c47ac3aad58f1db1993d9df7de7"
     },
     {
+      "path": "apps/operator-backend/src/codex/mcp_input_validation.ts",
+      "sha256": "sha256:7351841c5a0d55e2e9ffb3232555abcd61ecc893d85f07a300676234ce883c32"
+    },
+    {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
-      "sha256": "sha256:4959966d2b673090b8af4f11a90550ebc74cf4450f8660421b4351a5e24d6ca0"
+      "sha256": "sha256:d99119f0f458aa16c95c75cdfe1b2983da459eb581650542a6681c85632fb795"
     },
     {
       "path": "apps/operator-backend/src/codex/operator_backend_auth_lease.ts",
@@ -3097,7 +3101,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_controls.test.ts",
-      "sha256": "sha256:18ed09d7eceedcca67a2341575abcb74b60ad438d8cd4c5e9592a83366bae90d"
+      "sha256": "sha256:2a231b0c5aa318937ea271f56e94ffb5fc7f4843b0b6f8f67dd93c087ed69f29"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
@@ -3862,6 +3866,10 @@
     {
       "path": "apps/operator-backend/test/macro_skill_commands.test.ts",
       "sha256": "sha256:828bfb1ab9bbb8eb46ff31ffcca8f0e2942c6931d29177934cbad3f8de1b9e11"
+    },
+    {
+      "path": "apps/operator-backend/test/mcp_input_validation.test.ts",
+      "sha256": "sha256:8a30d8f21d63acda2731d322f583d1bf3b49c0abc9c11c29b6a0eb0a7cb0b924"
     },
     {
       "path": "apps/operator-backend/test/mep_route_redline_resolver.test.ts",
@@ -6537,7 +6545,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:09cdd288077f5a8375207e33c7a3238a4680b6f3df56e93aa34a2a72df757504",
+  "inputs_hash": "sha256:c818d4e95d7ef14a581a644a2e273028c46efd423e68328ed7cd67a026837cbf",
   "result": {
     "passed": true,
     "checks": [

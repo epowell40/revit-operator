@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "mcp_input_validation.test.ts",
     "codex_turn_input.test.ts",
     "codex_research_config.test.ts",
     "chat_stream_attachment_parity.test.ts",
@@ -1092,6 +1093,14 @@
       "coverage": [
         "backend:assignment_auto_goal_admission.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "invalid-generated-apply-input-never-opens-unknown-effect",
+      "coverage": [
+        "backend:mcp_input_validation.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
       ]
     },
     {

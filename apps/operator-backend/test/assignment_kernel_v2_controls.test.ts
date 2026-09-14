@@ -31,6 +31,7 @@ import { canonicalTeammateFinalVerification } from "../src/teammate_assignment_i
 import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
 import { appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
+import { McpInputValidator } from "../src/codex/mcp_input_validation.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -79,6 +80,37 @@ test("a standalone research turn fetches evidence after a blocked model task wit
   } finally { endTeammateLoopOwner(owner); }
   assert.equal((await handleCodexDynamicToolCall(runtime as any, request) as any).success, false, "expired turn cannot fetch");
   assert.equal(calls, 1);
+}));
+
+test("invalid generated apply deadlines never enter the operation graph and a corrected request can dispatch", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Set Comments on one duct using a custom C# program and verify the committed change.");
+  const validator = new McpInputValidator();
+  const definitions = [{ name: "operator_run_dynamic_revit_program", inputSchema: { type: "object",
+    properties: { worker_deadline_ms: { type: "integer", maximum: 30000 }, apply_deadline_ms: { type: "integer", maximum: 5000 } } } }];
+  let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    validateToolArguments: async (tool: string, args: unknown) => validator.validate(tool, args, definitions),
+    callTool: async (_tool: string, _args: unknown, context: any) => { calls++; context.onMcpAccepted();
+      // A lost reply after real dispatch remains uncertain, despite validation.
+      throw new Error("Connection lost after dispatch");
+    } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Pilot", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
+  const request: any = { id: "deadline-invalid", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "deadline-test",
+    tool: "operator_run_dynamic_revit_program", arguments: { mode: "apply", source: "public class Program {}", worker_deadline_ms: 120000, apply_deadline_ms: 120000 } } };
+  try {
+    const rejected: any = await handleCodexDynamicToolCall(runtime as any, request);
+    assert.equal(rejected.success, false); assert.match(JSON.stringify(rejected), /tool_request_invalid/);
+    assert.equal(calls, 0); assert.equal(Object.keys(getAssignmentKernelSnapshotV2(binding.assignment_id)!.operations).length, 0);
+    const corrected = { ...request, id: "deadline-corrected", params: { ...request.params,
+      arguments: { ...request.params.arguments, worker_deadline_ms: 30000, apply_deadline_ms: 5000 } } };
+    await handleCodexDynamicToolCall(runtime as any, corrected);
+    assert.equal(calls, 1);
+    const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.ok(Object.values(after.operations).some(operation => operation.persistent_effect === "unknown"));
+    const retry: any = await handleCodexDynamicToolCall(runtime as any, { ...corrected, id: "deadline-lost-reply-retry" });
+    assert.equal(retry.success, false); assert.equal(calls, 1, "lost apply cannot be replayed");
+  } finally { endTeammateLoopOwner(owner); }
 }));
 
 test("generated-tool validation diagnostics survive a missing canonical receipt without inventing native evidence", () => workspace(async () => {

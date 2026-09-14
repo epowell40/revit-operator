@@ -159,6 +159,15 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   });
   const boundParams = { ...params, arguments: boundArguments.arguments };
   const boundRequest = { ...request, params: boundParams };
+  // The connected runtime's advertised schema is checked before the mutation
+  // guard and durable admission. Invalid input has no possible native effect;
+  // errors received after dispatch still require authoritative reconciliation.
+  try {
+    await runtime.validateToolArguments?.(String(params.tool || ""), boundArguments.arguments);
+  } catch (error) {
+    return { contentItems: [{ type: "inputText", text: `[tool_request_invalid] ${
+      (error instanceof Error ? error.message : String(error)).slice(0, 5_000)}` }], success: false };
+  }
   const parallel = parallelGuard.tryAcquire(boundParams);
   if (!parallel.accepted) {
     return { contentItems: [{ type: "inputText", text: parallel.message ?? "Concurrent dependent Revit call blocked." }], success: false };

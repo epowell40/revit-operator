@@ -8,6 +8,7 @@ import { OperatorBackendAuthLeaseRegistry, type OperatorBackendAuthLease } from 
 import { AssignmentKernelTurnLeaseRegistryV2, type AssignmentKernelTurnLeaseV2 } from "./assignment_kernel_v2_lease.js";
 import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_kernel_v2_factory.js";
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
+import { McpInputValidator } from "./mcp_input_validation.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -63,6 +64,7 @@ export class CodexMcpToolRuntime {
   private starting: Promise<void> | null = null;
   private stderrTail = "";
   private dynamicNamespace: unknown | null = null;
+  private readonly inputValidator = new McpInputValidator();
   private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
   private readonly assignmentKernelV2Leases = new AssignmentKernelTurnLeaseRegistryV2();
   private readonly assignmentKernelV2TurnStops = new Map<string, {
@@ -257,6 +259,11 @@ export class CodexMcpToolRuntime {
     }
   }
 
+  async validateToolArguments(tool: string, args: unknown): Promise<void> {
+    const namespace = await this.getDynamicToolNamespace();
+    this.inputValidator.validate(tool, args, namespace.tools);
+  }
+
   async getDynamicToolNamespace(): Promise<any> {
     if (this.dynamicNamespace) return this.dynamicNamespace;
     await this.ensureStarted();
@@ -285,6 +292,7 @@ export class CodexMcpToolRuntime {
     this.client = null;
     this.transport = null;
     this.dynamicNamespace = null;
+    this.inputValidator.clear();
     this.backendAuthLeases.clear();
     this.assignmentKernelV2Leases.clear();
     this.assignmentKernelV2TurnStops.clear();
