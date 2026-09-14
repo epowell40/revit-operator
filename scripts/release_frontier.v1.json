@@ -1093,11 +1093,20 @@
         "backend:assignment_auto_goal_admission.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
       ]
+    },
+    {
+      "id": "supervisor-input-pipe-cleanup-preserves-native-result-and-unknown-apply",
+      "coverage": [
+        "dynamic:WorkerInputChannelTests",
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
     "GeneratedCodeAdmissionTests",
     "RuntimeWorkspaceTests",
-    "ReadOnlyGeneratedProgramTests"
+    "ReadOnlyGeneratedProgramTests",
+    "WorkerInputChannelTests"
   ]
 }

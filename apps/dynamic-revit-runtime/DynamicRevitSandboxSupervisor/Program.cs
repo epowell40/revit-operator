@@ -184,7 +184,7 @@ internal static class Program
                 compilationCacheKey, cachedAssemblyBase64 }, Json);
         }
         inputPipe.DisposeLocalCopyOfClientHandle();
-        using var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true };
+        using var inputWriter = CreateWorkerInputWriter(inputPipe);
         await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new
         {
             turnIndex = 0, nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey),
@@ -443,6 +443,11 @@ internal static class Program
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
     }
+
+    // Own the input channel. With leaveOpen:true, a second Dispose flushes an
+    // already-closed pipe and replaces even a completed native apply receipt.
+    internal static StreamWriter CreateWorkerInputWriter(Stream pipe) =>
+        new(pipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: false) { AutoFlush = true };
 
     internal static void ValidateExpectedDocument(string? expected, string actual)
     {
