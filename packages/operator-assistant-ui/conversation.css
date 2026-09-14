@@ -41,6 +41,10 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .bubble p:last-child { margin-bottom: 0; }
 .composer { margin: 12px 30px 22px; padding: 12px 14px; gap: 6px; border: 1px solid #c9c9c9; border-radius: 8px; background: #fff; box-shadow: none; }
 .composer:focus-within { border-color: #777; }
+#composerNotice { display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; line-height: 1.4; }
+#composerNotice[hidden] { display: none; }
+#composerNotice > span { flex: 1; }
+#composerNotice > button { flex: 0 0 auto; padding: 6px 12px; }
 textarea { min-height: 46px; max-height: 180px; padding: 0 2px; border: 0; border-radius: 0; box-shadow: none; font: inherit; font-size: 15px; line-height: 1.5; background: transparent; resize: vertical; }
 textarea:focus { outline: none; }
 .composerFooter { display: flex; justify-content: flex-end; gap: 8px; }

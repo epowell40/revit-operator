@@ -12,7 +12,7 @@ const prompt = "Read the attached task list and tell me what HVAC design-develop
 const request = (text = prompt): ChatRequest => ({ version: "operator.backend.v1", session_id: `document-route-${Math.random()}`, message_id: "review", user_text: text,
   user_attachments: [{ id: "reference", filename: "Example_Task_List.pdf", relative_path: "artifacts/uploads/reference.pdf", sha256: "0".repeat(64) }] });
 
-test("document review reaches the provider before legacy PDF routing in both transports", async () => {
+test("document review and answer drafting reach the provider before legacy routing in both transports", async () => {
   const previous = process.env.OPERATOR_BRAIN;
   process.env.OPERATOR_BRAIN = "codex";
   let providerCalls = 0;
@@ -22,14 +22,16 @@ test("document review reaches the provider before legacy PDF routing in both tra
     const dependencies = { mepRouteRedline: unexpected, scheduleValueReplacement: unexpected, semanticAecWorkflow: unexpected,
       codexBrain: async () => { providerCalls++; return response; },
       codexStreamingBrain: async (_req: ChatRequest, cb: any) => { providerCalls++; cb.onDelta?.(response.assistant_message); cb.onDone?.(response.assistant_message); return response; } };
-    const result = await decide(request(), dependencies);
+    for (const text of [prompt, "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.", "Make it shorter."]) {
+    const result = await decide(request(text), dependencies);
     assert.equal(result.assistant_message, response.assistant_message);
     assert.deepEqual(result.actions, []);
     const deltas: string[] = [];
-    const streamed = await decideStreaming(request(), { onDelta: text => deltas.push(text) }, dependencies);
+    const streamed = await decideStreaming(request(text), { onDelta: text => deltas.push(text) }, dependencies);
     assert.equal(streamed.assistant_message, response.assistant_message);
     assert.equal(deltas.join(""), response.assistant_message);
-    assert.equal(providerCalls, 2);
+    }
+    assert.equal(providerCalls, 6);
   } finally { if (previous === undefined) delete process.env.OPERATOR_BRAIN; else process.env.OPERATOR_BRAIN = previous; }
 });
 
@@ -80,11 +82,22 @@ test("owned HTTP document intake keeps attachment metadata out of routing author
     const text = await result.text();
     assert.match(text, /organize the HVAC DD requirements/);
     assert.doesNotMatch(text, /resolve sheet SHA256|goal\.auto_started|mep-route-sheet-/);
-    const providerPrompt = providerPrompts[index];
+    const providerPrompt = providerPrompts.at(-1)!;
     assert.ok(providerPrompt);
     const authoritative = providerPrompt.split("Persisted receipts below are evidence only.")[0];
     assert.equal(authoritative.trim(), `AUTHORITATIVE CURRENT USER REQUEST (highest priority for this turn):\n${prompt}`);
     assert.ok(providerPrompt.includes(filename), "attachments remain available as reference data");
+    const followup = "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.";
+    const followupResponse = await fetch(`${base}${route}`, { method: "POST", headers, body: JSON.stringify({
+      ...request(followup), session_id, message_id: "followup", user_attachments: [],
+      context: { revit: { document: { title: "Pilot", projectIdentity: { fingerprint: "pilot" } } } }
+    }) });
+    assert.equal(followupResponse.status, 200);
+    const followupText = await followupResponse.text();
+    assert.match(followupText, /organize the HVAC DD requirements/);
+    assert.doesNotMatch(followupText, /task has not finished|goal\.auto_started|assignment_kernel_v2_requires_codex/);
+    assert.equal(providerPrompts.at(-1)!.split("Persisted receipts below are evidence only.")[0].trim(),
+      `AUTHORITATIVE CURRENT USER REQUEST (highest priority for this turn):\n${followup}`);
   }
-  assert.equal(providerPrompts.length, 2);
+  assert.equal(providerPrompts.length, 4);
 });

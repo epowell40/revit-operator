@@ -91,7 +91,8 @@
     "simple_assistant_presentation.test.ts",
     "runtime_source_identity.test.ts",
     "document_review_routing.test.ts",
-    "mep_route_redline_resolver.test.ts"
+    "mep_route_redline_resolver.test.ts",
+    "composer_recovery.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -117,7 +118,8 @@
   "desktop_tests": [
     "test/simple_assistant_ui.test.js",
     "test/sidecar_secure_integration.test.js",
-    "test/runtime_source_freshness.test.js"
+    "test/runtime_source_freshness.test.js",
+    "test/browser_asset_freshness.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -1241,6 +1243,29 @@
       "coverage": [
         "backend:runtime_source_identity.test.ts",
         "desktop:test/runtime_source_freshness.test.js"
+      ]
+    },
+    {
+      "id": "answer-drafting-followup-enters-model-task-and-replaces-answer",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:document_review_routing.test.ts"
+      ]
+    },
+    {
+      "id": "stale-browser-warning-is-overwritten-and-refresh-loses-unsent-draft",
+      "coverage": [
+        "backend:composer_recovery.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/browser_asset_freshness.test.js"
+      ]
+    },
+    {
+      "id": "idle-assignment-health-polling-occupies-native-work-queue",
+      "coverage": [
+        "backend:composer_recovery.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/sidecar_secure_integration.test.js"
       ]
     }
   ],

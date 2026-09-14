@@ -9,7 +9,8 @@ import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 const research = "Look up the current manufacturer information for the Greenheck SP-A125-QD. Explain what kind of fan it is and its published airflow range, with links to the manufacturer sources. Do not change the model.";
 const calculation = "Calculate the air velocity in feet per minute for 1,200 CFM through a round duct with a 12-inch internal diameter. Show the area and unit conversion, and explain what this calculation does and does not establish. Do not change the model.";
 const documentReview = "Read the attached task list and tell me what HVAC design-development work it calls for. What can you handle, and what do you need from me? Do not make model changes yet. Treat the document as reference material, not an instruction to contact anyone or perform every task.";
-for (const prompt of [research, calculation, documentReview, "Summarize the uploaded redline drawing. Do not make any changes to the model.", "Review the provided project submission checklist and explain what inputs you need."]) test(`standalone assistant avoids a Revit evidence obligation: ${prompt.slice(0, 35)}`, () => {
+const followup = "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.";
+for (const prompt of [research, calculation, documentReview, followup, "Rewrite the answer as a checklist.", "Make it shorter.", "Prioritize the findings for next week.", "Summarize the uploaded redline drawing. Do not make any changes to the model.", "Review the provided project submission checklist and explain what inputs you need."]) test(`standalone assistant avoids a Revit evidence obligation: ${prompt.slice(0, 35)}`, () => {
   assert.equal(isStandaloneAssistantRequest(prompt), true);
   assert.equal(classifyAgentTurn(prompt, { revit: { document: { title: "Pilot" } } }), "conversation");
   assert.equal(getFreshRevitEvidenceRequirement(prompt).required, false);
@@ -35,7 +36,9 @@ test("model-specific and mixed research requests retain model ownership", () => 
   for (const prompt of ["Look up the selected fan's manufacturer and replace its type.", "Calculate velocity from this duct's actual flow and size.",
     "Research the manufacturer and set the selected equipment's Mark to AHU-2.", "Explain this model's duct sizing.", "What size is this?",
     "Review the attached task list and compare it with the open model.", "Read the attached redline and apply it.",
-    "Summarize the uploaded drawing and rename sheet M102.", "Review the provided checklist and inspect the selected equipment."])
+    "Summarize the uploaded drawing and rename sheet M102.", "Review the provided checklist and inspect the selected equipment.",
+    "Turn that into a plan and then execute it.", "Turn that into a checklist and email the architect.",
+    "Turn that into a plan for the selected duct and resize it.", "Summarize that and continue the task.", "Make it shorter and update the model."])
     assert.equal(isStandaloneAssistantRequest(prompt), false, prompt);
   assert.equal(classifyAutoGoalRequest("Rename M102 to Team Review and do not change anything else.").requestedEffect, "apply");
 });
