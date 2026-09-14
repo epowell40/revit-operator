@@ -9,9 +9,20 @@ import { buildCodexTurnInput } from "../src/brains/codex_turn_input.js";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
 import { ATTACHMENT_CODE_MODE_DISPLAY, readRegisteredPdfAttachment } from "../src/attachments/read_attachment.js";
 import type { ChatRequest } from "../src/contracts.js";
+import { retainedResultQuestions } from "./retained_result_discussion.fixtures.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN8sAAAAASUVORK5CYII=", "base64");
 const request = (extra: Partial<ChatRequest> = {}): ChatRequest => ({ version: "operator.backend.v1", session_id: "redline-input", message_id: "turn-1", user_text: "", ...extra });
+
+test("retained-result discussion enters the actual provider turn without fresh model obligations", async t => {
+  fixture(t);
+  const input = await buildCodexTurnInput(request({ user_text: retainedResultQuestions[0], context: { revit: {} } }), []);
+  const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
+  assert.match(text, /STANDALONE ASSISTANT TURN/);
+  assert.match(text, /without a Revit bootstrap/);
+  const mixed = await buildCodexTurnInput(request({ user_text: retainedResultQuestions[0] + " Inspect the selected duct too." }), []);
+  assert.doesNotMatch(mixed.filter(item => item.type === "text").map(item => item.text).join("\n"), /STANDALONE ASSISTANT TURN/);
+});
 
 test("the actual model-audit turn carries completeness and evidence cross-checks", async t => {
   fixture(t);

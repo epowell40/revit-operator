@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 import { PersistenceManager } from "../src/persistence/persistence_manager.js";
 import { standaloneEngineeringQuestion, independentEngineeringQuestions } from "./standalone_engineering.fixtures.js";
+import { retainedResultQuestions, retainedResultMixedRequests } from "./retained_result_discussion.fixtures.js";
 
 async function availablePort(): Promise<number> {
   const net = await import("node:net");
@@ -86,6 +87,14 @@ test("context and batch availability endpoints enforce session ownership without
   assert.equal(reply.status, 200);
   assert.deepEqual(await reply.json(), { schema: "revit-operator.chat-context-policy.v1", session_id, message_id: "question", requires_revit_context: false });
   const documentQuestion = "Review all pages of these two attached documents. Summarize the HVAC design-development tasks and identify the red marks. Tell me what can be checked in Revit and which decisions or outside inputs are still needed. Cite the document and page for each finding. Do not change the model or contact anyone.";
+  for (const user_text of retainedResultQuestions) {
+    const result = await policy({ ...request, user_text });
+    assert.equal(result.status, 200);
+    assert.equal((await result.json() as any).requires_revit_context, false, user_text);
+  }
+  for (const user_text of retainedResultMixedRequests) {
+    assert.equal((await (await policy({ ...request, user_text })).json() as any).requires_revit_context, true, user_text);
+  }
   const documentPolicy = await policy({ ...request, user_text: documentQuestion });
   assert.equal(documentPolicy.status, 200);
   assert.equal((await documentPolicy.json() as any).requires_revit_context, false);

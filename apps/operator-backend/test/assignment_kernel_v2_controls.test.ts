@@ -37,6 +37,7 @@ import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dyn
 import { CodexMcpToolRuntime } from "../src/codex/mcp_tool_runtime.js";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
 import { attachmentPdf } from "./pdf_attachment.fixtures.js";
+import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -244,6 +245,11 @@ for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${wi
   } finally { endTeammateLoopOwner(owner); }
   advanceAssignmentKernelProgressV2({ binding });
   const afterReads = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const deliveryGuidance = deriveProgressGapsV2(afterReads).find(gap => gap.kind === "result_delivery_required")!;
+  assert.match(deliveryGuidance.reason, /simple counts, lists or sample reports, omit assessment/);
+  assert.match(deliveryGuidance.reason, /requested names, values and scope directly in resultItems/);
+  assert.match(deliveryGuidance.reason, /Put requested answer values in the findings/);
+  assert.equal(afterReads.result_delivery, undefined, "guidance does not manufacture a delivered result");
   const observation = Object.values(afterReads.observations).find(item =>
     afterReads.operations[item.operation_id]!.request_identity?.path === "/revit/get-parameters")!;
   assert.equal(observation.evidence_class, "task_result");

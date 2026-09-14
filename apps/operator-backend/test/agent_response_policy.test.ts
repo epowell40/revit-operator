@@ -37,6 +37,8 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /Ask one focused clarifying question/i);
   assert.match(policy, /conversational Revit\/BIM expert, not a tool dispatcher/i);
   assert.match(policy, /Ground model-specific answers with the live model/i);
+  assert.match(policy, /prior results as earlier observations/);
+  assert.match(policy, /do not reread Revit just to reformat them/);
   assert.match(policy, /active view and current selection as starting context, not as a limit/i);
   assert.match(policy, /schema or argument-validation error/i);
   assert.match(policy, /do not spray adjacent routes/i);

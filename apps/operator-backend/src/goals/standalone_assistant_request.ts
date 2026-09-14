@@ -1,5 +1,17 @@
 import { MODEL_CHANGE_PROHIBITION } from "../no_write_intent.js";
 
+/** Reformatting an explicitly earlier result does not request a fresh model read. */
+function isRetainedResultDiscussion(request: string): boolean {
+  const earlierResult = /\b(?:previous|earlier|prior|last|retained)\s+(?:sample|results?|reports?|answers?|findings|data|counts?)\b/i.test(request)
+    || /\b(?:results?|reports?|answers?|data|counts?)\s+(?:(?:that|which)\s+)?(?:you|we)\s+(?:already\s+)?(?:collected|gathered|reported|returned|found)\b/i.test(request);
+  if (!earlierResult || !/\b(?:which|what|explain|summarize|list|names|counts|table|reformat|rewrite|compare|show|tell)\b/i.test(request)) return false;
+  // These clauses ask for new work or current-state verification, even if a
+  // previous report is also mentioned. History grants no model authority.
+  if (/\b(?:inspect|check|verify|refresh|query|collect|requery|rescan|rerun|re-run|run|execute|implement|perform|make|continue|resume|retry|add|adjust|change|correct|fix|create|place|move|delete|remove|rename|resize|replace|set|route|connect|disconnect|update|modify|edit|apply|commit|export|print|open|save|close|activate|select|highlight|zoom|email|send|contact|publish|submit)\b|\b(?:carry out|go ahead|do (?:it|that|what|the work|the tasks))\b/i.test(request)) return false;
+  if (/\b(?:current|active|selected|live|latest)\b|\b(?:this|our|the)\s+model\b|\bin\s+revit\b/i.test(request)) return false;
+  return true;
+}
+
 /** Requests to reshape an answer are conversation, even in a model session. */
 function isAnswerDraftRequest(request: string): boolean {
   const reference = "(?:that|this|it|the (?:above|answer|response|summary|findings|list))";
@@ -24,6 +36,7 @@ export function isStandaloneAssistantRequest(text: string): boolean {
     .replace(/\b(?:do not|don't|dont|never)\s+(?:change|modify|edit|save)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
     .replace(/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/gi, " ")
     .replace(/\b(?:leave|keep)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\s+unchanged\b/gi, " ");
+  if (isRetainedResultDiscussion(request)) return true;
   const documentReview = /\b(?:read|review|summarize|explain|extract|compare|outline|analy[sz]e)\b[^.!?;\n]{0,100}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|redlines?|drawings?)\b/i.test(request)
     || /\bwhat\b[^.!?;\n]{0,60}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?)\b[^.!?;\n]{0,60}\b(?:say|mean|require|call for)\b/i.test(request);
   const researchOrCalculation = /\b(?:look up|research|search (?:the )?(?:internet|web)|manufacturer|published|calculate|calculation|convert|formula|explain|engineering)\b/i.test(request);

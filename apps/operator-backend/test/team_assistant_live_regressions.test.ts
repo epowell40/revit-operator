@@ -6,6 +6,21 @@ import { classifyAgentTurn, buildTeammateTurnContract } from "../src/teammate_lo
 import { getFreshRevitEvidenceRequirement } from "../src/brains/revit_turn_evidence.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 import { standaloneEngineeringQuestion, independentEngineeringQuestions } from "./standalone_engineering.fixtures.js";
+import { retainedResultQuestions, retainedResultMixedRequests } from "./retained_result_discussion.fixtures.js";
+
+test("discussion of explicitly earlier results avoids a new task while neighboring model work retains its owner", () => {
+  for (const prompt of retainedResultQuestions) {
+    assert.equal(isStandaloneAssistantRequest(prompt), true, prompt);
+    assert.equal(classifyAgentTurn(prompt, { revit: {} }), "conversation", prompt);
+    assert.equal(getFreshRevitEvidenceRequirement(prompt).required, false, prompt);
+    assert.equal(prepareAssignmentTurn({ sessionId: "prior-result", messageId: "format", userText: prompt,
+      toolResults: [], source: "chat", createdBy: null }), null, prompt);
+  }
+  for (const prompt of retainedResultMixedRequests) {
+    assert.equal(isStandaloneAssistantRequest(prompt), false, prompt);
+    assert.notEqual(classifyAgentTurn(prompt, { revit: {} }), "conversation", prompt);
+  }
+});
 
 test("standalone engineering with coordinated model-access exclusions has no model assignment or freshness obligation", () => {
   for (const prompt of [...independentEngineeringQuestions,
