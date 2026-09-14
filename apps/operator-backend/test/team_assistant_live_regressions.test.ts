@@ -35,6 +35,7 @@ for (const prompt of [
 test("model-specific and mixed research requests retain model ownership", () => {
   for (const prompt of ["Look up the selected fan's manufacturer and replace its type.", "Calculate velocity from this duct's actual flow and size.",
     "Research the manufacturer and set the selected equipment's Mark to AHU-2.", "Explain this model's duct sizing.", "What size is this?",
+    "What size is this? Keep it brief.", "Which system does this belong to? Make it concise.",
     "Review the attached task list and compare it with the open model.", "Read the attached redline and apply it.",
     "Summarize the uploaded drawing and rename sheet M102.", "Review the provided checklist and inspect the selected equipment.",
     "Turn that into a plan and then execute it.", "Turn that into a checklist and email the architect.",

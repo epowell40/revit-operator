@@ -1052,9 +1052,10 @@ export function getActiveGoalForSession(sessionId?: string | null): GoalRecord |
 export function getCurrentGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
   if (!sid) return null;
-  return readAllGoals().find(goal =>
+  const candidates = readAllGoals().filter(goal =>
     goal.related_session_id === sid && ["active", "paused", "blocked"].includes(goal.status)
-  ) ?? null;
+  );
+  return candidates.find(goal => goal.status === "active") ?? candidates[0] ?? null;
 }
 
 export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalRecord {

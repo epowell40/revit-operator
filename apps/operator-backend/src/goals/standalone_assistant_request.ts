@@ -4,9 +4,9 @@ import { MODEL_CHANGE_PROHIBITION } from "../no_write_intent.js";
 function isAnswerDraftRequest(request: string): boolean {
   const reference = "(?:that|this|it|the (?:above|answer|response|summary|findings|list))";
   const output = "(?:plan|checklist|summary|table|outline|list|questions|draft)";
-  return new RegExp(`\\b(?:turn|organize|reorganize|convert)\\s+${reference}\\s+into\\s+(?:a\\s+|an\\s+)?[^.!?;\\n]{0,60}\\b${output}\\b`, "i").test(request)
-    || new RegExp(`\\b(?:summarize|rewrite|rephrase|condense|prioritize|explain)\\s+${reference}\\b`, "i").test(request)
-    || new RegExp(`\\b(?:make|keep)\\s+${reference}\\s+(?:shorter|briefer|brief|concise|simpler|more concise|more readable)\\b`, "i").test(request);
+  return new RegExp(`^\\s*(?:please\\s+)?(?:turn|organize|reorganize|convert)\\s+${reference}\\s+into\\s+(?:a\\s+|an\\s+)?[^.!?;\\n]{0,60}\\b${output}\\b`, "i").test(request)
+    || new RegExp(`^\\s*(?:please\\s+)?(?:summarize|rewrite|rephrase|condense|prioritize|explain)\\s+${reference}\\b`, "i").test(request)
+    || new RegExp(`^\\s*(?:please\\s+)?(?:make|keep)\\s+${reference}\\s+(?:shorter|briefer|brief|concise|simpler|more concise|more readable)\\b`, "i").test(request);
 }
 
 /** Standalone document review, answer drafting, research and calculation need no Revit observation. */

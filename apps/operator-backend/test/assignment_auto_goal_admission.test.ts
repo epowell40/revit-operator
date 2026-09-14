@@ -32,6 +32,7 @@ for (const [effect, prompt, facts] of [
   ["read", "Count all air devices in the project and break the total down by family and type. Do not change the model.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["read", "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.", ["task.result_available"]],
   ["read", "What size is this?", ["task.result_available"]],
+  ["read", "What is the diameter of the selected duct?", ["task.result_available"]],
   ["read", "Which system does this belong to?", ["task.result_available"]],
   ["read", "Give me a CSV of the Level 4 equipment: name, family/type, level, and location in feet.", ["task.result_available"]],
   ["read", "Our Revit add-in uses ElementId.IntegerValue. Find out what needs to change for Revit 2026 while keeping Revit 2023 support. Explain the fix; do not edit the add-in.", ["task.result_available"]],

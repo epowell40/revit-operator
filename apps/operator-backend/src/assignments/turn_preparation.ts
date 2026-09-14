@@ -1,6 +1,6 @@
 import type { ToolResult } from "../contracts.js";
 import type { ChatRequest } from "../contracts.js";
-import { isStandaloneAssistantRequest } from "../goals/standalone_assistant_request.js";
+import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
 import { startAutoGoalIfEligible } from "../goals/auto_goal_start.js";
 import type { GoalRecord } from "../goals/service.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/index.js";
@@ -20,7 +20,14 @@ export type PreparedAssignmentTurn = {
 };
 
 export function bindPreparedAssignmentToRequest(request: ChatRequest, prepared: PreparedAssignmentTurn | null): ChatRequest {
-  if (!prepared) return request;
+  if (!prepared) {
+    if (!request.user_text?.trim()) return request;
+    const context = request.context && typeof request.context === "object" ? request.context : {};
+    const ui = (context as Record<string, unknown>).ui;
+    return { ...request, context: { ...context, ui: {
+      ...(ui && typeof ui === "object" ? ui : {}), authoritative_user_text: request.user_text
+    } } };
+  }
   const canonical = prepared.kernelVersion === 2 && prepared.bindingV2
     ? assignmentKernelV2ForBinding(prepared.bindingV2)?.snapshot : null;
   const inputContext = canonical && Object.keys(canonical.input_values).length > 0
@@ -77,7 +84,7 @@ export function prepareAssignmentTurn(input: {
     journalAssignmentToolResults(input.sessionId, input.toolResults, `outer_${input.source}_result`);
     return { assignmentId: bound.assignmentId, runId: bound.runId, generation: bound.generation, kernelVersion: 1 };
   }
-  if (input.toolResults.length === 0 && isStandaloneAssistantRequest(input.userText)) return null;
+  if (isIndependentAssistantTurn({ user_text: input.userText, context: input.requestContext, tool_results: input.toolResults })) return null;
   const started = startAutoGoalIfEligible({
     session_id: input.sessionId,
     user_text: input.userText,

@@ -1,8 +1,8 @@
 import { classifyAutoGoalRequest } from "./auto_goal.js";
-import { supersedeBlockedAutoGoalForFreshRequest } from "./auto_goal_runtime.js";
-import { getCurrentGoalForSession, setAgentGoal, type GoalRecord } from "./service.js";
+import { createGoal, getCurrentGoalForSession, setAgentGoal, type GoalRecord } from "./service.js";
 import { hasRevitTurnContext } from "../revit_context_policy.js";
-import { isStandaloneAssistantRequest } from "./standalone_assistant_request.js";
+import { isIndependentAssistantTurn } from "./assistant_turn.js";
+import { pauseAutomaticAssignmentForNewRequest } from "../assignments/fresh_request.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -25,7 +25,7 @@ export function startAutoGoalIfEligible(input: {
   on_started?: (goal: GoalRecord, signals: string[]) => void;
 }): GoalRecord | null {
   if (input.tool_result_count > 0) return null;
-  if (isStandaloneAssistantRequest(input.user_text)) {
+  if (isIndependentAssistantTurn({ user_text: input.user_text, context: input.request_context })) {
     // Preserve any existing work; a side question is not a cancellation.
     return null;
   }
@@ -38,12 +38,17 @@ export function startAutoGoalIfEligible(input: {
     decision.signals.push("request in Revit conversation context");
   }
   const current = getCurrentGoalForSession(input.session_id);
-  if (current && !supersedeBlockedAutoGoalForFreshRequest(input.session_id)) return current;
+  const resume = /^(?:please\s+)?(?:continue|resume|keep going|go on)(?:\s+(?:the\s+)?(?:saved|current|previous|active))?(?:\s+(?:work|task|assignment))?[.!]?$/i.test(input.user_text.trim());
+  if (current && resume) return current;
+  if (current && current.work_budget?.mode !== "auto_goal") return current;
+  if (current) pauseAutomaticAssignmentForNewRequest(current);
   const context = object(input.request_context);
   const revit = object(context.revit);
   const document = object(revit.document);
   const projectIdentity = object(document.projectIdentity);
-  const goal = setAgentGoal(input.session_id, {
+  // An unbound user turn owns its own objective. A prior automatic question
+  // remains resumable; its immutable request must not replace the new one.
+  const goalInput = {
     title: decision.title,
     objective: decision.objective,
     success_criteria: decision.acceptanceCriteria,
@@ -70,7 +75,10 @@ export function startAutoGoalIfEligible(input: {
       retry_policy: "canonical none/unknown/applied reducer with explicit reconciliation and bounded progress"
     },
     created_by: input.created_by ?? `auto_goal:${input.source}`
-  });
+  };
+  const goal = current
+    ? createGoal({ ...goalInput, acceptance_criteria: decision.acceptanceCriteria, related_session_id: input.session_id, status: "active" })
+    : setAgentGoal(input.session_id, goalInput);
   input.on_started?.(goal, decision.signals);
   return goal;
 }

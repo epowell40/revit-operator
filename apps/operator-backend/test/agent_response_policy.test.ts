@@ -71,6 +71,10 @@ test("backend prompts do not force Plan-prefixed action turns", () => {
 
 test("per-turn teammate contract classifies representative conversation, navigation, inspection, and mutation requests", () => {
   assert.equal(classifyAgentTurn("Can you explain what a shock arrestor does?"), "conversation");
+  const modelContext = { revit: { source: { live: true }, document: { title: "Disposable", projectIdentity: { fingerprint: "model" } } } };
+  assert.equal(classifyAgentTurn("What is static pressure in an HVAC duct? Keep it to two sentences.", modelContext), "conversation");
+  assert.equal(classifyAgentTurn("What is the diameter of the selected duct?", modelContext), "inspection");
+  assert.equal(classifyAgentTurn("What size is this? Keep it brief.", modelContext), "inspection");
   assert.equal(classifyAgentTurn("Show me the air handling unit schedule."), "navigation");
   assert.equal(
     classifyAgentTurn("Where are the shock arrestors? Provide the room number for each device location."),

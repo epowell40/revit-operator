@@ -24,7 +24,7 @@ import {
   upsertStepPlanned
 } from "./memory/sqlite_store.js";
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
-import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
+import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
 import { cancelCodexBrainTurn, getCodexAppServerCompatibility, warmCodexAppServer } from "./brains/codex_brain.js";
@@ -2160,7 +2160,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isStandaloneAssistantRequest(userText) || isDirectBrainRouteRequest(boundCanonicalRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isIndependentAssistantTurn(boundCanonicalRequest) || isDirectBrainRouteRequest(boundCanonicalRequest)
         ? null
         : maybeHandleMacroSkill(boundCanonicalRequest);
 
@@ -2558,7 +2558,7 @@ const server = http.createServer(async (req, res) => {
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
       };
       const boundBrainRequest = bindPreparedAssignmentToRequest(brainRequest, assignmentBinding);
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isStandaloneAssistantRequest(userText) || isDirectBrainRouteRequest(boundBrainRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isIndependentAssistantTurn(boundBrainRequest) || isDirectBrainRouteRequest(boundBrainRequest)
         ? null
         : maybeHandleMacroSkill(boundBrainRequest);
       if (macroResp) {

@@ -153,6 +153,10 @@ function synchronizeGoalLifecycle(goal: GoalRecord, snapshot: AssignmentSnapshot
         : "Useful work is retained while bounded review is pending."
     };
   }
+  if (snapshot.execution_control?.state === "paused") {
+    return { ...goal, status: "paused", current_phase: "paused", current_step: "Resume saved work when ready.",
+      finished_at: null, blocker: null, error: null, progress_summary: "Work and evidence are saved. Execution is paused." };
+  }
   return {
     ...goal,
     status: "active",

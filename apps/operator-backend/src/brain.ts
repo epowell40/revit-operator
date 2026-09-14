@@ -42,7 +42,7 @@ import {
 import { ensureWorkspaceLayout } from "./workspace.js";
 import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
-import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
+import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -445,7 +445,7 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   }
   // A reference document is not an implicit request to enter a model workflow.
   // Route standalone work before legacy PDF/schedule/redline shortcuts.
-  if (isStandaloneAssistantRequest(req.user_text ?? "")) {
+  if (isIndependentAssistantTurn(req)) {
     const decision = await decideWithSelectedBrain(resolveOperatorBrainRoute(), req, dependencies);
     return isCertifiedSidecarRequest(req) ? finalizeDecision(req, decision) : finalizeGenericDecision(req, decision);
   }
@@ -572,7 +572,7 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
     if (streamGate.buffered) emitBufferedGenericDecision(cb, decision);
     return decision;
   }
-  if (isStandaloneAssistantRequest(req.user_text ?? "")) {
+  if (isIndependentAssistantTurn(req)) {
     const route = resolveOperatorBrainRoute();
     const certified = isCertifiedSidecarRequest(req);
     const gate = certified ? { buffered: true, callbacks: { abortSignal: cb.abortSignal } } : genericStreamGate(req, cb);

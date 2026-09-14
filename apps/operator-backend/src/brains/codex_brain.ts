@@ -26,6 +26,7 @@ import {
 import { getPinnedGoal } from "../session_store.js";
 import { formatActiveGoalContext, getActiveGoalForSession, getGoal } from "../goals/service.js";
 import { createAutoGoalTurnObserver } from "../goals/auto_goal_runtime.js";
+import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
@@ -556,7 +557,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   let activeGoalBlock = "";
   try {
-    activeGoalBlock = formatActiveGoalContext(assignmentKernelV2?.goal ?? getActiveGoalForSession(req.session_id));
+    activeGoalBlock = isIndependentAssistantTurn(req) ? ""
+      : formatActiveGoalContext(assignmentKernelV2?.goal ?? getActiveGoalForSession(req.session_id));
   } catch {
     activeGoalBlock = "";
   }
@@ -916,7 +918,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
-  const assignmentObserver = assignmentKernelV2
+  const assignmentObserver = assignmentKernelV2 || isIndependentAssistantTurn(req)
     ? { observe: (_value: unknown) => {}, finish: (_turnId: string, _assistant: string, _receipt: unknown) => {} }
     : createAutoGoalTurnObserver(req.session_id);
   const turnNotificationObserver = createCodexTurnNotificationObserver({
@@ -974,7 +976,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let providerTurnDisposition: "completed" | "interrupted" | "failed" = "failed";
   let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
-  const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id ?? getActiveGoalForSession(req.session_id)?.id ?? null;
+  const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
+    ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;

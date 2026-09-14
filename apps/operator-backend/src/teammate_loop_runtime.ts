@@ -225,7 +225,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   if (previewOnly || documentLifecycleDenied) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
   if (isConceptualQuestion(text)
-      && !(hasRevitTurnContext(context) && /\b(?:this|that|these|those|it)\b/.test(text))
+      && !(hasRevitTurnContext(context) && /\b(?:this|that|these|those|it)\b/.test(text.split(/[.!?]/, 1)[0]!))
       && (!explicitMutation || explicitlyConceptualFraming)
       && !/\b(?:then|and|also|otherwise)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
   if (explicitMutation) return "mutation";

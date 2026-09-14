@@ -22,7 +22,7 @@ test("document review and answer drafting reach the provider before legacy routi
     const dependencies = { mepRouteRedline: unexpected, scheduleValueReplacement: unexpected, semanticAecWorkflow: unexpected,
       codexBrain: async () => { providerCalls++; return response; },
       codexStreamingBrain: async (_req: ChatRequest, cb: any) => { providerCalls++; cb.onDelta?.(response.assistant_message); cb.onDone?.(response.assistant_message); return response; } };
-    for (const text of [prompt, "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.", "Make it shorter."]) {
+    for (const text of [prompt, "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.", "Make it shorter.", "What is static pressure in an HVAC duct? Keep it to two sentences."]) {
     const result = await decide(request(text), dependencies);
     assert.equal(result.assistant_message, response.assistant_message);
     assert.deepEqual(result.actions, []);
@@ -31,7 +31,7 @@ test("document review and answer drafting reach the provider before legacy routi
     assert.equal(streamed.assistant_message, response.assistant_message);
     assert.equal(deltas.join(""), response.assistant_message);
     }
-    assert.equal(providerCalls, 6);
+    assert.equal(providerCalls, 8);
   } finally { if (previous === undefined) delete process.env.OPERATOR_BRAIN; else process.env.OPERATOR_BRAIN = previous; }
 });
 

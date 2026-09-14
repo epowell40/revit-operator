@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "conversation_assignment_isolation.test.ts",
     "session_history_recovery.test.ts",
     "local_desktop_launcher_registration.test.ts",
     "generated_parameter_postcondition_v2.test.ts",
@@ -116,6 +117,7 @@
     "lib/dynamicAssignmentIntegration.test.ts"
   ],
   "desktop_tests": [
+    "test/assignment_workspace_ux.test.js",
     "test/simple_assistant_ui.test.js",
     "test/sidecar_secure_integration.test.js",
     "test/runtime_source_freshness.test.js",
@@ -1266,6 +1268,21 @@
         "backend:composer_recovery.test.ts",
         "desktop:test/simple_assistant_ui.test.js",
         "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "unfinished-document-plan-replaces-new-selected-duct-question",
+      "coverage": [
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
+      ]
+    },
+    {
+      "id": "general-engineering-question-inherits-model-task-and-suppresses-answer",
+      "coverage": [
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:document_review_routing.test.ts",
+        "backend:agent_response_policy.test.ts"
       ]
     }
   ],
