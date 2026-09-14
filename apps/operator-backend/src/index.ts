@@ -24,6 +24,7 @@ import {
   upsertStepPlanned
 } from "./memory/sqlite_store.js";
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
+import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
 import { cancelCodexBrainTurn, getCodexAppServerCompatibility, warmCodexAppServer } from "./brains/codex_brain.js";
@@ -2117,7 +2118,7 @@ const server = http.createServer(async (req, res) => {
       const canonicalRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) }),
-        user_text: userTextWithAttachments,
+        user_text: userText,
         tool_results: toolResults,
         user_attachments: userAttachments
       };
@@ -2129,7 +2130,7 @@ const server = http.createServer(async (req, res) => {
 
       const owner = sessionOwnerForPrincipal(auth.principal);
       const assignmentBinding = prepareAssignmentTurn({
-        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText,
         toolResults, source: "stream", createdBy: owner?.owner_user_id ?? null,
         requestContext: canonicalRequest.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
@@ -2159,7 +2160,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundCanonicalRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isStandaloneAssistantRequest(userText) || isDirectBrainRouteRequest(boundCanonicalRequest)
         ? null
         : maybeHandleMacroSkill(boundCanonicalRequest);
 
@@ -2518,7 +2519,7 @@ const server = http.createServer(async (req, res) => {
 
       const owner = sessionOwnerForPrincipal(auth.principal);
       const assignmentBinding = prepareAssignmentTurn({
-        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText,
         toolResults, source: "chat", createdBy: owner?.owner_user_id ?? null,
         requestContext: parsed.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
@@ -2551,13 +2552,13 @@ const server = http.createServer(async (req, res) => {
       const devUnlocked = devAgentUnlocked(req);
       const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
-        user_text: userTextWithAttachments,
+        user_text: userText,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
       };
       const boundBrainRequest = bindPreparedAssignmentToRequest(brainRequest, assignmentBinding);
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundBrainRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isStandaloneAssistantRequest(userText) || isDirectBrainRouteRequest(boundBrainRequest)
         ? null
         : maybeHandleMacroSkill(boundBrainRequest);
       if (macroResp) {

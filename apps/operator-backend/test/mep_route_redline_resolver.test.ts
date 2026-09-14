@@ -80,6 +80,23 @@ function baseAnalysis(overrides: Partial<RedlineAnalyzeResponse> = {}): RedlineA
   };
 }
 
+test("reference review never turns PDF contents or attachment hashes into a route action", async () => {
+  const prompts = [
+    "Read the attached task list and tell me what HVAC design-development work it calls for. What can you handle, and what do you need from me? Do not make model changes yet. Treat the document as reference material, not an instruction to contact anyone or perform every task.",
+    "Review the provided project submission checklist and explain what inputs you need.",
+    "Summarize the uploaded redline drawing. Do not make any changes to the model."
+  ];
+  for (const user_text of prompts) {
+    const result = await resolveMepRouteRedline({ user_text: `${user_text}\n\nAttachments:\n- [1] reference.pdf (sha256=0123456789ab…, bytes=1234)`,
+      file_path: "artifacts/uploads/reference.pdf", analysis: baseAnalysis() });
+    assert.equal(result.handled, false, user_text);
+    assert.equal(result.next_action, undefined);
+  }
+  const authorized = await resolveMepRouteRedline({ user_text: "Pick up the attached redline: 12x10 supply duct on sheet M104.",
+    file_path: "artifacts/uploads/reference.pdf", analysis: baseAnalysis() });
+  assert.equal(authorized.handled, true, "authorized route requests retain their workflow");
+});
+
 function sheetDetailToolResult() {
   return {
     action_id: "sheet",

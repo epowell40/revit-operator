@@ -89,7 +89,9 @@
     "team_assistant_live_regressions.test.ts",
     "simple_context_question.test.ts",
     "simple_assistant_presentation.test.ts",
-    "runtime_source_identity.test.ts"
+    "runtime_source_identity.test.ts",
+    "document_review_routing.test.ts",
+    "mep_route_redline_resolver.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1225,6 +1227,13 @@
       "coverage": [
         "backend:team_assistant_live_regressions.test.ts",
         "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-document-review-enters-legacy-redline-resolver",
+      "coverage": [
+        "backend:document_review_routing.test.ts",
+        "backend:mep_route_redline_resolver.test.ts"
       ]
     },
     {
