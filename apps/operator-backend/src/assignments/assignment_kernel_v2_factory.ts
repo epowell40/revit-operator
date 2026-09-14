@@ -55,6 +55,10 @@ function requestedEffect(goal: GoalRecord): RequestedEffectV2 {
 function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly string[] = []): string[] | null {
   if (configuredFacts.some((fact) => fact.startsWith("inventory."))) return [...configuredFacts];
   const source = `${goal.objective}\n${goal.acceptance_criteria.join("\n")}\n${text(goal.work_budget?.source_user_request, 20_000)}`;
+  // Counting a table's rows or a review's findings is part of an assessment,
+  // not a request for the model-wide quantify contract. Keep the full read
+  // outcome deliverable instead of forcing every audit through inventory facts.
+  if (/\b(?:reviews?|audits?|assess(?:ment)?|prioriti[sz]e(?:d)?|gaps?|missing|blank|schedules?)\b/i.test(source)) return null;
   const boundedSample = /\bsampled\b|\b(?:sample|samples|sampling)\b(?!\s+models?\b)|\bsnapshot_limit\s*[=:]?\s*\d+/i.test(source);
   const fullInventory = /\b(?:all|every|entire|whole)\b[^.!?\n]{0,60}\b(?:model|project|instances?|elements?|ducts?|devices?|equipment)\b|\bcomplete\s+inventory\b/i.test(source);
   if (boundedSample && !fullInventory) return null;

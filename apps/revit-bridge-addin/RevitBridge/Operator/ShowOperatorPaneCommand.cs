@@ -13,7 +13,7 @@ namespace RevitBridge.Operator
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            if (OperatorDesktopLauncher.UseLegacyPane())
+            if (OperatorDesktopLauncher.UseEmbeddedPane() || OperatorDesktopLauncher.UseLegacyPane())
             {
                 var pane = commandData.Application.GetDockablePane(OperatorPaneIds.PaneId);
                 pane?.Show();

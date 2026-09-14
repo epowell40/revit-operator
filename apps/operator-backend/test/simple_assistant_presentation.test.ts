@@ -28,6 +28,9 @@ test("idle tasks cannot imply ongoing work; working summaries do not expose inte
   assert.equal(ui.compactWorkSummary({ current_step: "Verify native postcondition for internal-id-42" }, true), "Checking the result…");
   assert.equal(ui.compactWorkSummary({ current_step: "Discover current model" }, true), "Checking the model…");
   assert.equal(ui.compactWorkSummary({ current_step: "Apply parameter changes" }, true), "Making the requested changes…");
+  assert.equal(ui.compactWorkSummary({ current_step: "Executing task", _projection: { execution: { requested_effect: "read" } } }, true), "Checking the model…");
+  assert.equal(ui.compactWorkSummary({ current_step: "Executing task", work_budget: { requested_effect: "preview" } }, true), "Preparing a preview…");
+  assert.equal(ui.compactWorkSummary({ current_step: "Executing task" }, true), "Working…");
   assert.equal(ui.conciseStatus("Sidecar ready."), "Ready");
   assert.equal(ui.conciseStatus("Revit connection lost."), "Revit connection lost.");
 });
@@ -50,6 +53,9 @@ test("document answers render semantic headings, lists and inert code instead of
   assert.equal(root.children[2].children.length,2);assert.equal(root.children[3].children.length,2);
   assert.ok(root.children[2].children[0].children.some((n:any)=>n.tag==="strong"&&n.textContent==="Page 3:"));
   assert.equal(root.children[4].children[0].tag,"code");assert.equal(root.children[4].children[0].textContent,"<script>run()</script>");
+  ui.renderAssistantBlocks(root,"A = Q / V (ft²).\n\nD = sqrt(4 × A / π) (ft).");
+  const equations = root.children.flatMap((n:any)=>n.children).map((n:any)=>n.textContent).join(" ");
+  assert.match(equations,/A = Q \/ V \(ft²\)/); assert.match(equations,/sqrt\(4 × A \/ π\)/);
   ui.renderAssistantBlocks(root,"## Replacement\nFinal only.");
   assert.deepEqual(root.children.map((n:any)=>n.tag),["h3","p"],"stream rerender replaces prior nodes");
 });

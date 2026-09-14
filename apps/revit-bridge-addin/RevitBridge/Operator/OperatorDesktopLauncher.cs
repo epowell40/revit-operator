@@ -48,6 +48,41 @@ namespace RevitBridge.Operator
             return IsTruthy(ReadSetting("OPERATOR_USE_LEGACY_PANE"));
         }
 
+        public static bool UseEmbeddedPane()
+            => string.Equals(ReadSetting("OPERATOR_UI_MODE").Trim(), "embedded", StringComparison.OrdinalIgnoreCase);
+
+        public static Task<Uri> LaunchEmbeddedAsync(CancellationToken cancellationToken)
+            => Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RequestLauncherPathRefresh();
+                if (!WaitForLauncherPathInitialRefresh(TimeSpan.FromMilliseconds(FirstClickPreloadWaitMilliseconds)))
+                    throw new InvalidOperationException(BuildPreloadTimeoutDetail("launcher discovery"));
+                var launcherPath = ResolveLauncherPath();
+                if (string.IsNullOrWhiteSpace(launcherPath))
+                    throw new InvalidOperationException("Operator's launcher is unavailable. Start Operator Desktop or repair the workstation installation.");
+                if (!LaunchGate.TryEnter(out var lease))
+                    throw new InvalidOperationException("Operator is already starting or Revit is closing. Try again when that finishes.");
+                using (lease!)
+                using (var process = Process.Start(BuildLauncherStartInfo(launcherPath!, noBrowser: true)))
+                {
+                    if (process == null) throw new InvalidOperationException("Windows could not start Operator.");
+                    var elapsed = Stopwatch.StartNew();
+                    var exited = false;
+                    while (!(exited = process.WaitForExit(100)) && elapsed.ElapsedMilliseconds < LauncherObservationTimeoutMilliseconds)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    // The registered launcher validates process/listener/source ownership.
+                    // Endpoint shape alone, before successful launcher exit, is insufficient.
+                    if (!exited || process.ExitCode != 0)
+                        throw new InvalidOperationException(GetObservedLaunchFailure(launcherPath!, exited, exited ? process.ExitCode : 0, false));
+                    if (!WaitForSidecarLiveness(PostExitLivenessTimeoutMilliseconds))
+                        throw new InvalidOperationException("Operator started but its interface is unavailable. Try again or open Operator Desktop.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return new Uri(OperatorDesktopLaunchPlan.DefaultUrl);
+                }
+            }, cancellationToken);
+
         public static string? ResolveLauncherPath()
         {
             RequestLauncherPathRefresh();
@@ -276,7 +311,8 @@ namespace RevitBridge.Operator
         internal static ProcessStartInfo BuildLauncherStartInfo(
             string launcherPath,
             string? powershellPath = null,
-            string? commandInterpreterPath = null)
+            string? commandInterpreterPath = null,
+            bool noBrowser = false)
         {
             var workingDirectory = Path.GetDirectoryName(launcherPath) ?? "";
             var extension = Path.GetExtension(launcherPath);
@@ -290,7 +326,7 @@ namespace RevitBridge.Operator
                 return new ProcessStartInfo
                 {
                     FileName = executable,
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{launcherPath}\"",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{launcherPath}\"" + (noBrowser ? " -NoBrowser" : ""),
                     WorkingDirectory = workingDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true
@@ -305,7 +341,7 @@ namespace RevitBridge.Operator
                 return new ProcessStartInfo
                 {
                     FileName = executable,
-                    Arguments = $"/D /S /C \"\"{launcherPath}\"\"",
+                    Arguments = $"/D /S /C \"\"{launcherPath}\"" + (noBrowser ? " -NoBrowser" : "") + "\"",
                     WorkingDirectory = workingDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true
@@ -314,6 +350,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(extension, ".lnk", StringComparison.OrdinalIgnoreCase))
             {
+                if (noBrowser) throw new NotSupportedException("The docked interface needs the workstation .ps1 or .cmd launcher. A shortcut cannot pass its startup options; use Operator Desktop or repair the launcher setting.");
                 return new ProcessStartInfo
                 {
                     FileName = launcherPath,

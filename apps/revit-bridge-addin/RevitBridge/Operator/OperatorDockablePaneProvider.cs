@@ -14,7 +14,9 @@ namespace RevitBridge.Operator
 
         public void SetupDockablePane(DockablePaneProviderData data)
         {
-            data.FrameworkElement = new OperatorPaneControl(_eventService);
+            data.FrameworkElement = OperatorDesktopLauncher.UseEmbeddedPane()
+                ? new OperatorEmbeddedPaneControl()
+                : new OperatorPaneControl(_eventService);
             data.InitialState = new DockablePaneState
             {
                 DockPosition = DockPosition.Right

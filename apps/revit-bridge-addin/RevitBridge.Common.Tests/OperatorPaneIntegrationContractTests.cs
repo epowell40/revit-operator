@@ -11,6 +11,25 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorPaneIntegrationContractTests
     {
         [Fact]
+        public void ModernPaneUsesOneSidecarAndKeepsInitializationOffTheRevitApiPath()
+        {
+            var pane = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorEmbeddedPaneControl.cs");
+            var provider = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDockablePaneProvider.cs");
+            var launcher = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDesktopLauncher.cs");
+            AssertOrdered(pane, "await OperatorDesktopLauncher.LaunchEmbeddedAsync", "browser.EnsureCoreWebView2Async()", "core.Navigate(url.AbsoluteUri)");
+            Assert.Contains("UseEmbeddedPane()", provider);
+            Assert.Contains("new OperatorEmbeddedPaneControl()", provider);
+            Assert.DoesNotContain("new OperatorPaneControl", pane);
+            Assert.DoesNotContain("WebMessageReceived +=", pane);
+            Assert.DoesNotContain("AddHostObjectToScript", pane);
+            Assert.DoesNotContain("CoreWebView2PermissionState.Allow", pane);
+            Assert.Contains("if (_opening || _browser != null || _lifetime.IsCancellationRequested) return;", pane);
+            Assert.Contains("current._lifetime.Cancel()", pane);
+            Assert.Contains("current.DisposeBrowser()", pane);
+            AssertOrdered(launcher, "public static Task<Uri> LaunchEmbeddedAsync", "Task.Run", "LaunchGate.TryEnter", "noBrowser: true", "if (!exited || process.ExitCode != 0)", "WaitForSidecarLiveness");
+        }
+
+        [Fact]
         public void ToolResultRequestEffectRoundTripsAsOptionalWireMetadata()
         {
             var result = new OperatorToolResult
@@ -117,6 +136,11 @@ namespace RevitBridge.Common.Tests
             {
                 var candidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments).ToArray());
                 if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                if (relativeSegments.Length > 1 && relativeSegments[0] == "apps")
+                {
+                    var flatCandidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments.Skip(1)).ToArray());
+                    if (File.Exists(flatCandidate)) return File.ReadAllText(flatCandidate);
+                }
                 cursor = cursor.Parent;
             }
 

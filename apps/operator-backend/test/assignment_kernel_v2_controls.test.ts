@@ -202,7 +202,9 @@ test("generated-tool validation diagnostics survive a missing canonical receipt 
 }));
 
 for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${withAssessment ? "with cited assessment" : "with native values"} rejects foreign or missing evidence and survives publication`, () => workspace(async () => {
-  const { binding, snapshot, prepared } = start("Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
+  const { binding, snapshot, prepared } = start(withAssessment
+    ? "Review the selected element's name, size and system. Tell me how many of these fields are readable and assess what needs attention. Leave the model unchanged."
+    : "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
   const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => { throw new Error("read interrupted before delivery"); },
     callTool: async (_tool: unknown, args: any, context: any) => {

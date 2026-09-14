@@ -503,6 +503,24 @@ test("filesystem planning lease blocks a second backend process sharing the ledg
   assert.equal(createRequirement({ scope: ref, key: "tags.leaders", text: "Write after release." }).requirement.revision, 1);
 });
 
+test("independent planning readers coexist while every ledger mutation remains fenced", () => {
+  mkWorkspace();
+  const ref = scope("engineer", "local");
+  const first = resolveRequirements({ scope_refs: [ref] });
+  const left = beginRequirementsPlanningLease(first.receipt_sha256);
+  const right = beginRequirementsPlanningLease(first.receipt_sha256);
+  try {
+    assert.notEqual(left.token, right.token);
+    assert.equal(resolveRequirements({ scope_refs: [ref] }).receipt_sha256, first.receipt_sha256);
+    endRequirementsPlanningLease(left);
+    assert.throws(() => createRequirement({ scope: ref, key: "audit.rule", text: "A new requirement." }), /active planning lease/);
+  } finally {
+    endRequirementsPlanningLease(left);
+    endRequirementsPlanningLease(right);
+  }
+  assert.equal(createRequirement({ scope: ref, key: "audit.rule", text: "A new requirement." }).requirement.revision, 1);
+});
+
 test("dead-process planning lease remains auditable but does not block a restarted backend", () => {
   const root = mkWorkspace();
   const ref = scope("engineer", "local");

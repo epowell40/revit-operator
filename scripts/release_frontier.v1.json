@@ -100,7 +100,9 @@
     "composer_recovery.test.ts",
     "read_attachment.test.ts",
     "codex_tool_catalog.test.ts",
-    "result_delivery_diagnostics.test.ts"
+    "result_delivery_diagnostics.test.ts",
+    "requirements_store.test.ts",
+    "requirements_parallel_planning.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -167,7 +169,10 @@
     "OperatorSupportedToolInventoryTests",
     "OperatorRetiredPrototypeToolTests",
     "OperatorUiContextSnapshotTests",
-    "OperatorUiWakeSchedulerTests"
+    "OperatorUiWakeSchedulerTests",
+    "OperatorEmbeddedNavigationTests",
+    "OperatorDesktopLauncherTests",
+    "OperatorPaneIntegrationContractTests"
   ],
   "failure_families": [
     {
@@ -1438,6 +1443,34 @@
       "coverage": [
         "mcp:lib/mcp_stdio_smoke.test.ts",
         "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "independent-conversations-contend-for-requirements-reader-planning-lease",
+      "coverage": [
+        "backend:requirements_store.test.ts",
+        "backend:requirements_parallel_planning.test.ts"
+      ]
+    },
+    {
+      "id": "schedule-assessment-with-row-count-is-forced-into-model-quantify-contract",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-equations-arrive-as-unrendered-tex",
+      "coverage": [
+        "backend:agent_response_policy.test.ts",
+        "backend:simple_assistant_presentation.test.ts"
+      ]
+    },
+    {
+      "id": "read-execution-progress-incorrectly-says-making-model-changes",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
       ]
     }
   ],

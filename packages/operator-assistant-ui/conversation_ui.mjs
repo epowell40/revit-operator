@@ -1,10 +1,15 @@
 export function compactWorkSummary(goal, running) {
   if (!running) return "";
   const phase = `${goal?.current_step || ""} ${goal?.current_phase || ""}`.toLowerCase();
+  const effect = goal?._projection?.execution?.requested_effect || goal?.work_budget?.requested_effect || goal?.requested_effect;
   if (/verif|postcondition|confirm/.test(phase)) return "Checking the result…";
-  if (/apply|execut|mutat|chang/.test(phase)) return "Making the requested changes…";
   if (/preview/.test(phase)) return "Preparing a preview…";
   if (/research|search/.test(phase)) return "Looking up the details…";
+  if (/apply|execut|mutat|chang/.test(phase)) {
+    if (effect === "read") return "Checking the model…";
+    if (effect === "preview") return "Preparing a preview…";
+    if (effect === "apply" || /apply|mutat|chang/.test(phase)) return "Making the requested changes…";
+  }
   if (/observ|discover|inspect|context|read/.test(phase)) return "Checking the model…";
   return "Working…";
 }

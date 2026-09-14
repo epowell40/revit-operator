@@ -23,6 +23,8 @@ function readRepoFile(relativePath: string): string {
 
 test("agent response policy requires natural acknowledgement instead of routine visible plans", () => {
   const policy = AGENT_RESPONSE_STYLE_LINES.join("\n");
+  assert.match(policy, /equations as readable plain text with explicit units/);
+  assert.match(policy, /does not typeset LaTeX/);
 
   assert.match(policy, /short natural acknowledgement/i);
   assert.match(policy, /Ask one focused clarifying question/i);

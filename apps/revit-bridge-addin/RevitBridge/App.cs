@@ -106,9 +106,9 @@ namespace RevitBridge
                 WriteStartupLog("Dialog computer-use registration skipped by local setting.");
             }
 
-            // The desktop sidecar is the primary UI. Register the legacy pane only
-            // when an explicit rollback mode was selected before Revit startup.
-            if (OperatorDesktopLauncher.UseLegacyPane())
+            // The modern docked host is an explicit workstation qualification mode.
+            // Both modes reuse the registered pane ID, but only legacy runs its old UI.
+            if (OperatorDesktopLauncher.UseEmbeddedPane() || OperatorDesktopLauncher.UseLegacyPane())
             {
                 try
                 {
@@ -116,11 +116,11 @@ namespace RevitBridge
                         OperatorPaneIds.PaneId,
                         OperatorPaneIds.PaneTitle,
                         new OperatorDockablePaneProvider(_eventService));
-                    WriteStartupLog("Legacy Operator dockable pane registered.");
+                    WriteStartupLog(OperatorDesktopLauncher.UseEmbeddedPane() ? "Modern Operator dockable pane registered." : "Legacy Operator dockable pane registered.");
                 }
                 catch (Exception ex)
                 {
-                    WriteStartupLog($"Legacy Operator dockable pane registration failed: {ex.GetType().FullName}: {ex.Message}");
+                    WriteStartupLog($"Operator dockable pane registration failed: {ex.GetType().FullName}: {ex.Message}");
                 }
             }
             else
@@ -166,6 +166,7 @@ namespace RevitBridge
         public Result OnShutdown(UIControlledApplication application)
         {
             WriteStartupLog("OnShutdown begin.");
+            OperatorEmbeddedPaneControl.Shutdown();
             _eventService?.StopBackgroundWake();
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
