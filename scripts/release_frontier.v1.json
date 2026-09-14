@@ -1400,7 +1400,8 @@
       "id": "narrow-assistant-reply-overlaps-header-and-renders-raw-markdown",
       "coverage": [
         "backend:simple_assistant_presentation.test.ts",
-        "desktop:test/conversation_rendering.test.js"
+        "desktop:test/conversation_rendering.test.js",
+        "dotnet:OperatorPaneIntegrationContractTests"
       ]
     },
     {
@@ -1471,6 +1472,28 @@
       "coverage": [
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "engineering-anything-in-revit-exclusion-enters-native-assignment",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "backend:assistant_context_policy.test.ts"
+      ]
+    },
+    {
+      "id": "assessment-answer-dumps-raw-evidence-over-the-actionable-findings",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "broad-audit-manual-row-scan-omits-an-anomaly-present-in-complete-schedule",
+      "coverage": [
+        "backend:agent_response_policy.test.ts",
+        "backend:codex_turn_input.test.ts"
       ]
     }
   ],

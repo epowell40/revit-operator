@@ -151,11 +151,13 @@ namespace RevitBridge
             {
                 PushButtonData operatorBtnData = new PushButtonData(
                     "cmdRevitOperatorPane",
-                    "Operator\nDesktop",
+                    "Operator",
                     _assemblyPath,
                     "RevitBridge.Operator.ShowOperatorPaneCommand"
                 );
-                operatorBtnData.ToolTip = "Launch or focus Operator Desktop. Set OPERATOR_UI_MODE=pane to use the legacy dockable pane.";
+                operatorBtnData.ToolTip = OperatorDesktopLauncher.UseEmbeddedPane()
+                    ? "Open Operator beside your model."
+                    : "Open Operator Desktop.";
                 panel.AddItem(operatorBtnData);
             }
             catch { }

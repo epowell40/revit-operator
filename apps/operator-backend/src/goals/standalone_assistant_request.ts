@@ -16,7 +16,8 @@ export function isStandaloneAssistantRequest(text: string): boolean {
   // inspection request behind. Affirmative neighboring work stays intact.
   const accessVerb = "(?:inspect|read|query|access|touch|open|use|change|modify|edit|save)";
   const modelObject = "(?:(?:the|any)\\s+)?(?:(?:current|active|open)\\s+)?(?:revit\\s+)?(?:model|project|document)";
-  const accessExclusion = new RegExp(`\\b(?:do not|don't|dont|never)\\s+${accessVerb}(?:\\s*(?:,|and|or|nor)\\s*${accessVerb})*\\s+${modelObject}\\b`, "gi");
+  const excludedObject = `(?:${modelObject}|(?:anything|any (?:elements?|parameters?|data))(?:\\s+(?:in|within|to)\\s+(?:revit|${modelObject}))?|revit)`;
+  const accessExclusion = new RegExp(`\\b(?:do not|don't|dont|never)\\s+${accessVerb}(?:\\s*(?:,|and|or|nor)\\s*${accessVerb})*\\s+${excludedObject}\\b`, "gi");
   const request = text.replace(accessExclusion, " ")
     .replace(/\bwithout\s+(?:opening|inspecting|reading|accessing|querying|touching)(?:\s*(?:,|and|or)\s*(?:opening|inspecting|reading|accessing|querying|touching))*\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
     .replace(new RegExp(MODEL_CHANGE_PROHIBITION.source, "gi"), " ")

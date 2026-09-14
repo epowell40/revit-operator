@@ -3,6 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { independentEngineeringQuestions } from "./standalone_engineering.fixtures.js";
 import { assistantContextPolicy } from "../src/goals/assistant_context_policy.js";
 const root = ["../packages/operator-assistant-ui", "../../packages/operator-assistant-ui"].map(p => path.resolve(p))
   .find(p => fs.existsSync(path.join(p, "assistant_context.mjs")))!;
@@ -10,7 +11,7 @@ const { resolveInitialChatContext } = await import(pathToFileURL(path.join(root,
 const request = (user_text: string, extra = {}) => ({ session_id: "session", message_id: "message", user_text, ...extra });
 
 test("general engineering and document conversation bypass a blocked native bootstrap", async () => {
-  for (const prompt of ["What is static pressure in an HVAC duct? Keep it to two sentences.", "Make it shorter.",
+  for (const prompt of [...independentEngineeringQuestions, "What is static pressure in an HVAC duct? Keep it to two sentences.", "Make it shorter.",
     "Read the attached task list and tell me what HVAC design-development work it calls for. What do you need from me? Do not make model changes yet."]) {
     const body = request(prompt);
     assert.equal(assistantContextPolicy(body).requires_revit_context, false, prompt);

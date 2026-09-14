@@ -59,8 +59,8 @@ export function renderAssistantBlocks(container, text, renderInline = appendInli
   container.replaceChildren();
   const document = container.ownerDocument;
   const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
-  let paragraph = [], list = null, listType = null;
-  const block = (tag, content) => { const node = document.createElement(tag); renderInline(node, content); container.appendChild(node); return node; };
+  let paragraph = [], list = null, listType = null, target = container;
+  const block = (tag, content) => { const node = document.createElement(tag); renderInline(node, content); target.appendChild(node); return node; };
   const flush = () => { if (paragraph.length) block("p", paragraph.join("\n")); paragraph = []; };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -68,14 +68,23 @@ export function renderAssistantBlocks(container, text, renderInline = appendInli
       flush(); list = null; const codeLines = [];
       while (++i < lines.length && !/^\s*```/.test(lines[i])) codeLines.push(lines[i]);
       const pre = document.createElement("pre"), code = document.createElement("code");
-      code.textContent = codeLines.join("\n"); pre.appendChild(code); container.appendChild(pre); continue;
+      code.textContent = codeLines.join("\n"); pre.appendChild(code); target.appendChild(pre); continue;
     }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
-    if (heading) { flush(); list = null; block(`h${Math.min(heading[1].length + 1, 6)}`, heading[2]); continue; }
+    if (heading) {
+      flush(); list = null;
+      if (heading[1].length <= 2) target = container;
+      if (heading[1] === "##" && heading[2].trim() === "Model evidence") {
+        const details = document.createElement("details"), summary = document.createElement("summary");
+        details.className = "modelEvidence"; summary.textContent = "Model evidence";
+        details.appendChild(summary); container.appendChild(details); target = details;
+      } else block(`h${Math.min(heading[1].length + 1, 6)}`, heading[2]);
+      continue;
+    }
     const item = line.match(/^\s*(?:([-*+])\s+|(\d+)[.)]\s+)(.+)$/);
     if (item) {
       flush(); const tag = item[2] ? "ol" : "ul";
-      if (!list || listType !== tag) { list = document.createElement(tag); listType = tag; if (tag === "ol") list.start = Number(item[2]); container.appendChild(list); }
+      if (!list || listType !== tag) { list = document.createElement(tag); listType = tag; if (tag === "ol") list.start = Number(item[2]); target.appendChild(list); }
       const li = document.createElement("li"); renderInline(li, item[3]); list.appendChild(li); continue;
     }
     if (!line.trim()) { flush(); list = null; continue; }

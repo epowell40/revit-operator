@@ -18,6 +18,7 @@ namespace RevitBridge.Common.Tests
             var launcher = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDesktopLauncher.cs");
             AssertOrdered(pane, "await OperatorDesktopLauncher.LaunchEmbeddedAsync", "browser.EnsureCoreWebView2Async()", "core.Navigate(url.AbsoluteUri)");
             Assert.Contains("UseEmbeddedPane()", provider);
+            Assert.Contains("MinimumWidth = OperatorDesktopLauncher.UseEmbeddedPane() ? 380 : 200", provider);
             Assert.Contains("new OperatorEmbeddedPaneControl()", provider);
             Assert.DoesNotContain("new OperatorPaneControl", pane);
             Assert.DoesNotContain("WebMessageReceived +=", pane);

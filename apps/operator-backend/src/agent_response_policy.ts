@@ -1,8 +1,11 @@
 import { classifyAgentTurn, formatTeammateTurnContract, type AgentTurnKind } from "./teammate_loop_runtime.js";
 import { GENERAL_AGENT_EXECUTION_STRATEGY_LINES } from "./execution_strategy.js";
 
+export const TABULAR_AUDIT_VERIFICATION = "Tabular audit verification: compute anomaly counts and the complete matching identifier list with deterministic filtering of the retained JSON, not manual scanning or a remembered sample. State the data-row predicate and exclude headings, grouping rows and totals; reconcile the data-row count with the schedule total and pagination before claiming completeness. A missing-field finding must cite the actual empty field values together with each record identifier, not just a name. Recheck that the reported count equals the full identifier list before submitting an assessment. A zero result in selected categories establishes absence only in those categories. Do not infer absent links, drawings or project work from an unqueried field. Keep each assessment finding to at most eight evidence indices; split a finding when it needs more.";
+
 export const AGENT_RESPONSE_STYLE_LINES = [
   "Response style (important):",
+  TABULAR_AUDIT_VERIFICATION,
   "- Write equations as readable plain text with explicit units, for example A = Q / V and D = sqrt(4 × A / π). This conversation does not typeset LaTeX. Do not use TeX commands or math delimiters; use ordinary symbols, parentheses and a short code block when alignment helps.",
   "- Answer a simple factual question in one short sentence when possible. Use the model's displayed engineering units; omit raw internal units and excessive decimal precision unless the user asks for them. A selected duct diameter should read like 'The selected duct is 4 inches in diameter.' Keep source and verification details available without dumping them into the answer.",
   "- Act as a conversational Revit/BIM expert, not a tool dispatcher. Understand whether the user is chatting, asking a question, requesting model inspection, or requesting a change, and respond at that level.",

@@ -25,6 +25,10 @@ test("agent response policy requires natural acknowledgement instead of routine 
   const policy = AGENT_RESPONSE_STYLE_LINES.join("\n");
   assert.match(policy, /equations as readable plain text with explicit units/);
   assert.match(policy, /does not typeset LaTeX/);
+  assert.match(policy, /deterministic filtering of the retained JSON/);
+  assert.match(policy, /actual empty field values together with each record identifier/);
+  assert.match(policy, /reported count equals the full identifier list/);
+  assert.match(policy, /at most eight evidence indices/);
 
   assert.match(policy, /short natural acknowledgement/i);
   assert.match(policy, /Ask one focused clarifying question/i);

@@ -13,6 +13,17 @@ import type { ChatRequest } from "../src/contracts.js";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN8sAAAAASUVORK5CYII=", "base64");
 const request = (extra: Partial<ChatRequest> = {}): ChatRequest => ({ version: "operator.backend.v1", session_id: "redline-input", message_id: "turn-1", user_text: "", ...extra });
 
+test("the actual model-audit turn carries completeness and evidence cross-checks", async t => {
+  fixture(t);
+  const input = await buildCodexTurnInput(request({user_text:"Review this model against the checklist.",context:{revit:{document:{title:"Pilot"}}}}), []);
+  const text = input.filter(item=>item.type==="text").map(item=>item.text).join("\n");
+  assert.match(text,/deterministic filtering of the retained JSON/);
+  assert.match(text,/reported count equals the full identifier list/);
+  assert.match(text,/actual empty field values together with each record identifier/);
+  assert.match(text,/at most eight evidence indices/);
+  assert.doesNotMatch(text,/HRU406|HRU109B/,'the instruction must not contain benchmark answers');
+});
+
 function fixture(t: test.TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-visual-input-"));
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;

@@ -5,10 +5,10 @@ import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { classifyAgentTurn, buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { getFreshRevitEvidenceRequirement } from "../src/brains/revit_turn_evidence.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
-import { standaloneEngineeringQuestion } from "./standalone_engineering.fixtures.js";
+import { standaloneEngineeringQuestion, independentEngineeringQuestions } from "./standalone_engineering.fixtures.js";
 
 test("standalone engineering with coordinated model-access exclusions has no model assignment or freshness obligation", () => {
-  for (const prompt of [standaloneEngineeringQuestion,
+  for (const prompt of [...independentEngineeringQuestions,
     "Calculate duct area for 1,200 CFM at 800 fpm without opening or inspecting the Revit model.",
     "Research the published airflow formula. Never query, modify or save the current model.",
     "Review the attached checklist. Do not inspect or edit the model."]) {
@@ -18,6 +18,7 @@ test("standalone engineering with coordinated model-access exclusions has no mod
     assert.equal(prepareAssignmentTurn({ sessionId: "engineering", messageId: "calculation", userText: prompt, toolResults: [], source: "chat", createdBy: null }), null);
   }
   for (const prompt of [
+    ...independentEngineeringQuestions.map(prompt => prompt + " Inspect the selected duct too."),
     "Calculate velocity from the selected duct. Do not inspect or change the other model.",
     "Research the airflow formula without changing the model. Then inspect the selected duct's actual size.",
     "Explain the formula. Do not inspect the model; instead change the selected duct diameter to 18 inches.",

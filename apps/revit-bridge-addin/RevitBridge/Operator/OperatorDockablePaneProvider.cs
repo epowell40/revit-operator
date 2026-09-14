@@ -19,7 +19,8 @@ namespace RevitBridge.Operator
                 : new OperatorPaneControl(_eventService);
             data.InitialState = new DockablePaneState
             {
-                DockPosition = DockPosition.Right
+                DockPosition = DockPosition.Right,
+                MinimumWidth = OperatorDesktopLauncher.UseEmbeddedPane() ? 380 : 200
             };
         }
     }

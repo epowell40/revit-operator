@@ -73,3 +73,17 @@ test("restoring history preserves a simultaneous live reply and avoids duplicate
   assert.equal(result[2], live);
   assert.equal(result[2].text, "Current streaming reply");
 });
+
+test("assessment evidence is expandable while limitations and questions remain visible", () => {
+  const document:any={createTextNode:(text:string)=>({tag:"text",textContent:text}),createElement:(tag:string)=>({tag,children:[] as any[],ownerDocument:document,textContent:"",
+    appendChild(child:any){this.children.push(child);},replaceChildren(){this.children=[];}})};
+  const root=document.createElement("div");
+  ui.renderAssistantBlocks(root,"## Assessment\nFour rows need attention.\n\n## Not verified\n- Cause of the blank cells.\n\n## Model evidence\n- [1] Actual blank: <img onerror=run()>\n\n## Questions\n1. Which phase should govern?");
+  assert.deepEqual(root.children.map((n:any)=>n.tag),["h3","p","h3","ul","details","h3","ol"]);
+  const evidence=root.children[4]; assert.equal(evidence.open,undefined); assert.equal(evidence.children[0].tag,"summary");
+  assert.equal(evidence.children[0].textContent,"Model evidence"); assert.equal(evidence.children[1].tag,"ul");
+  assert.ok(evidence.children[1].children[0].children.some((n:any)=>n.textContent.includes("<img onerror=run()>")));
+  const fence=String.fromCharCode(96).repeat(3);
+  ui.renderAssistantBlocks(root,fence+"text\n## Model evidence\nkeep literal\n"+fence);
+  assert.deepEqual(root.children.map((n:any)=>n.tag),["pre"],"fenced examples are not disclosure directives");
+});
