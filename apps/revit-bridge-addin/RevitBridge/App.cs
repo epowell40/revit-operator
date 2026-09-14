@@ -166,6 +166,7 @@ namespace RevitBridge
         public Result OnShutdown(UIControlledApplication application)
         {
             WriteStartupLog("OnShutdown begin.");
+            _eventService?.StopBackgroundWake();
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
             application.ControlledApplication.DocumentOpening -= OnDocumentOpening;

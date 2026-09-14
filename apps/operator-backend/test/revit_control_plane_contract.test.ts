@@ -38,6 +38,20 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
   assert.ok(releasesSingleFlight < execute.indexOf("item.Completion.TrySetException(error)"));
 });
 
+test("background wake posts a coalesced UI signal without executing model work outside API callbacks", () => {
+  const source = addinFile(path.join("RevitBridge", "Services", "RevitEventService.cs"));
+  const app = addinFile(path.join("RevitBridge", "App.cs"));
+  const constructor = source.slice(source.indexOf("public RevitEventService("), source.indexOf("public Task<T> Run"));
+  assert.match(constructor, /Dispatcher\.CurrentDispatcher/);
+  assert.match(constructor, /new OperatorUiWakeScheduler/);
+  assert.match(constructor, /dispatcher\.BeginInvoke\(DispatcherPriority\.Background, callback\)/);
+  assert.match(constructor, /_externalEvent\.Raise\(\)/);
+  assert.doesNotMatch(constructor, /item\.Action|Execute\(|ActiveUIDocument|Transaction\(/);
+  assert.match(source, /_uiWake\.Request\(\)/);
+  assert.match(app, /_eventService\?\.StopBackgroundWake\(\)/);
+  assert.match(source, /internal void StopBackgroundWake\(\)[\s\S]{0,140}_uiWake\.Stop\(\)/);
+});
+
 test("metadata and native discovery bypass the Revit event queue while actions propagate cancellation", () => {
   const runner = addinFile(path.join("RevitBridge", "Operator", "OperatorActionRunner.cs"));
   const server = addinFile(path.join("RevitBridge", "Server", "RevitHttpServer.cs"));

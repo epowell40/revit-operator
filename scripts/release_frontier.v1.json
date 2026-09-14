@@ -147,7 +147,8 @@
     "OperatorActionDeadlinePolicyTests",
     "OperatorSupportedToolInventoryTests",
     "OperatorRetiredPrototypeToolTests",
-    "OperatorUiContextSnapshotTests"
+    "OperatorUiContextSnapshotTests",
+    "OperatorUiWakeSchedulerTests"
   ],
   "failure_families": [
     {
@@ -1171,6 +1172,14 @@
       "coverage": [
         "backend:simple_context_question.test.ts",
         "dotnet:OperatorUiContextSnapshotTests",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "background-revit-queue-stalls-general-agent-bootstrap",
+      "coverage": [
+        "dotnet:OperatorUiWakeSchedulerTests",
+        "backend:revit_control_plane_contract.test.ts",
         "desktop:test/sidecar_secure_integration.test.js"
       ]
     },
