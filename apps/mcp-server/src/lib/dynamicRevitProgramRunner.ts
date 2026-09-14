@@ -649,14 +649,18 @@ function nullableHash(value: unknown): boolean { return value === null || typeof
 function boundedCodes(value: unknown): boolean { return Array.isArray(value) && value.length <= 32 && value.every(item => typeof item === "string" && item.length >= 1 && item.length <= 128) && new Set(value).size === value.length; }
 
 function iterationProgress(resume: LoadedResume | undefined, status: ExecutionStatus, current: StructuredDiagnostic[]): IterationReceipt["progress"] {
-  const parentCodes = [...new Set((resume?.diagnostics ?? []).map(value => value.code))].sort();
-  const currentCodes = [...new Set(current.map(value => value.code))].sort();
+  // Partial program text is useful diagnostic context, not a repair obligation.
+  // Removing informational output cannot count as task progress.
+  const parentIssues = (resume?.diagnostics ?? []).filter(value => value.severity !== "info");
+  const currentIssues = current.filter(value => value.severity !== "info");
+  const parentCodes = [...new Set(parentIssues.map(value => value.code))].sort();
+  const currentCodes = [...new Set(currentIssues.map(value => value.code))].sort();
   const resolved = parentCodes.filter(code => !currentCodes.includes(code));
   const introduced = currentCodes.filter(code => !parentCodes.includes(code));
   const classification = resume === undefined ? "root" : status === "completed" ? "completed" : status === "needs_facts" ?
-    "advanced_to_observation" : current.length < resume.diagnostics.length ? "diagnostics_reduced" :
+    "advanced_to_observation" : currentIssues.length < parentIssues.length ? "diagnostics_reduced" :
       resolved.length === 0 && introduced.length === 0 ? "no_progress" : "regressed_or_changed";
-  return { classification, parent_diagnostic_count: resume?.diagnostics.length ?? 0, current_diagnostic_count: current.length,
+  return { classification, parent_diagnostic_count: parentIssues.length, current_diagnostic_count: currentIssues.length,
     resolved_codes: resolved, introduced_codes: introduced };
 }
 

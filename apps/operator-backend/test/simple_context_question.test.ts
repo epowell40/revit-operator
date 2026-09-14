@@ -78,3 +78,15 @@ test("native UI snapshots preserve no-model and transition states without claimi
   }
   assert.match(ui.renderContextReply("model", ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: { ...snapshot, context: { document: null } } } })), /no model is open/);
 });
+
+
+test("connection paraphrases stay fast while mixed work and central-model questions use the agent", async () => {
+  for (const prompt of ["Is Revit connected?", "Is Revit running?", "Are you still connected to Revit?", "Are we connected?", "Do you have access to Revit?"]) {
+    assert.equal(ui.contextQuestionKind(request(prompt)), "connection", prompt);
+    const answer = await ui.tryContextReply(request(prompt), { verifySession: async () => {}, readContext: async () => ({ ok: false }) });
+    assert.match(answer, /couldn’t confirm/);
+    assert.doesNotMatch(answer, /task has not finished/);
+  }
+  for (const prompt of ["Is Revit connected? Then delete the ducts.", "Is the model connected to central?", "Are these ducts connected?", "Are you connected to Revit and can you rename the view?"])
+    assert.equal(ui.contextQuestionKind(request(prompt)), null, prompt);
+});

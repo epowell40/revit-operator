@@ -234,6 +234,8 @@ public sealed partial class DynamicResultReferenceProgramContextV1
     public DynamicTaskInput Input { get; }
     public IReadOnlyList<DynamicElementDto> Elements => Input.Elements;
     public DynamicResultReferenceGraphBuilderV1 Plan { get; }
+    internal DynamicProgramDiagnosticSnapshot CaptureDiagnostics() => new(_logs, _report);
+
     public void Log(string message)
     {
         if (string.IsNullOrWhiteSpace(message) || _logs.Count >= 64) return;

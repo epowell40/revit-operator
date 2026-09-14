@@ -2737,3 +2737,11 @@ test("visibility MCP host guard verifies only successful independent scale readb
     } finally { endTeammateLoopOwner(lease); }
   }
 });
+
+
+test("state questions inspect Revit while explicit combined edits keep their mutation contract", () => {
+  for (const prompt of ["Is Revit connected?", "Are these ducts connected?", "Does this model contain mechanical equipment?", "Has Revit finished opening?"])
+    assert.equal(classifyAgentTurn(prompt), "inspection", prompt);
+  for (const prompt of ["Is Revit connected? Then delete the selected duct.", "Are these ducts connected? If not, connect them.", "12x10 SUPPLY DUCT at the marked branch"])
+    assert.equal(classifyAgentTurn(prompt), "mutation", prompt);
+});

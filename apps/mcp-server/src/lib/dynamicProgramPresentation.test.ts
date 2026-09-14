@@ -50,3 +50,20 @@ test("successful result is returned unchanged and malformed receipts cannot manu
   assert.equal(view.native_preview.ok, false);
   assert.equal(view.native_apply.outcome, null);
 });
+
+
+test("partial output stays valid and explicitly unverified in the model-facing failure summary", () => {
+  const partial = { authority: "diagnostic_only", partial: true, replayIndex: 0,
+    report: { Notes: "x".repeat(1100) }, logs: [], omittedLogs: 2, omittedReportEntries: 4 };
+  const view: any = presentDynamicProgramResult({ execution_status: "failed", diagnostics: [
+    { code: "PROGRAM_EXCEPTION", message: "Missing flow.", severity: "error", line: 10, column: 9 },
+    { code: "PROGRAM_PARTIAL_OUTPUT", message: JSON.stringify(partial), severity: "info", retryable: false }
+  ] });
+  assert.equal(view.execution_ok, false);
+  assert.equal(view.diagnostics[1].severity, "info");
+  assert.deepEqual(JSON.parse(view.diagnostics[1].message), partial);
+  assert.match(view.guidance, /unverified program text/);
+  assert.match(view.guidance, /not proof of inspected targets/);
+  assert.equal(view.native_preview.ok, false);
+  assert.deepEqual(view.program_report_not_completion_evidence, {});
+});

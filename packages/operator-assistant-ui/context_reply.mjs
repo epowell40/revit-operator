@@ -7,7 +7,10 @@ export function contextQuestionKind(body = {}) {
     .replace(/^please /, "");
   const model = "(?:(?:the|my|our|this) )?(?:(?:currently )?(?:open|active|current) )?(?:revit )?(?:model|project|document)";
   if (new RegExp(`^(?:can|could|do) you (?:see|access|read) ${model}(?: (?:in revit|i have open|that's open|that is open))?$`).test(text)
-      || /^(?:are you connected to|can you connect to|can you see) revit$/.test(text)) return "connection";
+      || /^(?:are you (?:still )?connected to|can you connect to|can you see) revit$/.test(text)
+      || /^is revit (?:connected|running|open|available|ready)$/.test(text)
+      || /^are (?:you|we) (?:still )?connected(?: to revit)?$/.test(text)
+      || /^do you (?:still )?have (?:a )?(?:live )?(?:connection|access) to revit$/.test(text)) return "connection";
   if (new RegExp(`^(?:what|which) ${model} (?:is (?:currently )?open|do (?:i|we) have open|am i (?:in|working in))(?: in revit)?$`).test(text)
       || /^(?:what(?:'s| is)|tell me) the (?:name of the )?(?:open|current|active) (?:revit )?(?:model|project|document)(?: name)?$/.test(text)) return "model";
   if (/^(?:(?:what|which) (?:revit )?view (?:is (?:open|active|current)|am i (?:in|looking at))|what(?:'s| is) (?:the |my )?(?:active|current|open) view)$/.test(text)) return "view";

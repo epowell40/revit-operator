@@ -241,6 +241,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a
   // concrete Revit subject and is neither a question nor explicitly read-only,
   // default to doing the work instead of requiring a magic mutation verb.
+  if (hasRevitWorkSubject(text) && /^(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|had|should)\b/.test(text)) return "inspection";
   if (hasRevitWorkSubject(text)) return "mutation";
   return hasRevitTurnContext(context) ? "inspection" : "conversation";
 }

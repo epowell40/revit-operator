@@ -1200,12 +1200,30 @@
         "desktop:test/sidecar_secure_integration.test.js",
         "backend:codex_app_server_lifecycle.test.ts"
       ]
+    },
+    {
+      "id": "connection-state-paraphrase-admitted-as-edit-and-hides-transport-failure",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "generated-runtime-failure-discards-partial-output-and-source-location",
+      "coverage": [
+        "dynamic:RuntimeFailureDiagnosticTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "mcp:lib/dynamicProgramPresentation.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
     "GeneratedCodeAdmissionTests",
     "RuntimeWorkspaceTests",
     "ReadOnlyGeneratedProgramTests",
-    "WorkerInputChannelTests"
+    "WorkerInputChannelTests",
+    "RuntimeFailureDiagnosticTests"
   ]
 }

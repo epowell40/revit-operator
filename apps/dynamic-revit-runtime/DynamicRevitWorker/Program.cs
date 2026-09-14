@@ -13,6 +13,7 @@ using Microsoft.Win32;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Emit;
 using RevitOperator.DynamicRevitSdk;
 
 namespace RevitOperator.DynamicRevitWorker;
@@ -143,12 +144,12 @@ internal static class WorkerDiagnosticProtocol
 
     private static string Bound(string? value, int maximum, string fallback)
     {
-        var text = string.IsNullOrWhiteSpace(value) ? fallback : value;
+        var text = (string.IsNullOrWhiteSpace(value) ? fallback : value).Replace("\0", "\\0");
         return text.Length <= maximum ? text : text[..maximum];
     }
 
     private static string? BoundNullable(string? value, int maximum) =>
-        string.IsNullOrWhiteSpace(value) ? null : value!.Length <= maximum ? value : value[..maximum];
+        string.IsNullOrWhiteSpace(value) ? null : Bound(value, maximum, "");
 }
 
 internal static class Program
@@ -468,17 +469,17 @@ internal static class WorkerExecutor
             output.CompiledAssemblyBase64 = Convert.ToBase64String(compilation.Assembly!);
 
         using var timeout = new CancellationTokenSource(request.DeadlineMs);
+        var executionClock = Stopwatch.StartNew();
         try
         {
-            var executionClock = Stopwatch.StartNew();
             // Each replay receives its own JSON-round-tripped immutable snapshot so generated code
             // cannot influence the verification pass by mutating shared DTO instances. The two
             // collectible load contexts run concurrently: deterministic replay costs CPU, but does
             // not normally double wall-clock latency.
             var firstRequest = CloneExecutionRequest(request);
             var secondRequest = CloneExecutionRequest(request);
-            var firstTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, firstRequest), timeout.Token);
-            var secondTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, secondRequest), timeout.Token);
+            var firstTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, firstRequest, 0), timeout.Token);
+            var secondTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, secondRequest, 1), timeout.Token);
             var task = Task.WhenAll(firstTask, secondTask);
             if (!task.Wait(request.DeadlineMs)) return Fail(output, "WORKER_DEADLINE", "Program exceeded its worker deadline.");
             var pair = task.GetAwaiter().GetResult();
@@ -518,28 +519,34 @@ internal static class WorkerExecutor
         }
         catch (Exception ex)
         {
+            output.Ok = false; output.ExecutionStatus = "failed";
+            output.Graph = null; output.ResultReferenceProgramResult = null; output.CoreProgramResult = null;
+            output.DeterministicReplayVerified = false; output.ExecutionIdentityHash = null;
+            output.Logs = Array.Empty<string>(); output.Report = new Dictionary<string, string>(StringComparer.Ordinal);
+            var partial = GeneratedProgramDiagnostics.PartialOutput(ex);
             var assertion = FindAssertion(ex);
             if (assertion != null)
             {
-                output.Diagnostics = new[] { new WorkerDiagnostic
+                output.Diagnostics = new[] { GeneratedProgramDiagnostics.WithLocation(new WorkerDiagnostic
                 {
                     Code = "PROGRAM_ASSERTION_FAILED", Message = assertion.Message, StepId = assertion.StepId,
                     AssertionId = assertion.AssertionId, Retryable = true
-                } };
+                }, assertion) }.Concat(partial).ToArray();
                 return output;
             }
-            // The two replay tasks may fail identically. Unwrap and deduplicate
-            // their causes instead of returning an opaque AggregateException.
+            // Preserve the actual cause and generated source location. Partial
+            // program text is diagnostic-only and cannot expose an executable graph.
             var causes = ex is AggregateException aggregate
                 ? aggregate.Flatten().InnerExceptions.Select(error => error.GetBaseException())
                 : new[] { ex.GetBaseException() };
-            output.Diagnostics = causes.GroupBy(error => (error.GetType().FullName, error.Message)).Take(32)
-                .Select(group => new WorkerDiagnostic
+            output.Diagnostics = causes.GroupBy(error => (error.GetType().FullName, error.Message)).Take(30)
+                .Select(group => GeneratedProgramDiagnostics.WithLocation(new WorkerDiagnostic
                 {
                     Code = "PROGRAM_EXCEPTION", Message = group.Key.FullName + ": " + group.Key.Message
-                }).ToArray();
+                }, group.First())).Concat(partial).ToArray();
             return output;
         }
+        finally { output.ExecutionElapsedMs = executionClock.ElapsedMilliseconds; }
         }
         finally
         {
@@ -562,9 +569,9 @@ internal static class WorkerExecutor
         JsonSerializer.Deserialize<WorkerInput>(JsonSerializer.Serialize(request, Compiler.Json), Compiler.Json)
         ?? throw new InvalidOperationException("Worker execution snapshot could not be cloned.");
 
-    private static ExecutedProgram ExecuteRequest(byte[] assembly, WorkerInput request) => ExecuteAssembly(assembly, request.Input,
+    private static ExecutedProgram ExecuteRequest(byte[] assembly, WorkerInput request, int replayIndex) => ExecuteAssembly(assembly, request.Input,
         request.ResultReferenceDocumentRevision, request.ResultReferenceSnapshotHash, request.ResultReferenceScopeHash,
-        request.BuildingSystemsPages, request.TrustedExternalTargets, request.VerifiedContextRule, request.ContextObservationPages);
+        request.BuildingSystemsPages, request.TrustedExternalTargets, request.VerifiedContextRule, request.ContextObservationPages, replayIndex);
 
     private static void NormalizeAndValidate(ExecutedProgram result, WorkerInput request)
     {
@@ -649,7 +656,7 @@ internal static class WorkerExecutor
         IEnumerable<DynamicBuildingSystemsEnvelopeV1>? buildingSystemsPages = null,
         IEnumerable<DynamicTrustedElementFactV1>? trustedExternalTargets = null,
         DynamicVerifiedContextRuleV1? verifiedContextRule = null,
-        IEnumerable<DynamicObservationEnvelopeV1>? contextObservationPages = null)
+        IEnumerable<DynamicObservationEnvelopeV1>? contextObservationPages = null, int replayIndex = 0)
     {
         var alc = new AssemblyLoadContext("dynamic-revit-worker", isCollectible: true);
         try
@@ -669,17 +676,20 @@ internal static class WorkerExecutor
                     resultReferenceSnapshotHash, resultReferenceScopeHash,
                     buildingSystemsPages ?? Array.Empty<DynamicBuildingSystemsEnvelopeV1>(),
                     trustedExternalTargets ?? Array.Empty<DynamicTrustedElementFactV1>());
-                return new ExecutedProgram { ResultReference = referenceProgram.Execute(context) ?? context.Complete() };
+                return GeneratedProgramDiagnostics.Capture(replayIndex, context.CaptureDiagnostics,
+                    () => new ExecutedProgram { ResultReference = referenceProgram.Execute(context) ?? context.Complete() });
             }
             if (instance is IDynamicCoreRevitProgramV1 coreProgram)
             {
                 if (resultReferenceDocumentRevision == null || verifiedContextRule == null) throw new InvalidOperationException("Core programs require exact verified context and document revision.");
                 var context = new DynamicCoreProgramContextV1(input, resultReferenceDocumentRevision.Value, verifiedContextRule,
                     contextObservationPages ?? Array.Empty<DynamicObservationEnvelopeV1>());
-                return new ExecutedProgram { Core = coreProgram.Execute(context) ?? context.Complete() };
+                return GeneratedProgramDiagnostics.Capture(replayIndex, context.CaptureDiagnostics,
+                    () => new ExecutedProgram { Core = coreProgram.Execute(context) ?? context.Complete() });
             }
             var legacy = (IDynamicRevitProgram)instance; var legacyContext = new DynamicRevitContext(input);
-            return new ExecutedProgram { Legacy = legacy.Execute(legacyContext) ?? legacyContext.Complete() };
+            return GeneratedProgramDiagnostics.Capture(replayIndex, legacyContext.CaptureDiagnostics,
+                    () => new ExecutedProgram { Legacy = legacy.Execute(legacyContext) ?? legacyContext.Complete() });
         }
         finally { alc.Unload(); }
     }
@@ -704,12 +714,12 @@ internal static class Compiler
                 .Where(path => string.Equals(Path.GetFileName(path), "netstandard.dll", StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetFileName(path), "System.Runtime.dll", StringComparison.OrdinalIgnoreCase)))
             .Distinct(StringComparer.OrdinalIgnoreCase);
         var refs = baseReferences.Select(path => MetadataReference.CreateFromFile(path)).Cast<MetadataReference>().ToArray();
-        var compilation = CSharpCompilation.Create("DynamicRevitProgram", new[] { CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.CSharp12)) }, refs,
+        var compilation = CSharpCompilation.Create("DynamicRevitProgram", new[] { CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.CSharp12), path: "GeneratedProgram.cs", encoding: Encoding.UTF8) }, refs,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release, allowUnsafe: false, deterministic: true));
         var semanticDiagnostics = StaticAdmission.CheckSemantic(compilation);
         if (semanticDiagnostics.Length > 0) return new Result { Diagnostics = semanticDiagnostics };
         using var stream = new MemoryStream();
-        var emit = compilation.Emit(stream);
+        var emit = compilation.Emit(stream, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.Embedded));
         if (!emit.Success)
         {
             return new Result { Diagnostics = emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(32).Select(d =>

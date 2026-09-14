@@ -402,3 +402,51 @@ test("dynamic runner binds2027 to supervisor config and rejects unsupported dire
   assert.equal(calls,1);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test("partial worker diagnostics stay unverified and dropping them is not repair progress", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-partial-diagnostics-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (includePartial: boolean) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      const base = { line: null, column: null, endLine: null, endColumn: null, stepId: null, assertionId: null };
+      const diagnostics = [
+        { ...base, code: "PROGRAM_EXCEPTION", message: "System.InvalidOperationException: Missing flow.", phase: "execute", severity: "error",
+          repairAction: "inspect_trace_and_repair_source", line: 10, retryable: true },
+        ...(includePartial ? [{ ...base, code: "PROGRAM_PARTIAL_OUTPUT", phase: "execute", severity: "info", retryable: false,
+          repairAction: "inspect_unverified_partial_output", message: JSON.stringify({ authority: "diagnostic_only", partial: true, replayIndex: 0,
+            report: { Inspected: "20" }, logs: ["Program wrote this before failing."], omittedLogs: 0, omittedReportEntries: 0 }) }] : [])
+      ];
+      const canonical = diagnostics.map(d => [d.code, d.phase, d.severity, d.repairAction, d.line ?? "", d.column ?? "", d.endLine ?? "",
+        d.endColumn ?? "", d.stepId ?? "", d.assertionId ?? "", d.retryable ? "1" : "0", sha256(d.message)].join("|")).join("\n");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", previewReceipt: "", workerOutput: {
+        ok: false, sourceHash: sha256(source), executionStatus: "failed", deterministicReplayVerified: false,
+        graph: null, logs: [], report: {}, diagnostics, diagnosticBundleHash: sha256("dynamic-revit-worker-diagnostics/v1\n" + canonical)
+      } }));
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+    const source = "public class PartialDiagnosticFixture {}";
+    const initial = await runDynamicRevitProgram({ source, mode: "preview" }, env, execute(true));
+    assert.equal(initial.execution_status, "failed");
+    assert.equal(initial.execution_ok, false);
+    assert.equal(initial.verification.deterministic_replay_verified, false);
+    assert.deepEqual(initial.report, {});
+    assert.deepEqual(initial.logs, []);
+    assert.equal(initial.diagnostics[0]?.line, 10);
+    const partial = initial.diagnostics.find(d => d.code === "PROGRAM_PARTIAL_OUTPUT");
+    assert.equal(partial?.severity, "info");
+    assert.equal(JSON.parse(partial!.message).authority, "diagnostic_only");
+    assert.equal(initial.iteration.progress.current_diagnostic_count, 1);
+    const retried = await runDynamicRevitProgram({ source: source + "\n// logging removed, same unresolved exception", mode: "preview",
+      resume: { prior_run_id: initial.run_id, prior_evidence_sha256: initial.verification.evidence_sha256, mode: "repair" } }, env, execute(false));
+    assert.equal(retried.execution_status, "failed");
+    assert.equal(retried.iteration.progress.classification, "no_progress");
+    assert.equal(retried.iteration.progress.parent_diagnostic_count, 1);
+    assert.equal(retried.iteration.progress.current_diagnostic_count, 1);
+    assert.deepEqual(retried.iteration.progress.resolved_codes, []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

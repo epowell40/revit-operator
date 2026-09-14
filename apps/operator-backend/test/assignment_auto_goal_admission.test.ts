@@ -17,6 +17,10 @@ import { setAgentGoal } from "../src/goals/service.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 
 for (const [effect, prompt, facts] of [
+  ["read", "Is Revit connected?", ["task.result_available"]],
+  ["read", "Are these ducts connected?", ["task.result_available"]],
+  ["read", "Does this model contain mechanical equipment?", ["task.result_available"]],
+  ["apply", "Is Revit connected? Then delete the selected duct.", ["task.result_available"]],
   ["read", "Please check the drafting view we just created. Keep the existing view and report its name and scale.", ["task.result_available"]],
   ["read", "Inspect the current view scale.", ["task.result_available"]],
   ["read", "Use custom C# to count a sample of up to twenty ducts by type. Make no model changes.", ["task.result_available"]],

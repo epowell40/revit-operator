@@ -20,7 +20,8 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
   const iteration = record(value.iteration);
   const diagnostics = Array.isArray(value.diagnostics) ? value.diagnostics.slice(0, 8).map(item => {
     const d = record(item);
-    return { code: text(d.code, 128), message: text(d.message), phase: text(d.phase, 64),
+    return { code: text(d.code, 128), message: text(d.message, d.code === "PROGRAM_PARTIAL_OUTPUT" ? 2048 : 1000), phase: text(d.phase, 64),
+      severity: text(d.severity, 16),
       repair_action: text(d.repair_action, 128), line: integer(d.line), column: integer(d.column), retryable: d.retryable === true };
   }) : [];
   const budgetExceeded = preview.failure === "Dynamic preview changed-element budget exceeded.";
@@ -35,7 +36,7 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
     native_apply: { outcome: text(apply.outcome, 128), failure: text(apply.failure) },
     guidance: budgetExceeded
       ? "operation_budget also caps Revit's dependent affected elements. Keep the intended direct targets unchanged, inspect the affected-element count, and choose a bounded limit that covers it for a new preview. Changing C# formatting cannot fix this limit."
-      : "Inspect the first diagnostic and retained evidence before correcting the request or source.",
+      : "Inspect the first diagnostic and retained evidence before correcting the request or source. Partial output is unverified program text, not proof of inspected targets, completed calculations, or model changes.",
     retry_policy: "This summary grants no retry authority. An uncertain apply requires authoritative reconciliation; use the retained iteration's exact repair/fact contract when eligible.",
     iteration: { run_id: text(iteration.run_id, 128), attempt: integer(iteration.attempt), resume_mode: text(iteration.resume_mode, 64),
       source_sha256: text(iteration.source_sha256, 128), evidence_sha256: text(iteration.evidence_sha256, 128),
