@@ -79,6 +79,7 @@ import {
   recordExecutionStrategyEvidence
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
+import { presentDynamicProgramResult } from "./lib/dynamicProgramPresentation.js";
 import { DYNAMIC_REVIT_SOURCE_GUIDE, DYNAMIC_REVIT_TOOL_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
@@ -668,7 +669,7 @@ server.tool("operator_run_dynamic_revit_program", DYNAMIC_REVIT_TOOL_GUIDE, {
 }, async (args) => {
   try {
     const result = await runDynamicRevitProgram(args);
-    return { isError: result.execution_status === "failed", content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    return { isError: result.execution_status === "failed", content: [{ type: "text", text: JSON.stringify(presentDynamicProgramResult(result), null, 2) }] };
   }
   catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
 });

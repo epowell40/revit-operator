@@ -24,7 +24,8 @@ import { extractMcpStructuredPayload } from "./structured_payload.js";
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,240}$/;
 const STRONG_SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  /sk-[A-Za-z0-9_-]{20,}/,
+  // Match a credential token, not the suffix of legitimate task-<uuid> IDs.
+  /\bsk-[A-Za-z0-9_-]{20,}/,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{24,}={0,2}\b/i,
   /\b(?:api[_-]?key|client[_-]?secret|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9._~+\/-]{24,}/i
 ] as const;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   readAuthoritativeEvidence,
   readEvidenceRef,
@@ -444,6 +445,31 @@ test("verifier can recover a required fact deliberately absent from the determin
   assert.equal(authoritative.deep.payload.rareNeededFact, "orientation_is_reversed");
   const focused = retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "verify exact orientation postcondition", fields: ["deep.payload.rareNeededFact"], max_bytes: 512 });
   assert.deepEqual(focused.selection, { "deep.payload.rareNeededFact": "orientation_is_reversed" });
+}));
+
+test("committed generated checkpoint task IDs survive secret screening with exact authoritative bytes", { concurrency: false }, () => withWorkspace(() => {
+  const raw = JSON.stringify({ schema: "revit-operator.dynamic-revit-program-run.v1", execution_status: "completed",
+    requested_mode: "apply", checkpoint: { task_session_id: "task-289013d60cff4ff0a782e5a1e7ac2ce6",
+      outcome: "committed_verified", checkpoint_index: 1, parent: null },
+    neighboring_metadata: ["risk-289013d60cff4ff0a782e5a1e7ac2ce6", "disk-289013d60cff4ff0a782e5a1e7ac2ce6"] });
+  const stored = storeEvidence({ scope, source: "generated_checkpoint", media_type: "application/json", trust_level: "authoritative_native", raw });
+  assert.equal(readAuthoritativeEvidence(stored.ref, scope).toString("utf8"), raw);
+  assert.equal(stored.ref.content_hash, "sha256:" + createHash("sha256").update(raw).digest("hex"));
+  const selected = retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "verify retained generated checkpoint identity",
+    fields: ["checkpoint.task_session_id", "checkpoint.outcome"] });
+  assert.equal((selected.selection as any)["checkpoint.outcome"], "committed_verified");
+}));
+
+test("real credential tokens remain rejected without persisting secret bytes", { concurrency: false }, () => withWorkspace(root => {
+  storeEvidence({ scope, source: "baseline", trust_level: "host_observed", raw: { safe: true } });
+  const objects = () => fs.readdirSync(path.join(root, "evidence", "objects", "sha256"), { recursive: true });
+  const before = objects();
+  for (const raw of [
+    `sk-${"a".repeat(32)}`, { api_key: `sk-proj-${"a".repeat(64)}` },
+    `Authorization: Bearer ${"b".repeat(32)}`, "-----BEGIN PRIVATE KEY-----",
+    `prefix sk-${"c".repeat(32)} suffix`, { checkpoint: { task_session_id: "task-safe", log: `sk-${"d".repeat(32)}` } }
+  ]) assert.throws(() => storeEvidence({ scope, source: "credential_probe", trust_level: "authoritative_native", raw }), /secret screening/);
+  assert.deepEqual(objects(), before);
 }));
 
 test("model request assembly enforces item and aggregate budgets with explicit omission", { concurrency: false }, () => withWorkspace(() => {

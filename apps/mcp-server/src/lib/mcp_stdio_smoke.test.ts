@@ -465,6 +465,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.match(generatedTool.description!, /DynamicProgramResult Execute\(DynamicRevitContext c\)/);
   assert.match(generatedTool.description!, /category=OST_DuctCurves/);
   assert.match(generatedTool.description!, /public sealed class SampleReport/);
+  assert.match(generatedTool.description!, /print text\(result\) directly/);
+  assert.match(generatedTool.description!, /operation_budget at its default/);
   const invalidGenerated = await client.callTool({ name: generatedTool.name,
     arguments: { mode: "read", source: "public class Program {}", category: "duct sample summary by type" } });
   assert.equal(invalidGenerated.isError, true);

@@ -342,6 +342,44 @@ test("generated read report satisfies the canonical read task and delivers retai
   } finally { endTeammateLoopOwner(owner); }
 }));
 
+test("generated committed task checkpoint crosses evidence storage without becoming an unknown effect", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Use a custom C# program to set Comments to PILOT on one duct and verify the edit.");
+  const payload = { schema: "revit-operator.dynamic-revit-program-run.v1", requested_mode: "apply", execution_ok: true,
+    execution_status: "completed", checkpoint: { task_session_id: "task-289013d60cff4ff0a782e5a1e7ac2ce6", outcome: "committed_verified" },
+    report: { Changed: "1" } };
+  let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, _args: unknown, context: any) => {
+      calls++; const lease = context.assignmentKernelV2; context.onMcpAccepted();
+      return { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `dynamic:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "applied",
+          native_transaction_state: "committed", authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
+          observation_required: true, raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: `dynamic-evidence:${lease.operation_id}`,
+          request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+        observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
+          verification_relevance: ["task_result"], evidence_class: "task_result" } } };
+    } };
+  const request = bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "Snowdon HVAC", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared);
+  const owner = beginTeammateLoopOwner(runtime, request);
+  try {
+  const response: any = await handleCodexDynamicToolCall(runtime as any, { id: "checkpoint", method: "item/tool/call",
+    params: { namespace: "revit_operator", turnId: "checkpoint", tool: "operator_run_dynamic_revit_program",
+      arguments: { source: "public class Edit {}", mode: "apply", category: "OST_DuctCurves", snapshot_limit: 20 } } } as any);
+  assert.equal(response.success, true, JSON.stringify(response));
+  const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  assert.equal(calls, 1);
+  assert.deepEqual(after.unresolved_unknown_operation_ids, []);
+  const operation = Object.values(after.operations).find(o => o.capability_id === "operator_run_dynamic_revit_program")!;
+  assert.equal(operation.persistent_effect, "applied");
+  const observation = Object.values(after.observations).find(o => o.authority === "dynamic-runtime")!;
+  assert.ok(observation);
+  assert.equal(observation.raw_payload_hash, payloadDigestV2(payload).digest);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
 test("a supplementary read after verified apply uses its canonical discovery role despite the legacy verification assertion", () => workspace(async () => {
   const { binding, snapshot, prepared } = start("Put UI CHECK in Comments for this pipe.");
   const payload = { items: [{ id: 1380354, parameterDetails: [{ name: "Comments", value: "UI CHECK", valueString: "UI CHECK" }] }] };

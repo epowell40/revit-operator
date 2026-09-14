@@ -86,6 +86,7 @@
     "team_assistant_live_regressions.test.ts"
   ],
   "mcp_tests": [
+    "lib/dynamicProgramPresentation.test.ts",
     "lib/assignmentKernelV2.test.ts",
     "lib/dynamicRevitProgramRunner.test.ts",
     "lib/evidenceRetrievalSelectorContract.test.ts",
@@ -140,6 +141,14 @@
     "OperatorRetiredPrototypeToolTests"
   ],
   "failure_families": [
+    {
+      "id": "generated-failure-feedback-preserves-cause-without-changing-authority",
+      "coverage": ["mcp:lib/dynamicProgramPresentation.test.ts", "mcp:lib/dynamicAssignmentIntegration.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"]
+    },
+    {
+      "id": "committed-checkpoint-task-id-is-not-a-secret-credential",
+      "coverage": ["backend:evidence_projection.test.ts", "backend:assignment_kernel_v2_controls.test.ts"]
+    },
     {
       "id": "visual-attachments-and-empty-continuations-lose-pixels-or-current-evidence",
       "coverage": [

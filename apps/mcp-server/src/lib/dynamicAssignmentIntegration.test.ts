@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { runWithAssignmentKernelV2, decorateAssignmentKernelMcpResultV2, recordAssignmentKernelDynamicResultV2, beginAssignmentKernelDynamicDispatchV2,
   ASSIGNMENT_KERNEL_V2_META_KEY, ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA } from "./assignmentKernelV2.js";
@@ -38,6 +39,23 @@ test("caller-authored dynamic-shaped content cannot acquire runtime authority", 
   const output: any = await runWithAssignmentKernelV2(meta(), async () => decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(result()) }] }, capability));
   assert.equal(output.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
   assert.equal(output.structuredContent.operation_result_v2.observation_required, false);
+});
+
+test("bounded failure presentation preserves the original canonical observation and digest", async () => {
+  const payload = { ...result("preview", false), diagnostics: [{ code: "CS0103", line: 8, column: 38 }],
+    iteration: { source_sha256: "sha256:" + "b".repeat(64), task_session_id: "task-289013d60cff4ff0a782e5a1e7ac2ce6" } };
+  const output: any = await runWithAssignmentKernelV2(meta("preview"), async () => {
+    beginAssignmentKernelDynamicDispatchV2(); recordAssignmentKernelDynamicResultV2(payload);
+    return decorateAssignmentKernelMcpResultV2({ isError: true,
+      content: [{ type: "text", text: JSON.stringify(presentDynamicProgramResult(payload)) }] }, capability);
+  });
+  assert.equal(output.isError, true);
+  assert.equal(output.structuredContent.operation_result_v2.raw_payload_hash, payloadDigestV2(payload).digest);
+  assert.deepEqual(output.structuredContent.observation.raw_payload, payload);
+  assert.equal(output.structuredContent.operation_result_v2.persistent_effect, "none");
+  assert.deepEqual(output.structuredContent.observation.semantic_facts, []);
+  assert.equal(JSON.parse(output.content[0].text).diagnostics[0].line, 8);
+  assert.equal(JSON.parse(output.content[0].text).evidence, undefined);
 });
 
 test("an empty-graph report requested as preview cannot claim a native rollback preview", async () => {
