@@ -528,8 +528,17 @@ internal static class WorkerExecutor
                 } };
                 return output;
             }
-            var root = ex.GetBaseException();
-            return Fail(output, "PROGRAM_EXCEPTION", root.Message);
+            // The two replay tasks may fail identically. Unwrap and deduplicate
+            // their causes instead of returning an opaque AggregateException.
+            var causes = ex is AggregateException aggregate
+                ? aggregate.Flatten().InnerExceptions.Select(error => error.GetBaseException())
+                : new[] { ex.GetBaseException() };
+            output.Diagnostics = causes.GroupBy(error => (error.GetType().FullName, error.Message)).Take(32)
+                .Select(group => new WorkerDiagnostic
+                {
+                    Code = "PROGRAM_EXCEPTION", Message = group.Key.FullName + ": " + group.Key.Message
+                }).ToArray();
+            return output;
         }
         }
         finally
@@ -731,9 +740,32 @@ internal static class StaticAdmission
     public static WorkerDiagnostic[] Check(string source)
     {
         var diagnostics = new List<WorkerDiagnostic>();
-        foreach (var token in BannedTokens.Where(token => source.IndexOf(token, StringComparison.Ordinal) >= 0)) diagnostics.Add(new WorkerDiagnostic { Code = "POLICY_SOURCE_FORBIDDEN", Message = "Untrusted worker source may not use " + token + "." });
-        if (source.IndexOf("Autodesk.Revit", StringComparison.OrdinalIgnoreCase) >= 0) diagnostics.Add(new WorkerDiagnostic { Code = "REVIT_REFERENCE_FORBIDDEN", Message = "Generated programs may not reference Autodesk.Revit APIs." });
-        if (!source.Contains("IDynamicRevitProgram", StringComparison.Ordinal) && !source.Contains("IDynamicResultReferenceRevitProgramV1", StringComparison.Ordinal) && !source.Contains("IDynamicCoreRevitProgramV1", StringComparison.Ordinal))
+        // Roslyn excludes comments/disabled text from executable tokens and keeps
+        // expressions inside interpolated strings. Compare whole token sequences:
+        // prose and names such as aerodynamic must not trip an API denylist.
+        // Semantic/metadata admission and the OS sandbox remain authoritative.
+        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.CSharp12));
+        var tokens = tree.GetRoot().DescendantTokens().ToArray();
+        foreach (var forbidden in BannedTokens.Append("Autodesk.Revit"))
+        {
+            var pattern = SyntaxFactory.ParseTokens(forbidden).Where(token => !token.IsKind(SyntaxKind.EndOfFileToken)).ToArray();
+            for (var offset = 0; offset <= tokens.Length - pattern.Length; offset++)
+            {
+                if (!pattern.Select((part, index) => tokens[offset + index].RawKind == part.RawKind &&
+                    tokens[offset + index].ValueText == part.ValueText).All(value => value)) continue;
+                var start = tokens[offset].GetLocation().GetLineSpan().StartLinePosition;
+                var end = tokens[offset + pattern.Length - 1].GetLocation().GetLineSpan().EndLinePosition;
+                diagnostics.Add(new WorkerDiagnostic
+                {
+                    Code = forbidden == "Autodesk.Revit" ? "REVIT_REFERENCE_FORBIDDEN" : "POLICY_SOURCE_FORBIDDEN",
+                    Message = "Generated code may not use " + forbidden + ".",
+                    Line = start.Line + 1, Column = start.Character + 1, EndLine = end.Line + 1, EndColumn = end.Character + 1
+                });
+                break;
+            }
+        }
+        if (!tokens.Any(token => token.IsKind(SyntaxKind.IdentifierToken) && token.ValueText is
+            "IDynamicRevitProgram" or "IDynamicResultReferenceRevitProgramV1" or "IDynamicCoreRevitProgramV1"))
             diagnostics.Add(new WorkerDiagnostic { Code = "PROGRAM_INTERFACE_REQUIRED", Message = "Program must implement exactly one supported dynamic Revit program interface." });
         return diagnostics.Take(32).ToArray();
     }
