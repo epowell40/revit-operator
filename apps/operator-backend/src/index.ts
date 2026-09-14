@@ -8,6 +8,8 @@ import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
+import { conversationDisplay, recordUiContextConversation } from "./conversation_history.js";
+import { getConversationHistory } from "./memory/sqlite_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
 import { appendAuditLine } from "./audit_log.js";
 import { getOrCreateOperatorToken } from "./operator_token.js";
@@ -722,6 +724,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/kb/documents/") ||
     pathname === "/api/kb/search" ||
     pathname === "/session/new" ||
+    pathname === "/session/history" ||
+    pathname === "/session/ui-context" ||
     pathname === "/loop/stop" ||
     pathname === "/tools/ocr" ||
     pathname === "/tools/redline/analyze" ||
@@ -1117,6 +1121,26 @@ const server = http.createServer(async (req, res) => {
       }
       log("session.new", { session_id });
       return writeJson(res, 200, { session_id });
+    }
+
+    if (req.method === "GET" && url.pathname === "/session/history") {
+      res.setHeader("cache-control", "no-store");
+      const sessionId = url.searchParams.get("session_id") || "";
+      if (!sessionId || sessionId.length > 200) return writeJson(res, 400, { error: "A valid conversation is required." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      try { return writeJson(res, 200, { session_id: sessionId, messages: getConversationHistory(sessionId) }); }
+      catch { return writeJson(res, 503, { error: "Conversation history is unavailable." }); }
+    }
+
+    if (req.method === "POST" && url.pathname === "/session/ui-context") {
+      let body: Record<string, any>;
+      try { body = objectRecord(await readJson(req, 16_384)); }
+      catch { return writeJson(res, 400, { error: "Invalid conversation request." }); }
+      const sessionId = typeof body?.session_id === "string" ? body.session_id : "";
+      if (!sessionId || sessionId.length > 200) return writeJson(res, 400, { error: "A valid conversation is required." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      try { return writeJson(res, 200, { assistant_message: await recordUiContextConversation(body) }); }
+      catch (error) { return writeJson(res, 400, { error: error instanceof Error ? error.message : "Conversation could not be saved." }); }
     }
 
     if (req.method === "GET" && url.pathname === "/environment/profile") {
@@ -2176,9 +2200,9 @@ const server = http.createServer(async (req, res) => {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_stream_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2253,7 +2277,7 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2312,7 +2336,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const text = (decision.assistant_message || doneText || streamed || "").toString();
-        appendMessage(parsed.session_id, { role: "assistant", text });
+        appendMessage(parsed.session_id, { role: "assistant", text }, { display: conversationDisplay(parsed.message_id, text) });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {
@@ -2540,9 +2564,9 @@ const server = http.createServer(async (req, res) => {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_chat_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2611,7 +2635,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2644,7 +2668,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const decision = await decide(boundBrainRequest);
         if (assignmentBinding?.kernelVersion !== 2) journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
-        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message }, { display: conversationDisplay(parsed.message_id, decision.assistant_message) });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {

@@ -25,3 +25,17 @@ test("inline formatting treats model names and HTML as inert text", () => {
   assert.equal(nodes.find(n => n.tag === "strong").textContent, "Model A");
   assert.ok(nodes.some(n => n.textContent.includes("<img onerror=run()>")));
 });
+
+test("restoring history preserves a simultaneous live reply and avoids duplicate messages", () => {
+  const live = { id: "new", role: "assistant", text: "Current streaming reply" };
+  const result = ui.mergeConversationHistory([live], [
+    { message_id: "old", role: "user", text: "Which model?" },
+    { message_id: "old", role: "assistant", text: "Pilot." },
+    { message_id: "new", role: "assistant", text: "Older partial reply" },
+    { message_id: "old", role: "assistant", text: "Duplicate" },
+    { message_id: "internal", role: "tool", text: "hidden" }
+  ]);
+  assert.equal(result.length, 3);
+  assert.equal(result[2], live);
+  assert.equal(result[2].text, "Current streaming reply");
+});

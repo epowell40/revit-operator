@@ -1,3 +1,4 @@
+import { formatUiContextConversationHistory } from "../conversation_history.js";
 import type { ChatRequest } from "../contracts.js";
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
@@ -10,6 +11,7 @@ export async function buildCodexTurnInput(req: ChatRequest, contextBlocks: strin
   const userText = req.user_text?.trim();
   const blocks = [
     ...contextBlocks,
+    formatUiContextConversationHistory(req.session_id),
     formatCodexRequestEnvelope(req),
     userText ? `USER:\n${req.user_text}` : req.user_attachments?.length
       ? "USER supplied attachments without a new written instruction. Use the existing assignment if it establishes the requested work; otherwise inspect the attachments and ask what result is wanted before changing the model."

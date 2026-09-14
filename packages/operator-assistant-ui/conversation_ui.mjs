@@ -9,6 +9,25 @@ export function compactWorkSummary(goal, running) {
   return "Working…";
 }
 
+export function mergeConversationHistory(current, history) {
+  const live = Array.isArray(current) ? current : [];
+  const liveById = new Map(live.filter(message => message.id).map(message => [`${message.role}:${message.id}`, message]));
+  const seen = new Set();
+  const merged = [];
+  for (const item of Array.isArray(history) ? history : []) {
+    if (!item || !["user", "assistant"].includes(item.role) || typeof item.message_id !== "string" || typeof item.text !== "string") continue;
+    const key = `${item.role}:${item.message_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(liveById.get(key) || { id: item.message_id, role: item.role, text: item.text,
+      attachments: Array.isArray(item.attachments) ? item.attachments : [] });
+  }
+  for (const message of live) {
+    if (!message.id || !seen.has(`${message.role}:${message.id}`)) merged.push(message);
+  }
+  return merged;
+}
+
 export function conciseStatus(text) {
   if (/^(?:Sidecar ready\.?|Ready\.?)$/i.test(text)) return "Ready";
   if (/^(?:Starting backend session|Connecting to backend)/i.test(text)) return "Connecting…";

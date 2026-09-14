@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -326,9 +327,12 @@ export function getNotificationsAfter(sessionId: string, afterId: number, limit:
   return out;
 }
 
-export function getRecentMessages(sessionId: string, limit: number): StoredMessage[] {
+export function getRecentMessages(sessionId: string, limit: number, requireAvailable = false): StoredMessage[] {
   const d = openDb();
-  if (!d) return [];
+  if (!d) {
+    if (requireAvailable) throw new Error("Conversation history is unavailable.");
+    return [];
+  }
   const rows = d
     .prepare("SELECT role, kind, payload_json FROM events WHERE session_id=? AND kind='chat.message' ORDER BY id DESC LIMIT ?")
     .all(sessionId, Math.max(1, Math.min(500, limit)));
@@ -349,6 +353,58 @@ export function getRecentMessages(sessionId: string, limit: number): StoredMessa
     }
   }
   return out;
+}
+
+export type ConversationDisplay = {
+  source?: "ui_context";
+  message_id: string;
+  text: string;
+  attachments?: Array<{ id: string; name: string }>;
+};
+
+export type ConversationEntry = ConversationDisplay & { role: "user" | "assistant"; created_at: string };
+
+// Only explicitly recorded display text is exposed to the browser. Provider
+// prompts and tool summaries may contain attachment machinery or internal data.
+export function getConversationHistory(sessionId: string, limit = 80): ConversationEntry[] {
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_type(payload_json, '$.display')='object' ORDER BY id DESC LIMIT 1000").all(sessionId);
+  return conversationRows(rows, limit);
+}
+
+export function getUiContextConversationHistory(sessionId: string): ConversationEntry[] {
+  if (!fs.existsSync(dbFilePath())) return [];
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source')='ui_context' ORDER BY id DESC LIMIT 40").all(sessionId);
+  return conversationRows(rows, 8);
+}
+
+export function getConversationTurn(sessionId: string, messageId: string): ConversationEntry[] {
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.message_id')=? ORDER BY id DESC LIMIT 20").all(sessionId, messageId);
+  return conversationRows(rows, 2);
+}
+
+function conversationRows(rows: any[], limit: number): ConversationEntry[] {
+  const result: ConversationEntry[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.role !== "user" && row.role !== "assistant") continue;
+    try {
+      const display = JSON.parse(row.payload_json).display;
+      if (typeof display?.message_id !== "string" || typeof display?.text !== "string") continue;
+      const key = `${row.role}:${display.message_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ role: row.role, message_id: display.message_id, text: display.text,
+        attachments: Array.isArray(display.attachments) ? display.attachments : [], created_at: row.ts });
+      if (result.length >= Math.max(1, Math.min(200, limit))) break;
+    } catch { /* Ignore a malformed historical event without exposing raw data. */ }
+  }
+  return result.reverse();
 }
 
 export type StopReason = "NO_ACTIONS" | "AWAITING_APPROVAL" | "MAX_STEPS" | "ERROR" | "USER_CANCELLED";

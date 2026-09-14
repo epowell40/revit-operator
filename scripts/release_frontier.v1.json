@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "session_history_recovery.test.ts",
     "local_desktop_launcher_registration.test.ts",
     "generated_parameter_postcondition_v2.test.ts",
     "mcp_input_validation.test.ts",
@@ -1173,6 +1174,16 @@
         "backend:simple_context_question.test.ts",
         "dotnet:OperatorUiContextSnapshotTests",
         "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "refresh-or-restart-loses-conversation-and-direct-context-followups",
+      "coverage": [
+        "backend:session_history_recovery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:codex_turn_input.test.ts"
       ]
     },
     {
