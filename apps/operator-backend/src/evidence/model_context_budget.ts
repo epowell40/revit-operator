@@ -26,14 +26,20 @@ export function assembleBoundedEvidenceContext(input: {
 }): { projections: EvidenceProjectionV1[]; bytes: number; omitted: number } {
   const budget = input.budget ?? getEvidenceContextBudget();
   const selected: EvidenceProjectionV1[] = [];
-  let bytes = 2;
+  // Reserve the actual wire envelope, including the largest possible omission
+  // count, before admitting records. Array-only accounting can fit records
+  // whose final serialized response exceeds the caller's request budget.
+  let bytes = Buffer.byteLength(JSON.stringify(modelEvidenceEnvelope([], input.projections.length)), "utf8");
   let omitted = 0;
   for (const projection of input.projections) {
-    const encodedBytes = Buffer.byteLength(JSON.stringify(projection), "utf8") + (selected.length > 0 ? 1 : 0);
-    if (encodedBytes > budget.item_bytes || bytes + encodedBytes > budget.request_bytes) { omitted++; continue; }
+    const itemBytes = Buffer.byteLength(JSON.stringify(projection), "utf8");
+    const encodedBytes = itemBytes + (selected.length > 0 ? 1 : 0);
+    if (itemBytes > budget.item_bytes || bytes + encodedBytes > budget.request_bytes) { omitted++; continue; }
     selected.push(projection);
     bytes += encodedBytes;
   }
+  bytes = Buffer.byteLength(JSON.stringify(modelEvidenceEnvelope(selected, omitted)), "utf8");
+  if (bytes > budget.request_bytes) throw new Error("Evidence response envelope exceeds the configured request budget.");
   const rawBytes = input.projections.reduce((sum, item) => sum + item.byte_count, 0);
   appendEvidenceTelemetry({
     session_id: input.session_id,
@@ -86,7 +92,7 @@ export function assertBoundedModelEvidencePayload(input: unknown, budget = getEv
       const projections = validEnvelopeShape && Array.isArray(projectionEnvelope?.evidence_projections)
         ? projectionEnvelope.evidence_projections
         : [];
-      const isEvidenceProjection = projections.length > 0 && projections.every(projection => {
+      const isEvidenceProjection = validEnvelopeShape && Array.isArray(projectionEnvelope?.evidence_projections) && projections.every(projection => {
         if (!projection || typeof projection !== "object" || (projection as any).schema !== "revit-operator.evidence-projection.v1") return false;
         return Buffer.byteLength(JSON.stringify(projection), "utf8") <= budget.item_bytes;
       });

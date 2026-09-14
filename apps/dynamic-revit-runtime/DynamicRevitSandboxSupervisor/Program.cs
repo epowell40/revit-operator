@@ -85,7 +85,13 @@ internal static class Program
         var runtimeExpires = DateTimeOffset.UtcNow.AddMinutes(8).ToUnixTimeSeconds();
         var registration = "";
         var hostAuthentications = new List<string>();
-        var bootstrapRaw = await Post(config.BridgeUrl, "/revit/dynamic-runtime/bootstrap", token, writeGrant, "{}", Guid.NewGuid().ToString("N"));
+        var bootstrapRead = await BootstrapReadRetry.SendAsync(() => SendPost(config.BridgeUrl, BootstrapReadRetry.Path,
+            token, writeGrant, "{}", Guid.NewGuid().ToString("N")));
+        if (BootstrapReadRetry.IsUndispatchedBusyRead(bootstrapRead.Response))
+            return BootstrapBusyEvidence(started, config.TargetRevitYear, bootstrapRead.Attempts);
+        if (!bootstrapRead.Response.Success)
+            throw new InvalidOperationException("Bridge bootstrap returned " + bootstrapRead.Response.StatusCode + ": " + bootstrapRead.Response.Body);
+        var bootstrapRaw = bootstrapRead.Response.Body;
         var bootstrap = await CompleteBootstrap(bootstrapRaw, runtimeId, hostSessionKey, launcherHash, selectedHost);
         hostAuthentications.Add(bootstrap.Receipt);
         var snapshotCore = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget }, WireJson);
@@ -929,6 +935,13 @@ internal static class Program
         PrincipalIdHash = value.PrincipalIdHash, PrincipalSessionHash = value.PrincipalSessionHash
     };
 
+    internal static LiveEvidence BootstrapBusyEvidence(DateTimeOffset started, string targetYear, int attempts) => new()
+    {
+        Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+        TargetRevitYear = targetYear, WorkerOutput = JsonSerializer.SerializeToElement<object?>(null),
+        Failure = BootstrapReadRetry.ExhaustedFailure, BootstrapAttempts = attempts, WorkerStarted = false
+    };
+
     private static async Task<string> Post(string baseUrl, string path, string token, string writeGrant, string json, string correlation)
     {
         var response = await SendPost(baseUrl, path, token, writeGrant, json, correlation);
@@ -1280,6 +1293,8 @@ internal sealed class DynamicObservationDeltaEvidenceV1
 }
 internal sealed class LiveEvidence
 {
+    public int? BootstrapAttempts { get; set; }
+    public bool? WorkerStarted { get; set; }
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
     public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }

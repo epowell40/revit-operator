@@ -1,6 +1,35 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
+import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+
+test("actual dynamic response includes envelope overhead and never restores raw data when every projection is omitted", { concurrency: false }, () => {
+  const prior=process.env.OPERATOR_WORKSPACE_ROOT;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"dynamic-response-budget-"));
+  process.env.OPERATOR_WORKSPACE_ROOT=root;
+  try {
+    for(const detailLength of [1400,1700,1850,1900]) for(const requestBytes of [512,4000]) {
+      const projections=Array.from({length:12},(_,n)=>({schema:"revit-operator.evidence-projection.v1",evidence_id:`ev1_${n}`,
+        byte_count:100_000,key_facts:{detail:"é".repeat(detailLength/2)}} as any));
+      const budget={item_bytes:2048,request_bytes:requestBytes};
+      const bounded=assembleBoundedEvidenceContext({projections,session_id:"budget-test",budget});
+      const result=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:"UNBOUNDED_RAW_".repeat(10_000)}]},
+        {tool:"revit_list_schedules",projections:bounded.projections,omitted:bounded.omitted});
+      assert.equal(result.contentItems.length,1);
+      const item=result.contentItems[0]!;assert.equal(item.type,"inputText");
+      if(item.type!=="inputText")throw Error("Expected evidence envelope");
+      assert.ok(!item.text.includes("UNBOUNDED_RAW_"));
+      assert.equal(Buffer.byteLength(item.text,"utf8"),bounded.bytes);
+      assert.ok(bounded.bytes<=requestBytes);
+      const usage=assertBoundedModelEvidencePayload([{type:"function_call_output",output:item.text}],budget);
+      assert.equal(usage.projected_bytes,bounded.bytes);
+      assert.equal(JSON.parse(item.text).omitted,12-bounded.projections.length);
+    }
+  } finally {
+    if(prior===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=prior;
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
 
 test("code-mode evidence selections remain one JSON value with separate host observation metadata", () => {
   const index = { schema: "revit-operator.model-observation-index/v2", observations: [{ observation_id: "host-observation" }] };
@@ -20,6 +49,10 @@ test("code-mode evidence selections remain one JSON value with separate host obs
     assert.equal(response.success, false);
     assert.deepEqual(response.contentItems[0], { type: "inputText", text: value });
   }
+  const controlPayload = {ok:true,status:{outcome:"complete"}};
+  const noProjection = adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify(controlPayload)}]},
+    {tool:"operator_evaluate_assignment_criteria",projections:[],omitted:0});
+  assert.deepEqual(noProjection.contentItems,[{type:"inputText",text:JSON.stringify(controlPayload)}]);
   const image = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "image", mimeType: "image/png", data: "AA==" }] });
   attachDynamicObservationContext(image, "operator_retrieve_evidence", JSON.stringify(index));
   assert.deepEqual(image.contentItems[0], { type: "inputImage", imageUrl: "data:image/png;base64,AA==" });

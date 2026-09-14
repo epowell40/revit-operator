@@ -10,6 +10,40 @@ import { getWorkspaceRoot } from "./workspace.js";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
 
+test("bounded bootstrap contention retains a useful read retry receipt without authorizing a mutation replay", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-bootstrap-busy-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (extra: Record<string, unknown> = {}) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ schema: "dynamic-revit-phase2-live-evidence/v0", ok: false,
+        bootstrapAttempts: 8, workerStarted: false, workerOutput: null, registrationReceipt: "", snapshotReceipt: "",
+        previewReceipt: "", admission: null, v1Admission: null, applyReceipt: null, applyAuthorizationReceipt: null,
+        hostAuthenticationReceipts: [],
+        failure: "Revit remained busy before generated-code startup. No worker was launched and no preview or apply was dispatched.", ...extra }));
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+    const input = { source: "public class ReadProbe {}", mode: "read" as const };
+    const failed = await runDynamicRevitProgram(input, env, execute());
+    assert.equal(failed.execution_status, "failed");
+    assert.equal(failed.diagnostics[0]?.code, "REVIT_STARTUP_BUSY");
+    assert.equal(failed.iteration.retryable, true);
+    assert.equal(failed.canonical_attempt_settlement, undefined);
+    assert.equal(failed.checkpoint, null);
+    assert.deepEqual(failed.report, {});
+    const apply = await runDynamicRevitProgram({ ...input, mode: "apply" }, env, execute());
+    assert.equal(apply.iteration.retryable, false, "keep the conservative apply replay fence");
+    for (const ambiguous of [{ workerStarted: true }, { workerOutput: {} }, { bootstrapAttempts: 9 },
+      { registrationReceipt: "registration" }, { applyReceipt: "possible dispatch" }, { hostAuthenticationReceipts: ["host"] }]) {
+      const result = await runDynamicRevitProgram(input, env, execute(ambiguous));
+      assert.equal(result.diagnostics[0]?.code, "SUPERVISOR_FAILURE");
+      assert.equal(result.canonical_attempt_settlement, undefined);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("snapshot bounds reject oversized audits before installation or dispatch and admit the upper boundary", async () => {
   for (const snapshot_limit of [0, 1001, 3000, 5000, 1.5]) {
     await assert.rejects(() => runDynamicRevitProgram({ source: "public class Audit {}", mode: "read", snapshot_limit }, {},

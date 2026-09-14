@@ -118,6 +118,10 @@ export type EvidenceRetrievalResult = {
   selection: unknown;
   returned_bytes: number;
   complete: boolean;
+  pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
+    has_more: boolean; next_start: number | null; byte_limited: boolean };
+  missing_fields?: string[];
+  selection_origins?: Record<string, "payload" | "deterministic_projection">;
 };
 
 export type EvidenceTelemetryEventV1 = {

@@ -158,6 +158,8 @@ namespace RevitBridge
                 operatorBtnData.ToolTip = OperatorDesktopLauncher.UseEmbeddedPane()
                     ? "Open Operator beside your model."
                     : "Open Operator Desktop.";
+                operatorBtnData.LargeImage = OperatorRibbonIcon.Create(32);
+                operatorBtnData.Image = OperatorRibbonIcon.Create(16);
                 panel.AddItem(operatorBtnData);
             }
             catch { }

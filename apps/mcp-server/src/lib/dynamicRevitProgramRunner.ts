@@ -684,6 +684,14 @@ function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: stri
     if (diagnostics.length || evidence.ok === true) return diagnostics;
   }
   if (evidence.ok === true) return [];
+  if (evidence.failure === "Revit remained busy before generated-code startup. No worker was launched and no preview or apply was dispatched."
+      && evidence.bootstrapAttempts === 8 && evidence.workerStarted === false && evidence.workerOutput === null
+      && !evidence.registrationReceipt && !evidence.snapshotReceipt && !evidence.previewReceipt
+      && !evidence.admission && !evidence.v1Admission && !evidence.applyReceipt && !evidence.applyAuthorizationReceipt
+      && Array.isArray(evidence.hostAuthenticationReceipts) && evidence.hostAuthenticationReceipts.length === 0)
+    return [{ code: "REVIT_STARTUP_BUSY", message: evidence.failure, phase: "supervisor", severity: "error",
+      repair_action: "refresh_state_or_inspect_runtime", line: null, column: null, end_line: null, end_column: null,
+      step_id: null, assertion_id: null, retryable: true }];
   if (evidence.failure === "Read-only generated code produced model operations. No preview or apply was dispatched.")
     return [{ code: "READ_ONLY_GRAPH_REQUIRED", message: evidence.failure, phase: "supervisor", severity: "error",
       repair_action: "edit_source", line: null, column: null, end_line: null, end_column: null,

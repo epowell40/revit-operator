@@ -458,6 +458,10 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
+  const retrievalTool = tools.tools.find(tool => tool.name === "operator_retrieve_evidence")!;
+  assert.match(retrievalTool.description!, /pagination.next_start/);
+  assert.match(retrievalTool.description!, /projection.key_counts/);
+  assert.match(retrievalTool.description!, /missing_fields/);
   const generatedTool = tools.tools.find(tool => tool.name === "operator_run_dynamic_revit_program")!;
   // Code-mode clients can discard descriptions on schema properties. Discovery
   // must still contain everything needed to write the first valid program.

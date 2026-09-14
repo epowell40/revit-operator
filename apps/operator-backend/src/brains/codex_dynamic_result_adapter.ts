@@ -85,15 +85,17 @@ export function adaptMcpToolCallResultToDynamicResponse(
   // can never consume the requested fields. The V2 settlement path still
   // retains the retrieval result and its projection durably for audit/recovery.
   const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence" || result?.isError === true;
-  if (context?.projections?.length && !exposeFocusedRetrieval) {
+  const hasProjectionContext = Array.isArray(context?.projections)
+    && (context!.projections!.length > 0 || (context?.omitted ?? 0) > 0) && !exposeFocusedRetrieval;
+  if (hasProjectionContext) {
     contentItems.push({
       type: "inputText",
-      text: JSON.stringify(modelEvidenceEnvelope(context.projections, context.omitted ?? 0))
+      text: JSON.stringify(modelEvidenceEnvelope(context!.projections!, context!.omitted ?? 0))
     });
   }
   let attachedImages = 0;
   for (const item of content) {
-    if (context?.projections?.length && !exposeFocusedRetrieval && item?.type !== "image") continue;
+    if (hasProjectionContext && item?.type !== "image") continue;
     if (item?.type === "text" && typeof item.text === "string") {
       contentItems.push({ type: "inputText", text: result?.isError === true ? item.text : compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
       continue;

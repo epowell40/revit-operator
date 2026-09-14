@@ -29,6 +29,9 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /actual empty field values together with each record identifier/);
   assert.match(policy, /reported count equals the full identifier list/);
   assert.match(policy, /at most eight evidence indices/);
+  assert.match(policy, /already computed from retained native rows/);
+  assert.match(policy, /pagination.next_start/);
+  assert.match(policy, /missing_fields as unavailable fields rather than actual blanks/);
 
   assert.match(policy, /short natural acknowledgement/i);
   assert.match(policy, /Ask one focused clarifying question/i);

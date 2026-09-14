@@ -54,6 +54,7 @@
     "direct_revit_execution_authorization.test.ts",
     "endpoint_mutability.test.ts",
     "evidence_projection.test.ts",
+    "evidence_http_routes.test.ts",
     "evidence_retrieval_selector_contract.test.ts",
     "general_revit_model_telemetry.test.ts",
     "general_revit_candidate_identity_preflight.test.ts",
@@ -530,7 +531,8 @@
       "coverage": [
         "backend:assignment_kernel_v2_controls.test.ts",
         "backend:assignment_kernel_v2_lifecycle.test.ts",
-        "mcp:lib/revitClient.test.ts"
+        "mcp:lib/revitClient.test.ts",
+        "dynamic:BootstrapReadRetryTests"
       ]
     },
     {
@@ -1495,6 +1497,27 @@
         "backend:agent_response_policy.test.ts",
         "backend:codex_turn_input.test.ts"
       ]
+    },
+    {
+      "id": "generated-code-bootstrap-busy-exits-without-bounded-evidence",
+      "coverage": [
+        "dynamic:BootstrapReadRetryTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "projected-inventory-fields-and-byte-limited-pages-stall-broad-audit",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:evidence_http_routes.test.ts"
+      ]
+    },
+    {
+      "id": "evidence-envelope-overhead-exceeds-budget-or-restores-omitted-raw-output",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -1502,6 +1525,7 @@
     "RuntimeWorkspaceTests",
     "ReadOnlyGeneratedProgramTests",
     "WorkerInputChannelTests",
-    "RuntimeFailureDiagnosticTests"
+    "RuntimeFailureDiagnosticTests",
+    "BootstrapReadRetryTests"
   ]
 }

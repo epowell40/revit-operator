@@ -245,7 +245,8 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
         "targetSubset (exact reviewed target identities only)",
         "image",
         "JSON payload fields: payload.<field>",
-        "JSON payload arrays: payload.<array>"
+        "JSON payload arrays: payload.<array>",
+        "inventory.* summary fields; pages: pagination.next_start; absent fields: missing_fields"
       ],
       max_bytes: 1_048_576
     },

@@ -29,6 +29,39 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("advertised inventory facts are retrievable and absent fields differ from actual null values", { concurrency: false }, () => withWorkspace(() => {
+  const items = Array.from({length:37},(_,i)=>({elementId:i+1,category:"Mechanical Equipment",familyName:"Example",typeName:"Unit"}));
+  const stored=storeEvidence({scope,source:"native:inventory",trust_level:"authoritative_native",raw:{count:37,itemsComplete:true,items,actualNull:null}},4096);
+  const result=retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Verify complete equipment counts",
+    fields:["inventory.total","inventory.complete","inventory.category::Mechanical Equipment","projection.key_counts.inventory.total","actualNull","unknownField"]});
+  assert.deepEqual(result.selection,{"inventory.total":37,"inventory.complete":true,"inventory.category::Mechanical Equipment":37,
+    "projection.key_counts.inventory.total":37,actualNull:null,unknownField:null});
+  assert.deepEqual(result.missing_fields,["unknownField"]);
+  assert.equal(result.selection_origins?.["inventory.total"],"deterministic_projection");
+  assert.equal(result.selection_origins?.actualNull,"payload");
+  assert.throws(()=>retrieveEvidence({scope:{...scope,session_id:"another"},evidence_id:stored.ref.evidence_id,purpose:"Verify counts",fields:["inventory.total"]}),/scope|session/i);
+}));
+
+test("byte-bounded inventory pages preserve every row with an explicit continuation", { concurrency: false }, () => withWorkspace(() => {
+  const items=Array.from({length:509},(_,i)=>({elementId:i+1,name:"Device "+i,description:"x".repeat(300)}));
+  const stored=storeEvidence({scope,source:"native:inventory",trust_level:"authoritative_native",raw:{count:items.length,itemsComplete:true,items}},4096);
+  const recovered: unknown[]=[];
+  let start=0;
+  do {
+    const page=retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Review the next equipment page",item_range:{path:"items",start,count:256},max_bytes:4096});
+    assert.ok(page.returned_bytes<=4096); assert.ok(Array.isArray(page.selection));
+    assert.equal(page.pagination?.total_items,509);
+    assert.equal(page.pagination?.returned_count,page.selection.length);
+    assert.equal(page.complete,false);
+    recovered.push(...page.selection);
+    if(!page.pagination?.has_more)break;
+    assert.ok(page.pagination.next_start!>start);
+    start=page.pagination.next_start!;
+  } while(start<items.length);
+  assert.deepEqual(recovered,items);
+  assert.throws(()=>retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Review one oversized row",item_range:{path:"items",start:0,count:1},max_bytes:64}),/One evidence row exceeds/);
+}));
+
 test("509-air-device inventory is projected under budget and remains byte-for-byte recoverable", { concurrency: false }, () => withWorkspace(() => {
   const inventory = {
     count: 509,
@@ -479,6 +512,7 @@ test("model request assembly enforces item and aggregate budgets with explicit o
   assert.ok(result.omitted > 0);
   assert.ok(result.projections.length < projections.length);
   const valid = JSON.stringify(modelEvidenceEnvelope(result.projections, result.omitted));
+  assert.equal(result.bytes, Buffer.byteLength(valid,"utf8"), "account for the serialized envelope, not only its record array");
   const usage = assertBoundedModelEvidencePayload([{ type: "function_call_output", output: valid }], { item_bytes: 1_500, request_bytes: 4_000 });
   assert.equal(usage.projection_count, result.projections.length);
   assert.equal(usage.referenced_raw_bytes, result.projections.reduce((sum, projection) => sum + projection.byte_count, 0));
