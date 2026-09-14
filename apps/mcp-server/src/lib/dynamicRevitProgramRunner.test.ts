@@ -10,6 +10,28 @@ import { getWorkspaceRoot } from "./workspace.js";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
 
+test("snapshot bounds reject oversized audits before installation or dispatch and admit the upper boundary", async () => {
+  for (const snapshot_limit of [0, 1001, 3000, 5000, 1.5]) {
+    await assert.rejects(() => runDynamicRevitProgram({ source: "public class Audit {}", mode: "read", snapshot_limit }, {},
+      async () => { throw new Error("must not dispatch"); }), /numeric bound/);
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-snapshot-bound-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const result = await runDynamicRevitProgram({ source: "public class Audit {}", mode: "read", category: "OST_DuctCurves", snapshot_limit: 1000 }, env, async (_file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      assert.equal(config.limit, 1000); assert.equal(config.readOnly, true);
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, workerOutput: { ok: true, sourceHash: sha256(source), executionStatus: "completed",
+        graph: { operations: [] }, report: { Inspected: "1000", Limit: "Bounded snapshot; total cohort unverified." }, logs: [], diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    assert.equal(result.execution_ok, true); assert.deepEqual(result.report, { Inspected: "1000", Limit: "Bounded snapshot; total cohort unverified." });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("read-only runner enforces an empty graph, retains host rejection diagnostics, and repairs within the same mode", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-read-runner-"));
   try {

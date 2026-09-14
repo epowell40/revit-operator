@@ -11,8 +11,15 @@ function isAnswerDraftRequest(request: string): boolean {
 
 /** Standalone document review, answer drafting, research and calculation need no Revit observation. */
 export function isStandaloneAssistantRequest(text: string): boolean {
-  // Remove only model-preservation constraints. They do not request model work.
-  const request = text.replace(new RegExp(MODEL_CHANGE_PROHIBITION.source, "gi"), " ")
+  // Strip the complete prohibition before individual edit constraints, so
+  // "do not inspect or change the Revit model" cannot leave a false model
+  // inspection request behind. Affirmative neighboring work stays intact.
+  const accessVerb = "(?:inspect|read|query|access|touch|open|use|change|modify|edit|save)";
+  const modelObject = "(?:(?:the|any)\\s+)?(?:(?:current|active|open)\\s+)?(?:revit\\s+)?(?:model|project|document)";
+  const accessExclusion = new RegExp(`\\b(?:do not|don't|dont|never)\\s+${accessVerb}(?:\\s*(?:,|and|or|nor)\\s*${accessVerb})*\\s+${modelObject}\\b`, "gi");
+  const request = text.replace(accessExclusion, " ")
+    .replace(/\bwithout\s+(?:opening|inspecting|reading|accessing|querying|touching)(?:\s*(?:,|and|or)\s*(?:opening|inspecting|reading|accessing|querying|touching))*\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
+    .replace(new RegExp(MODEL_CHANGE_PROHIBITION.source, "gi"), " ")
     .replace(/\b(?:do not|don't|dont|never)\s+(?:change|modify|edit|save)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
     .replace(/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/gi, " ")
     .replace(/\b(?:leave|keep)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\s+unchanged\b/gi, " ");

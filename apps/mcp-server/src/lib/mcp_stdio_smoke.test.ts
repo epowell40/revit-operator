@@ -467,6 +467,17 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.match(generatedTool.description!, /public sealed class SampleReport/);
   assert.match(generatedTool.description!, /print text\(result\) directly/);
   assert.match(generatedTool.description!, /operation_budget at its default/);
+  assert.match(generatedTool.description!, /snapshot_limit is 1\.\.1000/);
+  assert.match(generatedTool.description!, /path:\["report","Inspected"\]/);
+  assert.match(generatedTool.description!, /prioritized assessment with evidence_indices/);
+  assert.match(generatedTool.description!, /Missing parameter keys do not establish missing model relationships/);
+  for (const limit of [0, 1001, 3000, 5000]) {
+    const denied = await client.callTool({ name: generatedTool.name,
+      arguments: { mode: "read", source: "public class Program {}", category: "OST_DuctCurves", snapshot_limit: limit } });
+    assert.equal(denied.isError, true);
+    assert.match(JSON.stringify(denied.content), /Input validation error/);
+    assert.match(JSON.stringify(denied.content), /snapshot_limit/);
+  }
   const invalidGenerated = await client.callTool({ name: generatedTool.name,
     arguments: { mode: "read", source: "public class Program {}", category: "duct sample summary by type" } });
   assert.equal(invalidGenerated.isError, true);

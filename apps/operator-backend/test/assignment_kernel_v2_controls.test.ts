@@ -340,7 +340,9 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
           : [{ fact_id: "control.evidence_selection_available", fact_class: "control", value: true,
             cardinality: "many", identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
             dimensions: { capability_id: tool, evidence_id: "retained-export", selection_path: "payload.artifact_receipt" } }];
-      return { content: [], structuredContent: {
+      const retrieval = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1",
+        selection: { "payload.artifact_receipt": receipt }, complete: false } };
+      return { content: tool === "operator_retrieve_evidence" ? [{ type: "text", text: JSON.stringify(retrieval) }] : [], structuredContent: {
         schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
         operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `handoff:${lease.operation_id}`,
           operation_id: lease.operation_id, binding, status: "succeeded",
@@ -363,6 +365,14 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
     const result = await handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call",
       params: { namespace: "revit_operator", turnId: "pdf-handoff", tool, arguments: args } } as any) as any;
     assert.equal(result.success, true, JSON.stringify(result));
+    if (tool === "operator_retrieve_evidence") {
+      const rendered = result.contentItems.map((item: any) => item.text).join("\n");
+      const parsed = JSON.parse(rendered);
+      assert.deepEqual(parsed.result.selection["payload.artifact_receipt"], receipt);
+      assert.equal(parsed.model_observation_index.schema, "revit-operator.model-observation-index/v2");
+      assert.equal(parsed.model_observation_index.observations[0].capability_id, "operator_retrieve_evidence");
+      assert.equal(result.contentItems.length, 1);
+    }
   };
   try {
     await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], fileName: "M000.pdf", colorMode: "Color", dryRun: false } });

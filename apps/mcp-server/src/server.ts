@@ -957,7 +957,7 @@ server.tool("revit_tool_registry", "List/search Revit HTTP primitives from the b
   }
 );
 
-server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence.",
+server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence. itemRange.count is 1..256: advance start for additional pages. For fields, result.selection uses the exact requested path as its key, such as selection['payload.elementIds']; itemRange returns the selected array directly. In Operator code mode, a successful JSON retrieval is one JSON object with optional host model_observation_index metadata; use JSON.parse(String(result)) and retain the parsed selection in the same cell for the next tool. Inspect errors before parsing. Repeating an identical retrieval is not a parsing repair.",
   {
     evidenceId: z.string().describe("Named ev1_ evidence identity from a model-facing projection."),
     sessionId: z.string().describe("Current session identity."),

@@ -13,7 +13,7 @@ import {
 import { storeEvidence } from "../evidence/evidence_store.js";
 import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
-import { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
+import { adaptMcpToolCallResultToDynamicResponse, attachDynamicObservationContext } from "./codex_dynamic_result_adapter.js";
 import {
   assignmentEvidenceScope,
   assignmentToolEvidenceTrust,
@@ -296,7 +296,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         omitted: context.omitted
       });
       const observationContext = codexAssignmentEvidenceContextV2(settled.snapshot, lease.operation_id);
-      if (observationContext) response.contentItems.push({ type: "inputText", text: observationContext });
+      attachDynamicObservationContext(response, params.tool, observationContext);
       return response;
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: error instanceof Error ? error.message : String(error) });

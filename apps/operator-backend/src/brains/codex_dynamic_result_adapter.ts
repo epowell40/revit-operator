@@ -3,6 +3,32 @@ import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
 import { modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 
+/** Code mode joins text blocks with newlines. Keep a retrieved JSON selection
+ * and its host observation metadata in one parseable object. Never change the
+ * selection itself or turn a plain error / image response into a success. */
+export function attachDynamicObservationContext(
+  response: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>,
+  tool: unknown,
+  observationContext: string | null
+): void {
+  if (!observationContext) return;
+  if (tool === "operator_retrieve_evidence" && response.success && response.contentItems.length === 1) {
+    const item = response.contentItems[0]!;
+    if (item.type === "inputText") {
+      try {
+        const payload = JSON.parse(item.text);
+        const index = JSON.parse(observationContext);
+        if (payload?.ok === true && payload?.result?.schema === "revit-operator.evidence-retrieval.v1"
+          && index?.schema === "revit-operator.model-observation-index/v2") {
+          item.text = JSON.stringify({ ...payload, model_observation_index: index });
+          return;
+        }
+      } catch { /* Preserve the original correction contract below. */ }
+    }
+  }
+  response.contentItems.push({ type: "inputText", text: observationContext });
+}
+
 function parseToolArguments(value: unknown): any {
   if (typeof value !== "string") return value && typeof value === "object" ? value : {};
   try {

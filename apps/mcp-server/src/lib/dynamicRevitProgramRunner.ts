@@ -85,6 +85,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   if (!input || typeof input.source !== "string" || input.source.length < 1 || input.source.length > 128_000 || input.source.includes("\0")) throw new Error("Dynamic Revit program source is invalid or exceeds 128,000 characters.");
   if (!["read", "preview", "apply"].includes(input.mode)) throw new Error("Dynamic Revit program mode must be read, preview or apply.");
   if (input.mode === "read" && (input.result_reference || input.continue_from_checkpoint)) throw new Error("Read-only reports use the basic snapshot SDK; result-reference edits and committed continuation require preview or apply.");
+  const snapshotLimit = boundedInteger(input.snapshot_limit, 1, 1000, 200);
   const assignment = currentAssignmentKernelV2Context();
   if (assignment && (assignment.capability_id !== "operator_run_dynamic_revit_program" || assignment.requested_effect !== input.mode))
     throw new Error("Dynamic execution mode does not match the admitted assignment operation.");
@@ -115,7 +116,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const config = {
     workerDirectory, evidencePath: evidenceFile, bridgeUrl: env.OPERATOR_REVIT_URL || "http://127.0.0.1:5000",
     operatorTokenFile: tokenFile, sourceFile, targetRevitYear: year, category: input.category ?? null,
-    limit: boundedInteger(input.snapshot_limit, 1, 1000, 200), parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
+    limit: snapshotLimit, parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
     workerDeadlineMs: boundedInteger(input.worker_deadline_ms, 1000, 30_000, 15_000), apply: input.mode === "apply", readOnly: input.mode === "read",
     ...(assignment?.binding.document_fingerprint ? { expectedDocumentFingerprint: assignment.binding.document_fingerprint } : {}),
     applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000), compilationCacheDirectory,

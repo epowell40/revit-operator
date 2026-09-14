@@ -1418,6 +1418,27 @@
         "backend:assignment_kernel_v2_controls.test.ts",
         "mcp:lib/mcp_stdio_smoke.test.ts"
       ]
+    },
+    {
+      "id": "standalone-engineering-model-prohibition-creates-unfinished-model-assignment",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "code-mode-evidence-json-framing-causes-retrieval-loop-and-audit-budget-exhaustion",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "generated-audit-snapshot-exceeds-hidden-code-mode-bound",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

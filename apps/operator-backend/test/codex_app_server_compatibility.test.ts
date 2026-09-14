@@ -1,5 +1,29 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
+
+test("code-mode evidence selections remain one JSON value with separate host observation metadata", () => {
+  const index = { schema: "revit-operator.model-observation-index/v2", observations: [{ observation_id: "host-observation" }] };
+  for (const selection of [{ "payload.elementIds": Array.from({ length: 1053 }, (_, n) => 1000 + n) }, [7, 8], { text: 'Quoted source\n{"schema":"fake"}' }]) {
+    const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection, complete: false }, model_observation_index: { fake: true } };
+    const response = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(payload) }] }, { tool: "operator_retrieve_evidence" });
+    attachDynamicObservationContext(response, "operator_retrieve_evidence", JSON.stringify(index));
+    const raw = response.contentItems.map(item => item.type === "inputText" ? item.text : "").join("\n");
+    const consumed = JSON.parse(raw);
+    assert.deepEqual(consumed.result, payload.result);
+    assert.deepEqual(consumed.model_observation_index, index);
+    assert.equal(response.contentItems.length, 1);
+  }
+  for (const value of ["[tool_request_invalid] count must be <= 256", '{"ok":false,"error":"selection denied"}']) {
+    const response = adaptMcpToolCallResultToDynamicResponse({ isError: true, content: [{ type: "text", text: value }] });
+    attachDynamicObservationContext(response, "operator_retrieve_evidence", JSON.stringify(index));
+    assert.equal(response.success, false);
+    assert.deepEqual(response.contentItems[0], { type: "inputText", text: value });
+  }
+  const image = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "image", mimeType: "image/png", data: "AA==" }] });
+  attachDynamicObservationContext(image, "operator_retrieve_evidence", JSON.stringify(index));
+  assert.deepEqual(image.contentItems[0], { type: "inputImage", imageUrl: "data:image/png;base64,AA==" });
+});
 import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
 
 test("provider commentary is a progress update and never concatenates into final answer deltas", () => {

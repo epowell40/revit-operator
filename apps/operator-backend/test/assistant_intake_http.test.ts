@@ -7,6 +7,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { PersistenceManager } from "../src/persistence/persistence_manager.js";
+import { standaloneEngineeringQuestion } from "./standalone_engineering.fixtures.js";
 
 async function availablePort(): Promise<number> {
   const net = await import("node:net");
@@ -88,6 +89,10 @@ test("context and batch availability endpoints enforce session ownership without
   const documentPolicy = await policy({ ...request, user_text: documentQuestion });
   assert.equal(documentPolicy.status, 200);
   assert.equal((await documentPolicy.json() as any).requires_revit_context, false);
+  const engineeringPolicy = await policy({ ...request, user_text: standaloneEngineeringQuestion });
+  assert.equal(engineeringPolicy.status, 200);
+  assert.equal((await engineeringPolicy.json() as any).requires_revit_context, false);
+  assert.equal((await (await policy({ ...request, user_text: standaloneEngineeringQuestion + " Also inspect the selected duct's flow." })).json() as any).requires_revit_context, true);
   assert.equal((await (await policy({ ...request, user_text: documentQuestion + " Inspect the open model too." })).json() as any).requires_revit_context, true);
   for (const body of [{ ...request, user_text: "What is the diameter of the selected duct?" }, { ...request, assignment_id: "task" }]) {
     assert.equal((await (await policy(body)).json() as any).requires_revit_context, true);
