@@ -882,7 +882,7 @@ namespace RevitBridge.Server
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
-                        new { status = "ok", timestamp = DateTime.Now }, requestedEffect, effectiveMethod, path,
+                        new { status = "ok", timestamp = DateTime.Now, ui_context = RevitUiContextSnapshot.Read() }, requestedEffect, effectiveMethod, path,
                         attemptId: correlationId));
                 }
                 else if (path == "/revit/capabilities")

@@ -1,4 +1,4 @@
-// Deliberately small: only questions answerable by one fresh /revit/context read.
+// Deliberately small: only questions answerable by native UI identity.
 // A mixed request, attachment, or explicit task continuation belongs to the agent.
 export function contextQuestionKind(body = {}) {
   if ([body.attachments, body.user_attachments, body.pending_attachments, body.tool_results].some(items => Array.isArray(items) && items.length)
@@ -39,6 +39,16 @@ export function renderContextReply(kind, diagnostic) {
       : `**${title}** is open, but Revit didn’t report the selection.`;
   }
   return `${kind === "connection" ? "Yes — " : ""}**${title}** is open.${viewName ? ` The active view is **${viewName}**.` : ""}`;
+}
+
+export function contextSnapshotDiagnostic(ping) {
+  if (!ping?.ok) return { ok: false, data: null };
+  const snapshot = ping.data?.ui_context;
+  if (snapshot === undefined) return null; // Older add-ins retain the ordinary context read.
+  if (snapshot?.schema !== "revit-operator.ui-context/v1" || snapshot.state !== "available"
+      || snapshot.authority !== "ui_identity_only" || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 1
+      || !snapshot.context || !Object.hasOwn(snapshot.context, "document")) return { ok: false, data: null };
+  return { ok: true, data: snapshot.context };
 }
 
 export async function tryContextReply(body, { verifySession, readContext, signal, timeoutMs = 5000 }) {

@@ -9,6 +9,7 @@ html, body { height: 100%; background: #fff; color: #222; font-family: "Segoe UI
 .wrap { padding: 0; gap: 0; height: 100dvh; min-height: 0; overflow: hidden; }
 .wrap::before, .wrap::after, .brandMark { display: none; }
 .bar { min-height: 64px; padding: 12px 24px; border: 0; border-bottom: 1px solid #e6e6e6; border-radius: 0; background: #fff; box-shadow: none; flex-wrap: nowrap; }
+.top { z-index: 40; }
 .titleName { font-size: 18px; font-weight: 600; letter-spacing: -.3px; }
 .titleMeta { display: none; }
 .controls { display: flex; flex: 0 1 auto; }
@@ -57,6 +58,7 @@ textarea:focus { outline: none; }
 .assignmentCompactCopy > span:last-child { white-space: normal; overflow: visible; font-size: 12px; color: #666; }
 #assignmentCompactToggle { padding: 0 4px; border: 0; background: none; color: #666; font-size: 12px; }
 .right { display: flex; flex-direction: column; width: min(420px, 45vw); flex: 0 0 auto; padding: 18px; overflow-y: auto; gap: 16px; border-left: 1px solid #ddd; background: #fafafa; }
+.right > *, .goalSummary { min-width: 0; overflow-wrap: anywhere; }
 .detailsHeader { display: flex; align-items: center; justify-content: space-between; }
 .detailsHeader h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .assignmentPane { flex: 0 0 auto; overflow: visible; background: transparent; border: 0; box-shadow: none; padding: 0; }

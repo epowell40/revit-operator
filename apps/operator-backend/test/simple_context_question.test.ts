@@ -68,3 +68,13 @@ test("denied or expired session authorization cannot dispatch a model read", asy
   await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(reads, 0);
 });
+
+test("native UI snapshots preserve no-model and transition states without claiming task evidence", () => {
+  assert.equal(ui.contextSnapshotDiagnostic({ ok: true, data: { status: "ok" } }), null);
+  const snapshot = { schema: "revit-operator.ui-context/v1", state: "available", authority: "ui_identity_only", revision: 2, context: fresh().data };
+  assert.match(ui.renderContextReply("model", ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: snapshot } })), /Snowdon HVAC/);
+  for (const change of [{ state: "unavailable" }, { authority: "model_verified" }, { revision: 0 }, { context: {} }]) {
+    assert.equal(ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: { ...snapshot, ...change } } }).ok, false);
+  }
+  assert.match(ui.renderContextReply("model", ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: { ...snapshot, context: { document: null } } } })), /no model is open/);
+});

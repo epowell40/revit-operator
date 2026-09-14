@@ -29,6 +29,14 @@ namespace RevitBridge
 
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosing += OnDocumentClosing;
+            application.ControlledApplication.DocumentOpening += OnDocumentOpening;
+            application.ControlledApplication.DocumentClosed += OnDocumentClosed;
+            application.ControlledApplication.DocumentChanged += OnDocumentChanged;
+            application.ControlledApplication.DocumentSaved += OnDocumentSaved;
+            application.ControlledApplication.DocumentSavedAs += OnDocumentSavedAs;
+            application.ViewActivated += OnViewActivated;
+            application.ViewActivating += OnViewActivating;
+            application.SelectionChanged += OnSelectionChanged;
             application.Idling += OnIdling;
 
             try
@@ -160,6 +168,15 @@ namespace RevitBridge
             WriteStartupLog("OnShutdown begin.");
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
+            application.ControlledApplication.DocumentOpening -= OnDocumentOpening;
+            application.ControlledApplication.DocumentClosed -= OnDocumentClosed;
+            application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+            application.ControlledApplication.DocumentSaved -= OnDocumentSaved;
+            application.ControlledApplication.DocumentSavedAs -= OnDocumentSavedAs;
+            application.ViewActivated -= OnViewActivated;
+            application.ViewActivating -= OnViewActivating;
+            application.SelectionChanged -= OnSelectionChanged;
+            RevitUiContextSnapshot.Shutdown();
             application.Idling -= OnIdling;
             try
             {
@@ -210,6 +227,7 @@ namespace RevitBridge
 
         private static void OnDocumentOpened(object sender, DocumentOpenedEventArgs args)
         {
+            RevitUiContextSnapshot.Invalidate("document_opened");
             try { OperatorNativeDocumentSessionAuthority.RegisterOpenedDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session registration failed closed: {ex.GetType().FullName}: {ex.Message}"); }
         }
@@ -224,6 +242,7 @@ namespace RevitBridge
             {
                 if (sender is UIApplication uiApplication)
                 {
+                    RevitUiContextSnapshot.Capture(uiApplication);
                     // ActiveUIDocument is the authoritative host state on the Revit API
                     // thread. A global open/close counter is unsafe here: EditFamily and
                     // other transient documents can emit asymmetric lifecycle events and
@@ -246,8 +265,37 @@ namespace RevitBridge
 
         private static void OnDocumentClosing(object sender, DocumentClosingEventArgs args)
         {
+            RevitUiContextSnapshot.Invalidate("document_closing");
             try { OperatorNativeDocumentSessionAuthority.InvalidateClosingDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session invalidation failed closed: {ex.GetType().FullName}: {ex.Message}"); }
+        }
+
+        private static void OnDocumentOpening(object sender, DocumentOpeningEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("document_opening");
+        private static void OnDocumentClosed(object sender, DocumentClosedEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("document_closed");
+        private static void OnDocumentChanged(object sender, DocumentChangedEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnDocumentSaved(object sender, DocumentSavedEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnDocumentSavedAs(object sender, DocumentSavedAsEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnViewActivated(object sender, ViewActivatedEventArgs args)
+        {
+            RevitUiContextSnapshot.Invalidate("view_changed");
+            try
+            {
+                var document = args.CurrentActiveView?.Document;
+                if (document != null) RevitUiContextSnapshot.Capture(new UIApplication(document.Application));
+            }
+            catch { RevitUiContextSnapshot.Invalidate("view_context_unavailable"); }
+        }
+        private static void OnViewActivating(object sender, ViewActivatingEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("view_activating");
+        private static void OnSelectionChanged(object sender, SelectionChangedEventArgs args)
+        {
+            try { RevitUiContextSnapshot.Capture(new UIApplication(args.GetDocument().Application)); }
+            catch { RevitUiContextSnapshot.Invalidate("selection_context_unavailable"); }
         }
 
         private static OperatorApprovalMode GetCourierApprovalMode()

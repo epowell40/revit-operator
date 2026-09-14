@@ -146,7 +146,8 @@
     "TransactionTruthTests",
     "OperatorActionDeadlinePolicyTests",
     "OperatorSupportedToolInventoryTests",
-    "OperatorRetiredPrototypeToolTests"
+    "OperatorRetiredPrototypeToolTests",
+    "OperatorUiContextSnapshotTests"
   ],
   "failure_families": [
     {
@@ -1163,6 +1164,21 @@
       "coverage": [
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/simple_assistant_ui.test.js"
+      ]
+    },
+    {
+      "id": "background-revit-context-queue-starves-simple-model-identity",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "dotnet:OperatorUiContextSnapshotTests",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "sidecar-stop-route-scope-error-leaves-provider-running",
+      "coverage": [
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:codex_app_server_lifecycle.test.ts"
       ]
     }
   ],
