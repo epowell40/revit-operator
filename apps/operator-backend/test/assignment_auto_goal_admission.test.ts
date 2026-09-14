@@ -15,8 +15,11 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
 import { setAgentGoal } from "../src/goals/service.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
+import { navigationPreservationRequests, scopedFurtherChangeRequests } from "./navigation_preservation.fixtures.js";
 
 for (const [effect, prompt, facts] of [
+  ...navigationPreservationRequests.map(prompt => ["read", prompt, ["task.result_available"]] as const),
+  ...scopedFurtherChangeRequests.map(prompt => ["apply", prompt, ["task.result_available"]] as const),
   ["read", "Review the Heat Recovery Unit Summary schedule in the open model. Tell me how many equipment rows it contains, identify rows with missing Space Number or Space Name, and give me a brief prioritized assessment of what needs attention. Distinguish an actual blank schedule field from information a tool could not read. Do not change the model.", ["task.result_available"]],
   ["read", "Count the rows in the equipment schedule and identify blank fields. Do not change the model.", ["task.result_available"]],
   ["read", "Audit all air terminals and count the missing airflow values. Give me a prioritized gap list. Do not change the model.", ["task.result_available"]],
@@ -75,6 +78,10 @@ for (const [effect, prompt, facts] of [
         assert.equal(prepared?.kernelVersion, 2);
         const snapshot = getAssignmentKernelSnapshotV2(prepared!.assignmentId)!;
         assert.equal(snapshot.spec.requested_effect, effect);
+        if (navigationPreservationRequests.includes(prompt as any)) {
+          assert.equal(snapshot.spec.result_delivery_required, true, "navigation must accept a verified read result");
+          assert.equal(snapshot.spec.work_units.some(unit => unit.requested_effect === "apply"), false);
+        }
         assert.equal(snapshot.current_binding.principal_id, "local:shared-token");
         assert.equal(snapshot.current_binding.document_fingerprint, "test-model");
         assert.equal(snapshot.spec.source_user_request, prompt);

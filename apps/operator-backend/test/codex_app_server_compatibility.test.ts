@@ -100,6 +100,13 @@ import test from "node:test";
 import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+
+test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /View navigation:[^\n]*verify the active view with `revit_get_context`/);
+  assert.match(instructions, /fresh Observation in resultItems/);
+  assert.match(instructions, /Pending activation and capture\/control receipts cannot prove completion/);
+});
 import {
   extractCitedHttpUrls,
   fetchCitedAuthoritativeWebEvidence,

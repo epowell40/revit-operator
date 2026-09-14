@@ -2,7 +2,20 @@ import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 
 // An explicit model-preservation sentence is a turn constraint, including
 // ordinary wording such as "Do not make model changes yet."
-export const MODEL_CHANGE_PROHIBITION = /\b(?:do not|don't|dont|never)\s+(?:make|perform|apply|commit)\s+(?:any\s+)?(?:(?:revit|model|project|document)\s+(?:changes?|edits?|modifications?)|(?:changes?|edits?|modifications?)\s+to\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document))\b/i;
+export const MODEL_CHANGE_PROHIBITION = /\b(?:do not|don't|dont|never)\s+(?:make|perform|apply|commit)\s+(?:any\s+)?(?:(?:further|additional)\s+)?(?:(?:revit|model|project|document)\s+(?:changes?|edits?|modifications?)|(?:changes?|edits?|modifications?)\s+to\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document))\b/i;
+
+function withoutScopedFurtherChanges(text: string): string {
+  const match = new RegExp(MODEL_CHANGE_PROHIBITION.source + "[.!?]*\\s*$", "i").exec(text);
+  if (!match || !/\b(?:further|additional)\b/i.test(match[0])) return text;
+  const preceding = text.slice(0, match.index);
+  const leadingAction = /^\s*(?:please\s+)?([a-z]+(?:\s+(?:up|in|out|off|on))?)\b/i.exec(preceding)?.[1] ?? "";
+  // A terminal scope limit preserves an affirmative edit earlier in this
+  // turn. A leading prohibition or navigation-only request stays read-only.
+  // A noun or an edit mentioned inside an inspection/explanation is not an
+  // affirmative command. Keep the exception limited to a leading edit.
+  return hasExplicitMutationVerb(leadingAction) && !hasPreviewOrGlobalNoWriteFraming(preceding)
+    ? preceding : text;
+}
 
 /** A disabled request option is not an instruction to run a preview. */
 export function previewIntentText(text: string): string {
@@ -75,6 +88,7 @@ export function hasNoncommittingChangePreviewRequest(text: string): boolean {
 }
 
 export function hasEffectiveNoWriteFraming(text: string): boolean {
+  text = withoutScopedFurtherChanges(text);
   const withoutScopedConstraint = text.replace(SCOPED_ANYTHING_ELSE_NO_WRITE, " ");
   const scopedAffirmativeMutation = withoutScopedConstraint !== text
     && hasExplicitMutationVerb(withoutScopedConstraint)

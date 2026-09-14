@@ -7,6 +7,7 @@ import { getFreshRevitEvidenceRequirement } from "../src/brains/revit_turn_evide
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 import { standaloneEngineeringQuestion, independentEngineeringQuestions } from "./standalone_engineering.fixtures.js";
 import { retainedResultQuestions, retainedResultMixedRequests } from "./retained_result_discussion.fixtures.js";
+import { navigationPreservationRequests, scopedFurtherChangeRequests } from "./navigation_preservation.fixtures.js";
 
 test("discussion of explicitly earlier results avoids a new task while neighboring model work retains its owner", () => {
   for (const prompt of retainedResultQuestions) {
@@ -72,6 +73,7 @@ for (const prompt of [research, calculation, documentReview, followup, "Rewrite 
 });
 
 for (const prompt of [
+  ...navigationPreservationRequests,
   'Test the custom C# execution diagnostics without changing the model. Run a small read-only program that logs "diagnostic probe reached" and then deliberately throws an InvalidOperationException with message "diagnostic probe failure". Show me the retained log and the source line of the exception. Then repair that same program to return a short successful result, run it once, and report both outcomes. Do not change any elements or parameters.',
   "Repair and rerun the custom C# diagnostic without modifying the Revit model.",
   "Fix the test program. Do not edit any elements or parameters.",
@@ -88,6 +90,11 @@ for (const prompt of [
 });
 
 test("model-specific and mixed research requests retain model ownership", () => {
+  for (const prompt of scopedFurtherChangeRequests) {
+    assert.equal(classifyAutoGoalRequest(prompt).requestedEffect, "apply", prompt);
+    assert.equal(buildTeammateTurnContract({ session_id: "scoped-edit", user_text: prompt }).write_authorized, true, prompt);
+  }
+  assert.equal(classifyAutoGoalRequest("Do not make any further model changes. Explain how to rename sheet M102.").requestedEffect, "read");
   for (const prompt of ["Look up the selected fan's manufacturer and replace its type.", "Calculate velocity from this duct's actual flow and size.",
     "Research the manufacturer and set the selected equipment's Mark to AHU-2.", "Explain this model's duct sizing.", "What size is this?",
     "What size is this? Keep it brief.", "Which system does this belong to? Make it concise.",

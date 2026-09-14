@@ -1550,6 +1550,15 @@
         "backend:codex_turn_input.test.ts",
         "backend:team_assistant_live_regressions.test.ts"
       ]
+    },
+    {
+      "id": "navigation-further-model-changes-prohibition-admits-apply-and-rejects-read-delivery",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
