@@ -55,6 +55,9 @@ function requestedEffect(goal: GoalRecord): RequestedEffectV2 {
 function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly string[] = []): string[] | null {
   if (configuredFacts.some((fact) => fact.startsWith("inventory."))) return [...configuredFacts];
   const source = `${goal.objective}\n${goal.acceptance_criteria.join("\n")}\n${text(goal.work_budget?.source_user_request, 20_000)}`;
+  const boundedSample = /\bsampled\b|\b(?:sample|samples|sampling)\b(?!\s+models?\b)|\bsnapshot_limit\s*[=:]?\s*\d+/i.test(source);
+  const fullInventory = /\b(?:all|every|entire|whole)\b[^.!?\n]{0,60}\b(?:model|project|instances?|elements?|ducts?|devices?|equipment)\b|\bcomplete\s+inventory\b/i.test(source);
+  if (boundedSample && !fullInventory) return null;
   if (!/\b(inventory|quantif(?:y|ication)|count|how many|group(?:ed|ing)?)\b/i.test(source)) return null;
   const grouped = /\b(group(?:ed|ing)?|family|type)\b/i.test(source);
   return ["inventory.complete", "inventory.total", ...(grouped ? ["inventory.group"] : [])];

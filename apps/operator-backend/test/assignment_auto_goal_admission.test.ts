@@ -19,6 +19,10 @@ import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 for (const [effect, prompt, facts] of [
   ["read", "Please check the drafting view we just created. Keep the existing view and report its name and scale.", ["task.result_available"]],
   ["read", "Inspect the current view scale.", ["task.result_available"]],
+  ["read", "Use custom C# to count a sample of up to twenty ducts by type. Make no model changes.", ["task.result_available"]],
+  ["read", "Exercise C# compile repair and group the sampled ducts by TypeName. Use snapshot_limit 20. Make no model changes.", ["task.result_available"]],
+  ["read", "Count all ducts by type in this sample model.", ["inventory.complete", "inventory.total", "inventory.group"]],
+  ["read", "Inspect a sample, then count all ducts in the model by type.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["apply", "Check the view scale, then set it to 100.", ["task.result_available"]],
   ["apply", "Report its name and scale the view to 100.", ["task.result_available"]],
   ["read", "Count all air devices in the project and break the total down by family and type. Do not change the model.", ["inventory.complete", "inventory.total", "inventory.group"]],

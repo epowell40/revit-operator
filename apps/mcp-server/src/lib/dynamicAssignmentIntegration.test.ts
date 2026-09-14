@@ -16,7 +16,7 @@ function result(mode = "read", success = true) {
   return { schema: "revit-operator.dynamic-revit-program-run.v1", requested_mode: mode, execution_ok: success, execution_status: success ? "completed" : "failed",
     report: { Inspected: "20", "Type: Rectangular": "20", Limit: "Bounded snapshot sample; not a complete model inventory." },
     iteration: { source_sha256: "sha256:" + "b".repeat(64) }, verification: { evidence_sha256: "sha256:" + "c".repeat(64) },
-    evidence: { snapshotReceipt: JSON.stringify({ document: { projectFingerprint: "sha256:" + binding.document_fingerprint } }),
+    evidence: { snapshotReceipt: JSON.stringify({ document: { ProjectFingerprint: "sha256:" + binding.document_fingerprint } }), previewReceipt: "",
       hostAuthenticationReceipts: ["authenticated-bootstrap", "authenticated-snapshot"], workerOutput: { ok: success, graph: { operations: [] } }, failure: success ? null : "CS0103: unknown member" } };
 }
 
@@ -55,7 +55,7 @@ test("an empty-graph report requested as preview cannot claim a native rollback 
 test("dynamic report rejects another document, another mode, and missing authenticated host evidence", async () => {
   for (const changed of [
     { ...result(), requested_mode: "apply" },
-    { ...result(), evidence: { ...result().evidence, snapshotReceipt: JSON.stringify({ document: { projectFingerprint: "sha256:" + "d".repeat(64) } }) } },
+    { ...result(), evidence: { ...result().evidence, snapshotReceipt: JSON.stringify({ document: { ProjectFingerprint: "sha256:" + "d".repeat(64) } }) } },
     { ...result(), evidence: { ...result().evidence, hostAuthenticationReceipts: [] } }
   ]) await runWithAssignmentKernelV2(meta(), async () => {
     beginAssignmentKernelDynamicDispatchV2(); assert.throws(() => recordAssignmentKernelDynamicResultV2(changed), /assignment_dynamic_result_/);

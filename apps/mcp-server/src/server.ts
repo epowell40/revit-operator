@@ -79,7 +79,7 @@ import {
   recordExecutionStrategyEvidence
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
-import { DYNAMIC_REVIT_SOURCE_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
+import { DYNAMIC_REVIT_SOURCE_GUIDE, DYNAMIC_REVIT_TOOL_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
 import {
@@ -612,7 +612,7 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
   content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
 }));
 
-server.tool("operator_run_dynamic_revit_program", "Authenticated General Agent and development laboratory: compile and execute generated C# on the user's trusted workstation through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Five evidence-bound attempts form one diagnostic loop. A committed_verified apply emits a separate checkpoint; continue_from_checkpoint starts the next design step against that exact persisted document/session, allowing up to 64 verified steps while preserving explicit discard-or-compensation restoration. Certified-only exposure remains fail-closed, while an authenticated hosted General Agent has the same execution substrate as local development.", {
+server.tool("operator_run_dynamic_revit_program", DYNAMIC_REVIT_TOOL_GUIDE, {
   source: z.string().min(1).max(128_000).describe(DYNAMIC_REVIT_SOURCE_GUIDE),
   mode: z.enum(["read", "preview", "apply"]).describe("read: snapshot report only, no operation graph is allowed; preview: execute a rollback preview; apply: authorized commit and verification."),
   target_revit_year: z.enum(["2023", "2024", "2025", "2026", "2027"]).optional(),

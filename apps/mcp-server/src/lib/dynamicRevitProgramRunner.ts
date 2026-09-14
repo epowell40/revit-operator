@@ -179,7 +179,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const committedCheckpoint = committedApplyEvidence ? createCheckpoint({
     runId, sourceHash, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null, verified: committedApplyEvidence
   }) : null;
-  const snapshotReport = typeof evidence.previewReceipt === "string"
+  const snapshotReport = typeof evidence.previewReceipt === "string" && evidence.previewReceipt.trim().length > 0
     && JSON.parse(evidence.previewReceipt)?.schema === "dynamic-revit-read-report-receipt/v0";
   if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   const canonicalAttemptSettlement = executionStatus === "completed" ? {

@@ -458,6 +458,18 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
+  const generatedTool = tools.tools.find(tool => tool.name === "operator_run_dynamic_revit_program")!;
+  // Code-mode clients can discard descriptions on schema properties. Discovery
+  // must still contain everything needed to write the first valid program.
+  assert.match(generatedTool.description!, /IDynamicRevitProgram/);
+  assert.match(generatedTool.description!, /DynamicProgramResult Execute\(DynamicRevitContext c\)/);
+  assert.match(generatedTool.description!, /category=OST_DuctCurves/);
+  assert.match(generatedTool.description!, /public sealed class SampleReport/);
+  const invalidGenerated = await client.callTool({ name: generatedTool.name,
+    arguments: { mode: "read", source: "public class Program {}", category: "duct sample summary by type" } });
+  assert.equal(invalidGenerated.isError, true);
+  assert.match(JSON.stringify(invalidGenerated.content), /category/);
+  assert.match(JSON.stringify(invalidGenerated.content), /Input validation error/);
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
   const findTextNotesTool = tools.tools.find(tool => tool.name === "revit_find_text_notes");

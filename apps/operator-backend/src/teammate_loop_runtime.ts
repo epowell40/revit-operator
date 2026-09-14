@@ -1127,6 +1127,8 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
   return separator >= 0 ? state.key.slice(0, separator) : null;
 }
 
+export function teammateLoopIsConversationForOwner(owner: object, turnId: unknown): boolean { return ownerState(owner, turnId)?.contract.turn_kind === "conversation"; }
+
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown }): TeammateMcpGate {
   const state = ownerState(owner, params.turnId);
   if (!state) return { allowed: false, message: "[teammate_loop_missing] No active host teammate-loop contract exists for this Revit call." };

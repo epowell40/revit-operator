@@ -21,7 +21,7 @@ test("read-only runner enforces an empty graph, retains host rejection diagnosti
       assert.equal(config.readOnly, true); assert.equal(config.apply, false);
       assert.equal(config.category, "OST_DuctCurves"); assert.equal(config.limit, 20);
       const source = fs.readFileSync(config.sourceFile, "utf8");
-      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok,
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok, previewReceipt: "",
         failure: ok ? null : "Read-only generated code produced model operations. No preview or apply was dispatched.",
         workerOutput: { ok: true, sourceHash: sha256(source), executionStatus: "completed", graph: { operations },
           report: { Inspected: "20", Limit: "Bounded sample" }, logs: ["Inspected supplied DTOs"], diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
@@ -347,7 +347,7 @@ test("dynamic runner distinguishes source repair from transient retry and caps t
       };
       const bundle = sha256(`dynamic-revit-worker-diagnostics/v1\nCS1002|compile|error|edit_source|3|18|3|18|||1|${sha256(diagnostic.message)}`);
       const source = fs.readFileSync(config.sourceFile, "utf8");
-      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", workerOutput: {
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", previewReceipt: "", workerOutput: {
         sourceHash: sha256(source), executionStatus: "failed", diagnostics: [diagnostic], diagnosticBundleHash: bundle
       } }));
       return { exitCode: 1, stdout: "", stderr: "" };

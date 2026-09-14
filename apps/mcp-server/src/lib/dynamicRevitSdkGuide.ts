@@ -17,3 +17,7 @@ Working report example:
 ${DYNAMIC_REVIT_READ_SAMPLE}
 Use mode:"read" for reports. The successful raw tool payload contains report and logs at its root. For canonical result delivery select resultItems path:["report"] from the returned Observation ID, without adding a payload wrapper.
 Advanced: IDynamicResultReferenceRevitProgramV1 uses result_reference, c.Fact(...), c.TraceStep(...), c.Require(...), c.NeedFacts(...) or c.Complete(). Use its exact domain contract before composing MEP/annotation graphs. Repair a compile error with changed source and resume:{prior_run_id,prior_evidence_sha256,mode:"repair"}; five attempts share one evidence-bound loop.`;
+
+// Some code-mode clients omit property descriptions when generating TypeScript
+// declarations. Keep the executable contract at tool level as well.
+export const DYNAMIC_REVIT_TOOL_GUIDE = `Compile and run bounded generated C# on the trusted workstation. read permits reports only; preview rolls back model operations; apply requires fresh host authorization, commit and readback. Machine access stays restricted. Five evidence-bound repair attempts form one loop; committed_verified checkpoints permit up to 64 separately verified steps. Certified-only exposure remains fail-closed.\n\n${DYNAMIC_REVIT_SOURCE_GUIDE}`;

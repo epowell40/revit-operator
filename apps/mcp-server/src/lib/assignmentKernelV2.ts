@@ -122,9 +122,10 @@ export function recordAssignmentKernelDynamicResultV2(value: Record<string, unkn
       || scope.native_calls.length || value.schema !== "revit-operator.dynamic-revit-program-run.v1"
       || value.requested_mode !== scope.context.requested_effect) throw new Error("assignment_dynamic_result_context_mismatch");
   const evidence = object(value.evidence);
-  const snapshot = typeof evidence.snapshotReceipt === "string" ? object(JSON.parse(evidence.snapshotReceipt)) : {};
+  const snapshot = typeof evidence.snapshotReceipt === "string" && evidence.snapshotReceipt.trim() ? object(JSON.parse(evidence.snapshotReceipt)) : {};
   const expected = scope.context.binding.document_fingerprint?.replace(/^sha256:/, "");
-  const actual = text(object(snapshot.document).projectFingerprint).replace(/^sha256:/, "");
+  // The native snapshot serializes DynamicDocumentDto with PascalCase fields.
+  const actual = text(object(snapshot.document).ProjectFingerprint).replace(/^sha256:/, "");
   if (expected && actual !== expected) throw new Error("assignment_dynamic_result_document_mismatch");
   if (value.execution_ok === true && (!text(object(value.verification).evidence_sha256).match(/^sha256:[a-f0-9]{64}$/)
       || !text(object(value.iteration).source_sha256).match(/^sha256:[a-f0-9]{64}$/)
@@ -138,7 +139,7 @@ function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
   const evidence = object(payload.evidence);
   const completed = payload.execution_ok === true && payload.execution_status === "completed";
   const worker = object(evidence.workerOutput);
-  const preview = typeof evidence.previewReceipt === "string" ? object(JSON.parse(evidence.previewReceipt)) : {};
+  const preview = typeof evidence.previewReceipt === "string" && evidence.previewReceipt.trim() ? object(JSON.parse(evidence.previewReceipt)) : {};
   const snapshotReport = preview.schema === "dynamic-revit-read-report-receipt/v0";
   const apply = scope.context.requested_effect === "apply";
   // A failed compilation never ran an edit. Other failed apply executions are

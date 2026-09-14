@@ -7,6 +7,7 @@ import {
   guardTeammateMcpCall,
   recordTeammateMcpResult,
   reconcileTeammateCanonicalSettlementV2,
+  teammateLoopIsConversationForOwner,
   teammateLoopSessionIdForOwner
 } from "../teammate_loop_runtime.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
@@ -78,6 +79,20 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
 
 export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   const params = request.params ?? {};
+  // Standalone research owns the current provider turn, not an earlier model
+  // assignment in this conversation. Only this read-only, policy-enforced tool
+  // may execute without a model assignment; native tools still need one.
+  if ((params.namespace === "revit_operator" || params.namespace === "mcp__revit_operator")
+      && params.tool === "web_fetch_evidence" && teammateLoopIsConversationForOwner(runtime, params.turnId)) {
+    const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId)!;
+    if (!runtime.assignmentKernelV2Binding?.(params.turnId, sessionId)) {
+      try {
+        return adaptMcpToolCallResultToDynamicResponse(await runtime.callTool(params.tool, params.arguments ?? {}, { turnId: params.turnId, sessionId }));
+      } catch (error) {
+        return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false };
+      }
+    }
+  }
   const interruptedAssignment = findInterruptedAutoGoalForSession(teammateLoopSessionIdForOwner(runtime, params.turnId));
   if (interruptedAssignment) {
     return {
@@ -205,8 +220,9 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       };
     }
     let accepted = false;
+    let rawResult: any;
     try {
-      const rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
+      rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
         turnId: params.turnId,
         sessionId,
         assignmentKernelV2: lease,
@@ -271,7 +287,11 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
       return {
-        contentItems: [{ type: "inputText", text: `[assignment_kernel_v2_tool_failed] ${error instanceof Error ? error.message : String(error)}` }],
+        contentItems: [{ type: "inputText", text: `[assignment_kernel_v2_tool_failed] ${error instanceof Error ? error.message : String(error)}` },
+          // Preserve bounded SDK validation/handler diagnostics even when a
+          // canonical receipt is missing. Text never grants effect authority.
+          ...(rawResult?.isError === true ? adaptMcpToolCallResultToDynamicResponse(rawResult).contentItems
+            .filter(item => item.type === "inputText").slice(0, 4).map(item => ({ ...item, text: item.text.slice(0, 8_000) })) : [])],
         success: false
       };
     } finally {

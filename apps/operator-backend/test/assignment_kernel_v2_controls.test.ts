@@ -29,6 +29,8 @@ import { renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_
 import { buildAssignmentResultDeliveryV2 } from "../src/assignments/assignment_kernel_v2_result_delivery.js";
 import { canonicalTeammateFinalVerification } from "../src/teammate_assignment_inputs.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
+import { appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { deriveAndSettleAssignmentKernelV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -51,6 +53,52 @@ function start(prompt = "Count all air devices in the model.") {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "controls-model" } } } } })!;
   return { prepared, binding: prepared.bindingV2!, snapshot: getAssignmentKernelSnapshotV2(prepared.assignmentId)! };
 }
+
+test("a standalone research turn fetches evidence after a blocked model task without reopening model access", () => workspace(async () => {
+  const { prepared, binding, snapshot } = start("Use a short custom C# program to inspect twenty ducts. Make no model changes.");
+  appendCurrentAssignmentKernelEventV2({ goal_id: prepared.assignmentId, binding: snapshot.current_binding,
+    event_id: "retained-failure", actor: "assignment-kernel-v2", body: { event_type: "progress_blocked",
+      code: "no_progress_budget_exhausted", gap_ids: [`criterion:${snapshot.spec.criteria[0]!.criterion_id}`] } });
+  assert.equal(deriveAndSettleAssignmentKernelV2(binding, "no_progress_budget_exhausted").outcome, "blocked");
+  let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => null, callTool: async (tool: string, _args: unknown, context: any) => {
+    assert.equal(tool, "web_fetch_evidence"); assert.equal(context.sessionId, "controls-session");
+    assert.equal(context.assignmentKernelV2, undefined); calls++;
+    return { content: [{ type: "text", text: "Source: https://www.greenheck.com/\nExtracted text: bathroom exhaust fan, 109-144 CFM" }] };
+  } };
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session",
+    user_text: "Look up current manufacturer information for Greenheck SP-A125-QD. Do not change the model." } as any);
+  const request = { id: "research", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "research-turn",
+    tool: "web_fetch_evidence", arguments: { url: "https://www.greenheck.com/" } } } as any;
+  try {
+    const response: any = await handleCodexDynamicToolCall(runtime as any, request);
+    assert.equal(response.success, true); assert.match(JSON.stringify(response), /109-144/); assert.equal(calls, 1);
+    for (const tool of ["revit_get_context", "operator_run_dynamic_revit_program", "revit_set_parameters"])
+      assert.equal((await handleCodexDynamicToolCall(runtime as any, { ...request, params: { ...request.params, tool } }) as any).success, false);
+    assert.equal(calls, 1); assert.equal(getAssignmentKernelSnapshotV2(prepared.assignmentId)!.outcome, "blocked");
+  } finally { endTeammateLoopOwner(owner); }
+  assert.equal((await handleCodexDynamicToolCall(runtime as any, request) as any).success, false, "expired turn cannot fetch");
+  assert.equal(calls, 1);
+}));
+
+test("generated-tool validation diagnostics survive a missing canonical receipt without inventing native evidence", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Use a short custom C# program to summarize twenty ducts. Make no model changes.");
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, _args: unknown, context: any) => { context.onMcpAccepted();
+      return { isError: true, content: [{ type: "text", text: 'Input validation error: category must match OST_[A-Za-z0-9_]+' }] };
+    } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Pilot", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
+  try {
+    const result: any = await handleCodexDynamicToolCall(runtime as any, { id: "invalid-category", method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "invalid-category", tool: "operator_run_dynamic_revit_program",
+      arguments: { mode: "read", source: "public class Program {}", category: "duct sample summary by type" } } } as any);
+    assert.equal(result.success, false); assert.match(JSON.stringify(result), /category must match OST_/);
+    const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.equal(Object.keys(after.observations).length, 0);
+    assert.equal(Object.values(after.operations).some(o => o.persistent_effect === "applied"), false);
+  } finally { endTeammateLoopOwner(owner); }
+}));
 
 test("read-result HTTP delivery returns native values, rejects foreign or missing evidence, and survives publication", () => workspace(async () => {
   const { binding, snapshot, prepared } = start("Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
@@ -155,7 +203,7 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
       context.onMcpAccepted();
       const native = tool === "revit_call_tool";
       const apply = args.path === "/revit/export-pdf";
-      const payload = apply ? { ok: true, status: "Success", artifact_receipt: receipt }
+      const payload = apply ? { ok: true, status: "Success", artifact_receipt: receipt, selectedSheets: [{ sheetNumber: "M000", name: "Cover Sheet" }] }
         : native ? { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true, requestedPaths: [outputPath], files: [file] }
           : tool === "revit_search_tools" ? { matches: [{ method: "POST", path: "/revit/inspect-exported-files" }] } : { artifact_receipt: receipt };
       const facts = native ? [{ fact_id: apply ? "task.result_available" : "control.result_available", fact_class: apply ? "domain" : "control", value: true }]
@@ -211,6 +259,7 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
     const presentation = guardGenericTeammateDecision(loopRequest,
       { assistant_message: renderTerminalResultV2(final), actions: [] } as any);
     assert.doesNotMatch(presentation.assistant_message, /post apply verification required/);
+    assert.match(presentation.assistant_message, /Exported sheet M000: Cover Sheet/);
     assert.equal(presentation.teammate_loop_receipt?.verified, true);
     assert.deepEqual(calls, ["/revit/export-pdf", "revit_search_tools", "operator_retrieve_evidence", "/revit/inspect-exported-files"]);
     assert.equal(Object.values(final.operations).filter(o => o.persistent_effect === "applied").length, 1);

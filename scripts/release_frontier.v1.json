@@ -1065,6 +1065,34 @@
         "mcp:lib/dynamicRevitProgramRunner.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
       ]
+    },
+    {
+      "id": "code-mode-tool-discovery-retains-sdk-and-validation-diagnostics",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-research-escapes-stale-model-task-without-native-authority",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:team_assistant_live_regressions.test.ts"
+      ]
+    },
+    {
+      "id": "native-generated-receipt-casing-and-empty-preview-preserve-compile-repair",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "bounded-generated-sample-does-not-require-full-model-census",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
