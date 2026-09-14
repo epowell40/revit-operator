@@ -7,7 +7,7 @@ import test from "node:test";
 import { createCanvas } from "@napi-rs/canvas";
 import { buildCodexTurnInput } from "../src/brains/codex_turn_input.js";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
-import { readRegisteredPdfAttachment } from "../src/attachments/read_attachment.js";
+import { ATTACHMENT_CODE_MODE_DISPLAY, readRegisteredPdfAttachment } from "../src/attachments/read_attachment.js";
 import type { ChatRequest } from "../src/contracts.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN8sAAAAASUVORK5CYII=", "base64");
@@ -137,6 +137,8 @@ test("eight combined PDF pages expose the missing coverage and can be read expli
   assert.match(text, /STANDALONE ASSISTANT TURN/); assert.match(text, /operator_read_attachment/);
   assert.equal(input.filter(item => item.type === "image").length, 6);
   assert.match(text, /marked-checklist.pdf/); assert.match(text, /2 pages still require inspection/);
+  assert.ok(text.includes(ATTACHMENT_CODE_MODE_DISPLAY), "the actual turn supplies the tested one-call image display recipe");
+  assert.match(text, /returned value is a string/); assert.match(text, /Do not print or JSON.stringify the raw result/);
   const remaining = await readRegisteredPdfAttachment("redline-input", { attachment_id: second.id, pages: [2, 3] });
   const coverage = JSON.parse(remaining.content.filter(item => item.type === "text")[0]!.text);
   assert.deepEqual(coverage.pages_returned, [2, 3]); assert.equal(coverage.sha256, second.sha256);

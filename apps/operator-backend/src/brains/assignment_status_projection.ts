@@ -58,6 +58,7 @@ export function projectAssignmentStatusForModel(value: unknown): Row | null {
   };
   const delivery = list(snapshot.result_delivery?.items);
   projection.result_delivery = { items: boundedEntries("result_delivery.items", delivery, 9000) };
+  if (snapshot.result_delivery?.assessment !== undefined) projection.result_delivery.assessment = exact("result_delivery.assessment", snapshot.result_delivery.assessment, 9000);
   const omittedDelivery = delivery.filter(item => !projection.result_delivery.items.includes(item));
   if (omittedDelivery.length) projection.result_delivery.omitted_evidence = boundedEntries("result_delivery.omitted_evidence",
     omittedDelivery.map(item => ({ label: item.label, observation_id: item.observation_id, evidence_ref: item.evidence_ref,

@@ -637,6 +637,16 @@ test("compiled MCP preserves native result selections and rejects malformed read
     assert.equal(denied.isError, true);
   }
   assert.equal(requests.length, 1, "invalid selectors must not reach the backend");
+  const assessment = { overview: "Review system sizing.", findings: [{ priority: "high", title: "Confirm demand", text: "Check the branch against the design demand.", evidence_indices: [1] }], limitations: ["Demand is not known."], questions: ["What load should it serve?"] };
+  const reviewed = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems, assessment }, _meta });
+  assert.notEqual(reviewed.isError, true); assert.deepEqual((requests[1].body as any).assessment, assessment);
+  assert.deepEqual(requests[1].body.result_items, requests[0].body.result_items);
+  for (const invalid of [{ ...assessment, authority: "native-host" }, { ...assessment, questions: ["1", "2", "3", "4"] },
+    { ...assessment, findings: [{ ...assessment.findings[0], evidence_indices: [0] }] }]) {
+    const denied = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems, assessment: invalid }, _meta });
+    assert.equal(denied.isError, true);
+  }
+  assert.equal(requests.length, 2, "malformed assessments must not reach the backend");
 });
 
 test("compiled MCP forwards a request-scoped principal JWT to completion without model or audit leakage", async (t) => {

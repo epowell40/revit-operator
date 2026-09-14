@@ -1397,6 +1397,27 @@
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/conversation_rendering.test.js"
       ]
+    },
+    {
+      "id": "long-audit-journal-rehydration-replays-every-prefix-and-stalls-ui",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "code-mode-pdf-display-repeats-reads-and-dumps-base64",
+      "coverage": [
+        "backend:read_attachment.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "checklist-audit-final-answer-is-raw-inventory-without-priorities-or-questions",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

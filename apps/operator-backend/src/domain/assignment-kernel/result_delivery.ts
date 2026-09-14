@@ -15,6 +15,47 @@ export interface AssignmentResultItemV2 {
 
 export interface AssignmentResultDeliveryV2 {
   items: readonly AssignmentResultItemV2[];
+  assessment?: AssignmentAssessmentV2;
+}
+
+/** Assistant interpretation of cited values; never evaluator authority. */
+export interface AssignmentAssessmentV2 {
+  overview: string;
+  findings: readonly { priority: "high" | "medium" | "low"; title: string; text: string; evidence_indices: readonly number[] }[];
+  limitations: readonly string[];
+  questions: readonly string[];
+}
+
+function boundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && Boolean(value.trim()) && value.length <= max;
+}
+
+export function validateAssignmentAssessmentV2(value: unknown, items: readonly AssignmentResultItemV2[]): asserts value is AssignmentAssessmentV2 {
+  const a = value as AssignmentAssessmentV2;
+  if (!a || typeof a !== "object" || Array.isArray(a)
+      || Object.keys(a).some(key => !["overview", "findings", "limitations", "questions"].includes(key))
+      || !boundedText(a.overview, 1200) || !Array.isArray(a.findings) || a.findings.length < 1 || a.findings.length > 12
+      || !Array.isArray(a.limitations) || a.limitations.length > 8 || a.limitations.some(text => !boundedText(text, 800))
+      || !Array.isArray(a.questions) || a.questions.length > 3 || a.questions.some(text => !boundedText(text, 600))) {
+    throw new Error("assignment_assessment_invalid");
+  }
+  for (const finding of a.findings) {
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)
+        || Object.keys(finding).some(key => !["priority", "title", "text", "evidence_indices"].includes(key))
+        || !["high", "medium", "low"].includes(finding.priority) || !boundedText(finding.title, 160) || !boundedText(finding.text, 1200)
+        || !Array.isArray(finding.evidence_indices) || finding.evidence_indices.length < 1 || finding.evidence_indices.length > 8
+        || new Set(finding.evidence_indices).size !== finding.evidence_indices.length
+        || finding.evidence_indices.some((index: number) => !Number.isSafeInteger(index) || index < 1 || index > items.length)) {
+      throw new Error("assignment_assessment_finding_invalid");
+    }
+  }
+  // An assessment should present selected answer values, never whole native
+  // inventories. The full hash-checked payload remains retained separately.
+  const scalar = (item: unknown) => item === null || ["string", "number", "boolean"].includes(typeof item);
+  if (items.some(item => JSON.stringify(item.value).length > 800
+      || !(scalar(item.value) || (Array.isArray(item.value) && item.value.length <= 12 && item.value.every(scalar))))) {
+    throw new Error("assignment_assessment_select_concise_values: select scalar resultItems or small scalar arrays instead of whole reports or inventories");
+  }
 }
 
 /** Presentation never manufactures semantic facts or changes criterion truth. */
@@ -47,8 +88,20 @@ export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, deliver
       throw new Error("assignment_result_observation_ineligible");
     }
   }
+  if (delivery.assessment !== undefined) validateAssignmentAssessmentV2(delivery.assessment, delivery.items);
 }
 
 export function renderResultDeliveryV2(delivery: AssignmentResultDeliveryV2): string {
+  if (delivery.assessment) {
+    const a = delivery.assessment;
+    const priorities = { high: 0, medium: 1, low: 2 };
+    const findings = [...a.findings].sort((left, right) => priorities[left.priority] - priorities[right.priority]);
+    const evidence = delivery.items.map((item, i) => `- [${i + 1}] ${item.label}${item.presentation_kind === "diagnostic" ? " (failed run)" : ""}: ${Array.isArray(item.value) ? item.value.join(", ") : String(item.value)}`).join("\n");
+    return ["## Assessment", a.overview,
+      ...findings.map(finding => `### ${finding.priority[0]!.toUpperCase() + finding.priority.slice(1)} priority: ${finding.title}\n${finding.text} ${finding.evidence_indices.map(index => `[${index}]`).join(" ")}`),
+      ...(a.limitations.length ? ["## Not verified", a.limitations.map(text => `- ${text}`).join("\n")] : []),
+      ...(a.questions.length ? ["## Questions", a.questions.map((text, i) => `${i + 1}. ${text}`).join("\n")] : []),
+      "## Model evidence", evidence].join("\n\n");
+  }
   return delivery.items.map(item => `- ${item.label}${item.presentation_kind === "diagnostic" ? " (failed run)" : ""}: ${typeof item.value === "string" ? item.value : JSON.stringify(item.value)}`).join("\n");
 }

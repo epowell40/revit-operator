@@ -20,7 +20,7 @@ import {
 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { assignmentSpecFromGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
-import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
+import { __testOnlyResetGoalListCache, createGoal, getGoal, mutateGoalRecord } from "../src/goals/service.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { runWithRequestContext } from "../src/request_context.js";
 
@@ -341,6 +341,33 @@ test("trusted AssignmentSpec creation gives opaque mutations one stable input va
     if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
     else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
   }
+}));
+
+test("long persisted audit appends after restart with bounded replay work and still quarantines stale events", () => workspace(() => {
+  const { goal, binding } = fixture();
+  mutateGoalRecord(goal.id, current => {
+    const record = current.assignment_kernel_v2 as any;
+    for (let i = 2; i <= 180; i++) record.events.push(event(goal.id, binding, i, {
+      event_type: "work_unit_state_changed", work_unit_id: "work-result", state: i % 2 ? "active" : "pending", reason: "Audit progress"
+    }));
+    return current;
+  });
+  __testOnlyResetGoalListCache();
+  const clone = globalThis.structuredClone; let clones = 0;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => { clones++; return clone(value, options); }) as typeof structuredClone;
+    const result = appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, 181, {
+      event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "active", reason: "Next audit section"
+    }));
+    assert.equal(result.accepted, true); assert.equal(result.snapshot.assignment_version, 181);
+  } finally { globalThis.structuredClone = clone; }
+  assert.ok(clones < 180 * 20, `one durable append must not replay every prefix (${clones} clones)`);
+  const before = getAssignmentKernelSnapshotV2(goal.id);
+  const rejected = appendAssignmentKernelEventV2(goal.id, { ...event(goal.id, binding, 182, {
+    event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "pending", reason: "Stale caller"
+  }), binding: { ...binding, generation: 2 } });
+  assert.equal(rejected.accepted, false); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
+  __testOnlyResetGoalListCache(); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
 }));
 
 test("V2 session discovery survives a fresh process with a missing or stale independent index", () => workspace(() => {

@@ -943,7 +943,21 @@ export class AssignmentJournalV2 {
   readonly #events: AssignmentEventV2[] = [];
 
   constructor(events: readonly AssignmentEventV2[] = []) {
-    for (const event of events) this.append(event);
+    // Rehydration validates every event in order once. Calling append here
+    // replayed every prior prefix and made each persisted action quadratic in
+    // task history, blocking the event loop during long model audits.
+    const byId = new Map<string, AssignmentEventV2>();
+    for (const event of events) {
+      const existing = byId.get(event.event_id);
+      if (existing) {
+        kernelAssertV2(canonicalJsonV2(existing) === canonicalJsonV2(event), "assignment_event_id_conflict", "Event identity was reused with different content.");
+        continue;
+      }
+      const retained = structuredClone(event);
+      byId.set(retained.event_id, retained);
+      this.#events.push(retained);
+    }
+    if (this.#events.length > 0) reduceAssignmentEventsV2(this.#events);
   }
 
   append(event: AssignmentEventV2): AssignmentSnapshotV2 {

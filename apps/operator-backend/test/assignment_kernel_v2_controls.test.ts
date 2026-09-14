@@ -201,7 +201,7 @@ test("generated-tool validation diagnostics survive a missing canonical receipt 
   } finally { endTeammateLoopOwner(owner); }
 }));
 
-test("read-result HTTP delivery returns native values, rejects foreign or missing evidence, and survives publication", () => workspace(async () => {
+for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${withAssessment ? "with cited assessment" : "with native values"} rejects foreign or missing evidence and survives publication`, () => workspace(async () => {
   const { binding, snapshot, prepared } = start("Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
   const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => { throw new Error("read interrupted before delivery"); },
@@ -255,7 +255,10 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
   assert.equal(mapping.observations[0].observation_id, observationId);
   assert.equal(mapping.observations[0].evidence_id, observation.raw_payload_ref.replace(/^evidence:/, ""));
   assert.deepEqual(mapping.observations[0].eligible_criterion_ids, [snapshot.spec.criteria[0]!.criterion_id]);
-  const body = { ...binding, claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id, observation_ids: [observationId] }],
+  const assessment = { overview: "Review the drainage design before treating this pipe as ready.",
+    findings: [{ priority: "high" as const, title: "Confirm sizing", text: "The selected pipe belongs to the sanitary system. Check its size against the design load.", evidence_indices: [2, 3] }],
+    limitations: ["Fixture-unit demand and slope have not been checked."], questions: ["What design load should this branch serve?"] };
+  const body = { ...binding, ...(withAssessment ? { assessment } : {}), claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id, observation_ids: [observationId] }],
     result_items: [{ label: "Selected pipe", observation_id: observationId, path: ["name"] },
       { label: "Size", observation_id: observationId, path: ["parameters", "Size"] },
       { label: "System", observation_id: observationId, path: ["parameters", "System Name"] }] };
@@ -278,11 +281,26 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
       "an operation or correlation identifier cannot substitute for the published Observation ID");
     assert.equal((await send({ ...body, result_items: [{ ...body.result_items[0], path: ["missing"] }] })).status, 400);
     assert.equal((await send({ ...body, result_items: null })).status, 400);
+    if (withAssessment) {
+      for (const invalid of [null, { ...assessment, authority: "native-host" }, { ...assessment, questions: ["1", "2", "3", "4"] },
+        { ...assessment, findings: [{ ...assessment.findings[0], evidence_indices: [99] }] }]) {
+        assert.equal((await send({ ...body, assessment: invalid })).status, 400);
+      }
+      assert.equal((await send({ ...body, result_items: undefined })).status, 400);
+      assert.equal((await send({ ...body, result_items: [{ label: "Whole payload", observation_id: observationId, path: ["parameters"] }] })).status, 400);
+    }
     assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.terminal, false);
     const response = await send(body);
     assert.equal(response.status, 200, await response.clone().text());
     const result = (await response.json()) as any;
-    assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
+    if (withAssessment) {
+      const rendered = renderTerminalResultV2(result.assignment_snapshot_v2);
+      assert.match(rendered, /High priority: Confirm sizing/); assert.match(rendered, /\[2\] \[3\]/);
+      assert.match(rendered, /Not verified/); assert.match(rendered, /What design load/);
+      assert.match(rendered, /\[2\] Size: 4"ø/); assert.doesNotMatch(rendered, /\{"/);
+      assert.deepEqual(result.assignment_snapshot_v2.criteria, getAssignmentKernelSnapshotV2(binding.assignment_id)!.criteria);
+      assert.equal(result.assignment_snapshot_v2.spec.input_variables.length, 0, "presentation questions cannot manufacture user-input authority");
+    } else assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
     const canonicalBeforeProjection = JSON.stringify(getAssignmentKernelSnapshotV2(binding.assignment_id));
     const modelReply = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(result) }] },
       { tool: "operator_evaluate_assignment_criteria" });
@@ -293,6 +311,7 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
     const published = parseAssignmentKernelPublicationV2(getAssignmentKernelPublicationV2(binding.assignment_id)!);
     assert.deepEqual((published.snapshot as any).result_delivery, result.assignment_snapshot_v2.result_delivery);
     assert.equal((await send(body)).status, 200);
+    if (withAssessment) assert.equal((await send({ ...body, assessment: { ...assessment, overview: "Changed after settlement" } })).status, 400);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }));
 

@@ -11,6 +11,7 @@ import {
   canonicalJsonV2,
   deriveAssignmentOutcomeV2,
   deriveProgressGapsV2,
+  reduceAssignmentEventsV2,
   evaluateCriterionV2,
   type AssignmentBindingV2,
   type AssignmentEventV2,
@@ -103,6 +104,31 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
   journal.append(event(journal, { event_type: "assignment_created", spec: assignmentSpec }));
   return journal;
 }
+
+test("long journal rehydration validates one history without replaying every prefix", () => {
+  const events = [...createJournal().events()];
+  for (let i = 2; i <= 180; i++) events.push({ ...events[0]!, event_id: `history-${i}`, assignment_version: i,
+    event_type: "work_unit_state_changed", work_unit_id: "work-1", state: i % 2 ? "active" : "pending", reason: "Read-only audit progress" } as AssignmentEventV2);
+  const expected = reduceAssignmentEventsV2(events);
+  const clone = globalThis.structuredClone; let clones = 0; let actual: AssignmentJournalV2;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => { clones++; return clone(value, options); }) as typeof structuredClone;
+    actual = new AssignmentJournalV2(events);
+  } finally { globalThis.structuredClone = clone; }
+  assert.ok(clones < events.length * 8, `rehydration must be linear; observed ${clones} clones for ${events.length} events`);
+  assert.deepEqual(actual!.snapshot(), expected);
+  const copy = actual!.events(); (copy[0] as any).actor = "changed by caller";
+  assert.equal(actual!.events()[0]!.actor, "test");
+  const duplicate = new AssignmentJournalV2([...events, events[20]!, events[0]!]);
+  assert.deepEqual(duplicate.snapshot(), expected); assert.equal(duplicate.events().length, events.length);
+  assert.throws(() => new AssignmentJournalV2([...events, { ...events[20]!, actor: "foreign" }]), /Event identity was reused/);
+  assert.throws(() => new AssignmentJournalV2([...events.slice(0, 100), { ...events[100]!, assignment_version: 900 }]), /version/i);
+  assert.throws(() => new AssignmentJournalV2([...events, { ...events[179]!, event_id: "foreign-binding", assignment_version: 181,
+    binding: { ...binding, session_id: "foreign" } }]), /does not bind/i);
+  const before = actual!.snapshot();
+  assert.throws(() => actual!.append({ ...events[179]!, event_id: "invalid-after-reload", assignment_version: 181, work_unit_id: "unknown" } as AssignmentEventV2), /Work unit/);
+  assert.deepEqual(actual!.snapshot(), before);
+});
 
 function operation(effect: "read" | "preview" | "apply" = "read", purpose: OperationV2["purpose"] = "work"): OperationV2 {
   const fulfillmentRole = purpose === "verification" ? "verification"

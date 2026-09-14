@@ -1,6 +1,6 @@
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { canonicalJsonV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
-import { validateResultDeliveryV2, type AssignmentResultDeliveryV2 } from "../domain/assignment-kernel/result_delivery.js";
+import { validateResultDeliveryV2, type AssignmentAssessmentV2, type AssignmentResultDeliveryV2 } from "../domain/assignment-kernel/result_delivery.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 
 export type AssignmentResultSelectionV2 = Readonly<{
@@ -32,7 +32,7 @@ function selectValue(root: unknown, path: readonly (string | number)[]): unknown
 
 /** Read-only presentation: values come from hash-checked native evidence, never model arguments. */
 export function buildAssignmentResultDeliveryV2(
-  snapshot: AssignmentSnapshotV2, selections: readonly AssignmentResultSelectionV2[]
+  snapshot: AssignmentSnapshotV2, selections: readonly AssignmentResultSelectionV2[], assessment?: AssignmentAssessmentV2
 ): AssignmentResultDeliveryV2 {
   if (!Array.isArray(selections) || selections.length < 1 || selections.length > 32) throw new Error("assignment_result_items_required");
   const delivery = { items: selections.map(selection => {
@@ -57,7 +57,7 @@ export function buildAssignmentResultDeliveryV2(
       ...(snapshot.operations[observation.operation_id]?.result?.status === "failed_after_dispatch"
         ? { presentation_kind: "diagnostic" as const } : {})
     };
-  }) };
+  }), ...(assessment !== undefined ? { assessment: structuredClone(assessment) } : {}) };
   validateResultDeliveryV2(snapshot, delivery);
   if (snapshot.result_delivery && canonicalJsonV2(snapshot.result_delivery) !== canonicalJsonV2(delivery)) {
     throw new Error("assignment_result_delivery_conflict");

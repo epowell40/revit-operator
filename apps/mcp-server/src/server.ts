@@ -1087,7 +1087,16 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
       label: z.string().min(1).max(160),
       observationId: z.string().min(1).max(240),
       path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
-    })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery.")
+    })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
+    assessment: z.object({
+      overview: z.string().min(1).max(1200),
+      findings: z.array(z.object({
+        priority: z.enum(["high", "medium", "low"]), title: z.string().min(1).max(160), text: z.string().min(1).max(1200),
+        evidence_indices: z.array(z.number().int().min(1).max(32)).min(1).max(8)
+      }).strict()).min(1).max(12),
+      limitations: z.array(z.string().min(1).max(800)).max(8),
+      questions: z.array(z.string().min(1).max(600)).max(3)
+    }).strict().optional().describe("For read-only audits, reviews, comparisons and gap lists, provide a useful assessment in addition to resultItems. Findings are assistant interpretations supported by 1-based evidence_indices into resultItems; they never establish native proof, engineering certification, criterion truth, authorization or supplied user inputs. State unverified limits and ask only the most useful outside-input questions. Select scalar resultItems or small scalar arrays, not whole reports. This structured delivery becomes the final answer; later free text cannot replace it.")
   },
   async (args) => {
     try {
@@ -1099,6 +1108,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
         generation: binding.generation,
         session_id: binding.session_id,
         ...(args.resultItems ? { result_items: args.resultItems.map(item => ({ label: item.label, observation_id: item.observationId, path: item.path })) } : {}),
+        ...(args.assessment !== undefined ? { assessment: args.assessment } : {}),
         claims: args.claims.map(claim => ({
           criterion_id: claim.criterionId,
           observation_ids: claim.observationIds,

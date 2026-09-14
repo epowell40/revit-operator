@@ -1,6 +1,7 @@
 import type { ChatRequest } from "../contracts.js";
 import { formatAgentTurnContract } from "../agent_response_policy.js";
 import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
+import { ATTACHMENT_CODE_MODE_GUIDANCE } from "../attachments/read_attachment.js";
 import {
   CERTIFIED_SIDECAR_PROMPT_LINES,
   CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES,
@@ -108,6 +109,7 @@ export function formatCodexRequestEnvelope(req: ChatRequest): string {
     }));
     blocks.push(`USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`);
     blocks.push("PDF REVIEW: Use operator_read_attachment with attachment_id and up to three 1-based pages to inspect pages not included in initial visual coverage. This tool returns actual page pixels and text without Revit discovery or bootstrap. Review all requested pages, cite document/page, and distinguish visible marks from extracted text. If a page cannot be inspected, state that limitation; do not replace the requested document findings with model observations or claim complete coverage from previews.");
+    blocks.push(ATTACHMENT_CODE_MODE_GUIDANCE);
   }
   return blocks.join("\n\n");
 }

@@ -235,7 +235,8 @@ export async function handleAssignmentHttpRoute(
         };
       }) : [];
       const snapshot = evaluateAssignmentObservationCriteriaV2({ binding, claims,
-        ...(body?.result_items !== undefined ? { result_items: body.result_items as any } : {}) });
+        ...(body?.result_items !== undefined ? { result_items: body.result_items as any } : {}),
+        ...(body?.assessment !== undefined ? { assessment: body.assessment as any } : {}) });
       writeJson(res, snapshot.terminal ? 200 : 202, { ok: true, assignment_snapshot_v2: snapshot });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
