@@ -79,6 +79,7 @@ import {
   recordExecutionStrategyEvidence
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
+import { DYNAMIC_REVIT_SOURCE_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
 import {
@@ -612,8 +613,8 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
 }));
 
 server.tool("operator_run_dynamic_revit_program", "Authenticated General Agent and development laboratory: compile and execute generated C# on the user's trusted workstation through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Five evidence-bound attempts form one diagnostic loop. A committed_verified apply emits a separate checkpoint; continue_from_checkpoint starts the next design step against that exact persisted document/session, allowing up to 64 verified steps while preserving explicit discard-or-compensation restoration. Certified-only exposure remains fail-closed, while an authenticated hosted General Agent has the same execution substrate as local development.", {
-  source: z.string().min(1).max(128_000).describe("Exactly one public IDynamicRevitProgram or IDynamicResultReferenceRevitProgramV1 implementation using RevitOperator.DynamicRevitSdk. Result-reference programs should cite c.Fact(...), record c.TraceStep(...), assert with c.Require(...), and either return c.NeedFacts(...) or c.Complete()."),
-  mode: z.enum(["preview", "apply"]),
+  source: z.string().min(1).max(128_000).describe(DYNAMIC_REVIT_SOURCE_GUIDE),
+  mode: z.enum(["read", "preview", "apply"]).describe("read: snapshot report only, no operation graph is allowed; preview: execute a rollback preview; apply: authorized commit and verification."),
   target_revit_year: z.enum(["2023", "2024", "2025", "2026", "2027"]).optional(),
   category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
   parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
@@ -665,7 +666,10 @@ server.tool("operator_run_dynamic_revit_program", "Authenticated General Agent a
     }).strict()
   }).strict().optional()
 }, async (args) => {
-  try { return { content: [{ type: "text", text: JSON.stringify(await runDynamicRevitProgram(args), null, 2) }] }; }
+  try {
+    const result = await runDynamicRevitProgram(args);
+    return { isError: result.execution_status === "failed", content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
   catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
 });
 

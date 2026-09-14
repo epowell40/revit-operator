@@ -2,6 +2,7 @@ import { classifyAutoGoalRequest } from "./auto_goal.js";
 import { supersedeBlockedAutoGoalForFreshRequest } from "./auto_goal_runtime.js";
 import { getCurrentGoalForSession, setAgentGoal, type GoalRecord } from "./service.js";
 import { hasRevitTurnContext } from "../revit_context_policy.js";
+import { isStandaloneAssistantRequest } from "./standalone_assistant_request.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -24,6 +25,10 @@ export function startAutoGoalIfEligible(input: {
   on_started?: (goal: GoalRecord, signals: string[]) => void;
 }): GoalRecord | null {
   if (input.tool_result_count > 0) return null;
+  if (isStandaloneAssistantRequest(input.user_text)) {
+    // Preserve any existing work; a side question is not a cancellation.
+    return null;
+  }
   const decision = classifyAutoGoalRequest(input.user_text);
   // A Revit conversation is a work surface. Short requests ("What size is
   // this?") need a durable owner before discovery, even without command words.

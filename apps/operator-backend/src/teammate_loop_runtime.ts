@@ -1,4 +1,4 @@
-import { clearVerification, clearKnownNoEffectApply } from "./teammate_verification_state.js";
+import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
 import { canonicalNativeRollbackForTeammate } from "./teammate_canonical_settlement.js";
 import { createHash } from "node:crypto";
@@ -12,8 +12,9 @@ import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTo
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
-import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
+import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
 import {
   explicitTargetAbsenceV2,
   explicitVerificationV2,
@@ -83,6 +84,7 @@ export type TeammateLoopState = {
   verification_observed_values: Set<string>;
   verification_has_substantive_readback: boolean;
   apply_call: PendingCall | null;
+  apply_artifact_receipt?: unknown;
   verified: boolean;
   verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
   verification_action_id: string | null;
@@ -206,6 +208,7 @@ export function isAffirmativeDocumentLifecycleMutation(userText: string | null |
 export function classifyAgentTurn(userText: string | null | undefined, context?: unknown): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
+  if (isStandaloneAssistantRequest(text)) return "conversation";
   const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
   // A scoped persistence constraint such as "make the edit, but do not save"
   // must not downgrade the model edit to an inspection. Lifecycle denial is
@@ -550,6 +553,9 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "revit_transaction_plan") return call("preview", "revit_transaction");
   if (tool === "revit_transaction_apply") return call("apply", "revit_transaction");
   const flags = previewFlags(args);
+  if (tool === "operator_run_dynamic_revit_program") {
+    return call(args.mode === "read" ? "read" : args.mode === "preview" ? "preview" : args.mode === "apply" ? "apply" : "unknown");
+  }
   if (tool === "run_dynamic_revit_program") {
     return call(flags.preview ? "preview" : flags.apply ? "apply" : "unknown", "revit_dynamic_program");
   }
@@ -746,6 +752,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
     clearVerification(state);
+    state.apply_artifact_receipt = undefined;
     state.apply_attempts += 1;
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
@@ -840,20 +847,6 @@ function explicitDocumentOpenCompletion(call: PendingCall, evidence: unknown): b
   return matched;
 }
 
-function markVerified(
-  state: TeammateLoopState,
-  mode: Exclude<TeammateLoopState["verification_mode"], "none">,
-  actionId: string,
-  evidence: unknown
-): void {
-  state.verified = true;
-  state.verification_mode = mode;
-  state.verification_action_id = actionId;
-  state.verification_evidence_sha256 = `sha256:${payloadDigestV2(verificationObservationPayloadV2(evidence)).digest}`;
-  if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
-  state.contract.stage = "report";
-}
-
 function recordResult(state: TeammateLoopState, actionId: string, succeeded: boolean, evidence?: unknown): void {
   const pending = state.pending.get(actionId);
   if (!pending) return;
@@ -872,6 +865,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
+    retainApplyArtifactReceipt(state, succeeded, evidence, pending.path);
     if (!succeeded) {
       if (evidenceIsKnownNoEffectFailure(evidence, {
         firstDocumentOpen: isContextFreeDocumentBootstrapCall(pending),
@@ -899,6 +893,11 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
   const verificationAdmission = verificationCapabilityAdmissionForPathsV2(state.apply_call?.path ?? "", pending.path);
+  if (state.apply_succeeded && succeeded && pending.effect === "read"
+      && verificationAdmission.admissible && state.apply_artifact_receipt
+      && nativeArtifactPostconditionV2(state.apply_artifact_receipt, verificationPayload)) {
+    markVerified(state, "target_bound_readback", actionId, verificationPayload);
+  }
   const verificationResultTargets = operationTargetSelectorV2({
     operation: { path: pending.path },
     value: verificationPayload,
@@ -1007,6 +1006,7 @@ export function reconcileTeammateReceiptWithAssistant(
 export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   const state = stateFor(req);
   ingestToolResults(state, req.tool_results);
+  if (!(decision.actions?.length)) reconcileCanonicalFinalVerification(state, req);
   const requiredPreviewOperation = requestedPreviewOperation(state.contract.intent_summary);
   const dynamicReceipt = decision.dynamic_program_execution_receipt;
   if (dynamicReceipt) {

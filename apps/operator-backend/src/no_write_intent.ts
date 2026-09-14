@@ -40,6 +40,9 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
 
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
+  if (/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/i.test(text)) return true;
+  const withoutRepeatedEdit = text.replace(/\b(?:do not|don't|dont|never)\s+repeat\s+(?:the\s+)?(?:edit|change|mutation)\b/gi, " ");
+  if (withoutRepeatedEdit !== text && !hasExplicitMutationVerb(withoutRepeatedEdit)) return true;
   if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
   if (TERMINAL_DIRECT_NO_WRITE.test(text)) return true;
   if (hasNoncommittingChangePreviewRequest(text)) return true;

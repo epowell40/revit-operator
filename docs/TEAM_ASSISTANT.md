@@ -22,6 +22,8 @@ Continue in the same task. Use “Continue from the completed changes” or give
 
 Set a useful checkpoint: “Complete one typical room for review, then apply the accepted pattern to the remaining rooms.” On interruption, the agent must reconcile existing effects before repeating a write.
 
+For an ad hoc model report, ask for a short C# program and state the scope: “Summarize a sample of up to twenty ducts by type. Make no model changes and state the limits.” The generated-code tool includes a working SDK example. Its explicit read mode rejects model operations before execution in Revit. A bounded sample is not a complete inventory. Move vectors in the basic SDK are translations in feet; use a rollback preview and check the result before applying a generated change.
+
 ## Team pilot
 
 Start with ten recurring assignments across representative disposable project copies: note/tag revisions, sheet and schedule changes, then bounded MEP revisions. Record manual minutes, setup/prompting minutes, review minutes, corrections, and accepted results. Count machine runtime separately. Compare with the team's current scripts and other MCP tools where available.

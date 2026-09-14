@@ -27,14 +27,18 @@ import {
 } from "./assignment_kernel_v2_store.js";
 
 export const DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2: AssignmentProgressBudgetV2 = Object.freeze({
-  max_reasoning_turns: 12,
-  max_provider_calls: 16,
-  max_operations: 24,
+  // A continued drawing conversation can have 80k+ cached input tokens per
+  // response. Count actual provider usage, but allow a useful multi-step task.
+  // Identical-operation, no-progress, reconciliation and absolute-call limits
+  // remain independent bounds; explicit caller budgets still take precedence.
+  max_reasoning_turns: 32,
+  max_provider_calls: 32,
+  max_operations: 128,
   max_equivalent_operations: 1,
   max_no_progress_epochs: 2,
   max_reconciliation_attempts: 2,
-  max_wall_clock_ms: 15 * 60_000,
-  max_total_tokens: 500_000
+  max_wall_clock_ms: 30 * 60_000,
+  max_total_tokens: 4_000_000
 });
 
 function digest(value: unknown): string {

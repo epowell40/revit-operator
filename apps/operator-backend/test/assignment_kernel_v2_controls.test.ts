@@ -10,7 +10,7 @@ import { prepareAssignmentTurn, bindPreparedAssignmentToRequest } from "../src/a
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { advanceAssignmentKernelProgressV2, recordAssignmentProviderCallStateV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { openAssignmentKernelOperationV2, openAssignmentKernelChildOperationV2, settleAssignmentKernelOperationV2, failAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
-import { supplyAssignmentInputResultV2, requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
+import { supplyAssignmentInputResultV2, requestAssignmentInputV2, evaluateAssignmentObservationCriteriaV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { getAssignmentKernelPublicationV2 } from "../src/assignments/assignment_kernel_v2_publication.js";
 import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
@@ -26,7 +26,9 @@ import { completionOutboxKeyV2, retainCompletionOutboxV2 } from "@revitoperator/
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
-import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall } from "../src/teammate_loop_runtime.js";
+import { buildAssignmentResultDeliveryV2 } from "../src/assignments/assignment_kernel_v2_result_delivery.js";
+import { canonicalTeammateFinalVerification } from "../src/teammate_assignment_inputs.js";
+import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -96,6 +98,10 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
   assert.equal(observation.evidence_class, "task_result");
   assert.ok(afterReads.progress_epochs.at(-1)!.progress_reasons.includes("authoritative_observation_added"));
   const observationId = observation.observation_id;
+  assert.throws(() => buildAssignmentResultDeliveryV2(afterReads, [{ label: "Selected pipe", observation_id: observationId, path: ["payload", "parameters"] }]),
+    error => error instanceof Error && /assignment_result_path_missing_or_invalid/.test(error.message)
+      && /available_keys/.test(error.message) && /parameters/.test(error.message));
+  assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.result_delivery, undefined);
   const mapping = dynamicResponse.contentItems.map((item: any) => JSON.parse(item.text)).find((item: any) => item.schema === "revit-operator.model-observation-index/v2");
   assert.equal(mapping.observations[0].observation_id, observationId);
   assert.equal(mapping.observations[0].evidence_id, observation.raw_payload_ref.replace(/^evidence:/, ""));
@@ -173,10 +179,11 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
       } };
     }
   };
-  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+  const loopRequest = bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
     session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
     context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Snowdon HVAC", projectIdentity: { fingerprint: "controls-model" } } } }
-  } as any, prepared));
+  } as any, prepared);
+  const owner = beginTeammateLoopOwner(runtime, loopRequest);
   const run = async (id: string, tool: string, args: any) => {
     const result = await handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call",
       params: { namespace: "revit_operator", turnId: "pdf-handoff", tool, arguments: args } } as any) as any;
@@ -196,9 +203,61 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
     await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
     const final = advanceAssignmentKernelProgressV2({ binding }).snapshot;
     assert.equal(final.outcome, "complete");
+    assert.match(renderTerminalResultV2(final), /Verified file: C:\/fixture\/M000.pdf/);
+    const proofRequest = { user_text: snapshot.spec.source_user_request, session_id: binding.session_id,
+      assignment_id: binding.assignment_id, assignment_run_id: binding.run_id, assignment_generation: binding.generation };
+    assert.ok(canonicalTeammateFinalVerification(proofRequest));
+    assert.equal(canonicalTeammateFinalVerification({ ...proofRequest, assignment_generation: 99 }), null);
+    const presentation = guardGenericTeammateDecision(loopRequest,
+      { assistant_message: renderTerminalResultV2(final), actions: [] } as any);
+    assert.doesNotMatch(presentation.assistant_message, /post apply verification required/);
+    assert.equal(presentation.teammate_loop_receipt?.verified, true);
     assert.deepEqual(calls, ["/revit/export-pdf", "revit_search_tools", "operator_retrieve_evidence", "/revit/inspect-exported-files"]);
     assert.equal(Object.values(final.operations).filter(o => o.persistent_effect === "applied").length, 1);
     assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
+test("generated read report satisfies the canonical read task and delivers retained report values", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Use a short custom C# program to summarize a sample of up to twenty ducts by type. Make no model changes. Tell me what it inspected and the limits of the result.");
+  assert.equal(snapshot.spec.requested_effect, "read");
+  const payload = { schema: "revit-operator.dynamic-revit-program-run.v1", requested_mode: "read", execution_ok: true,
+    execution_status: "completed", report: { Inspected: "20", "Type: Rectangular": "12", "Type: Round": "8", Limit: "Bounded sample; not a model census." } };
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (tool: string, _args: unknown, context: any) => {
+      assert.equal(tool, "operator_run_dynamic_revit_program");
+      const lease = context.assignmentKernelV2;
+      assert.equal(lease.requested_effect, "read");
+      context.onMcpAccepted();
+      return { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `dynamic:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none",
+          native_transaction_state: "not_applicable", authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
+          observation_required: true, raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: `dynamic-evidence:${lease.operation_id}`,
+          request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+        observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
+          verification_relevance: ["task_result"], evidence_class: "task_result" } } };
+    } };
+  const request = bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "Snowdon HVAC", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared);
+  const owner = beginTeammateLoopOwner(runtime, request);
+  try {
+    const response: any = await handleCodexDynamicToolCall(runtime as any, { id: "generated-report", method: "item/tool/call",
+      params: { namespace: "revit_operator", turnId: "generated-report", tool: "operator_run_dynamic_revit_program",
+        arguments: { source: "public class SampleReport {}", mode: "read", category: "OST_DuctCurves", snapshot_limit: 20 } } } as any);
+    assert.equal(response.success, true, JSON.stringify(response));
+    const after = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    const observation = Object.values(after.observations).find(o => o.authority === "dynamic-runtime")!;
+    assert.ok(observation);
+    assert.equal(after.criteria[snapshot.spec.criteria[0]!.criterion_id]!.status, "pass");
+    assert.equal(after.terminal, false, "report still needs user-facing delivery");
+    evaluateAssignmentObservationCriteriaV2({ binding, claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id, observation_ids: [observation.observation_id] }],
+      result_items: [{ label: "Duct sample", observation_id: observation.observation_id, path: ["report"] }] });
+    const final = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert.equal(final.outcome, "complete");
+    assert.match(renderTerminalResultV2(final), /Bounded sample; not a model census/);
+    assert.equal(Object.values(final.operations).some(o => o.persistent_effect !== "none"), false);
   } finally { endTeammateLoopOwner(owner); }
 }));
 

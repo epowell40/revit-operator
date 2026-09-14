@@ -505,6 +505,7 @@ if (($kernelExecution -notmatch 'trustedVerification\.evidence_sha256\s*!==\s*`s
   $violations.Add("Trusted verification assertions can bypass exact payload binding or typed postcondition validation")
 }
 $teammateVerificationRuntime = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/teammate_loop_runtime.ts")
+$teammateVerificationRuntime += Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/teammate_verification_state.ts")
 foreach ($requiredVerificationSymbol in @(
   "payloadDigestV2",
   "verificationObservationPayloadV2",

@@ -1,5 +1,6 @@
 import type { ToolResult } from "../contracts.js";
 import type { ChatRequest } from "../contracts.js";
+import { isStandaloneAssistantRequest } from "../goals/standalone_assistant_request.js";
 import { startAutoGoalIfEligible } from "../goals/auto_goal_start.js";
 import type { GoalRecord } from "../goals/service.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/index.js";
@@ -76,6 +77,7 @@ export function prepareAssignmentTurn(input: {
     journalAssignmentToolResults(input.sessionId, input.toolResults, `outer_${input.source}_result`);
     return { assignmentId: bound.assignmentId, runId: bound.runId, generation: bound.generation, kernelVersion: 1 };
   }
+  if (input.toolResults.length === 0 && isStandaloneAssistantRequest(input.userText)) return null;
   const started = startAutoGoalIfEligible({
     session_id: input.sessionId,
     user_text: input.userText,

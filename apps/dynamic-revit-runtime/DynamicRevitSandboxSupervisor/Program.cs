@@ -49,6 +49,8 @@ internal static class Program
     private static async Task<LiveEvidence> RunLiveTask(LiveTaskConfig config, bool replayAdmission)
     {
         var started = DateTimeOffset.UtcNow;
+        if (config.ReadOnly && (config.Apply || config.ResultReference || !string.IsNullOrWhiteSpace(config.ContextRuleFile)))
+            throw new InvalidOperationException("Read-only programs use the basic snapshot/report SDK and cannot enable an execution lane.");
         var contextRuleRequested = !string.IsNullOrWhiteSpace(config.ContextRuleFile) || !string.IsNullOrWhiteSpace(config.ContextRuleVerificationKeyFile) ||
             !string.IsNullOrWhiteSpace(config.ContextCompanyId) || !string.IsNullOrWhiteSpace(config.ContextUserId) || config.CoreEffectBudget != null;
         if (contextRuleRequested)
@@ -96,6 +98,7 @@ internal static class Program
         using var snapshotDocument = JsonDocument.Parse(snapshotRaw);
         var snapshotRoot = snapshotDocument.RootElement;
         var document = snapshotRoot.GetProperty("document").Deserialize<DynamicDocumentDto>(Json) ?? throw new InvalidOperationException("Snapshot document DTO is missing.");
+        ValidateExpectedDocument(config.ExpectedDocumentFingerprint, document.ProjectFingerprint);
         var elements = snapshotRoot.GetProperty("elements").Deserialize<List<DynamicElementDto>>(Json) ?? throw new InvalidOperationException("Snapshot element DTOs are missing.");
         var snapshotToken = snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
         var snapshotInputHash = snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
@@ -352,6 +355,12 @@ internal static class Program
         if (output.TryGetProperty("resultReferenceProgramResult", out var unexpectedResult) && unexpectedResult.ValueKind != JsonValueKind.Null)
             throw new InvalidOperationException("A result-reference program was returned on the legacy execution lane.");
         var graph = output.GetProperty("graph").Clone();
+        try { ValidateReadOnlyGraph(config.ReadOnly, graph); }
+        catch (InvalidOperationException exception)
+        {
+            return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw,
+                output.Clone(), exception.Message);
+        }
         var graphHash = graph.GetProperty("graphHash").GetString()!;
         if (!FixedEquals(snapshotInputHash, graph.GetProperty("inputHash").GetString() ?? "")) throw new InvalidOperationException("Worker graph is not bound to the exact issued snapshot DTO input.");
         var admission = new DynamicWorkerAdmission
@@ -433,6 +442,18 @@ internal static class Program
             ok = ok && replayRejected;
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
+    }
+
+    internal static void ValidateExpectedDocument(string? expected, string actual)
+    {
+        if (!string.IsNullOrWhiteSpace(expected) && !FixedEquals(expected.StartsWith("sha256:", StringComparison.Ordinal) ? expected : "sha256:" + expected, actual))
+            throw new InvalidOperationException("Dynamic runtime snapshot does not match the admitted assignment document.");
+    }
+
+    internal static void ValidateReadOnlyGraph(bool readOnly, JsonElement graph)
+    {
+        if (readOnly && (!graph.TryGetProperty("operations", out var operations) || operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 0))
+            throw new InvalidOperationException("Read-only generated code produced model operations. No preview or apply was dispatched.");
     }
 
     internal static void RequireDevelopmentLaboratory()
@@ -1202,6 +1223,8 @@ internal static class Program
 internal sealed class ProbeResult { public string Action { get; set; } = ""; public string Expected { get; set; } = ""; public bool Denied { get; set; } public string Observed { get; set; } = ""; public string? ExceptionType { get; set; } }
 internal sealed class LiveTaskConfig
 {
+    public bool ReadOnly { get; set; }
+    public string? ExpectedDocumentFingerprint { get; set; }
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
     public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
     public bool ResultReference { get; set; } public bool RequireExecutionTrace { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }

@@ -23,6 +23,7 @@ import {
 import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
 import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment-kernel/semantic_admissibility.js";
+import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
 
 const binding: AssignmentBindingV2 = {
@@ -1028,6 +1029,24 @@ function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: 
       { fact_id: "control.payload_hash", fact_class: "control", value: `hash-${id}` }] };
   return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
 }
+
+test("continued drawing task retains raw token costs without exhausting the default budget during SDK discovery", () => {
+  const j = journal();
+  for (let i = 0; i < 8; i++) {
+    const call_id = `large-context-${i}`;
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "admitted", provider: "openai", model: "gpt-5.6-sol",
+      reasoning_effort: "medium", gap_ids: ["criterion:criterion-inventory"], criterion_ids: ["criterion-inventory"], expected_information: ["inventory.total"] }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "dispatched" }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "usage_received",
+      usage: { input_tokens: 82_297, cached_input_tokens: 76_800, output_tokens: 155, reasoning_tokens: 50, total_tokens: 82_452, estimated_cost_usd: null } }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "completed", success: true }));
+  }
+  const snapshot = j.snapshot();
+  assert.equal(Object.values(snapshot.provider_calls).reduce((n, c) => n + (c.usage?.total_tokens ?? 0), 0), 659_616);
+  const decision = decideAssignmentProgressV2({ snapshot, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now: "2026-08-26T20:01:00Z" });
+  assert.notEqual(decision.decision, "blocked");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, max_total_tokens: 500_000 }, now: "2026-08-26T20:01:00Z" }).reason, "token_budget_exhausted");
+});
 
 test("b09 registry then evidence reads then native views discovery adds progress once without fulfilling the edit", () => {
   const initial = journal().snapshot();

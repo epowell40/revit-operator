@@ -11,7 +11,7 @@ The [Astra model reference](https://developers.openai.com/api/docs/models/gpt-6-
 ## Concrete implementation boundary
 
 - Keep the canonical Codex harness. Check its protocol and advertised models; if a runtime update is required, regenerate the pinned protocol and qualify it first. Do not bypass the existing compatibility check.
-- Add `gpt-6-astra` to the Desktop model picker and normalization in `apps/operator-desktop/public/{index.html,app.js}`. Preserve saved Sol/Terra/Luna selections and existing reasoning preferences.
+- Add `gpt-6-astra` to the Desktop model picker and normalization. The current integration checkout keeps these files at `operator-desktop/public/{index.html,app.js}`; verify their location when implementing the migration. Preserve saved Sol/Terra/Luna selections and existing reasoning preferences.
 - Add model-specific effort validation at `apps/operator-backend/src/speed_config.ts`. Map unsupported `none` to `low` for Astra; do not silently change other model settings.
 - Verify the actual start/resume/turn requests and model telemetry. Prevent silent fallback to Sol. Keep the existing mid-turn steering, durable effects, instruction receipts and compaction ownership.
 - Review `codex_brain.ts`, loaded skills and project guidance together for contradictory permission, task-completion and engineering-default instructions. Keep authorization and transaction enforcement in code.

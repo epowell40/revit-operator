@@ -80,7 +80,9 @@
     "benchmark_protocol_v2_instruction_evidence.test.ts",
     "instruction_binding_http.test.ts",
     "general_revit_request.test.ts",
-    "view_artifact_evidence.test.ts"
+    "view_artifact_evidence.test.ts",
+    "pdfjs_standard_fonts.test.ts",
+    "team_assistant_live_regressions.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -99,7 +101,8 @@
     "lib/toolSearchRiskSemantics.test.ts",
     "skills/quantify.test.ts",
     "lib/supportedToolInventory.test.ts",
-    "lib/dynamicRuntimeInstallation.test.ts"
+    "lib/dynamicRuntimeInstallation.test.ts",
+    "lib/dynamicAssignmentIntegration.test.ts"
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
@@ -1011,10 +1014,62 @@
         "mcp:lib/dynamicRuntimeInstallation.test.ts",
         "mcp:lib/dynamicRevitProgramRunner.test.ts"
       ]
+    },
+    {
+      "id": "standard-font-redline-text-survives-pdf-to-provider-pixels",
+      "coverage": [
+        "backend:pdfjs_standard_fonts.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-research-calculation-avoids-model-obligation",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_research_config.test.ts"
+      ]
+    },
+    {
+      "id": "no-write-followup-preserves-read-contract-and-report-delivery",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "continued-task-raw-token-budget-and-stop-reason",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "native-file-handoff-and-result-path-correction",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "generated-read-sdk-report-has-no-model-operations",
+      "coverage": [
+        "dynamic:ReadOnlyGeneratedProgramTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "generated-task-authority-and-lost-apply-receipt",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
     "GeneratedCodeAdmissionTests",
-    "RuntimeWorkspaceTests"
+    "RuntimeWorkspaceTests",
+    "ReadOnlyGeneratedProgramTests"
   ]
 }

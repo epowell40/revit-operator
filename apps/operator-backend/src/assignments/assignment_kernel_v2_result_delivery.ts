@@ -12,12 +12,18 @@ export type AssignmentResultSelectionV2 = Readonly<{
 function selectValue(root: unknown, path: readonly (string | number)[]): unknown {
   if (!Array.isArray(path) || path.length < 1 || path.length > 24) throw new Error("assignment_result_path_invalid");
   let value = root;
-  for (const key of path) {
+  for (const [index, key] of path.entries()) {
     if (!((typeof key === "string" && key.length > 0 && key.length <= 240
         && !["__proto__", "prototype", "constructor"].includes(key))
         || (typeof key === "number" && Number.isSafeInteger(key) && key >= 0))
         || value === null || typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, key)) {
-      throw new Error("assignment_result_path_missing_or_invalid");
+      const available = value !== null && typeof value === "object"
+        ? Object.keys(value).filter(k => !["__proto__", "prototype", "constructor"].includes(k)).slice(0, 24) : [];
+      throw new Error(`assignment_result_path_missing_or_invalid: ${JSON.stringify({
+        requested_path: path, resolved_prefix: path.slice(0, index), missing_key: key,
+        available_keys: available,
+        hint: "Select exact keys from the retained raw payload. Do not assume a payload wrapper. Retrieve these fields, then retry resultItems with the corrected path."
+      })}`);
     }
     value = (value as Record<string | number, unknown>)[key];
   }

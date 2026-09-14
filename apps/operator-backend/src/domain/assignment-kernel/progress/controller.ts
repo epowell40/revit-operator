@@ -337,7 +337,7 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "request_user_review", "A bounded user review decision is pending."), decision: "request_user_review", gap_ids: snapshot.pending_review_ids.map((id) => `review:${id}`), work_unit_ids: [] };
   }
   if (snapshot.outcome !== "active") {
-    return { ...decisionBase(snapshot, now, "terminal", "Canonical criteria and operation state derive a terminal outcome."), decision: "terminal", outcome: snapshot.outcome };
+    return { ...decisionBase(snapshot, now, "terminal", snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? "Canonical criteria and operation state derive a terminal outcome."), decision: "terminal", outcome: snapshot.outcome };
   }
   const gaps = deriveProgressGapsV2(snapshot);
   const exhausted = budgetBlocker(snapshot, budget, now);

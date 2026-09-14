@@ -1,6 +1,5 @@
 import path from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 
 type PdfJsLike = {
   getDocument: (options: Record<string, unknown>) => { promise: Promise<any> };
@@ -16,7 +15,9 @@ function resolveStandardFontDataUrl(): string | null {
     const pkgJson = require.resolve("pdfjs-dist/package.json");
     const fontsDir = path.join(path.dirname(pkgJson), "standard_fonts");
     const withTrailingSep = fontsDir.endsWith(path.sep) ? fontsDir : `${fontsDir}${path.sep}`;
-    cachedStandardFontDataUrl = pathToFileURL(withTrailingSep).href;
+    // PDF.js's NodeStandardFontDataFactory passes this string to readFile.
+    // A file: URL string is not a filesystem path (on Windows or POSIX).
+    cachedStandardFontDataUrl = withTrailingSep;
   } catch {
     cachedStandardFontDataUrl = null;
   }

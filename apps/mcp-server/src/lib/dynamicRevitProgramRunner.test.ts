@@ -10,6 +10,37 @@ import { getWorkspaceRoot } from "./workspace.js";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
 
+test("read-only runner enforces an empty graph, retains host rejection diagnostics, and repairs within the same mode", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-read-runner-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (ok: boolean, operations: unknown[] = []) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      assert.equal(config.readOnly, true); assert.equal(config.apply, false);
+      assert.equal(config.category, "OST_DuctCurves"); assert.equal(config.limit, 20);
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok,
+        failure: ok ? null : "Read-only generated code produced model operations. No preview or apply was dispatched.",
+        workerOutput: { ok: true, sourceHash: sha256(source), executionStatus: "completed", graph: { operations },
+          report: { Inspected: "20", Limit: "Bounded sample" }, logs: ["Inspected supplied DTOs"], diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: ok ? 0 : 1, stdout: "", stderr: "" };
+    };
+    const input = { source: "public class BadReport {}", mode: "read" as const, category: "OST_DuctCurves", snapshot_limit: 20 };
+    const failed = await runDynamicRevitProgram(input, env, execute(false, [{ kind: "MoveElement" }]));
+    assert.equal(failed.execution_status, "failed"); assert.match(JSON.stringify(failed.diagnostics), /Read-only generated code/);
+    const resume = { prior_run_id: failed.run_id, prior_evidence_sha256: failed.verification.evidence_sha256, mode: "repair" as const };
+    await assert.rejects(() => runDynamicRevitProgram({ ...input, source: "public class GoodReport {}", mode: "apply", resume }, env), /mode/);
+    const repaired = await runDynamicRevitProgram({ ...input, source: "public class GoodReport {}", resume }, env, execute(true));
+    assert.equal(repaired.execution_ok, true); assert.equal(repaired.iteration.attempt, 2);
+    assert.deepEqual(repaired.report, { Inspected: "20", Limit: "Bounded sample" });
+    assert.deepEqual(repaired.logs, ["Inspected supplied DTOs"]);
+    assert.equal(repaired.canonical_attempt_settlement?.effect_authority, "worker");
+    await assert.rejects(() => runDynamicRevitProgram(input, env, execute(true, [{ kind: "MoveElement" }])), /Read-only runtime evidence/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("dynamic runner supports authenticated hosted execution, remains bounded, and redacts trusted paths", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-mcp-runner-"));
   try {
@@ -52,6 +83,15 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
     assert.equal(hosted.canonical_attempt_settlement!.effect_state, "none");
     assert.equal(hosted.canonical_attempt_settlement!.effect_authority, "native_rollback");
     assert.equal(hosted.canonical_attempt_settlement!.request_dispatched, true);
+    const unresolved = await runDynamicRevitProgram({ source: "public class MaybeApplied {}", mode: "apply" }, env, async (_file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "timeout waiting for native apply receipt", workerOutput: {
+        ok: true, sourceHash: sha256("public class MaybeApplied {}"), executionStatus: "completed", diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: 1, stdout: "", stderr: "timeout" };
+    });
+    assert.equal(unresolved.iteration.retryable, false, "a timeout after worker completion cannot authorize replaying an edit");
+    await assert.rejects(() => runDynamicRevitProgram({ source: "public class MaybeApplied {}", mode: "apply", resume: {
+      prior_run_id: unresolved.run_id, prior_evidence_sha256: unresolved.verification.evidence_sha256, mode: "retry" } }, env), /prior retryable failed attempt/);
     await assert.rejects(() => runDynamicRevitProgram({ source: "x".repeat(128_001), mode: "preview" }, env), /128,000/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
