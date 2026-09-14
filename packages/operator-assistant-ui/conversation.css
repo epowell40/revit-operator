@@ -1,0 +1,85 @@
+/* Conversation surface shared by the local assistant and hosted integration. */
+:root {
+  --bg: #fff; --bg2: #fff; --panel: #fff; --surface: #fff; --surface-strong: #fff;
+  --text-strong: #222; --text-muted: #696969; --text-soft: #555;
+  --line-soft: #e6e6e6; --line-strong: #c9c9c9; --shadow-sm: none; --shadow-lg: none;
+}
+html, body { height: 100%; background: #fff; color: #222; font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; }
+[hidden] { display: none !important; }
+.wrap { padding: 0; gap: 0; height: 100dvh; min-height: 0; overflow: hidden; }
+.wrap::before, .wrap::after, .brandMark { display: none; }
+.bar { min-height: 64px; padding: 12px 24px; border: 0; border-bottom: 1px solid #e6e6e6; border-radius: 0; background: #fff; box-shadow: none; flex-wrap: nowrap; }
+.titleName { font-size: 18px; font-weight: 600; letter-spacing: -.3px; }
+.titleMeta { display: none; }
+.controls { display: flex; flex: 0 1 auto; }
+.productControls { flex-wrap: nowrap; gap: 8px; }
+button, input, select { font: inherit; border-radius: 4px; box-shadow: none; }
+button { padding: 7px 11px; background: #fff; border: 1px solid #ddd; color: #333; }
+button:hover:not(:disabled) { transform: none; background: #f3f3f3; box-shadow: none; border-color: #bbb; }
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid #1565c0; outline-offset: 3px; }
+.statusPill { min-height: auto; padding: 0; margin-right: 10px; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 12px; font-weight: 400; max-width: 210px; }
+.statusPill::before { width: 5px; height: 5px; box-shadow: none; }
+.statusDots { display: none; }
+#newSessionButton, #workDetailsButton { border-color: transparent; }
+.main { display: flex; flex: 1; min-height: 0; overflow: hidden; gap: 0; }
+.left { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.chatPane { width: 100%; max-width: 880px; margin: 0 auto; border: 0; border-radius: 0; background: #fff; box-shadow: none; backdrop-filter: none; }
+#chatScroll { flex: 1; min-height: 0; overflow-y: auto; padding: 34px 30px 20px; }
+.paneIntro { display: none; }
+.messages { gap: 30px; }
+.messages:empty::before { content: "What would you like to do?"; display: block; padding-top: min(16vh, 130px); font-size: 24px; font-weight: 500; letter-spacing: -.5px; color: #333; }
+.msg { gap: 8px; }
+.role { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: #555; }
+.role::before { display: none; }
+.msg.user .role { display: none; }
+.bubble { max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.msg.assistant .bubble { max-width: 100%; }
+.msg.user .bubble { max-width: 85%; padding: 11px 16px; border: 0; border-radius: 12px; background: #f2f2f2; }
+.msg.error .bubble { padding: 12px; background: #fff4f3; border: 1px solid #f0cbc8; border-radius: 6px; }
+.bubble p:first-child { margin-top: 0; }
+.bubble p:last-child { margin-bottom: 0; }
+.composer { margin: 12px 30px 22px; padding: 12px 14px; gap: 6px; border: 1px solid #c9c9c9; border-radius: 8px; background: #fff; box-shadow: none; }
+.composer:focus-within { border-color: #777; }
+textarea { min-height: 46px; max-height: 180px; padding: 0 2px; border: 0; border-radius: 0; box-shadow: none; font: inherit; font-size: 15px; line-height: 1.5; background: transparent; resize: vertical; }
+textarea:focus { outline: none; }
+.composerFooter { display: flex; justify-content: flex-end; gap: 8px; }
+.composerBtns { width: 100%; display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+.composerBtns .iconButton { width: 32px; height: 32px; min-width: 32px; padding: 6px; border: 0; border-radius: 4px; }
+#attachButton { border: 0; padding: 6px 9px; font-size: 13px; }
+#sendButton { margin-left: auto; padding: 7px 16px; border-radius: 4px; background: #252525; color: #fff; border-color: #252525; box-shadow: none; }
+#sendButton:hover:not(:disabled) { background: #444; }
+#recStopButton:disabled { display: none; }
+.attachStrip { border: 0; padding: 0; background: none; }
+.assignmentCompact { order: 2; margin: 0 30px; padding: 8px 2px 0; border: 0; border-radius: 0; background: none; box-shadow: none; display: flex; justify-content: space-between; font-size: 12px; color: #666; }
+.composer { order: 3; }
+.assignmentCompactCopy { display: flex; flex: 1; min-width: 0; }
+#assignmentCompactStatus, #assignmentCompactTitle { display: none; }
+.assignmentCompactCopy > span:last-child { white-space: normal; overflow: visible; font-size: 12px; color: #666; }
+#assignmentCompactToggle { padding: 0 4px; border: 0; background: none; color: #666; font-size: 12px; }
+.right { display: flex; flex-direction: column; width: min(420px, 45vw); flex: 0 0 auto; padding: 18px; overflow-y: auto; gap: 16px; border-left: 1px solid #ddd; background: #fafafa; }
+.detailsHeader { display: flex; align-items: center; justify-content: space-between; }
+.detailsHeader h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.assignmentPane { flex: 0 0 auto; overflow: visible; background: transparent; border: 0; box-shadow: none; padding: 0; }
+.advancedPanel > summary { padding: 7px 10px; border: 1px solid #ddd; border-radius: 4px; background: #fff; font-size: 13px; }
+.advancedPanel[open] > summary { background: #f3f3f3; }
+.advancedPanelBody { position: fixed; top: 64px; right: 12px; width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 80px); overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; background: #fff; box-shadow: 0 8px 24px #0002; padding: 18px; z-index: 30; }
+.settingsAccount { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.composerMeta { margin-top: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.feedbackBar { margin: 16px 0; }
+.feedbackBar.on { display: flex; flex-wrap: wrap; }
+.desktopCard, .progressPane, .actionsPane { flex: 0 0 auto; padding: 14px; }
+.stopButton { font-size: 13px; }
+@media (max-width: 640px) {
+  .bar { padding: 10px 12px; min-height: 56px; gap: 6px; }
+  .titleName { font-size: 16px; }
+  .productControls { gap: 2px; }
+  .productControls > button, .advancedPanel > summary { padding: 7px; font-size: 12px; }
+  .statusPill { position: absolute; top: 62px; left: 18px; z-index: 2; max-width: calc(100vw - 36px); background: #fff; }
+  #chatScroll { padding: 36px 18px 16px; }
+  .composer { margin: 8px 12px 12px; }
+  .assignmentCompact { margin: 0 16px; }
+  .right { position: fixed; inset: 56px 0 0; width: 100%; z-index: 20; background: #fff; }
+  .advancedPanelBody { top: 56px; }
+  .messages:empty::before { font-size: 22px; padding-top: 15vh; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

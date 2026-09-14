@@ -235,6 +235,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   if (/\bshow\b[^.!?;\n]{0,140}\bin\s+(?:red|blue|green|gray|grey|black|white|halftone)\b/.test(text)) return "mutation";
   const navigationText = withoutAdjectivalOpenDocumentState(text);
   if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(navigationText)) return "navigation";
+  if (/^(?:please\s+)?(?:can|could|do) you (?:see|access|read)\b/.test(text) && hasRevitWorkSubject(text)) return "inspection";
   if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|report|compare|audit|summarize|describe|csv|inventory|current|active|selected)\b/.test(text)) return "inspection";
   // Delegated Revit work is commonly written as a terse redline or noun phrase
   // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a

@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+
+test("the user's plain model-visibility question is inspection, not an edit", () => {
+  assert.equal(classifyAgentTurn("can you see the open model?"), "inspection");
+  assert.equal(classifyAgentTurn("can you see the open model and rename sheet M102?"), "mutation");
+});
 import {
   AGENT_RESPONSE_STYLE_LINES,
   classifyAgentTurn,

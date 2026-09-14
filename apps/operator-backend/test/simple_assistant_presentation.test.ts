@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
+
+const root = ["../packages/operator-assistant-ui", "../../packages/operator-assistant-ui"].map(p => path.resolve(p))
+  .find(p => fs.existsSync(path.join(p, "conversation_ui.mjs")))!;
+const ui = await import(pathToFileURL(path.join(root, "conversation_ui.mjs")).href);
+
+test("idle tasks cannot imply ongoing work; working summaries do not expose internal task detail", () => {
+  assert.equal(ui.compactWorkSummary({ current_step: "Canonical evidence token secret-value" }, false), "");
+  assert.equal(ui.compactWorkSummary({ current_step: "Verify native postcondition for internal-id-42" }, true), "Checking the result…");
+  assert.equal(ui.compactWorkSummary({ current_step: "Discover current model" }, true), "Checking the model…");
+  assert.equal(ui.compactWorkSummary({ current_step: "Apply parameter changes" }, true), "Making the requested changes…");
+  assert.equal(ui.conciseStatus("Sidecar ready."), "Ready");
+  assert.equal(ui.conciseStatus("Revit connection lost."), "Revit connection lost.");
+});
+
+test("inline formatting treats model names and HTML as inert text", () => {
+  const nodes: any[] = [];
+  const document = { createElement: (tag: string) => ({ tag, textContent: "" }), createTextNode: (text: string) => ({ tag: "text", textContent: text }) };
+  ui.appendInlineText({ ownerDocument: document, appendChild: (node: any) => nodes.push(node) }, "Yes — **Model A**. `<script>` <img onerror=run()>");
+  assert.deepEqual(nodes.filter(n => n.tag !== "text").map(n => n.tag), ["strong", "code"]);
+  assert.equal(nodes.find(n => n.tag === "strong").textContent, "Model A");
+  assert.ok(nodes.some(n => n.textContent.includes("<img onerror=run()>")));
+});

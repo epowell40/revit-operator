@@ -85,7 +85,9 @@
     "general_revit_request.test.ts",
     "view_artifact_evidence.test.ts",
     "pdfjs_standard_fonts.test.ts",
-    "team_assistant_live_regressions.test.ts"
+    "team_assistant_live_regressions.test.ts",
+    "simple_context_question.test.ts",
+    "simple_assistant_presentation.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -108,7 +110,10 @@
     "lib/dynamicRuntimeInstallation.test.ts",
     "lib/dynamicAssignmentIntegration.test.ts"
   ],
-  "desktop_tests": [],
+  "desktop_tests": [
+    "test/simple_assistant_ui.test.js",
+    "test/sidecar_secure_integration.test.js"
+  ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
     "OperatorDuplicateSheetContractTests",
@@ -146,19 +151,33 @@
   "failure_families": [
     {
       "id": "local-checkpoint-ribbon-selects-stale-installed-desktop-launcher",
-      "coverage": ["backend:local_desktop_launcher_registration.test.ts", "dotnet:OperatorDesktopLaunchPlanTests"]
+      "coverage": [
+        "backend:local_desktop_launcher_registration.test.ts",
+        "dotnet:OperatorDesktopLaunchPlanTests"
+      ]
     },
     {
       "id": "generated-parameter-commit-requires-graph-bound-fresh-native-verification",
-      "coverage": ["backend:generated_parameter_postcondition_v2.test.ts", "backend:assignment_kernel_v2_controls.test.ts", "backend:postcondition_verification_v2.test.ts"]
+      "coverage": [
+        "backend:generated_parameter_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:postcondition_verification_v2.test.ts"
+      ]
     },
     {
       "id": "generated-failure-feedback-preserves-cause-without-changing-authority",
-      "coverage": ["mcp:lib/dynamicProgramPresentation.test.ts", "mcp:lib/dynamicAssignmentIntegration.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"]
+      "coverage": [
+        "mcp:lib/dynamicProgramPresentation.test.ts",
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
     },
     {
       "id": "committed-checkpoint-task-id-is-not-a-secret-credential",
-      "coverage": ["backend:evidence_projection.test.ts", "backend:assignment_kernel_v2_controls.test.ts"]
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     },
     {
       "id": "visual-attachments-and-empty-continuations-lose-pixels-or-current-evidence",
@@ -1129,6 +1148,21 @@
         "dynamic:WorkerInputChannelTests",
         "mcp:lib/dynamicAssignmentIntegration.test.ts",
         "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "plain-model-visibility-question-misclassified-as-apply-and-stalls",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:agent_response_policy.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "assistant-conversation-obscured-by-diagnostics-and-stale-task-progress",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/simple_assistant_ui.test.js"
       ]
     }
   ],
