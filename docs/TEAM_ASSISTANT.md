@@ -30,4 +30,10 @@ Start with ten recurring assignments across representative disposable project co
 
 Expand scope when independently accepted results save net staff time. A useful target is a 50% reduction in human time without reduced drawing or model quality; this is a pilot target, not a current measured claim. Keep first failures and rework in the totals.
 
-This guide describes implementation behavior and an evaluation method. See the current candidate's qualification evidence before relying on a workflow in a production model.
+## Current qualification
+
+The local 2026-09-14 pilot used Revit 2024.3, GPT-5.6 Sol / Medium and a disposable Snowdon HVAC model. The installed candidate completed an attached PDF sheet-title redline, a generated C# rollback preview, and a generated C# parameter edit followed by a separate native read. Independent comparisons checked all 17 sheet records and all 1,053 duct Comments: only the marked sheet title changed; preview changed no Comments; apply changed exactly one. Revit's visible properties and title block provide additional checks.
+
+Earlier installed replays also qualified a bounded C# report, compiler-error repair with preserved lineage, manufacturer research with official links, a unit-aware duct velocity calculation, and an updated PDF export. These are specific acceptance cases, not qualification of every MEP operation or Revit version. The pilot has not measured team productivity or unattended multi-hour work. Generated-code completion summaries and mathematical notation still need presentation improvements.
+
+Start production evaluation with reviewed project copies and the team pilot above. The private EPIC-0462 qualification record retains exact installed revisions, deterministic gates, first failures and replay evidence.

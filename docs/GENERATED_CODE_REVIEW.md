@@ -48,3 +48,9 @@ Prioritize useful feedback next: retain bounded partial reports on program failu
 6. Missing facts produce an explicit fact request; stale or foreign document/session/target evidence fails before mutation.
 
 Deterministic checks and native Revit qualification are separate results. The team pilot should record both, plus user review time and rework.
+
+## Installed qualification on 2026-09-14
+
+Public runtime revision `71e4a92c346a23f2da6c5320eb105af4b8aba545` passed the natural C# preview and apply cases in Operator on Revit 2024.3 with Sol / Medium. The preview compiled a real parameter operation and rolled it back; a separate paged read of all 1,053 duct Comments found no changes. The apply test first submitted excessive worker/transaction deadlines, received validation errors before admission, corrected them, and committed one direct Comments edit. A fresh native parameter read supplied `verification.postcondition_satisfied`; the assignment and UI both completed. Independent comparison found exactly one changed Comment and 1,052 unchanged, with the new value also visible in Revit Properties.
+
+Earlier installed candidates passed the bounded report, deliberate compiler-error repair and exact repair lineage. Their first failures are retained rather than replaced by the final passing replay. Current deterministic qualification includes both 127-family release frontiers and full changed backend suites; the unchanged full MCP, Dynamic Runtime and Revit compatibility results are recorded separately. These checks are not a penetration test, unrestricted Revit API qualification, or proof of multi-hour unattended reliability.
