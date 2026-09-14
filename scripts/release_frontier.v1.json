@@ -97,7 +97,8 @@
     "runtime_source_identity.test.ts",
     "document_review_routing.test.ts",
     "mep_route_redline_resolver.test.ts",
-    "composer_recovery.test.ts"
+    "composer_recovery.test.ts",
+    "read_attachment.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -126,7 +127,8 @@
     "test/sidecar_secure_integration.test.js",
     "test/runtime_source_freshness.test.js",
     "test/browser_asset_freshness.test.js",
-    "test/idle_batch_worker.test.js"
+    "test/idle_batch_worker.test.js",
+    "test/composer_intake.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -1326,6 +1328,43 @@
       "coverage": [
         "dotnet:OperatorUiWakeSchedulerTests",
         "backend:revit_control_plane_contract.test.ts"
+      ]
+    },
+    {
+      "id": "document-review-capability-question-completes-with-unrequested-model-schedules",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "deferred-pdf-pages-cannot-be-read-as-registered-conversation-evidence",
+      "coverage": [
+        "backend:read_attachment.test.ts",
+        "backend:codex_turn_input.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "send-intake-awaits-freshness-before-acknowledgment-and-click-capture",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/composer_intake.test.js",
+        "desktop:test/browser_asset_freshness.test.js"
+      ]
+    },
+    {
+      "id": "generated-code-repair-without-changing-model-misclassified-as-apply",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "generated-support-read-attaches-domain-facts-to-control-evidence",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
       ]
     }
   ],

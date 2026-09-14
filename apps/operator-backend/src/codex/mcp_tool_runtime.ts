@@ -9,6 +9,7 @@ import { AssignmentKernelTurnLeaseRegistryV2, type AssignmentKernelTurnLeaseV2 }
 import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_kernel_v2_factory.js";
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
 import { McpInputValidator } from "./mcp_input_validation.js";
+import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -264,6 +265,15 @@ export class CodexMcpToolRuntime {
     this.inputValidator.validate(tool, args, namespace.tools);
   }
 
+  async readAttachmentForTurn(args: unknown, binding: { turnId: unknown; sessionId: string }): Promise<unknown> {
+    // Host-owned file reads have no MCP/native dependency, but retain the same
+    // authenticated turn/session lifetime as every other backend capability.
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    const result = await readRegisteredPdfAttachment(binding.sessionId, args);
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    return result;
+  }
+
   async getDynamicToolNamespace(): Promise<any> {
     if (this.dynamicNamespace) return this.dynamicNamespace;
     await this.ensureStarted();
@@ -275,13 +285,13 @@ export class CodexMcpToolRuntime {
       type: "namespace",
       name: "revit_operator",
       description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
-      tools: listed.tools.map(tool => ({
+      tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name).map(tool => ({
         type: "function",
         name: tool.name,
         description: tool.description ?? "Revit Operator tool",
         inputSchema: tool.inputSchema,
         deferLoading: !EAGER_OPERATOR_MCP_TOOLS.has(tool.name)
-      }))
+      }))]
     };
     return this.dynamicNamespace;
   }

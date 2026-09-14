@@ -79,6 +79,31 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
 
 export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   const params = request.params ?? {};
+  if ((params.namespace === "revit_operator" || params.namespace === "mcp__revit_operator") && params.tool === "operator_read_attachment") {
+    try {
+      const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId);
+      if (!sessionId) throw new Error("Attachment reads require a current host-owned conversation turn.");
+      const conversation = teammateLoopIsConversationForOwner(runtime, params.turnId);
+      const binding = runtime.assignmentKernelV2Binding?.(params.turnId, sessionId);
+      const snapshot = binding ? getAssignmentKernelSnapshotV2(binding.assignment_id) : null;
+      if (!conversation) {
+        const interrupted = findInterruptedAutoGoalForSession(sessionId);
+        const journal = binding ? null : currentAssignmentJournalContext(sessionId);
+        if (interrupted || snapshot?.execution_control?.state === "paused" || snapshot?.terminal
+          || (!snapshot && (!journal || journal.projection.terminal_state !== "open"))) {
+          throw new Error("The model task is not active; resume it before reading more task documents.");
+        }
+      } else if (binding) {
+        throw new Error("An independent document question cannot use an earlier model-task binding.");
+      }
+      // Document inspection cannot satisfy model observation/change criteria.
+      // The source receipt and page pixels are delivered directly to the active
+      // provider, without opening or settling a native/model operation.
+      return adaptMcpToolCallResultToDynamicResponse(await runtime.readAttachmentForTurn(params.arguments, { turnId: params.turnId, sessionId }));
+    } catch (error) {
+      return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false };
+    }
+  }
   // Standalone research owns the current provider turn, not an earlier model
   // assignment in this conversation. Only this read-only, policy-enforced tool
   // may execute without a model assignment; native tools still need one.

@@ -11,3 +11,5 @@ Generic local assistant components, independent of hosted authentication and dep
 The Desktop integration copies these assets into its runtime so bundle dependency verification covers them. The backend test suite exercises the public modules; Desktop route and UI tests cover the integration. A direct context answer is conversational information, not an assignment completion or a model change receipt.
 
 The ping snapshot has `authority: "ui_identity_only"`; its capture time records the last Revit UI update, not a new model inspection. Protected ping reads can bypass the serialized model-operation lane because they access only serialized values, never the Autodesk API from an HTTP thread. Detailed inspection and change verification still require ordinary native API work and its evidence contracts.
+
+- composer_intake.mjs captures the exact Send text/attachment bytes before asynchronous recovery or freshness work and excludes duplicate pending/backend submissions. Computer steering remains available after intake.

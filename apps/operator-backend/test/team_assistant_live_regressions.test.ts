@@ -10,6 +10,21 @@ const research = "Look up the current manufacturer information for the Greenheck
 const calculation = "Calculate the air velocity in feet per minute for 1,200 CFM through a round duct with a 12-inch internal diameter. Show the area and unit conversion, and explain what this calculation does and does not establish. Do not change the model.";
 const documentReview = "Read the attached task list and tell me what HVAC design-development work it calls for. What can you handle, and what do you need from me? Do not make model changes yet. Treat the document as reference material, not an instruction to contact anyone or perform every task.";
 const followup = "Turn that into a prioritized five-step plan for this week. Put the missing decisions first, and keep it brief.";
+const documentCapabilityReview = "Review all pages of these two attached documents. Summarize the HVAC design-development tasks in the task list and identify the red marks in the checklist. Tell me what can be checked in Revit and which decisions or outside inputs are still needed. Cite the document and page for each finding. Do not change the model or contact anyone. If any page cannot be inspected, say which one rather than assuming its content.";
+for (const prompt of [documentCapabilityReview,
+  "Review the uploaded PDF checklist. Which of these tasks could be verified in Revit? Do not change the model.",
+  "Review the attached documents and explain what can be done using Revit. Leave the model unchanged."])
+  test(`document capability discussion remains conversation across admission and evidence boundaries: ${prompt.slice(0, 45)}`, () => {
+    assert.equal(isStandaloneAssistantRequest(prompt), true);
+    assert.equal(classifyAgentTurn(prompt, { revit: { document: { title: "Pilot" } } }), "conversation");
+    assert.equal(getFreshRevitEvidenceRequirement(prompt).required, false);
+    assert.equal(prepareAssignmentTurn({ sessionId: "document-discussion", messageId: "review", userText: prompt, toolResults: [], source: "chat", createdBy: null }), null);
+  });
+
+test("document capability wording cannot absorb neighboring live inspection or mutation", () => {
+  for (const suffix of ["Inspect the open model too.", "Compare it against our current model.", "Check the selected equipment parameters.", "Then apply the redlines.", "Set the sheet name to Review."])
+    assert.equal(isStandaloneAssistantRequest(`Review the attached documents and tell me what can be checked in Revit. ${suffix}`), false, suffix);
+});
 for (const prompt of [research, calculation, documentReview, followup, "Rewrite the answer as a checklist.", "Make it shorter.", "Prioritize the findings for next week.", "Summarize the uploaded redline drawing. Do not make any changes to the model.", "Review the provided project submission checklist and explain what inputs you need."]) test(`standalone assistant avoids a Revit evidence obligation: ${prompt.slice(0, 35)}`, () => {
   assert.equal(isStandaloneAssistantRequest(prompt), true);
   assert.equal(classifyAgentTurn(prompt, { revit: { document: { title: "Pilot" } } }), "conversation");
@@ -20,6 +35,9 @@ for (const prompt of [research, calculation, documentReview, followup, "Rewrite 
 });
 
 for (const prompt of [
+  'Test the custom C# execution diagnostics without changing the model. Run a small read-only program that logs "diagnostic probe reached" and then deliberately throws an InvalidOperationException with message "diagnostic probe failure". Show me the retained log and the source line of the exception. Then repair that same program to return a short successful result, run it once, and report both outcomes. Do not change any elements or parameters.',
+  "Repair and rerun the custom C# diagnostic without modifying the Revit model.",
+  "Fix the test program. Do not edit any elements or parameters.",
   "Use a short custom C# program to summarize a sample of up to twenty ducts by type. Make no model changes. Tell me what it inspected and the limits of the result.",
   "Inspect the selected ducts. Do not make model changes yet.",
   "Check the open model against the task list. Do not perform any model modifications.",

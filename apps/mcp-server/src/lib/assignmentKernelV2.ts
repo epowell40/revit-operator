@@ -166,7 +166,8 @@ function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
     schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: operationResult,
     observation: {
       raw_payload: payload,
-      semantic_facts: completed ? [{ fact_id: scope.context.requested_effect === "preview" && !snapshotReport ? "task.preview_valid" : "task.result_available", fact_class: "domain", value: true }] : [],
+      semantic_facts: completed && scope.context.fulfillment_role === "delegated_task_execution" && scope.context.eligible_criterion_ids.length > 0
+        ? [{ fact_id: scope.context.requested_effect === "preview" && !snapshotReport ? "task.preview_valid" : "task.result_available", fact_class: "domain", value: true }] : [],
       target_scope: {}, verification_relevance: [evidenceClass(scope.context.fulfillment_role)],
       evidence_class: evidenceClass(scope.context.fulfillment_role)
     }

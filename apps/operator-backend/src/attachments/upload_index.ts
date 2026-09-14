@@ -102,6 +102,12 @@ function readLatestSessionUploadIndexRecords(sessionId: string, limit: number): 
   return readLatestUploadIndexRecordsFromFile(uploadsSessionIndexPath(sessionId), limit);
 }
 
+export function findSessionUploadById(sessionId: string, id: string): UploadIndexRecord | null {
+  if (!sessionId || !id) return null;
+  return readLatestSessionUploadIndexRecords(sessionId, 500)
+    .find(record => record.id === id && record.session_id === sessionId) ?? null;
+}
+
 function looksLikeImagePath(relPath: string): boolean {
   const ext = path.extname(relPath).toLowerCase();
   return ext === ".png" || ext === ".jpg" || ext === ".jpeg";

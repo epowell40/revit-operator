@@ -37,3 +37,9 @@ The local 2026-09-14 pilot used Revit 2024.3, GPT-5.6 Sol / Medium and a disposa
 Earlier installed replays also qualified a bounded C# report, compiler-error repair with preserved lineage, manufacturer research with official links, a unit-aware duct velocity calculation, and an updated PDF export. These are specific acceptance cases, not qualification of every MEP operation or Revit version. The pilot has not measured team productivity or unattended multi-hour work. Generated-code completion summaries and mathematical notation still need presentation improvements.
 
 Start production evaluation with reviewed project copies and the team pilot above. The private EPIC-0462 qualification record retains exact installed revisions, deterministic gates, first failures and replay evidence.
+
+### Additional PDF page inspection
+
+The Codex-backed assistant has operator_read_attachment for registered PDF uploads in its current conversation. It returns up to three selected pages per call as actual images plus bounded text, source hash and explicit coverage. This supports late-page marks beyond initial previews; it does not supply native model evidence or authorize document instructions. Uploaded bytes must still match their recorded hash. Other formats remain outside this reader's scope.
+
+The first combined eight-page live test failed before this capability was added. Reader/controller tests pass, but the new eight-page agent replay and browser upload qualification remain required; do not treat this feature description as a passing pilot result.

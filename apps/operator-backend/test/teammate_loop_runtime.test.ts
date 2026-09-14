@@ -2142,6 +2142,23 @@ test("a generic successful apply payload cannot impersonate independent verifica
   }
 });
 
+test("repairing generated source without changing the model never authorizes generated apply", () => {
+  for (const text of [
+    "Test the custom C# execution diagnostics without changing the model. Run a small read-only program, then repair that program and run it once. Do not change any elements or parameters.",
+    "Repair the custom C# code without modifying the Revit model.",
+    "Fix the C# test program. Do not edit any elements or parameters."
+  ]) {
+    __testOnlyResetTeammateLoopState(); const owner = {}; const lease = beginTeammateLoopOwner(owner, request(text));
+    try {
+      const read = guardTeammateMcpCall(owner, { tool: "operator_run_dynamic_revit_program", arguments: { mode: "read", source: "public class Probe {}" } });
+      assert.equal(read.allowed, true, read.message);
+      const apply = guardTeammateMcpCall(owner, { tool: "operator_run_dynamic_revit_program", arguments: { mode: "apply", source: "public class Probe {}" } });
+      assert.equal(buildTeammateTurnContract(request(text)).no_write, true);
+      assert.equal(apply.allowed, false); assert.match(apply.message ?? "", /does not authorize model mutation|no.write/i);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
 test("post-apply verification ignores echoed request values outside authoritative result fields", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

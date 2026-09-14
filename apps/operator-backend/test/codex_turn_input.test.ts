@@ -7,6 +7,7 @@ import test from "node:test";
 import { createCanvas } from "@napi-rs/canvas";
 import { buildCodexTurnInput } from "../src/brains/codex_turn_input.js";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
+import { readRegisteredPdfAttachment } from "../src/attachments/read_attachment.js";
 import type { ChatRequest } from "../src/contracts.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN8sAAAAASUVORK5CYII=", "base64");
@@ -85,12 +86,12 @@ test("large drawing sets cannot crowd the latest Revit capture out of the visual
 });
 
 // A four-page vector PDF exercises the actual PDF parser and canvas renderer.
-function pagedPdf(pageCount = 4): Buffer {
+function pagedPdf(pageCount = 4, pageOffset = 0): Buffer {
   const kids = Array.from({ length: pageCount }, (_, i) => `${3 + i * 2} 0 R`).join(" ");
   const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>`];
   for (let i = 0; i < pageCount; i++) {
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Contents ${4 + i * 2} 0 R >>`);
-    const stream = `1 0 0 RG 2 w 10 ${10 + i * 10} m 90 90 l S\n`;
+    const stream = `1 0 0 RG 2 w 10 ${10 + (i + pageOffset) * 10} m 90 90 l S\n`;
     objects.push(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`);
   }
   let output = "%PDF-1.4\n";
@@ -125,4 +126,19 @@ test("short document review receives every page including late discipline sectio
   assert.doesNotMatch(text, /pages still require inspection/);
   const mixed = await buildCodexTurnInput(request({user_text:"Review the attached task list and update the open model."}), []);
   assert.doesNotMatch(mixed.filter(item=>item.type === "text").map(item=>item.text).join("\n"), /STANDALONE ASSISTANT TURN/);
+});
+
+test("eight combined PDF pages expose the missing coverage and can be read explicitly by attachment ID", async t => {
+  fixture(t);
+  const first = storeAttachmentUpload({ filename: "tasks.pdf", session_id: "redline-input", data_base64: pagedPdf(5).toString("base64") });
+  const second = storeAttachmentUpload({ filename: "marked-checklist.pdf", session_id: "redline-input", data_base64: pagedPdf(3, 5).toString("base64") });
+  const input = await buildCodexTurnInput(request({ user_text: "Review all pages of the attached documents. Tell me what can be checked in Revit. Do not change the model.", user_attachments: [first, second] }), []);
+  const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
+  assert.match(text, /STANDALONE ASSISTANT TURN/); assert.match(text, /operator_read_attachment/);
+  assert.equal(input.filter(item => item.type === "image").length, 6);
+  assert.match(text, /marked-checklist.pdf/); assert.match(text, /2 pages still require inspection/);
+  const remaining = await readRegisteredPdfAttachment("redline-input", { attachment_id: second.id, pages: [2, 3] });
+  const coverage = JSON.parse(remaining.content.filter(item => item.type === "text")[0]!.text);
+  assert.deepEqual(coverage.pages_returned, [2, 3]); assert.equal(coverage.sha256, second.sha256);
+  assert.equal(remaining.content.filter(item => item.type === "image").length, 2);
 });

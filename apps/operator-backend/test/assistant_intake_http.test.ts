@@ -84,6 +84,11 @@ test("context and batch availability endpoints enforce session ownership without
   const reply = await policy(request);
   assert.equal(reply.status, 200);
   assert.deepEqual(await reply.json(), { schema: "revit-operator.chat-context-policy.v1", session_id, message_id: "question", requires_revit_context: false });
+  const documentQuestion = "Review all pages of these two attached documents. Summarize the HVAC design-development tasks and identify the red marks. Tell me what can be checked in Revit and which decisions or outside inputs are still needed. Cite the document and page for each finding. Do not change the model or contact anyone.";
+  const documentPolicy = await policy({ ...request, user_text: documentQuestion });
+  assert.equal(documentPolicy.status, 200);
+  assert.equal((await documentPolicy.json() as any).requires_revit_context, false);
+  assert.equal((await (await policy({ ...request, user_text: documentQuestion + " Inspect the open model too." })).json() as any).requires_revit_context, true);
   for (const body of [{ ...request, user_text: "What is the diameter of the selected duct?" }, { ...request, assignment_id: "task" }]) {
     assert.equal((await (await policy(body)).json() as any).requires_revit_context, true);
   }

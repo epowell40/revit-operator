@@ -35,6 +35,23 @@ test("trusted generated report crosses the MCP boundary as bound task evidence",
   assert.deepEqual(output.structuredContent.observation.semantic_facts, [{ fact_id: "task.result_available", fact_class: "domain", value: true }]);
 });
 
+test("generated support read retains its successful result without attaching task facts to control evidence", async () => {
+  const metadata: any = meta();
+  metadata[ASSIGNMENT_KERNEL_V2_META_KEY].fulfillment_role = "supporting_control";
+  metadata[ASSIGNMENT_KERNEL_V2_META_KEY].eligible_criterion_ids = [];
+  delete metadata[ASSIGNMENT_KERNEL_V2_META_KEY].delegation_authority_id;
+  const payload = result();
+  const output: any = await runWithAssignmentKernelV2(metadata, async () => {
+    beginAssignmentKernelDynamicDispatchV2(); recordAssignmentKernelDynamicResultV2(payload);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, capability);
+  });
+  assert.equal(output.structuredContent.operation_result_v2.status, "succeeded");
+  assert.equal(output.structuredContent.operation_result_v2.persistent_effect, "none");
+  assert.equal(output.structuredContent.observation.evidence_class, "control");
+  assert.deepEqual(output.structuredContent.observation.semantic_facts, []);
+  assert.deepEqual(output.structuredContent.observation.raw_payload.report, payload.report);
+});
+
 test("caller-authored dynamic-shaped content cannot acquire runtime authority", async () => {
   const output: any = await runWithAssignmentKernelV2(meta(), async () => decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(result()) }] }, capability));
   assert.equal(output.structuredContent.operation_result_v2.authority, "operator-mcp-transport");

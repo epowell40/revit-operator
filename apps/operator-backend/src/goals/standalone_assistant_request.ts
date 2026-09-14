@@ -21,10 +21,14 @@ export function isStandaloneAssistantRequest(text: string): boolean {
   const researchOrCalculation = /\b(?:look up|research|search (?:the )?(?:internet|web)|manufacturer|published|calculate|calculation|convert|formula|explain|engineering)\b/i.test(request);
   const answerDraft = isAnswerDraftRequest(request);
   if (!researchOrCalculation && !documentReview && !answerDraft) return false;
+  // Asking which checklist items could be checked in Revit is a capability
+  // question, not a request to inspect a live model. Remove only that narrow
+  // clause; a neighboring actual model inspection still retains its owner.
+  const scopeRequest = documentReview ? request.replace(/\b(?:tell me\s+)?(?:what|which)\s+(?:(?:of\s+)?(?:the(?:se)?\s+)?(?:items|tasks|requirements)\s+)?(?:can|could)\s+be\s+(?:checked|verified|handled|done|accomplished)\s+(?:in|using|with)\s+revit\b/gi, " ") : request;
   // References to the current model, selection, drawing, or an executable
   // model operation keep the durable Revit owner, including mixed requests.
   if (documentReview) {
-    if (/\b(?:revit|model|selected|selection|parameter|element)\b|\b(?:current|active|open|this|our)\s+(?:project|sheet|view|schedule)\b/i.test(request)) return false;
+    if (/\b(?:revit|model|selected|selection|parameter|element)\b|\b(?:current|active|open|this|our)\s+(?:project|sheet|view|schedule)\b/i.test(scopeRequest)) return false;
   } else if (/\b(?:revit|model|project|selected|selection|sheet|view|redline|markup|parameter|element|schedule)\b/i.test(request)) return false;
   if (/\b(?:this|that|these|those|current|active)\s+(?:duct|pipe|fan|device|equipment|system|branch)\b/i.test(request)) return false;
   if (/\b(?:add|adjust|change|correct|fix|create|place|move|delete|remove|rename|resize|replace|set|route|connect|disconnect|update|modify|edit|apply|commit|export|print)\b/i.test(request)) return false;

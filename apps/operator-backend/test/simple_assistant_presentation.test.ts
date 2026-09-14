@@ -7,6 +7,21 @@ import test from "node:test";
 const root = ["../packages/operator-assistant-ui", "../../packages/operator-assistant-ui"].map(p => path.resolve(p))
   .find(p => fs.existsSync(path.join(p, "conversation_ui.mjs")))!;
 const ui = await import(pathToFileURL(path.join(root, "conversation_ui.mjs")).href);
+const intake = await import(pathToFileURL(path.join(root, "composer_intake.mjs")).href);
+
+test("composer intake captures file bytes once and blocks duplicate backend or pending sends without blocking computer steering", () => {
+  const state: any = { pendingAttachments: [{ filename: "redline.pdf", data_base64: "bytes" }], streaming: false };
+  const first = intake.beginComposerSend(state, "Review it");
+  assert.equal(state.composerSubmissionPending, true);
+  assert.equal(intake.beginComposerSend(state, "Duplicate"), null);
+  state.pendingAttachments[0].filename = "later.pdf";
+  assert.equal(first.attachments[0].filename, "redline.pdf"); assert.equal(first.attachments[0].data_base64, "bytes");
+  state.composerSubmissionPending = false; state.streaming = true; state.activeRunKind = "backend";
+  assert.equal(intake.beginComposerSend(state, "Duplicate active send"), null);
+  state.activeRunKind = "computer"; assert.ok(intake.beginComposerSend(state, "Steer this work"));
+  state.composerSubmissionPending = false; state.resetting = true; assert.equal(intake.beginComposerSend(state, "Late send"), null);
+  assert.equal(intake.beginComposerSend({ pendingAttachments: [] }, "  "), null);
+});
 
 test("idle tasks cannot imply ongoing work; working summaries do not expose internal task detail", () => {
   assert.equal(ui.compactWorkSummary({ current_step: "Canonical evidence token secret-value" }, false), "");

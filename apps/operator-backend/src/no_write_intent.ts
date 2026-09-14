@@ -45,6 +45,8 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
   if (MODEL_CHANGE_PROHIBITION.test(text)) return true;
+  if (/\bwithout\s+(?:changing|modifying|editing|saving)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/i.test(text)) return true;
+  if (/\b(?:do not|don't|dont|never)\s+(?:change|modify|edit|delete|remove|write)\s+(?:any\s+)?(?:elements|parameters)\b/i.test(text)) return true;
   if (/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/i.test(text)) return true;
   const withoutRepeatedEdit = text.replace(/\b(?:do not|don't|dont|never)\s+repeat\s+(?:the\s+)?(?:edit|change|mutation)\b/gi, " ");
   if (withoutRepeatedEdit !== text && !hasExplicitMutationVerb(withoutRepeatedEdit)) return true;

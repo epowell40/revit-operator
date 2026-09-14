@@ -34,6 +34,9 @@ import { deriveAndSettleAssignmentKernelV2 } from "../src/assignments/assignment
 import { McpInputValidator } from "../src/codex/mcp_input_validation.js";
 import { generatedParameterPayload, generatedParameterSource } from "./generated_parameter_postcondition.fixtures.js";
 import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dynamic_result_adapter.js";
+import { CodexMcpToolRuntime } from "../src/codex/mcp_tool_runtime.js";
+import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
+import { attachmentPdf } from "./pdf_attachment.fixtures.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -56,6 +59,70 @@ function start(prompt = "Count all air devices in the model.") {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "controls-model" } } } } })!;
   return { prepared, binding: prepared.bindingV2!, snapshot: getAssignmentKernelSnapshotV2(prepared.assignmentId)! };
 }
+
+test("document reader inspects late pages beside a paused model task without changing its outcome or enabling native tools", () => workspace(async root => {
+  const { prepared, binding } = start();
+  controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-before-docs", expected_command_id: null });
+  const before = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+  assert.equal(before.execution_control?.state, "paused");
+  const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "checklist.pdf", data_base64: attachmentPdf().toString("base64") });
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const auth = runtime.beginBackendAuthLease("controls-session", createOperatorBackendAuth("shared_token", "test-only"));
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session", user_text: "Review the attached checklist and tell me what can be checked in Revit. Do not change the model." } as any);
+  const request = { id: "read-late-pages", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "doc-turn", tool: "operator_read_attachment", arguments: { attachment_id: attachment.id, pages: [6, 7, 8] } } } as any;
+  try {
+    const response: any = await handleCodexDynamicToolCall(runtime, request);
+    assert.equal(response.success, true, JSON.stringify(response).slice(0, 300));
+    assert.equal(response.contentItems.filter((item: any) => item.type === "inputImage").length, 3);
+    assert.match(response.contentItems.filter((item: any) => item.type === "inputText").map((item: any) => item.text).join("\n"), /Fixture page 8/);
+    assert.equal((await handleCodexDynamicToolCall(runtime, { ...request, params: { ...request.params, tool: "revit_get_context" } }) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before);
+  } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); }
+  assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, false);
+}));
+
+test("document support read never completes a live model-read criterion and obeys pause", () => workspace(async root => {
+  const { prepared, binding } = start("Review the attached checklist and check the open model against it.");
+  const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "checklist.pdf", data_base64: attachmentPdf().toString("base64") });
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const auth = runtime.beginBackendAuthLease("controls-session", createOperatorBackendAuth("shared_token", "test-only"));
+  const v2 = runtime.beginAssignmentKernelV2Lease(binding);
+  runtime.bindAssignmentKernelV2LeaseTurn(v2, "model-doc-turn");
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session", user_text: "Review the attached checklist and check the open model against it." } as any);
+  const request = { id: "support-page", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "model-doc-turn", tool: "operator_read_attachment", arguments: { attachment_id: attachment.id, pages: [8] } } } as any;
+  try {
+    const before = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, true);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before);
+    controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-current-docs", expected_command_id: null });
+    const paused = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), paused);
+  } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); runtime.endAssignmentKernelV2Lease(v2); }
+}));
+
+test("successful generated support report settles as no-effect control evidence while the model task remains incomplete", () => workspace(async () => {
+  const { binding, snapshot } = start("Use a custom C# program to set Comments to CHECKED on one duct and verify the edit.");
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "support-report", provider_turn_id: "support-turn",
+    capability_id: "operator_run_dynamic_revit_program", classified_effect: "read", arguments: { mode: "read", source: "public class Probe {}" } });
+  assert.equal(lease.fulfillment_role, "supporting_control");
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const payload = { requested_mode: "read", execution_ok: true, execution_status: "completed", report: { Result: "diagnostic repaired" } };
+  const result = settleAssignmentKernelOperationV2(lease, { content: [], structuredContent: {
+    schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+    operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: "support-report-result", operation_id: lease.operation_id,
+      binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none", native_transaction_state: "not_applicable",
+      authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2", observation_required: true,
+      raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: "dynamic-evidence:support-report", request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+    observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["control"], evidence_class: "control" }
+  } });
+  const operation = result.snapshot.operations[lease.operation_id]!;
+  assert.equal(operation.settlement_state, "settled"); assert.equal(operation.persistent_effect, "none");
+  assert.equal(operation.result?.status, "succeeded"); assert.equal(result.snapshot.unresolved_unknown_operation_ids.length, 0);
+  const observation = Object.values(result.snapshot.observations).find(row => row.operation_id === lease.operation_id)!;
+  assert.equal(observation.evidence_class, "control"); assert.equal(observation.facts.length, 0);
+  assert.notEqual(result.snapshot.outcome, "complete"); assert.equal(result.snapshot.terminal, false);
+}));
 
 test("a standalone research turn fetches evidence after a blocked model task without reopening model access", () => workspace(async () => {
   const { prepared, binding, snapshot } = start("Use a short custom C# program to inspect twenty ducts. Make no model changes.");

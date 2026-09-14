@@ -107,6 +107,7 @@ export function formatCodexRequestEnvelope(req: ChatRequest): string {
       sha256: attachment.sha256
     }));
     blocks.push(`USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`);
+    blocks.push("PDF REVIEW: Use operator_read_attachment with attachment_id and up to three 1-based pages to inspect pages not included in initial visual coverage. This tool returns actual page pixels and text without Revit discovery or bootstrap. Review all requested pages, cite document/page, and distinguish visible marks from extracted text. If a page cannot be inspected, state that limitation; do not replace the requested document findings with model observations or claim complete coverage from previews.");
   }
   return blocks.join("\n\n");
 }
