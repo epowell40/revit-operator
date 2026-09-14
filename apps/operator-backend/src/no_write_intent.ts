@@ -1,5 +1,9 @@
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 
+// An explicit model-preservation sentence is a turn constraint, including
+// ordinary wording such as "Do not make model changes yet."
+export const MODEL_CHANGE_PROHIBITION = /\b(?:do not|don't|dont|never)\s+(?:make|perform|apply|commit)\s+(?:any\s+)?(?:(?:revit|model|project|document)\s+(?:changes?|edits?|modifications?)|(?:changes?|edits?|modifications?)\s+to\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document))\b/i;
+
 /** A disabled request option is not an instruction to run a preview. */
 export function previewIntentText(text: string): string {
   return text.replace(/\bdry[- _]?run(?=["']?\s*[:=]\s*false\b)/gi, "disabled_option");
@@ -40,6 +44,7 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
 
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
+  if (MODEL_CHANGE_PROHIBITION.test(text)) return true;
   if (/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/i.test(text)) return true;
   const withoutRepeatedEdit = text.replace(/\b(?:do not|don't|dont|never)\s+repeat\s+(?:the\s+)?(?:edit|change|mutation)\b/gi, " ");
   if (withoutRepeatedEdit !== text && !hasExplicitMutationVerb(withoutRepeatedEdit)) return true;

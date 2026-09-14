@@ -82,7 +82,10 @@ export async function buildCodexVisualInput(req: Pick<ChatRequest, "user_attachm
       const { createCanvas } = await import("@napi-rs/canvas");
       receipt.page_count = document.numPages;
       receipt.pages = [];
-      for (let pageNumber = 1; pageNumber <= Math.min(MAX_PDF_PAGES, document.numPages) && imageCount < MAX_IMAGES; pageNumber++) {
+      // Supply complete short documents when they fit the existing image budget.
+      // Longer drawing sets keep bounded previews and explicit deferred coverage.
+      const pageLimit = document.numPages <= MAX_IMAGES ? document.numPages : MAX_PDF_PAGES;
+      for (let pageNumber = 1; pageNumber <= pageLimit && imageCount < MAX_IMAGES; pageNumber++) {
         const page = await document.getPage(pageNumber);
         try {
           const base = page.getViewport({ scale: 1 });

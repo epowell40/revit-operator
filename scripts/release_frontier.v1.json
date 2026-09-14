@@ -88,7 +88,8 @@
     "pdfjs_standard_fonts.test.ts",
     "team_assistant_live_regressions.test.ts",
     "simple_context_question.test.ts",
-    "simple_assistant_presentation.test.ts"
+    "simple_assistant_presentation.test.ts",
+    "runtime_source_identity.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -113,7 +114,8 @@
   ],
   "desktop_tests": [
     "test/simple_assistant_ui.test.js",
-    "test/sidecar_secure_integration.test.js"
+    "test/sidecar_secure_integration.test.js",
+    "test/runtime_source_freshness.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -1216,6 +1218,20 @@
         "dynamic:RuntimeFailureDiagnosticTests",
         "mcp:lib/dynamicRevitProgramRunner.test.ts",
         "mcp:lib/dynamicProgramPresentation.test.ts"
+      ]
+    },
+    {
+      "id": "document-review-with-no-model-changes-enters-apply-and-requires-revit",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "launcher-retains-stale-imported-helper-when-server-entrypoint-is-unchanged",
+      "coverage": [
+        "backend:runtime_source_identity.test.ts",
+        "desktop:test/runtime_source_freshness.test.js"
       ]
     }
   ],

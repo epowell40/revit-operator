@@ -85,9 +85,10 @@ test("large drawing sets cannot crowd the latest Revit capture out of the visual
 });
 
 // A four-page vector PDF exercises the actual PDF parser and canvas renderer.
-function fourPagePdf(): Buffer {
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 >>"];
-  for (let i = 0; i < 4; i++) {
+function pagedPdf(pageCount = 4): Buffer {
+  const kids = Array.from({ length: pageCount }, (_, i) => `${3 + i * 2} 0 R`).join(" ");
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>`];
+  for (let i = 0; i < pageCount; i++) {
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Contents ${4 + i * 2} 0 R >>`);
     const stream = `1 0 0 RG 2 w 10 ${10 + i * 10} m 90 90 l S\n`;
     objects.push(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`);
@@ -103,11 +104,25 @@ function fourPagePdf(): Buffer {
 
 test("PDF intake renders bounded annotated pages and explicitly retains uninspected page coverage", async t => {
   const root = fixture(t);
-  fs.writeFileSync(path.join(root, "drawing.pdf"), fourPagePdf());
+  fs.writeFileSync(path.join(root, "drawing.pdf"), pagedPdf(7));
   const input = await buildCodexTurnInput(request({ user_attachments: [{ id: "pdf", relative_path: "drawing.pdf" }] }), []);
   assert.equal(input.filter(item => item.type === "image").length, 3);
   const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
-  assert.match(text, /page 3 of 4/);
-  assert.match(text, /1 pages still require inspection/);
-  assert.doesNotMatch(text, /page 4 of 4/);
+  assert.match(text, /page 3 of 7/);
+  assert.match(text, /4 pages still require inspection/);
+  assert.doesNotMatch(text, /page 4 of 7/);
+});
+
+test("short document review receives every page including late discipline sections without Revit", async t => {
+  const root = fixture(t);
+  fs.writeFileSync(path.join(root, "tasks.pdf"), pagedPdf(5));
+  const input = await buildCodexTurnInput(request({ user_text: "Read the attached task list and explain the HVAC design-development work. Do not make model changes yet.", user_attachments: [{ id: "pdf", filename: "tasks.pdf", relative_path: "tasks.pdf" }] }), []);
+  const text = input.filter(item => item.type === "text").map(item => item.text).join("\n");
+  assert.equal(input.filter(item => item.type === "image").length, 5);
+  assert.match(text, /page 5 of 5/);
+  assert.match(text, /STANDALONE ASSISTANT TURN/);
+  assert.match(text, /without a Revit bootstrap/);
+  assert.doesNotMatch(text, /pages still require inspection/);
+  const mixed = await buildCodexTurnInput(request({user_text:"Review the attached task list and update the open model."}), []);
+  assert.doesNotMatch(mixed.filter(item=>item.type === "text").map(item=>item.text).join("\n"), /STANDALONE ASSISTANT TURN/);
 });
