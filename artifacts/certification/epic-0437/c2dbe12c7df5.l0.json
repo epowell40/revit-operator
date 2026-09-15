@@ -2745,7 +2745,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:2ace45a63b5b4af3fa6ef8ce1ea131184436331ad1b7b441ed6d8005aca5ed5a"
+      "sha256": "sha256:0dabab82496214ae819996afa8445bfddf01f4d69c961e57da98869ebb7df25c"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
@@ -4313,7 +4313,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_canonical_settlement.test.ts",
-      "sha256": "sha256:58c3064d06f115b9d22ac77004229e7c41698e4a23dbac64a456e4c5c5f38970"
+      "sha256": "sha256:6e6ac8e1975a35d243a44883dd15fc31bbc04bd44771ebad2aa20f28bf1600b5"
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
@@ -4322,6 +4322,10 @@
     {
       "path": "apps/operator-backend/test/teammate_mutation_intent_binding.test.ts",
       "sha256": "sha256:3e1123588e95394b14a02fddbe9e5df21df0ec0f54e596f7fe5c6a981cbaf29e"
+    },
+    {
+      "path": "apps/operator-backend/test/teammate_native_rollback_handoff.test.ts",
+      "sha256": "sha256:41a2b2196963dbaeb5cbf842ec0058b0a1f1dea6d9aa3d52a4c52525c1727ba8"
     },
     {
       "path": "apps/operator-backend/test/teammate_verification_evidence.test.ts",
@@ -6773,7 +6777,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:00fded5533fd550b693e8d0ebfb6b86622183a5709f7dfb42e9c217a3edf56c2",
+  "inputs_hash": "sha256:9c08e55df028308989fa5e72032b39d76b8b73e778535542f698516519fc21eb",
   "result": {
     "passed": true,
     "checks": [

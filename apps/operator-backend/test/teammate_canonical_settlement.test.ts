@@ -54,3 +54,36 @@ test("canonical rollback permits corrected arguments, keeps attempts counted and
     assert.equal(teammateLoopReceiptForOwner(owner)!.apply_attempts, 2);
   } finally { endTeammateLoopOwner(lease); }
 });
+
+test("raw status success cannot prevent authoritative rollback or release an uncertain neighbor", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, { version: "operator.backend.v1", session_id: "session", message_id: "status-only",
+    user_text: "Create a mechanical coordination plan called Coordination.",
+    context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Model", projectIdentity: { fingerprint: "model" } } } }
+  } as any);
+  try {
+    const first = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: { method: "POST", path, body } });
+    assert.equal(first.allowed, true);
+    recordTeammateMcpResult(owner, first, { content: [{ type: "text", text: '{"status":"Blocked","transaction":{"status":"rolled_back"}}' }] });
+    for (const change of [
+      (o: any) => { o.result.native_transaction_state = "unknown"; },
+      (o: any) => { o.result.native_transaction_state = "committed"; o.result.persistent_effect = "applied"; },
+      (o: any) => { o.result.binding.generation++; },
+      (o: any) => { o.result.native_correlation_id = "foreign"; },
+      (o: any) => { o.input.body = { ...body, levelName: "another-level" }; }
+    ]) {
+      const value = operation(); change(value);
+      assert.equal(reconcileTeammateCanonicalSettlementV2(first, value), false);
+    }
+    const corrected = { tool: "revit_call_tool", arguments: { method: "POST", path, body: { ...body, levelName: "L2" } } };
+    assert.equal(guardTeammateMcpCall(owner, corrected).allowed, false, "raw rollback prose does not authorize retry");
+    assert.equal(reconcileTeammateCanonicalSettlementV2(first, operation()), true);
+    assert.equal(teammateLoopReceiptForOwner(owner)!.verified, false);
+    const second = guardTeammateMcpCall(owner, corrected);
+    assert.equal(second.allowed, true);
+    assert.equal(reconcileTeammateCanonicalSettlementV2(first, operation()), false, "stale receipt cannot clear the next operation");
+    assert.equal(guardTeammateMcpCall(owner, corrected).allowed, false);
+    assert.equal(teammateLoopReceiptForOwner(owner)!.apply_attempts, 2);
+  } finally { endTeammateLoopOwner(lease); }
+});

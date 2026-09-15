@@ -75,6 +75,7 @@
     "codex_turn_model_telemetry.test.ts",
     "codex_brain_spatial_guidance.test.ts",
     "teammate_canonical_settlement.test.ts",
+    "teammate_native_rollback_handoff.test.ts",
     "provider_turn_usage.test.ts",
     "general_revit_campaign_completion.test.ts",
     "general_revit_capability_report.test.ts",
@@ -1757,6 +1758,13 @@
       "coverage": [
         "mcp:viewFrameImage.test.ts",
         "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "status-only-native-rollback-leaves-outer-apply-verification-fence-closed",
+      "coverage": [
+        "backend:teammate_native_rollback_handoff.test.ts",
+        "backend:teammate_canonical_settlement.test.ts"
       ]
     },
     {

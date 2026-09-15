@@ -1149,7 +1149,10 @@ function recoveredLiveContextIdentity(result: unknown): { state: TeammateContext
 export function reconcileTeammateCanonicalSettlementV2(gate: TeammateMcpGate, operation: OperationV2 | undefined): boolean {
   const state = gate.state;
   const call = gate.call;
-  if (!gate.allowed || !state || !call || call.effect !== "apply" || state.apply_succeeded) return false;
+  // Raw MCP success is provisional: a status-only Blocked response can look
+  // successful to the compatibility parser. The exact settled native receipt
+  // below is authoritative for whether this attempt left a persistent effect.
+  if (!gate.allowed || !state || !call || call.effect !== "apply") return false;
   const separator = call.path.indexOf("|");
   if (separator < 0 || state.apply_action_id !== call.path.slice(0, separator)
     || state.apply_signature !== call.signature) return false;
