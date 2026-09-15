@@ -263,7 +263,6 @@ test("a read-only disposition inspection never fabricates missing source state o
     assert.match(response.assistant_message, /No persisted existing-conditions source disposition/i);
     assert.match(response.assistant_message, /did not synthesize/i);
     assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
-
     const deltas: string[] = [];
     const streamed = await decideStreaming(request, {
       onDelta: value => deltas.push(value)
@@ -310,6 +309,19 @@ test("a read-only disposition inspection reports the persisted reason and exact 
     assert.match(response.assistant_message, new RegExp(entry.event_key));
     assert.match(response.assistant_message, /did not repeat the source search/i);
     assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
+    const deltas: string[] = [];
+    const streamed = await decideStreaming({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: "source-disposition-inspection-session",
+      message_id: "source-disposition-inspection-stream",
+      user_text: "Do not modify the model. Report and explain the latest persisted source disposition."
+    }, { onDelta: text => deltas.push(text) }, {
+      codexStreamingBrain: async () => { throw new Error("saved_report_must_not_call_provider"); }
+    });
+    assert.deepEqual(streamed.actions, []);
+    assert.equal(streamed.assistant_message, response.assistant_message);
+    assert.equal(deltas.join(""), streamed.assistant_message);
+    assert.equal(latestExistingConditionsSourceDispositionV1("source-disposition-inspection-session")?.event_key, entry.event_key);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

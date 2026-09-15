@@ -69,6 +69,20 @@ test("bridge-only status question pings bridge without opening Revit", async () 
   assert.doesNotMatch(JSON.stringify(res.actions), /open-model|2026|launch/i);
 });
 
+test("standalone bridge health remains immediate in both chat modes while engineering and mixed requests stay out", async () => {
+  const prompt = "can you see whether the bridge is responsive now?";
+  const unexpectedProvider = async (): Promise<ChatResponse> => { throw new Error("immediate_status_must_not_call_provider"); };
+  const response = await decide(mkReq(prompt), { codexBrain: unexpectedProvider });
+  const deltas: string[] = [];
+  const streamed = await decideStreaming(mkReq(prompt), { onDelta: text => deltas.push(text) }, { codexStreamingBrain: unexpectedProvider });
+  assert.deepEqual(response.actions.map(action => [action.method, action.path]), [["GET", "/revit/ping"]]);
+  assert.deepEqual(streamed.actions, response.actions);
+  assert.equal(deltas.join(""), streamed.assistant_message);
+  for (const text of ["What is a thermal bridge?", "Is this bridge structurally sound?", "Is the Revit bridge online and then delete the selected duct?", "Check bridge girder deflection."]) {
+    assert.equal(__testOnlyIsBridgeStatusQuestion(text), false, text);
+  }
+});
+
 test("equipment systems and best-view query is not misclassified as bridge status", () => {
   const prompt = "Where is HRU403? Return its exact element identity, family and type, level, room or space, connected systems, and best Revit view. Read only; do not modify the model.";
   assert.equal(__testOnlyIsBridgeStatusQuestion(prompt), false);

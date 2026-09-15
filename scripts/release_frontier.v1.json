@@ -104,7 +104,9 @@
     "result_delivery_diagnostics.test.ts",
     "requirements_store.test.ts",
     "requirements_parallel_planning.test.ts",
-    "bounded_evidence_delivery.test.ts"
+    "bounded_evidence_delivery.test.ts",
+    "brain.test.ts",
+    "existing_conditions_source_disposition_ledger.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1585,6 +1587,15 @@
         "dotnet:OperatorActiveIdleLeaseTests",
         "dotnet:OperatorProactivityLifecycleContractTests",
         "dotnet:OperatorUiWakeSchedulerTests"
+      ]
+    },
+    {
+      "id": "immediate-status-and-retained-inspection-bypassed-by-general-assistant-route",
+      "coverage": [
+        "backend:brain.test.ts",
+        "backend:existing_conditions_source_disposition_ledger.test.ts",
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:assignment_kernel_v2_provider_failure.test.ts"
       ]
     }
   ],
