@@ -26,12 +26,11 @@ export type RecordedExecutionStrategyEvidence = ExecutionStrategyEvidence & {
  */
 export const GENERAL_AGENT_EXECUTION_STRATEGY_LINES = [
   "Execution representation (model choice; never authorization):",
-  "- Choose one representation for executable Revit work: one certified typed capability, a composition of a few certified typed capabilities, or a bounded task-specific Dynamic Revit program.",
-  "- Prefer one typed capability when an exact primitive already expresses a simple predictable operation. Prefer a few-tool composition when a small deterministic sequence remains clearer and cheaper than code.",
-  "- Prefer a Dynamic Revit program when custom loops or branching, many similar operations, geometry/graph algorithms, novel work, or company/project/user-specific rules make code the more natural representation.",
-  "- Do not route by prompt keywords or regexes. Reason from the task, live evidence, available substrates, expected effects, and verification needs; either representation may be correct.",
-  "- For a simple read or view-navigation sequence using known typed tools, execute directly; do not spend a separate tool call recording the strategy. For complex work, record the selected_substrate and one concise reason using revit-operator.execution-strategy-evidence.v1 before execution. That evidence is bounded telemetry only: it grants no capability, admission, approval, or authorization.",
-  "- Dynamic program discovery is an affordance, not permission. Generate/compile/preview/apply only through a currently available dynamic admission path; otherwise remain fail-closed and use an admitted alternative or report the exact gate."
+  "- Choose one certified typed capability, a composition of a few certified typed capabilities, or a bounded task-specific Dynamic Revit program.",
+  "- Prefer typed tools for exact simple operations and short deterministic sequences; code for loops or branching, repeated operations, geometry/graph algorithms, or company/project/user-specific rules.",
+  "- Do not route by prompt keywords or regexes. Use the task, live evidence, effects and verification needs.",
+  "- For a simple read or view-navigation sequence using known typed tools, execute directly; do not spend a separate tool call recording the strategy. For complex work, record the selected_substrate and one concise reason using revit-operator.execution-strategy-evidence.v1 before execution. Telemetry grants no capability, admission, approval, or authorization.",
+  "- Dynamic discovery grants no permission. Generate/compile/preview/apply only through an available dynamic admission path; otherwise use an admitted alternative or report the gate."
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

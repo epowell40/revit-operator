@@ -103,9 +103,9 @@ import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse,
 
 test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /activate its returned view ID with `revit_activate_view`, then check `revit_get_context`/);
+  assert.match(instructions, /`revit_activate_view` \(returned ID\), then `revit_get_context` \(verify\)/);
   assert.match(instructions, /Context is control evidence; resultItems require task_result Observations/);
-  assert.match(instructions, /capture the target and present its name\/number, not internal IDs or raw paths/);
+  assert.match(instructions, /For visual review use `revit_capture_sheet_region`; present the name\/number, not internal IDs or raw paths/);
 });
 import {
   extractCitedHttpUrls,
@@ -488,9 +488,9 @@ test("common sheet navigation exposes the complete typed sequence before discove
     assert.ok(instructions.includes(`\`${tool}\``), tool);
   }
   assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_delete_elements"), false);
-  assert.match(instructions, /Do not search for these known tools or record a separate execution strategy/);
-  assert.match(instructions, /then check `revit_get_context`/);
-  assert.match(instructions, /For visual review, capture the target/);
+  assert.match(instructions, /Do not search or record a separate strategy/);
+  assert.match(instructions, /then `revit_get_context` \(verify\)/);
+  assert.match(instructions, /For visual review use `revit_capture_sheet_region`/);
 });
 
 test("MCP namespace presents navigation schemas eagerly and leaves unrelated tools deferred", async () => {
