@@ -668,7 +668,8 @@ test("progress controller durably materializes missing authenticated input witho
 
   const prepared = prepareCodexAssignmentProgressV2(binding);
   assert.equal(prepared.snapshot.assignment_version, first.snapshot.assignment_version);
-  assert.match(prepared.message, /waiting for the required authenticated user input/i);
+  assert.equal(prepared.message, clarification.question,
+    "the recovered task must show the actual question, not internal waiting-state prose");
 
   const resumed = supplyAssignmentInputV2({
     binding,

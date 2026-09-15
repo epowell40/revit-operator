@@ -3165,7 +3165,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:20f58a0575f366f3b25562f5e2277a6b4d9521bf90f33cdd802b8cb9385045eb"
+      "sha256": "sha256:c69cda852929133d673d8c05c8ab92e11907add7d15836ba3ae3248221cddce2"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_pause_http.test.ts",
@@ -6761,7 +6761,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:af17a3536e5e178eb3cc7460d8be2bac2bf8ce39b2d3b50c1c1bb829769442ca",
+  "inputs_hash": "sha256:0035af18403bf321d84409af29be1ba02c9fe71af7a80f2f7d88d66dce56a600",
   "result": {
     "passed": true,
     "checks": [
