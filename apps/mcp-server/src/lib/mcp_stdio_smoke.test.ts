@@ -289,6 +289,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
         version: "operator.tool_registry.v1",
         tools: [
           { method: "GET", path: "/revit/context", group: "Core", risk: "low", title: "Context", description: "Current context" },
+          { method: "POST", path: "/revit/export-view-frame", group: "Read", risk: "low", title: "View frame", description: "Native image and mapping" },
+          { method: "POST", path: "/revit/export-visible-elements", group: "Read", risk: "low", title: "Visible elements", description: "Native image, mapping and elements" },
           { method: "POST", path: "/revit/create-view", group: "Test", risk: "medium", title: "Test Write", description: "Smoke write" }
         ]
       }));
@@ -575,6 +577,20 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal((viewFrame as any).content.some((item:any)=>item.type==="image" && item.mimeType==="image/png"),true,
     "The exported Revit image must reach the model, not only its filename and mapping.");
   assert.match((viewFrame as any).content.find((item:any)=>item.type==="text").text,/frame-stdio-1/);
+
+  for (const path of ["/revit/export-view-frame", "/revit/export-visible-elements"]) {
+    const genericFrame = await withTimeout(client.callTool({
+      name: "revit_call_tool",
+      arguments: {method:"POST",path,body:{viewId:42,imageSize:1200,includeMapping:true},requireKnownPath:true}
+    }), `delivering ${path} through the general bridge tool`);
+    assert.notEqual(genericFrame.isError, true);
+    assert.equal((genericFrame as any).content.some((item:any)=>item.type==="image" && item.mimeType==="image/png"),true,
+      `The general ${path} route must deliver the native image, not just its path.`);
+    const genericFrameText=JSON.parse((genericFrame as any).content.find((item:any)=>item.type==="text").text);
+    assert.equal(genericFrameText.frameId,"frame-stdio-1");
+    assert.equal(genericFrameText.image_delivery.available,true);
+    assert.deepEqual(genericFrameText.mapping,{mode:"2d_affine",topLeftXyz:[0,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[0,0,0]});
+  }
 
   const sheetCount = await withTimeout(client.callTool({
     name: "revit_list_sheets",

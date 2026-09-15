@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {viewFrameImageContent} from "./viewFrameImage.js";
+import {nativeViewImageContent,viewFrameImageContent} from "./viewFrameImage.js";
 
 const frame=()=>({frameId:"native-frame",viewId:42,path:"artifacts/captures/native-frame.jpg",widthPx:2000,heightPx:1112,
   mapping:{mode:"2d_affine",topLeftXyz:[-10,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[-10,0,0]},
@@ -37,5 +37,40 @@ test("view frame never opens paths from failed, unknown or malformed native resp
     {...frame(),canonical_attempt_settlement:{...frame().canonical_attempt_settlement,path:"/revit/find-elements"}}]){
     const result=viewFrameImageContent(native,()=>{throw Error("Invalid response must not cause file access");});
     assert.equal(result.content.length,1);assert.equal(JSON.parse((result.content[0] as {text:string}).text).image_delivery.available,false);
+  }
+});
+
+test("both exact generic image routes retain native mapping and settlement while delivering pixels",()=>{
+  for(const path of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    const native={...frame(),items:[{elementId:42}],canonical_attempt_settlement:{...frame().canonical_attempt_settlement,path}};
+    const before=structuredClone(native);
+    const result=nativeViewImageContent("POST",path,native,(imagePath,limit)=>{
+      assert.equal(imagePath,native.path);assert.equal(limit,5*1024*1024);
+      return {ok:true,data:"native-image",mimeType:"image/jpeg"};
+    });
+    assert.ok(result);assert.equal(result.content.length,2);
+    assert.deepEqual(JSON.parse((result.content[0] as {text:string}).text),{...before,image_delivery:{available:true}});
+    assert.deepEqual(native,before);
+  }
+});
+
+test("generic image delivery never reads arbitrary routes or mismatched native outcomes",()=>{
+  const noRead=()=>{throw Error("No image file may be read for this route or result");};
+  for(const [method,path] of [["GET","/revit/export-view-frame"],["POST","/revit/get-parameters"],
+    ["POST","/revit/export-view-frame?file=other"],["POST","/revit/export-visible-elements/"],["POST","/revit/create-mep-route"]]){
+    assert.equal(nativeViewImageContent(method,path,frame(),noRead),null);
+  }
+  for(const path of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    for(const settlement of [
+      {...frame().canonical_attempt_settlement,path,effect_state:"unknown"},
+      {...frame().canonical_attempt_settlement,path,requested_effect:"apply"},
+      {...frame().canonical_attempt_settlement,path,method:"GET"},
+      {...frame().canonical_attempt_settlement,path:"/revit/get-parameters"}]){
+      const result=nativeViewImageContent("POST",path,{...frame(),canonical_attempt_settlement:settlement},noRead);
+      assert.equal(result?.content.length,1);
+      assert.equal(JSON.parse((result!.content[0] as {text:string}).text).image_delivery.available,false);
+    }
+    const failed=nativeViewImageContent("POST",path,{...frame(),status:"Blocked"},noRead);
+    assert.equal(failed?.content.length,1);
   }
 });

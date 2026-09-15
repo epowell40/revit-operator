@@ -227,7 +227,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:fe474616c10267da16e6e32563b1d1bcd3b2c5bd8a995ab8b1d417184199c3c3"
+      "sha256": "sha256:b0a7951bcbcc1d5f8e3b45933d739208c14fe55f84ced86aa313d268af68984d"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -424,7 +424,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:305a6a340d571b47c7bc4bda83e6d342806fcc92b7415d76ba45cc2bb78f1a02"
+      "sha256": "sha256:c750a82765ac3eff03757f4d0aced355706a27a3aa6a021a3dbb596941f5ddbf"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -508,11 +508,11 @@
     },
     {
       "path": "apps/mcp-server/src/viewFrameImage.test.ts",
-      "sha256": "sha256:93b021a649b95307dec5fb49170eb66d477fed080c8efd84ecbb5e4d5af05519"
+      "sha256": "sha256:4368a41653996f3bf8ee43933aba9069fa9859a75c892fa3a08788c3d2a178a6"
     },
     {
       "path": "apps/mcp-server/src/viewFrameImage.ts",
-      "sha256": "sha256:7ed74b2e212fbdfd8ab16ac64887737bd992a3d1bbe0a7c2d799ad3ed9e69336"
+      "sha256": "sha256:3a9453c67455d9b9b8d30f95b7642913f40dc1bd236168125b5ac8d193f4e2df"
     },
     {
       "path": "apps/mcp-server/tsconfig.json",
@@ -6773,7 +6773,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:56f1bd0fd2fdd261699644a4f6f69445e0f3d2a4a6f65363fde7e3a1b066a563",
+  "inputs_hash": "sha256:00fded5533fd550b693e8d0ebfb6b86622183a5709f7dfb42e9c217a3edf56c2",
   "result": {
     "passed": true,
     "checks": [

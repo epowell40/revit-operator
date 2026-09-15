@@ -1753,6 +1753,13 @@
       ]
     },
     {
+      "id": "generic-native-view-exports-bypass-image-delivery-and-send-only-paths",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
       "id": "concurrent-native-grant-publication-temporarily-hides-the-active-file",
       "coverage": [
         "dotnet:OperatorWriteGrantRenewalTests",

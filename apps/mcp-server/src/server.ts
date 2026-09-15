@@ -19,7 +19,7 @@ import {
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
-import { viewFrameImageContent } from "./viewFrameImage.js";
+import { nativeViewImageContent, viewFrameImageContent } from "./viewFrameImage.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -1452,6 +1452,8 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         projected && typeof projected === "object" && !Array.isArray(projected)
           ? addWorkspaceLinks(projected as Record<string, any>)
           : projected;
+      const imageContent = known ? nativeViewImageContent(method, pathInput, output) : null;
+      if (imageContent) return imageContent;
       const wrapped = known
         ? output
         : {
