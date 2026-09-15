@@ -2081,7 +2081,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_store.ts",
-      "sha256": "sha256:381260dcc911973394a0aad7336e683b7f0cee577b9a582b65b952e6e994c433"
+      "sha256": "sha256:2e4bed974eab172020bba5493fffaf0ef197640d63b686c14d960c7a784a0dcf"
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
@@ -3181,7 +3181,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
-      "sha256": "sha256:e96497ed3249819ec34e44542a13191df88d5621e78a3689694984b00e9ba75f"
+      "sha256": "sha256:051d452f1d0156f62679205ff3e0ad3f6ad4a0ce7e022d078d2c19d709e8d233"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_provider_failure.test.ts",
@@ -3457,7 +3457,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_projection.test.ts",
-      "sha256": "sha256:d6e495e0ad96addb86e51a4abaa7463ba42a19b1eb472b08b4c1215e76021442"
+      "sha256": "sha256:7ced78a82eb7ff90003967db3ef306414dcef1bfbe01b531fa106a4f71742310"
     },
     {
       "path": "apps/operator-backend/test/evidence_retrieval_selector_contract.test.ts",
@@ -6765,7 +6765,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:2d2d1390f81a5753810a0989e8b229f79000f89fc7865237ebaec80721de23a0",
+  "inputs_hash": "sha256:b295a40a6191abda722fead11739f294fd1b1aae65e8ffbd63a1f2700eaf97de",
   "result": {
     "passed": true,
     "checks": [

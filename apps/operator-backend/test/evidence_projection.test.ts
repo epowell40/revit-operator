@@ -30,7 +30,7 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
 test("seven-space zoning replay resolves all 49 advertised array fields", { concurrency: false }, () => withWorkspace(() => {
-  const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/evidence-seven-spaces.json", import.meta.url), "utf8"));
+  const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/evidence-seven-spaces.json"), "utf8"));
   const stored = storeEvidence({ scope, source: "regression:seven-space-zoning", trust_level: "authoritative_native",
     raw: { ok: true, result: fixture.rooms } }, 4096);
   const selected = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Review zoning attributes",
@@ -49,7 +49,7 @@ test("seven-space zoning replay resolves all 49 advertised array fields", { conc
 
 test("array field selectors preserve literal keys and nulls while rejecting executable or inherited paths", { concurrency: false }, () => withWorkspace(() => {
   const stored = storeEvidence({ scope, source: "regression:array-paths", trust_level: "authoritative_native",
-    raw: { items: [{ nested: [[null, 42]], "literal.key[0]": "literal" }], "items[0].name": "flattened" } }, 4096);
+    raw: { items: [{ nested: [[null, 42]], "literal.key[0]": "literal", "literal[design]": "named brackets" }], "items[0].name": "flattened" } }, 4096);
   const read = (fields: string[]) => retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Inspect nested fields", fields });
   const selected = read(["payload.items[0].nested[0][0]", "payload.items[0].nested[0][1]", "payload.items[0].literal.key[0]",
     "payload.items[0].name", "payload.items[7].name", "payload.items[0].toString"]);
@@ -57,6 +57,7 @@ test("array field selectors preserve literal keys and nulls while rejecting exec
     "payload.items[0].literal.key[0]": "literal", "payload.items[0].name": "flattened", "payload.items[7].name": null,
     "payload.items[0].toString": null });
   assert.deepEqual(selected.missing_fields, ["payload.items[7].name", "payload.items[0].toString"]);
+  assert.deepEqual(read(["payload.items[0].literal[design]"]).selection, { "payload.items[0].literal[design]": "named brackets" });
   for (const field of ["payload.items[-1]", "payload.items[01]", "payload.items[1.5]", "payload.items[9007199254740992]",
     "payload.items[process.exit()]", "payload.items[0].__proto__", "payload.constructor[0]", "payload.items[0].prototype", "payload.items[0"])
     assert.throws(() => read([field]), /Invalid typed field path/, field);

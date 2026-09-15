@@ -349,10 +349,13 @@ function selectPath(root: unknown, dottedPath: string, missing: unknown = null):
   const segments = dottedPath.replace(/^\$\.?/, "").split(".");
   const tokens = segments.map(segment => {
     const match = /^([^\[\]]*)((?:\[(?:0|[1-9]\d*)\])*)$/.exec(segment);
-    if (!match || !segment || ["__proto__", "constructor", "prototype"].includes(match[1]!))
+    if (!segment || ["__proto__", "constructor", "prototype"].includes(segment.split("[")[0]!))
       throw new Error("Invalid typed field path.");
+    // An exact retained key may contain literal brackets. Only parse bracket
+    // syntax if exact own-property lookup below does not already resolve it.
+    if (!match) return null;
     const indices = [...match[2]!.matchAll(/\[(\d+)\]/g)].map(item => Number(item[1]));
-    if (indices.some(item => !Number.isSafeInteger(item))) throw new Error("Invalid typed field path.");
+    if (indices.some(item => !Number.isSafeInteger(item))) return null;
     return { key: match[1]!, indices };
   });
   let value: unknown = root;
@@ -380,7 +383,8 @@ function selectPath(root: unknown, dottedPath: string, missing: unknown = null):
     }
     // Bracket indices are emitted by the evidence projection itself. Traverse
     // only literal own properties and array slots; never evaluate a selector.
-    const token = tokens[index]!;
+    const token = tokens[index];
+    if (!token) throw new Error("Invalid typed field path.");
     if (token.key) {
       if (!Object.hasOwn(row, token.key)) return missing;
       value = row[token.key];

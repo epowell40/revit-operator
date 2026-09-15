@@ -1063,7 +1063,7 @@ test("seven retained room pages progress through the real store and controller b
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-page-progress-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   try {
-    const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/evidence-seven-spaces.json", import.meta.url), "utf8"));
+    const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/evidence-seven-spaces.json"), "utf8"));
     const stored = storeEvidence({ scope: binding, source: "regression:seven-space-pages", trust_level: "authoritative_native",
       raw: { ok: true, result: fixture.rooms } }, 4096);
     let snapshot = journal().snapshot();
