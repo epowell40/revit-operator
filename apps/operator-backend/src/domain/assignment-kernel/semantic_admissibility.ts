@@ -9,6 +9,11 @@ import { isAssignmentKernelControlCapabilityV2, nativeArtifactResultEffectV2 } f
 export const CRITERION_EVIDENCE_POLICY_V2_SCHEMA = "revit-operator.criterion-evidence-policy/v2" as const;
 export const SEMANTIC_EVIDENCE_CONTRACT_V2 = "revit-operator.semantic-evidence-contract/v2" as const;
 
+/** Reuse the kernel's receipt validator for semantic and presentation eligibility. */
+export function operationHasAppliedNativeArtifactV2(operation: OperationV2): boolean {
+  return nativeArtifactResultEffectV2(operation.result) === "applied";
+}
+
 export type OperationFulfillmentRoleV2 =
   | "supporting_control"
   | "prerequisite"

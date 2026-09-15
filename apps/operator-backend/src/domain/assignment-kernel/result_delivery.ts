@@ -1,5 +1,5 @@
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
-import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { operationHasAppliedNativeArtifactV2 } from "./semantic_admissibility.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 
@@ -71,7 +71,7 @@ export function resultObservationEligibilityV2(snapshot: AssignmentSnapshotV2, o
   const applied = operation.requested_effect === "apply" ? operation
     : operation.verification_of_operation_id ? snapshot.operations[operation.verification_of_operation_id] : undefined;
   const verifiedArtifact = snapshot.spec.requested_effect === "apply" && snapshot.spec.result_delivery_required
-    && applied && nativeArtifactResultEffectV2(applied.result) === "applied"
+    && applied && operationHasAppliedNativeArtifactV2(applied)
     && appliedOperationHasVerifiedPostconditionV2(snapshot, applied.operation_id);
   const artifactResult = verifiedArtifact && observation.authority === "native-host"
     && (operation.requested_effect === "apply" && observation.evidence_class === "task_result"
