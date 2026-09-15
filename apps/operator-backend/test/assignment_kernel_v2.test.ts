@@ -240,6 +240,28 @@ function passingEvaluation(basis: CriterionEvaluationV2["basis"] = "observation"
   };
 }
 
+test("settled snapshot releases raw commit payload only after exact observation while journal replay retains recovery history", () => {
+  const journal = createJournal();
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+  const payload = { total: 509, rows: "retained-native-inventory".repeat(20_000) };
+  const nativeResult = result(payload);
+  journal.append(event(journal, { event_type: "operation_result_recorded", result: nativeResult,
+    observation_commit: { schema: "revit-operator.observation-commit-input/v2", result_id: nativeResult.result_id, raw_payload: payload, semantic_facts: [] } }));
+  const pendingEvents = journal.events();
+  assert.deepEqual(reduceAssignmentEventsV2(pendingEvents).operations["operation-1"]!.observation_commit?.raw_payload, payload);
+  const observation = observationFor(journal, nativeResult, "observation-1", "evidence://sha256/result", payload);
+  assert.throws(() => journal.append(event(journal, { event_type: "observation_retained", observation: { ...observation, raw_payload_hash: "0".repeat(64) } })), /exact recorded operation result/);
+  assert.deepEqual(journal.snapshot().operations["operation-1"]!.observation_commit?.raw_payload, payload);
+  const settled = journal.append(event(journal, { event_type: "observation_retained", observation }));
+  assert.equal(settled.operations["operation-1"]!.observation_commit, undefined);
+  assert.ok(JSON.stringify(settled).length < JSON.stringify(payload).length / 10);
+  assert.deepEqual(journal.events().slice(0, pendingEvents.length), pendingEvents);
+  assert.deepEqual(reduceAssignmentEventsV2(journal.events()), settled);
+  assert.deepEqual(settled.operations["operation-1"]!.result, nativeResult);
+  assert.deepEqual(settled.observations["observation-1"], observation);
+});
+
 test("read operation remains in flight until the authoritative observation is retained", () => {
   const journal = createJournal();
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));

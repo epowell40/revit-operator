@@ -113,7 +113,9 @@
     "tool_progress_delivery.test.ts",
     "workbook_export_intent.test.ts",
     "deferred_proposal_admission.test.ts",
-    "discovered_input_projection.test.ts"
+    "discovered_input_projection.test.ts",
+    "read_attachment_redline.test.ts",
+    "pdf_source_annotations.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -189,7 +191,8 @@
     "OperatorPaneIntegrationContractTests",
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
-    "OperatorWorkbookWriterTests"
+    "OperatorWorkbookWriterTests",
+    "ExportedRasterFrameGeometryTests"
   ],
   "failure_families": [
     {
@@ -1772,6 +1775,37 @@
       "coverage": [
         "dotnet:OperatorWriteGrantRenewalTests",
         "dotnet:OperatorWriteGrantAdmissionTests"
+      ]
+    },
+    {
+      "id": "pdf-reader-omits-marked-centerline-vectors-and-cannot-inspect-a-magnified-region",
+      "coverage": [
+        "backend:read_attachment_redline.test.ts",
+        "backend:pdf_source_annotations.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "delivered-native-jpeg-is-printed-as-base64-instead-of-displayed-in-code-mode",
+      "coverage": [
+        "backend:read_attachment_redline.test.ts",
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:viewFrameImage.test.ts"
+      ]
+    },
+    {
+      "id": "identical-exported-raster-uses-different-crop-and-outline-model-origins",
+      "coverage": [
+        "dotnet:ExportedRasterFrameGeometryTests",
+        "mcp:viewFrameImage.test.ts",
+        "mcp:spatialObservationV1.test.ts"
+      ]
+    },
+    {
+      "id": "settled-observation-retains-large-duplicate-payload-through-every-journal-replay",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
       ]
     }
   ],

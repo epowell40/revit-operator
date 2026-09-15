@@ -232,7 +232,7 @@ namespace RevitBridge.Logic.Handlers
 
                     path = SelectionUtil.ExportViewImage(doc, exportView, imageSize, folder, stem);
                     (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                    frame = SelectionUtil.BuildRasterAffineFrame(exportView, widthPx, heightPx);
+                    frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(exportView, widthPx, heightPx);
                 }
                 else
                 {
@@ -265,7 +265,7 @@ namespace RevitBridge.Logic.Handlers
                         try { uidoc.RefreshActiveView(); } catch { }
                         path = SelectionUtil.ExportViewImage(doc, view, imageSize, folder, stem);
                         (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                        frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                        frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
                     }
                     finally
                     {

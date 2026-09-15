@@ -686,6 +686,25 @@ test("Candidate 3 repaired sequence resolves only the schema gap before one corr
   assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.criteria[afterDocs.spec.criteria[0]!.criterion_id]?.status, "pass");
 }));
 
+test("large settled inventory reloads and rehydrates exact retained evidence without a duplicate commit payload or journal write", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "large-retained", provider_turn_id: "turn-large",
+    capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const payload = { total: 509, rows: "retained inventory with original values".repeat(20_000) };
+  const first = settleAssignmentKernelOperationV2(lease, envelope(lease.operation_id, lease.binding, payload));
+  const journalBefore = getGoal(goal.id)!.assignment_kernel_v2;
+  __testOnlyResetGoalListCache();
+  const reloaded = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(reloaded.operations[lease.operation_id]!.observation_commit, undefined);
+  const again = commitAssignmentKernelObservationV2(lease, { storeEvidence() { throw new Error("must_not_store_again"); } });
+  assert.deepEqual(again.observation, first.observation);
+  assert.deepEqual(again.evidence_refs, first.evidence_refs);
+  assert.deepEqual(again.evidence_projections, first.evidence_projections);
+  assert.deepEqual(getGoal(goal.id)!.assignment_kernel_v2, journalBefore);
+  assert.equal(again.result.raw_payload_hash, hash(payload));
+}));
+
 test("Observation persistence retries only the durable commit and never repeats native work", async () => {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-observation-retry-"));
@@ -722,6 +741,8 @@ test("Observation persistence retries only the durable commit and never repeats 
     assert.equal(persistenceAttempts, 1);
     assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
     assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.equal(recovered.operations[lease.operation_id]!.observation_commit, undefined);
+    assert.equal(commitAssignmentKernelObservationV2(lease).evidence_refs.length, 1);
     assert.equal(Object.keys(recovered.operations).length, 1);
   } finally {
     __testOnlyResetGoalListCache();
@@ -2399,6 +2420,8 @@ test("producer process loss after durable apply completion recovers without nati
     assert.equal(recovered.operations[lease.operation_id]!.persistent_effect, "applied");
     assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
     assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.equal(recovered.operations[lease.operation_id]!.observation_commit, undefined);
+    assert.ok(commitAssignmentKernelObservationV2(lease).evidence_refs.length === 1);
     assert.deepEqual(await recoverAssignmentKernelOperationsV2({ snapshot: recovered, runtime }), recovered);
     assert.deepEqual(settleAssignmentKernelOperationV2(lease, completion).snapshot, recovered,
       "a late original delivery must be idempotent after completion recovery");

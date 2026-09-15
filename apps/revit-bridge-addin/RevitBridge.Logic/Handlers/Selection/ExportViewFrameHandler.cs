@@ -47,7 +47,7 @@ namespace RevitBridge.Logic.Handlers
                 var stem = $"Revit_{RevitBridge.Common.ElementIdCompat.GetValue(view.Id)}_{frameId}_frame";
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                var frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                var frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
 
                 if (frame.AspectCorrectionApplied)
                 {
@@ -76,7 +76,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     mapping = SelectionUtil.BuildRasterAffineMappingPayload(
                         frame,
-                        "Derived from the exported raster frame; crop-box corners are included as reference only.");
+                        "Derived from the displayed View.Outline and view basis for this fit-to-page raster. Plan-view depth is a display plane; use targetLevel and independent element elevations for placement height.");
                 }
 
                 return Task.FromResult<object>(new

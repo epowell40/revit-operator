@@ -817,6 +817,10 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           settlement_state: "settled" as const,
           settled_at: event.occurred_at,
           observation_retention_error: undefined,
+          // The exact payload remains in the immutable result event and the
+          // authoritative evidence store. Only pending retention needs another
+          // in-memory copy; settled duplicate delivery rehydrates the evidence.
+          observation_commit: undefined,
           observation_ids: [...operation.observation_ids, event.observation.observation_id]
         };
         const operations = { ...snapshot.operations, [operation.operation_id]: settledOperation };

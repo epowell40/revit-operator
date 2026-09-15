@@ -7,6 +7,7 @@ import test from "node:test";
 import { CodexAppServer } from "../src/codex/app_server.js";
 import { CodexMcpToolRuntime } from "../src/codex/mcp_tool_runtime.js";
 import { READ_ATTACHMENT_TOOL } from "../src/attachments/read_attachment.js";
+import { CODE_MODE_IMAGE_DISPLAY } from "../src/codex/code_mode_images.js";
 import { getOrCreateCodexThread } from "../src/brains/codex_thread_lifecycle.js";
 import { getCodexThreadStartProfile } from "../src/brains/codex_turn_profile.js";
 import { codexTelemetryThreadKey } from "../src/brains/codex_turn_model_telemetry.js";
@@ -24,6 +25,21 @@ test("actual runtime advertisement includes the host PDF reader eagerly even whe
   assert.equal(codexToolCatalogHash([catalog]), codexToolCatalogHash(reordered));
   assert.notEqual(codexToolCatalogHash([catalog]), codexToolCatalogHash([{ ...catalog, tools: catalog.tools.slice(1) }]));
   assert.notEqual(codexToolCatalogHash([catalog]), codexToolCatalogHash([{ ...catalog, tools: [{ ...READ_ATTACHMENT_TOOL, deferLoading: true }, ...catalog.tools.slice(1)] }]));
+});
+
+test("actual dynamic namespace advertises the same image display recipe on native image tools without changing other tool contracts", async () => {
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: process.cwd(), codexHome: process.cwd(), spawnEnv: {} });
+  const tools = ["revit_call_tool", "revit_export_view_frame", "revit_get_context"].map(name => ({ name, description: "Original contract", inputSchema: { type: "object", additionalProperties: false, properties: {} } }));
+  (runtime as any).ensureStarted = async () => {};
+  (runtime as any).client = { listTools: async () => ({ tools }) };
+  const catalog = await runtime.getDynamicToolNamespace();
+  for (const original of tools) {
+    const actual = catalog.tools.find((item: any) => item.name === original.name);
+    assert.deepEqual(actual.inputSchema, original.inputSchema);
+    if (original.name === "revit_get_context") assert.equal(actual.description, original.description);
+    else { assert.ok(actual.description.includes(CODE_MODE_IMAGE_DISPLAY)); assert.match(actual.description, /same call|same.*result|Keep the result/); }
+  }
+  assert.ok(catalog.tools[0].description.includes(CODE_MODE_IMAGE_DISPLAY));
 });
 
 test("saved pre-reader thread receives a new catalog without losing conversation, replaying work, or replacing an active turn", async t => {

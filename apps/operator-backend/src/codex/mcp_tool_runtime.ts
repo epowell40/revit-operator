@@ -10,6 +10,7 @@ import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_ke
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
 import { McpInputValidator } from "./mcp_input_validation.js";
 import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
+import { describeCodeModeImageTool } from "./code_mode_images.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -290,7 +291,7 @@ export class CodexMcpToolRuntime {
       tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name).map(tool => ({
         type: "function",
         name: tool.name,
-        description: tool.description ?? "Revit Operator tool",
+        description: describeCodeModeImageTool(tool.name, tool.description ?? "Revit Operator tool"),
         inputSchema: tool.inputSchema,
         deferLoading: !EAGER_OPERATOR_MCP_TOOLS.has(tool.name)
       }))]

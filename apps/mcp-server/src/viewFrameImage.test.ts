@@ -1,10 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {nativeViewImageContent,viewFrameImageContent} from "./viewFrameImage.js";
+import {normalizeSpatialObservationV1} from "./spatialObservationV1.js";
 
 const frame=()=>({frameId:"native-frame",viewId:42,path:"artifacts/captures/native-frame.jpg",widthPx:2000,heightPx:1112,
   mapping:{mode:"2d_affine",topLeftXyz:[-10,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[-10,0,0]},
   canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:"/revit/export-view-frame"}});
+
+test("identical exported pixels retain the same displayed-outline coordinates through frame and inventory consumers",()=>{
+  const mapping={mode:"2d_affine",modelFrameSource:"view_outline",frameBasis:"exported_raster",
+    topLeftXyz:[-123.31686468322523,71.48585540021631,32.16666666666667],
+    topRightXyz:[89.8266420511672,71.48585540021631,32.16666666666667],
+    bottomLeftXyz:[-123.31686468322523,-47.01832591228737,32.16666666666667],
+    rasterWidthPx:2600,rasterHeightPx:1446,cropBoxReference:null};
+  const native={...frame(),widthPx:2600,heightPx:1446,mapping,count:0,scanned:0,truncated:false,items:[]};
+  const delivered=[];
+  for(const route of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    const response={...native,canonical_attempt_settlement:{...native.canonical_attempt_settlement,path:route}};
+    const result=nativeViewImageContent("POST",route,response,()=>({ok:true,data:"same-native-image-bytes",mimeType:"image/jpeg"}));
+    assert.ok(result);
+    const metadata=JSON.parse((result.content[0] as {text:string}).text);
+    assert.deepEqual(metadata.mapping,mapping);
+    if(route.endsWith("visible-elements")) assert.deepEqual(normalizeSpatialObservationV1(metadata).mapping,mapping);
+    delivered.push(result.content[1]);
+  }
+  assert.deepEqual(delivered[0],delivered[1]);
+  assert.deepEqual(native.mapping,mapping);
+});
 
 test("view frame delivers the bounded native image alongside unchanged mapping and settlement",()=>{
   const native=frame(),before=structuredClone(native);
