@@ -107,7 +107,10 @@
     "bounded_evidence_delivery.test.ts",
     "brain.test.ts",
     "existing_conditions_source_disposition_ledger.test.ts",
-    "execution_strategy.test.ts"
+    "execution_strategy.test.ts",
+    "result_projection_delivery.test.ts",
+    "tool_progress_delivery.test.ts",
+    "workbook_export_intent.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -128,7 +131,8 @@
     "skills/quantify.test.ts",
     "lib/supportedToolInventory.test.ts",
     "lib/dynamicRuntimeInstallation.test.ts",
-    "lib/dynamicAssignmentIntegration.test.ts"
+    "lib/dynamicAssignmentIntegration.test.ts",
+    "lib/generalAgentCapabilityDiscovery.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_ux.test.js",
@@ -179,7 +183,8 @@
     "OperatorDesktopLauncherTests",
     "OperatorPaneIntegrationContractTests",
     "OperatorActiveIdleLeaseTests",
-    "OperatorProactivityLifecycleContractTests"
+    "OperatorProactivityLifecycleContractTests",
+    "OperatorWorkbookWriterTests"
   ],
   "failure_families": [
     {
@@ -1613,6 +1618,46 @@
         "backend:codex_app_server_compatibility.test.ts",
         "backend:execution_strategy.test.ts",
         "backend:direct_revit_execution_authorization.test.ts"
+      ]
+    },
+    {
+      "id": "complete-native-counts-repeatedly-read-because-projected-values-cannot-be-delivered",
+      "coverage": [
+        "backend:result_projection_delivery.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "control-observations-offered-as-result-items-cause-avoidable-completion-retries",
+      "coverage": [
+        "backend:result_projection_delivery.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "active-native-work-does-not-update-conversation-progress",
+      "coverage": [
+        "backend:tool_progress_delivery.test.ts",
+        "backend:bounded_evidence_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "bulk-workbook-export-is-implemented-but-unreachable-in-supported-discovery",
+      "coverage": [
+        "mcp:lib/generalAgentCapabilityDiscovery.test.ts",
+        "dotnet:OperatorToolSearchRankingTests",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
+    },
+    {
+      "id": "model-preservation-denies-requested-workbook-file-effect-and-forces-unbounded-parameter-retyping",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "dotnet:OperatorWorkbookWriterTests",
+        "mcp:lib/generalAgentCapabilityDiscovery.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
       ]
     }
   ],

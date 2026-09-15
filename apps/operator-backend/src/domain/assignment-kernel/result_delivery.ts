@@ -7,6 +7,7 @@ export interface AssignmentResultItemV2 {
   /** Exact JSON object keys/array indexes used only to present retained data. */
   path: readonly (string | number)[];
   value: unknown;
+  value_source?: "raw_payload" | "deterministic_projection";
   evidence_ref: string;
   payload_hash: string;
   /** Failed read diagnostics can be reported, but never establish success. */
@@ -58,6 +59,20 @@ export function validateAssignmentAssessmentV2(value: unknown, items: readonly A
   }
 }
 
+/** One owner for the model index and the canonical presentation validator. */
+export function resultObservationEligibilityV2(snapshot: AssignmentSnapshotV2, observationId: string): "result" | "diagnostic" | "ineligible" {
+  const observation = snapshot.observations[observationId];
+  const operation = observation ? snapshot.operations[observation.operation_id] : undefined;
+  if (!observation || !sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
+      || observation.evidence_class !== "task_result"
+      || !["native-host", "dynamic-runtime"].includes(observation.authority)
+      || operation?.requested_effect !== "read" || operation.settlement_state !== "settled") return "ineligible";
+  if (operation.result?.status === "succeeded") return "result";
+  if (observation.authority === "dynamic-runtime" && operation.result?.status === "failed_after_dispatch"
+      && operation.result.persistent_effect === "none") return "diagnostic";
+  return "ineligible";
+}
+
 /** Presentation never manufactures semantic facts or changes criterion truth. */
 export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, delivery: AssignmentResultDeliveryV2): void {
   if (!snapshot.spec.result_delivery_required || snapshot.spec.requested_effect !== "read") {
@@ -68,22 +83,21 @@ export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, deliver
   for (const item of delivery.items) {
     const observation = snapshot.observations[item.observation_id];
     const operation = observation ? snapshot.operations[observation.operation_id] : undefined;
-    const diagnostic = item.presentation_kind === "diagnostic"
-      && observation?.authority === "dynamic-runtime"
-      && operation?.result?.status === "failed_after_dispatch"
-      && operation.result.persistent_effect === "none"
+    const eligibility = resultObservationEligibilityV2(snapshot, item.observation_id);
+    const diagnostic = item.presentation_kind === "diagnostic" && eligibility === "diagnostic"
+      && item.value_source !== "deterministic_projection"
       && ["execution_status", "diagnostics", "logs"].includes(String(item.path?.[0]));
-    if ((item.presentation_kind === "diagnostic" && !diagnostic)
+    if ((item.value_source !== undefined && !["raw_payload", "deterministic_projection"].includes(item.value_source))
+        || (item.value_source === "deterministic_projection" && (item.path?.length !== 2
+          || !["key_counts", "key_facts"].includes(String(item.path[0]))
+          || !["string", "number", "boolean"].includes(typeof item.value) && item.value !== null))
+        || (item.presentation_kind === "diagnostic" && !diagnostic)
         || (item.presentation_kind !== undefined && !["result", "diagnostic"].includes(item.presentation_kind))
         || !item.label?.trim() || item.label.length > 160 || item.value === undefined
         || !Array.isArray(item.path) || item.path.length < 1 || item.path.length > 24) {
       throw new Error("assignment_result_item_invalid");
     }
-    if (!observation || !sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
-        || observation.evidence_class !== "task_result"
-        || !["native-host", "dynamic-runtime"].includes(observation.authority)
-        || (!diagnostic && operation?.result?.status !== "succeeded") || operation?.requested_effect !== "read"
-        || operation.settlement_state !== "settled"
+    if (!observation || (!diagnostic && eligibility !== "result")
         || item.evidence_ref !== observation.raw_payload_ref || item.payload_hash !== observation.raw_payload_hash) {
       throw new Error("assignment_result_observation_ineligible");
     }

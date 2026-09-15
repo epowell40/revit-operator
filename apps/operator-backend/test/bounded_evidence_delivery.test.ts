@@ -65,16 +65,16 @@ test("inline payload is all-or-nothing within UTF-8 item and whole-response budg
   assert.ok(bounded.omitted > 0);
 }));
 
-test("bounded discovery instructions are directly readable but oversized and omitted responses stay projected", () => isolated(() => {
+for (const discoveryTool of ["revit_search_tools", "revit_tool_doc", "operator_discover_capabilities"]) test(`bounded ${discoveryTool} instructions are directly readable but oversized and omitted responses stay projected`, () => isolated(() => {
   const payload = { matches: [{ method: "POST", path: "/revit/activate-view", description: "Open an exact view; this does not modify model data." }] };
   const raw = { content: [{ type: "text", text: JSON.stringify(payload) }] };
   const projection = storeEvidence({ scope, source: "assignment_kernel_v2:revit_search_tools", trust_level: "host_observed", raw }).projection;
-  const response = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_search_tools", projections: [projection], omitted: 0 });
+  const response = adaptMcpToolCallResultToDynamicResponse(raw, { tool: discoveryTool, projections: [projection], omitted: 0 });
   assert.deepEqual(JSON.parse((response.contentItems[0] as any).text), payload);
   for (const context of [ { projections: [], omitted: 1 }, { projections: [projection], omitted: 1 } ]) {
-    const blocked = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_search_tools", ...context });
+    const blocked = adaptMcpToolCallResultToDynamicResponse(raw, { tool: discoveryTool, ...context });
     assert.equal(JSON.parse((blocked.contentItems[0] as any).text).schema, "revit-operator.model-evidence-envelope.v1");
   }
-  const oversized = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify({ documentation: "x".repeat(30_000) }) }] }, { tool: "revit_tool_doc", projections: [projection], omitted: 0 });
+  const oversized = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify({ documentation: "x".repeat(30_000) }) }] }, { tool: discoveryTool, projections: [projection], omitted: 0 });
   assert.equal(JSON.parse((oversized.contentItems[0] as any).text).schema, "revit-operator.model-evidence-envelope.v1");
 }));

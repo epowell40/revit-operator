@@ -662,6 +662,15 @@ test("compiled MCP preserves native result selections and rejects malformed read
     assert.equal(denied.isError, true);
   }
   assert.equal(requests.length, 2, "malformed assessments must not reach the backend");
+  const projected = [{ label: "Air devices", observationId: "native-observation", source: "deterministic_projection", path: ["key_counts", "inventory.total"] }];
+  const projectionResult = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems: projected }, _meta });
+  assert.notEqual(projectionResult.isError, true);
+  assert.deepEqual(requests[2].body.result_items, [{ label: "Air devices", observation_id: "native-observation", source: "deterministic_projection", path: ["key_counts", "inventory.total"] }]);
+  for (const source of ["model_value", null, {}, "projection"]) {
+    const denied = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems: [{ ...projected[0], source }] }, _meta });
+    assert.equal(denied.isError, true);
+  }
+  assert.equal(requests.length, 3, "unrecognized value sources cannot reach the backend");
 });
 
 test("compiled MCP forwards a request-scoped principal JWT to completion without model or audit leakage", async (t) => {

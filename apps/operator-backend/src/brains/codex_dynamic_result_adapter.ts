@@ -88,7 +88,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   // Keep complete small instructions visible instead of requiring a retrieval
   // just to learn how to call a tool. Reserve space for the observation index;
   // omitted or oversized results must still use the supplied projection budget.
-  const discovery = context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc";
+  const discovery = context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc" || context?.tool === "operator_discover_capabilities";
   const textOnly = content.length === 1 && content[0]?.type === "text" && typeof content[0].text === "string";
   const exposeBoundedDiscovery = discovery && textOnly && (context?.omitted ?? 0) === 0
     && Buffer.byteLength(content[0].text, "utf8") <= Math.max(0, getEvidenceContextBudget().item_bytes - 2048);

@@ -30,6 +30,24 @@ const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "
   expected_output_paths: ["C:\\fixture\\M000.pdf"], expected_export_calls: 1, export_calls: [true],
   outputs: [{ path: "C:\\fixture\\M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] };
 
+test("Excel workbook file effects require a native receipt and independent exact-file verification", () => {
+  const route = "/revit/export-elements-xlsx";
+  const workbook = { ...receipt, path: route, expected_output_paths: ["C:/fixture/rooms.xlsx"],
+    outputs: [{ ...receipt.outputs[0], path: "C:/fixture/rooms.xlsx" }] };
+  const read = { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true,
+    requestedPaths: workbook.expected_output_paths, files: [{ ...workbook.outputs[0], exists: true, readable: true }] };
+  assert.equal(nativeArtifactReceiptEffectV1(workbook, "POST", route, "apply"), "applied");
+  assert.equal(nativeArtifactPostconditionV2(workbook, read), true);
+  for (const change of [{ files: [] }, { itemsComplete: false }, { files: [{ ...read.files[0], sha256: "b".repeat(64) }] },
+    { files: [{ ...read.files[0], path: "C:/fixture/other.xlsx" }] }, { files: [{ ...read.files[0], readable: false }] }])
+    assert.equal(nativeArtifactPostconditionV2(workbook, { ...read, ...change }), false);
+  for (const mutation of [{ status: "unverified" }, { outputs: [] }, { export_calls: [false] }, { path: "/revit/delete" }])
+    assert.equal(nativeArtifactReceiptEffectV1({ ...workbook, ...mutation }, "POST", route, "apply"), null);
+  assert(verificationCapabilityAdmissionForPathsV2(route, "/revit/inspect-exported-files").admissible);
+  assert(!verificationCapabilityAdmissionForPathsV2(route, "/revit/get-element-summary").admissible);
+  assert.match(verificationCapabilityGuidanceV2({ capability_id: "revit_call_tool", path: route })!, /Do not export again/);
+});
+
 test("native export receipt requires complete current-call evidence and exact operation authority", () => {
   const base = { authority: "native-host", dispatch_state: "dispatched", native_transaction_state: "not_applicable", observation_required: true,
     raw_payload_hash: "b".repeat(64), persistent_effect: "applied", result_schema_id: "operator-native/POST:/revit/export-pdf/v2",

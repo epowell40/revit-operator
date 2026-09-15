@@ -1086,6 +1086,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
     resultItems: z.array(z.object({
       label: z.string().min(1).max(160),
       observationId: z.string().min(1).max(240),
+      source: z.enum(["raw_payload", "deterministic_projection"]).optional().describe("Default raw_payload selects native keys. deterministic_projection selects [key_counts or key_facts, exact literal key] recomputed from the same retained bytes. Complete inventory summaries only; no caller-provided values."),
       path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
     })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
     assessment: z.object({
@@ -1107,7 +1108,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
         run_id: binding.run_id,
         generation: binding.generation,
         session_id: binding.session_id,
-        ...(args.resultItems ? { result_items: args.resultItems.map(item => ({ label: item.label, observation_id: item.observationId, path: item.path })) } : {}),
+        ...(args.resultItems ? { result_items: args.resultItems.map(item => ({ label: item.label, observation_id: item.observationId, path: item.path, ...(item.source ? { source: item.source } : {}) })) } : {}),
         ...(args.assessment !== undefined ? { assessment: args.assessment } : {}),
         claims: args.claims.map(claim => ({
           criterion_id: claim.criterionId,

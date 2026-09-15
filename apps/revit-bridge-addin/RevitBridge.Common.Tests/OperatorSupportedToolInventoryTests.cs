@@ -15,8 +15,8 @@ namespace RevitBridge.Common.Tests
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(216, implemented.Count);
-            Assert.Equal(101, OperatorToolManifest.Tools.Count);
-            Assert.Equal(101, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(102, OperatorToolManifest.Tools.Count);
+            Assert.Equal(102, OperatorActionAllowlist.EnumerateAllowed().Count());
             foreach (var route in implemented)
             {
                 var supported = OperatorSupportedToolInventory.IsSupportedTool(route.Method, route.Path);

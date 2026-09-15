@@ -42,7 +42,7 @@ function safeRecord(value: unknown): Record<string, unknown> | null {
 
 function identityText(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const text = boundedText(value, 180);
+  const text = value.trim();
   return text || null;
 }
 
@@ -64,18 +64,28 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
     if (!IDENTITY_ARRAY_KEY.test(key) || !Array.isArray(value) || value.length === 0 || value.length > MAX_IDENTITY_ROWS) continue;
     const familyType = new Map<string, number>();
     const categories = new Map<string, number>();
+    const elementIdentities = new Set<string>();
+    let duplicateIdentity = false;
     let identityRows = 0;
     for (const valueRow of value) {
       const item = safeRecord(valueRow);
       if (!item) continue;
+      const id = item.elementId ?? item.element_id ?? item.id ?? item.uniqueId;
+      if ((typeof id === "string" && id.trim()) || (typeof id === "number" && Number.isSafeInteger(id))) {
+        const identity = String(id).trim();
+        duplicateIdentity ||= elementIdentities.has(identity);
+        elementIdentities.add(identity);
+      }
       const family = identityText(item.familyName ?? item.family_name ?? item.family);
       const type = identityText(item.typeName ?? item.type_name ?? item.type);
       const category = identityText(item.category ?? item.categoryName ?? item.category_name ?? item.builtInCategory);
       if (!family && !type && !category) continue;
       identityRows += 1;
       if (family || type) {
-        const label = family && type ? `${family} | ${type}` : family ?? type!;
-        familyType.set(label, (familyType.get(label) ?? 0) + 1);
+        // Group by the exact tuple. Truncation and delimiter collisions must
+        // never combine distinct families or types into one count.
+        const identity = JSON.stringify([family, type]);
+        familyType.set(identity, (familyType.get(identity) ?? 0) + 1);
       }
       if (category) categories.set(category, (categories.get(category) ?? 0) + 1);
     }
@@ -85,9 +95,16 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
     const explicitlyComplete = row.itemsComplete === true
       || (row.truncated === false && row.scanCapReached !== true && row.hasMore !== true);
     const total = declaredTotal ?? value.length;
-    const complete = !explicitlyIncomplete && explicitlyComplete && total === value.length && identityRows === value.length;
-    const allFamilyType = sortedCounts(familyType);
+    const complete = !duplicateIdentity && !explicitlyIncomplete && explicitlyComplete && total === value.length && identityRows === value.length;
+    const allFamilyType = sortedCounts(familyType).map(([identity, count]): [string, number] => {
+      const [family, type] = JSON.parse(identity) as [string | null, string | null];
+      return [family && type ? `${family} | ${type}` : family ?? type!, count];
+    });
+    const labels = new Map<string, number>();
+    for (const [label] of allFamilyType) labels.set(label, (labels.get(label) ?? 0) + 1);
+    const presentableFamilyType = allFamilyType.filter(([label]) => `inventory.family_type::${label}`.length <= 240 && labels.get(label) === 1);
     const allCategories = sortedCounts(categories);
+    const presentableCategories = allCategories.filter(([label]) => label.length <= 220);
     inventories.push({
       path: path === "$" ? key : `${path}.${key}`,
       rows: value.length,
@@ -95,9 +112,10 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
       total,
       complete,
       groupCount: allFamilyType.length,
-      familyType: allFamilyType.slice(0, MAX_IDENTITY_GROUPS),
-      categories: allCategories.slice(0, Math.max(0, MAX_IDENTITY_GROUPS - Math.min(MAX_IDENTITY_GROUPS, allFamilyType.length))),
+      familyType: presentableFamilyType.slice(0, MAX_IDENTITY_GROUPS),
+      categories: presentableCategories.slice(0, Math.max(0, MAX_IDENTITY_GROUPS - Math.min(MAX_IDENTITY_GROUPS, presentableFamilyType.length))),
       groupsTruncated: allFamilyType.length + allCategories.length > MAX_IDENTITY_GROUPS
+        || presentableFamilyType.length !== allFamilyType.length || presentableCategories.length !== allCategories.length
     });
   }
   return inventories;

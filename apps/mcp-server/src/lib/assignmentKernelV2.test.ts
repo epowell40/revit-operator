@@ -79,22 +79,26 @@ function pdfArtifactReceipt(phase: "apply" | "preview" = "apply") {
     outputs: phase === "apply" ? [{ path: "C:/fixture/M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] : [] };
 }
 
-test("native PDF exports and nonwriting plans retain artifact authority without inventing transactions", async () => {
-  for (const route of ["/revit/export-pdf", "/revit/print"]) for (const requested of ["apply", "preview"] as const) {
-    const receipt = pdfArtifactReceipt(requested), body = { viewIds: [1420963], dryRun: requested === "preview",
+test("native PDF and workbook exports and nonwriting plans retain artifact authority without inventing transactions", async () => {
+  for (const route of ["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"]) for (const requested of ["apply", "preview"] as const) {
+    const workbook = route === "/revit/export-elements-xlsx";
+    const filePath = workbook ? "C:/fixture/rooms.xlsx" : "C:/fixture/M000.pdf";
+    const receipt = pdfArtifactReceipt(requested), body = { ...(workbook ? { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx" } : { viewIds: [1420963] }), dryRun: requested === "preview",
       ...(route === "/revit/print" ? { copies: 1, collate: true, printIndividually: false } : {}) };
     Object.assign(receipt, { path: route, ...(route === "/revit/print" ? { print_settings_restored: true } : {}) });
+    receipt.expected_output_paths = [filePath];
+    receipt.outputs = receipt.outputs.map(output => ({ ...output, path: filePath }));
     const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
       const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
       await markAssignmentKernelNativeRequestDispatchingV2(request);
       await recordAssignmentKernelNativeResultV2("POST", route, {
         status: requested === "apply" ? "Success" : "Dry Run", ok: true, dryRun: requested === "preview", artifact_receipt: receipt,
         warnings: route === "/revit/print" ? ["Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged."] : [],
-        selectedCount: 1, selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }], preflight: { outputs: receipt.expected_output_paths },
+        selectedCount: 1, ...(workbook ? { requestedCount: 1, itemsComplete: true, issueCount: 0, sheets: ["Elements", "Issues", "Readme"] } : { selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }] }), preflight: { outputs: receipt.expected_output_paths },
         canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
           requested_effect: requested, effect_state: requested === "apply" ? "applied" : "none", effect_authority: "native_receipt",
           effect_reason: requested === "apply" ? "native_artifact_export_completed" : "native_artifact_export_not_started",
-          request_dispatched: true, affected_target_identities: requested === "apply" ? ["artifact_path:C:/fixture/M000.pdf"] : [] }
+          request_dispatched: true, affected_target_identities: requested === "apply" ? ["artifact_path:" + filePath] : [] }
       }, request);
       return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
     });

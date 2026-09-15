@@ -28,6 +28,20 @@ export type CodexTurnNotificationSnapshot = {
   hasAuthoritativeWebEvidence: boolean;
 };
 
+/** Runtime stage text is descriptive, never an assertion that an effect succeeded. */
+function toolProgressStage(item: any): string | undefined {
+  if (!["dynamicToolCall", "mcpToolCall"].includes(item?.type)) return undefined;
+  const tool = typeof item.tool === "string" ? item.tool : "";
+  if (["operator_evaluate_assignment_criteria"].includes(tool)) return "Checking the result…";
+  if (["operator_request_assignment_input", "request_user_input"].includes(tool)) return "Preparing a question…";
+  if (["operator_discover_capabilities", "revit_search_tools", "revit_tool_doc"].includes(tool)) return "Finding the right tool…";
+  if (tool === "operator_retrieve_evidence") return "Reviewing the collected information…";
+  if (/capture/.test(tool)) return "Capturing the view…";
+  if (/excel|xlsx/.test(tool)) return "Preparing the workbook…";
+  if (/^revit_(get|list|find|query)/.test(tool)) return "Reading model information…";
+  return "Working through the next step…";
+}
+
 function shouldNotifyCodexToolCalls(): boolean {
   const value = (process.env.OPERATOR_NOTIFY_CODEX_TOOL_CALLS ?? "1").toString().trim().toLowerCase();
   return value !== "0" && value !== "false" && value !== "no";
@@ -68,6 +82,8 @@ export function createCodexTurnNotificationObserver(args: {
       args.modelTelemetry.observe(notification);
       if (notification.method === "item/started" && notification.params?.turnId === args.turnId) {
         const item = notification.params?.item;
+        const stage = toolProgressStage(item);
+        if (stage) args.onProgress?.(stage);
         if (item?.type === "agentMessage" && typeof item.id === "string") messagePhases.set(item.id, item.phase ?? "unknown");
       }
       if (notification.method === "item/agentMessage/delta") {
@@ -99,6 +115,7 @@ export function createCodexTurnNotificationObserver(args: {
 
       const dynamicTool = adaptDynamicToolCompletedItem(item);
       if (dynamicTool) {
+        args.onProgress?.(dynamicTool.success === false ? "Reviewing a tool issue…" : "Reviewing the result…");
         args.assignmentObserver.observe(dynamicTool);
         if (isSuccessfulFreshRevitEvidence(args.freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
         if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
@@ -182,6 +199,7 @@ export function createCodexTurnNotificationObserver(args: {
       if (item?.type !== "mcpToolCall") return;
       const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
       const error = typeof item.error === "string" ? item.error.trim() : "";
+      args.onProgress?.(error || ["failed", "error"].includes(status) ? "Reviewing a tool issue…" : "Reviewing the result…");
       args.assignmentObserver.observe({
         action_id: typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null,
         server: typeof item.server === "string" ? item.server : null,

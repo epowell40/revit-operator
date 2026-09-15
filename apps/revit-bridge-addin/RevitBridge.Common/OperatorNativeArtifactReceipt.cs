@@ -31,7 +31,7 @@ namespace RevitBridge.Common
         internal OperatorNativeArtifactReceipt(string phase, string status, string[] paths, int expectedCalls,
             bool[] calls, OperatorNativeArtifactFile[] outputs, string path = "/revit/export-pdf", bool? printSettingsRestored = null)
         {
-            if (path != "/revit/export-pdf" && path != "/revit/print") throw new ArgumentException("Unsupported native file-export route.");
+            if (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx") throw new ArgumentException("Unsupported native file-export route.");
             Path = path; PrintSettingsRestored = printSettingsRestored;
             Phase = phase; Status = status; ExpectedOutputPaths = paths;
             ExpectedExportCalls = expectedCalls; ExportCalls = calls; Outputs = outputs;
@@ -68,7 +68,7 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("artifact_receipt", out var value)) return false;
             try
             {
-                if (method != "POST" || (path != "/revit/export-pdf" && path != "/revit/print")
+                if (method != "POST" || (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx")
                     || value.GetProperty("schema").GetString() != Version
                     || value.GetProperty("method").GetString() != method || value.GetProperty("path").GetString() != path)
                     return true;
@@ -147,7 +147,7 @@ namespace RevitBridge.Common
 
         public OperatorNativeArtifactCapture(IEnumerable<string> outputPaths, int expectedExportCalls, string path = "/revit/export-pdf")
         {
-            if (path != "/revit/export-pdf" && path != "/revit/print") throw new ArgumentException("Unsupported native file-export route.");
+            if (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx") throw new ArgumentException("Unsupported native file-export route.");
             routePath = path;
             paths = OperatorNativeArtifactReceipt.Normalize(outputPaths, expectedExportCalls);
             expectedCalls = expectedExportCalls;

@@ -14,6 +14,22 @@ namespace RevitBridge.Common.Tests
     {
         private const string Candidate22Query = "project-wide element inventory by category grouped by family and type complete count air terminals";
 
+        [Theory]
+        [InlineData("Read the complete Revit room and space inventory with HVAC load-calculation parameters, validate counts/units/missing values, and export a room-by-room Excel workbook artifact without changing the model.", "/revit/export-elements-xlsx")]
+        [InlineData("export element parameters to an Excel spreadsheet workbook", "/revit/export-elements-xlsx")]
+        [InlineData("export schedule csv", "/revit/export-schedule-csv")]
+        public void WorkbookAndNeighboringExportsRemainDiscoverableAcrossTheProductCatalog(string query, string requiredPath)
+        {
+            var ranked = OperatorToolManifest.Tools
+                .Select(tool => new { Tool = tool, Score = OperatorToolSearchRanking.Score(query, tool.Path, tool.Title, tool.Group, tool.Description, tool.Example, tool.Method) })
+                .Where(candidate => candidate.Score > 0)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.Tool.RiskLevel)
+                .ThenBy(candidate => candidate.Tool.Path, StringComparer.Ordinal)
+                .Take(4).Select(candidate => candidate.Tool.Path).ToArray();
+            Assert.Contains(requiredPath, ranked);
+        }
+
         [Fact]
         public void InventoryIntentRanksQuantifyAboveUnrelatedTypeAndRepairTools()
         {

@@ -156,6 +156,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/export-elements-xlsx"
+    },
+    {
+      "method": "POST",
       "path": "/revit/export-image"
     },
     {

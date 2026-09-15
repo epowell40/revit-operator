@@ -18,10 +18,10 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 216);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 101);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 102);
   assert.equal(SUPPORTED_MCP_ALIASES.length, 93);
   const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
-  assert.equal(excluded.length, 115);
+  assert.equal(excluded.length, 114);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

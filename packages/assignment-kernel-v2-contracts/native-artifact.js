@@ -7,7 +7,7 @@ const absolute = value => typeof value === "string" && value.length > 1 && value
 /** The wire receipt describes native file effects, never a Revit transaction. */
 export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffect) {
   const r = record(value);
-  if (method !== "POST" || !["/revit/export-pdf", "/revit/print"].includes(path) || r.schema !== NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA
+  if (method !== "POST" || !["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(path) || r.schema !== NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA
       || r.method !== method || r.path !== path) return null;
   const paths = r.expected_output_paths;
   if (path === "/revit/print" && ["apply", "preview"].includes(requestedEffect) && r.phase === requestedEffect

@@ -22,6 +22,10 @@ export function nativeResultPresentationV2(snapshot: AssignmentSnapshotV2, obser
       if (payloadDigestV2(payload).digest !== observation.raw_payload_hash) continue;
     } catch { continue; }
     const artifact = record(payload.artifact_receipt);
+    if (artifact.path === "/revit/export-elements-xlsx" && artifact.phase === "apply" && artifact.status === "complete"
+        && typeof payload.selectedCount === "number" && typeof payload.issueCount === "number") {
+      lines.add(`Workbook: ${payload.selectedCount} elements; ${payload.issueCount} fields flagged for review.`);
+    }
     if (artifact.path === "/revit/export-pdf" && artifact.phase === "apply" && artifact.status === "complete"
         && Array.isArray(payload.selectedSheets)) for (const item of payload.selectedSheets.slice(0, 12)) {
       const row = record(item);

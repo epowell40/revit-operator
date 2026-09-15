@@ -1,4 +1,5 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
+import { requestedWorkbookExport } from "../artifact_export_intent.js";
 import { classifyAgentTurn, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "../no_write_intent.js";
 
@@ -51,7 +52,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   const whatIfPreview = hasNoncommittingChangePreviewRequest(text);
   const explicitNoWrite = isExplicitNoWriteRequest(text) || whatIfPreview;
   const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
-  const requestedEffect = (PREVIEW_REQUEST.test(previewIntentText(text)) || whatIfPreview) && !informationalReadOnlyPlan
+  const requestedEffect = requestedWorkbookExport(text) ? "apply" : (PREVIEW_REQUEST.test(previewIntentText(text)) || whatIfPreview) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
     : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (turnKind === "mutation" && !explicitNoWrite)

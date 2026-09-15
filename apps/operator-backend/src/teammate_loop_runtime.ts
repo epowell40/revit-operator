@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifact_export_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
@@ -36,6 +37,7 @@ export type TeammateTurnContract = {
   stage: TeammateLoopStage;
   no_write: boolean;
   write_authorized: boolean;
+  file_export_paths?: readonly string[];
   preview_required: boolean;
   max_apply_attempts: 32;
   verification_required: boolean;
@@ -319,7 +321,8 @@ function contextIdentity(contextValue: unknown, kind: AgentTurnKind): { state: T
 
 export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTurnContract {
   const text = normalizedUserText(req);
-  const turnKind = classifyAgentTurn(text, req.context);
+  const workbookExport = requestedWorkbookExport(text);
+  const turnKind = workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
@@ -343,6 +346,7 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
     stage,
     no_write: noWrite,
     write_authorized: authorized,
+    ...(workbookExport ? { file_export_paths: ["/revit/export-elements-xlsx"] } : {}),
     preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
@@ -363,6 +367,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     stage: contract.stage,
     no_write: contract.no_write,
     write_authorized: contract.write_authorized,
+    ...(contract.file_export_paths ? { file_export_paths: contract.file_export_paths } : {}),
     preview_required: contract.preview_required,
     max_apply_attempts: contract.max_apply_attempts,
     verification_required: contract.verification_required,
@@ -370,7 +375,9 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     user_text_sha256: contract.user_text_sha256,
     document_signature: contract.document_signature
   };
-  const rules = contract.turn_kind === "conversation"
+  const rules = contract.file_export_paths
+    ? "Read the exact model scope and representative parameter names, export the requested workbook in one bulk call, then verify its exact file digest with inspect-exported-files. Preserve all model-edit restrictions."
+    : contract.turn_kind === "conversation"
     ? "Answer naturally; do not call Revit for a conceptual answer."
     : contract.required_user_inputs.length > 0
       ? `Use read-only Revit calls to ground the exact target and current state, then call operator_request_clarification with missingFields=${JSON.stringify(contract.required_user_inputs)} and one concise question. Do not preview or apply an opaque value that is not bound to authenticated user input.`
@@ -389,7 +396,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     : requestedOperation === "delete"
       ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. Preserve the material comparison facts used to rank the candidate. Distinguish the exact elements and physical connections that would be affected if the preview were committed, including the predicted remaining connected-system state, from the later rollback-restoration state. After rollback, re-read the previewed member and any requested connection/system state; explicitly report whether the target still exists and whether its connections were restored. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
       : "";
-  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
+  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.file_export_paths ? " The requested workbook export is authorized as a file effect and must be verified with inspect-exported-files; any model-preservation constraint still forbids Revit edits." : contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
 }
 
 function requestedPreviewOperation(text: string): string | null {
@@ -701,9 +708,11 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     return "open_model_sample_year_mismatch";
   }
   if (call.effect === "apply") {
+    const fileExportAuthorized = authorizedArtifactExportPath(state.authoritative_user_text, call.path);
+    if (call.path === "/revit/export-elements-xlsx" && !fileExportAuthorized) return "explicit_workbook_export_authority_required";
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
-    if (contract.no_write) return "user_no_write_limit";
-    if (!contract.write_authorized) return "explicit_write_authority_required";
+    if (contract.no_write && !fileExportAuthorized) return "user_no_write_limit";
+    if (!contract.write_authorized && !fileExportAuthorized) return "explicit_write_authority_required";
     if (state.apply_attempts >= contract.max_apply_attempts) return "apply_attempt_budget_exhausted";
     if (state.stage_apply_attempts >= 1) {
       if (!state.apply_succeeded || !state.verified) return "prior_apply_verification_required";

@@ -17,14 +17,16 @@ namespace RevitBridge.Handlers
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
             if (p.paths == null || p.paths.Count == 0 || p.paths.Count > 2000)
-                throw new ArgumentException("Provide 1 to 2000 exact exported PDF paths.");
+                throw new ArgumentException("Provide 1 to 2000 exact exported PDF or XLSX paths.");
             var paths = p.paths.Select(value =>
             {
-                if (string.IsNullOrWhiteSpace(value) || value.Length > 2000 || !string.Equals(Path.GetExtension(value), ".pdf", StringComparison.OrdinalIgnoreCase))
-                    throw new ArgumentException("Inspection accepts exact PDF file paths only.");
+                var extension = Path.GetExtension(value);
+                if (string.IsNullOrWhiteSpace(value) || value.Length > 2000 || !(string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase) || string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Inspection accepts exact PDF or XLSX file paths only.");
                 var full = Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(WorkspacePaths.GetWorkspaceRoot(), value));
                 // Reuse the exporter's allowed-root policy without creating directories or files.
-                ExportPdfHandler.ResolvePdfOutputFolder(Path.GetDirectoryName(full));
+                if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)) WorkspacePaths.ResolveFileUnderWorkspace(full);
+                else ExportPdfHandler.ResolvePdfOutputFolder(Path.GetDirectoryName(full));
                 return full;
             }).ToArray();
             var files = OperatorNativeArtifactCapture.Inspect(paths);

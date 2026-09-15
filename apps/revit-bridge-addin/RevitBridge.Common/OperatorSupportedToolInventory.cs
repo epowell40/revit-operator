@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:1345e210ae95004f7cbf1a5db38ca16e872186ff06a3da0745961a8c7356b77e";
+        public const string InventoryHash = "sha256:ba4fd2e52eb324ecaa873c3399a9c77b18b0d5d7bd37c5e5ac5c7ceb35e6de3d";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -46,6 +46,7 @@ namespace RevitBridge.Common
             "POST /revit/duplicate-sheet",
             "POST /revit/duplicate-type-and-swap-instance",
             "POST /revit/duplicate-view",
+            "POST /revit/export-elements-xlsx",
             "POST /revit/export-image",
             "POST /revit/export-pdf",
             "POST /revit/export-schedule-csv",

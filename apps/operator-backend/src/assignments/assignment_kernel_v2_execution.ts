@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { authorizedArtifactExportPath } from "../artifact_export_intent.js";
+import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
 import {
   OPERATION_RESULT_V2_SCHEMA,
@@ -278,6 +280,14 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
+  if (suggestedEffect === "apply" && requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path === "/revit/export-elements-xlsx"
+      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, "/revit/export-elements-xlsx")) {
+    throw new Error("assignment_kernel_v2_explicit_workbook_export_authority_required");
+  }
+  if (suggestedEffect === "apply" && isExplicitNoWriteRequest(snapshot.spec.source_user_request)
+      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path)) {
+    throw new Error("assignment_kernel_v2_user_no_model_write_limit");
+  }
   const purpose = operationPurpose(input.classified_effect, snapshot);
   if (snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
     throw new Error("assignment_kernel_v2_unknown_effect_requires_reconciliation");

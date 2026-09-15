@@ -6275,7 +6275,7 @@ namespace RevitBridge.Operator
                     || !inspection.Value.TryGetProperty("paths", out var paths) || paths.ValueKind != JsonValueKind.Array
                     || paths.GetArrayLength() == 0 || paths.GetArrayLength() > 2000)
                 {
-                    error = "inspect-exported-files requires 1 to 2000 exact PDF paths.";
+                    error = "inspect-exported-files requires 1 to 2000 exact PDF or XLSX paths.";
                     return false;
                 }
                 foreach (var property in inspection.Value.EnumerateObject())

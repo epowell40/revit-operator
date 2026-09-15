@@ -1,11 +1,12 @@
-import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { resultObservationEligibilityV2 } from "../domain/assignment-kernel/result_delivery.js";
 
 /** Bounded identity mapping; native payloads remain behind focused retrieval. */
 export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2, operationId?: string): string {
   const observations = Object.values(snapshot.observations)
     .filter(observation => {
       const operation = snapshot.operations[observation.operation_id];
-      return observation.binding.generation === snapshot.current_binding.generation
+      return sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
         && (!operationId || observation.operation_id === operationId || operation?.root_operation_id === operationId);
     })
     .sort((a, b) => b.observed_at.localeCompare(a.observed_at) || a.observation_id.localeCompare(b.observation_id));
@@ -17,10 +18,11 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
       operation_id: observation.operation_id,
       evidence_id: observation.raw_payload_ref.replace(/^evidence:/, ""),
       evidence_class: observation.evidence_class,
+      result_item_eligibility: resultObservationEligibilityV2(snapshot, observation.observation_id),
       eligible_criterion_ids: observation.eligible_criterion_ids,
       capability_id: snapshot.operations[observation.operation_id]?.capability_id
     })),
     omitted: Math.max(0, observations.length - 32),
-    usage: "Use observation_id for criterion claims and resultItems. Use evidence_id for focused payload retrieval. Operation IDs and native correlation IDs are not Observation IDs."
+    usage: "Use observation_id only for its eligible_criterion_ids. resultItems require result_item_eligibility=result; diagnostic permits only failed-read execution_status/diagnostics/logs. Control and verification evidence cannot become resultItems. Use evidence_id for missing payload fields. Operation IDs are not Observation IDs."
   });
 }

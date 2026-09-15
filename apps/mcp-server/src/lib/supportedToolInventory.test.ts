@@ -16,10 +16,10 @@ const excluded = implemented.filter(route => !isSupportedNativeTool(route.method
 
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
   assert.equal(implemented.length, 216);
-  assert.equal(excluded.length, 115);
+  assert.equal(excluded.length, 114);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 101);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 102);
     for (const route of excluded) {
       assert.equal(isKnownToolExposureRoute(route.method, route.path, env), false);
       assert.equal(isToolRouteExposedForSearch(route.method, route.path, env), false);

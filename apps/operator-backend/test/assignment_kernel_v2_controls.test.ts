@@ -202,11 +202,11 @@ test("generated-tool validation diagnostics survive a missing canonical receipt 
   } finally { endTeammateLoopOwner(owner); }
 }));
 
-for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${withAssessment ? "with cited assessment" : "with native values"} rejects foreign or missing evidence and survives publication`, () => workspace(async () => {
+for (const [withAssessment, withProjection] of [[false, false], [true, false], [false, true]]) test(`read-result HTTP delivery ${withAssessment ? "with cited assessment" : withProjection ? "with deterministic projection counts" : "with native values"} rejects foreign or missing evidence and survives publication`, () => workspace(async () => {
   const { binding, snapshot, prepared } = start(withAssessment
     ? "Review the selected element's name, size and system. Tell me how many of these fields are readable and assess what needs attention. Leave the model unchanged."
     : "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
-  const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
+  const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" }, count: 509, itemsComplete: true, items: Array.from({ length: 509 }, (_, i) => ({ elementId: i + 1, familyName: "Supply.Diffuser", typeName: "12 x 12" })) };
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => { throw new Error("read interrupted before delivery"); },
     callTool: async (_tool: unknown, args: any, context: any) => {
       const lease = context.assignmentKernelV2;
@@ -261,6 +261,7 @@ for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${wi
   assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.result_delivery, undefined);
   const mapping = dynamicResponse.contentItems.map((item: any) => JSON.parse(item.text)).find((item: any) => item.schema === "revit-operator.model-observation-index/v2");
   assert.equal(mapping.observations[0].observation_id, observationId);
+  assert.equal(mapping.observations[0].result_item_eligibility, "result");
   assert.equal(mapping.observations[0].evidence_id, observation.raw_payload_ref.replace(/^evidence:/, ""));
   assert.deepEqual(mapping.observations[0].eligible_criterion_ids, [snapshot.spec.criteria[0]!.criterion_id]);
   const assessment = { overview: "Review the drainage design before treating this pipe as ready.",
@@ -270,6 +271,10 @@ for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${wi
     result_items: [{ label: "Selected pipe", observation_id: observationId, path: ["name"] },
       { label: "Size", observation_id: observationId, path: ["parameters", "Size"] },
       { label: "System", observation_id: observationId, path: ["parameters", "System Name"] }] };
+  if (withProjection) (body as any).result_items = [
+    { label: "Air devices", observation_id: observationId, source: "deterministic_projection", path: ["key_counts", "inventory.total"] },
+    { label: "Supply diffusers", observation_id: observationId, source: "deterministic_projection", path: ["key_counts", "inventory.family_type::Supply.Diffuser | 12 x 12"] }
+  ];
   const server = http.createServer((req, res) => {
     void runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, async () => {
       await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
@@ -289,6 +294,11 @@ for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${wi
       "an operation or correlation identifier cannot substitute for the published Observation ID");
     assert.equal((await send({ ...body, result_items: [{ ...body.result_items[0], path: ["missing"] }] })).status, 400);
     assert.equal((await send({ ...body, result_items: null })).status, 400);
+    for (const invalid of [
+      { ...body.result_items[0], source: "untrusted_model" },
+      { ...body.result_items[0], source: "deterministic_projection", path: ["inventory", "total"] },
+      { ...body.result_items[0], source: "raw_payload", path: ["key_counts", "inventory.total"] }
+    ]) assert.equal((await send({ ...body, result_items: [invalid] })).status, 400);
     if (withAssessment) {
       for (const invalid of [null, { ...assessment, authority: "native-host" }, { ...assessment, questions: ["1", "2", "3", "4"] },
         { ...assessment, findings: [{ ...assessment.findings[0], evidence_indices: [99] }] }]) {
@@ -308,7 +318,9 @@ for (const withAssessment of [false, true]) test(`read-result HTTP delivery ${wi
       assert.match(rendered, /\[2\] Size: 4"ø/); assert.doesNotMatch(rendered, /\{"/);
       assert.deepEqual(result.assignment_snapshot_v2.criteria, getAssignmentKernelSnapshotV2(binding.assignment_id)!.criteria);
       assert.equal(result.assignment_snapshot_v2.spec.input_variables.length, 0, "presentation questions cannot manufacture user-input authority");
-    } else assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
+    } else assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), withProjection
+      ? '- Air devices: 509\n- Supply diffusers: 509'
+      : '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
     const canonicalBeforeProjection = JSON.stringify(getAssignmentKernelSnapshotV2(binding.assignment_id));
     const modelReply = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(result) }] },
       { tool: "operator_evaluate_assignment_criteria" });
