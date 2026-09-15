@@ -1698,6 +1698,20 @@
         "backend:assignment_kernel_v2_controls.test.ts",
         "backend:workbook_export_intent.test.ts"
       ]
+    },
+    {
+      "id": "pending-engineering-question-stops-provider-with-internal-error-and-hidden-answer-form",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "assessment-obligation-falsely-describes-an-uncreated-workbook-as-verified",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

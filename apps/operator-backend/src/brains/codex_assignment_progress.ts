@@ -80,7 +80,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2): 
     prompt: progressPrompt(progression.snapshot, progression.decision),
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
-      : progressMessage(progression.decision)
+      : finalCodexAssignmentMessageV2(progression.snapshot, progressMessage(progression.decision))
   };
 }
 
@@ -116,6 +116,12 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
     return "I could not confirm whether the model edit completed. The task needs reconciliation against the existing model before another edit can be attempted.";
   }
   if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
+  if (snapshot && !snapshot.terminal && snapshot.outcome === "awaiting_user_input") {
+    const questions = Object.values(snapshot.clarifications)
+      .filter(question => !question.resolved_at)
+      .map(question => question.question.trim()).filter(Boolean);
+    if (questions.length) return [...new Set(questions)].join("\n\n");
+  }
   if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
       && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {
     return "The task has not finished. Any completed changes and remaining verification are saved with the task.";
@@ -126,7 +132,9 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
 export function codexAssignmentControllerStopMessage(snapshot: AssignmentSnapshotV2 | null, reason: string): string {
   return finalCodexAssignmentMessageV2(
     snapshot,
-    `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
+    snapshot?.outcome === "awaiting_user_input"
+      ? "I need an answer before I can continue this task."
+      : `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
   );
 }
 

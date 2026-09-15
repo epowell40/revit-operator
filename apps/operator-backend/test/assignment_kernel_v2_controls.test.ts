@@ -18,7 +18,7 @@ import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { parseAssignmentKernelPublicationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { handleCodexDynamicToolCall } from "../src/brains/codex_dynamic_tool_handler.js";
-import { checkpointCodexAssignmentProgressV2, finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
+import { checkpointCodexAssignmentProgressV2, finalCodexAssignmentMessageV2, codexAssignmentControllerStopMessage, prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { canonicalTeammateInputs } from "../src/teammate_assignment_inputs.js";
 import { mutationIntentBlockReason } from "../src/teammate_mutation_intent_binding.js";
@@ -994,12 +994,14 @@ test("dynamic criterion handoff projects status after canonical evaluation", () 
 
 test("new engineering decisions persist through two questions and process restart without rewriting task or authority", () => workspace(() => {
   const original = "Prepare a proposed zoning schedule. Keep unlike room uses separate, give corner rooms their own zones, and aim for groups no larger than 600 square feet. Do not draw zones or place VAVs yet.";
-  const { binding, snapshot } = start(original);
+  const { binding, snapshot, prepared } = start(original);
   assert.equal(snapshot.spec.requested_effect, "read");
   assert.deepEqual(snapshot.spec.input_variables, []);
   const question = { binding, clarification_id: "choose-floor", variable_ids: ["floor_name"],
     new_variable_ids: ["floor_name"], question: "Which floor should I use for the proposed zoning schedule?" };
   const waiting = requestAssignmentInputV2(question as any);
+  assert.equal(codexAssignmentControllerStopMessage(waiting, "assignment_progress_controller_stop"), question.question,
+    "C27: a provider interrupted by the input controller must deliver the durable question");
   assert.deepEqual(waiting.spec, snapshot.spec);
   assert.deepEqual(waiting.pending_input_variable_ids, ["floor_name"]);
   assert.equal(requestAssignmentInputV2(question as any).assignment_version, waiting.assignment_version);
@@ -1019,6 +1021,8 @@ test("new engineering decisions persist through two questions and process restar
   ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
   assert.equal(child.status, 0, child.stderr);
   const replay = JSON.parse(child.stdout);
+  assert.equal(codexAssignmentControllerStopMessage(replay, "assignment_progress_controller_stop"),
+    "Should corner rooms mean spaces with exterior walls facing two directions?", "restart must not repeat the answered floor question");
   assert.deepEqual(replay.spec, snapshot.spec);
   assert.deepEqual(replay.input_values, second.input_values);
   assert.deepEqual(replay.pending_input_variable_ids, ["corner_definition"]);
@@ -1029,6 +1033,9 @@ test("new engineering decisions persist through two questions and process restar
   assert.match(String(complete.input_values.corner_definition), /uncertain exposure/);
   assert.deepEqual(complete.pending_input_variable_ids, []);
   assert.equal(complete.terminal, false, "answers alone never complete engineering work");
+  const resumed = bindPreparedAssignmentToRequest({ user_text: "Continue the existing task using its saved answers and evidence." } as any, prepared);
+  assert.match(String((resumed.context as any).ui.authoritative_user_text), /Keep unlike room uses separate/);
+  assert.match(String((resumed.context as any).ui.authoritative_user_text), /floor_name.*L2/);
   assert.throws(() => openAssignmentKernelOperationV2({ snapshot: complete, provider_turn_id: "resume", controller_request_id: "forbidden-write",
     capability_id: "revit_call_tool", classified_effect: "apply", arguments: { method: "POST", path: "/revit/set-parameter", body: { changes: [{ elementId: 42, parameterName: "Comments", value: "not authorized" }] } } }), /effect|write|intent/);
   assert.deepEqual(requestAssignmentInputV2(question as any).input_values, complete.input_values, "a repeated question cannot reopen an answered decision");
@@ -1153,6 +1160,10 @@ test("C26 HVAC workbook replay keeps requested assessment pending after exact fi
   try {
     assert.equal(snapshot.spec.result_delivery_required, true);
     assert.equal(snapshot.spec.result_assessment_required, true);
+    const initialGuidance = prepareCodexAssignmentProgressV2(binding).prompt;
+    assert.doesNotMatch(initialGuidance, /The exported file is verified/,
+      "C27: an assessment requirement must not invent an export before the first operation");
+    assert.match(initialGuidance, /If export is still outstanding, complete that work first/);
     await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-elements-xlsx",
       body: { elementIds: [42], parameterNames: ["Area"], fileName: "rooms.xlsx", dryRun: false } });
     const applied = advanceAssignmentKernelProgressV2({ binding }).snapshot;

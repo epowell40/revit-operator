@@ -20,7 +20,8 @@ import {
   type OperationResultV2,
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
-import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
+import { finalCodexAssignmentMessageV2, codexAssignmentControllerStopMessage } from "../src/brains/codex_assignment_progress.js";
+import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
 import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment-kernel/semantic_admissibility.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
@@ -520,6 +521,27 @@ test("pending apply cannot pass unverified completion prose while clarification 
   const snapshot = { ...j.snapshot(), spec: { ...j.snapshot().spec, requested_effect: "apply" as const } };
   assert.doesNotMatch(finalCodexAssignmentMessageV2(snapshot, "Created the view."), /Created the view/);
   assert.equal(finalCodexAssignmentMessageV2({ ...snapshot, outcome: "awaiting_user_input" }, "Which plan?"), "Which plan?");
+});
+
+test("input stop shows only unanswered questions and never hides an uncertain model effect", () => {
+  const snapshot = { ...journal().snapshot(), outcome: "awaiting_user_input" as const, clarifications: {
+    old: { clarification_id: "old", variable_id: "old", question: "Answered already?", requested_at: "2026-09-01T00:00:00Z", resolved_at: "2026-09-01T01:00:00Z" },
+    floor: { clarification_id: "floor", variable_id: "floor", question: "Which floor should I use?", requested_at: "2026-09-15T07:49:10Z" }
+  } };
+  assert.equal(codexAssignmentControllerStopMessage(snapshot, "assignment_progress_controller_stop"), "Which floor should I use?");
+  assert.match(codexAssignmentControllerStopMessage({ ...snapshot, unresolved_unknown_operation_ids: ["edit"] }, "stop"), /could not confirm/);
+  assert.doesNotMatch(codexAssignmentControllerStopMessage({ ...snapshot, clarifications: {} }, "assignment_progress_controller_stop"), /canonical|controller|assignment_progress/);
+});
+
+test("assessment guidance describes remaining obligations without claiming an uncreated artifact exists", () => {
+  const snapshot = journal().snapshot();
+  const requested = { ...snapshot, spec: { ...snapshot.spec, result_delivery_required: true, result_assessment_required: true } };
+  const guidance = deriveProgressGapsV2(requested).find(g => g.kind === "result_delivery_required")!.reason;
+  assert.doesNotMatch(guidance, /The exported file is verified/);
+  assert.match(guidance, /If export is still outstanding, complete that work first/);
+  assert.match(guidance, /Never repeat an export that already has an applied or uncertain effect/);
+  const plain = deriveProgressGapsV2({ ...requested, spec: { ...requested.spec, result_assessment_required: false } })[0]!.reason;
+  assert.doesNotMatch(plain, /export is still outstanding/);
 });
 
 test("blocked terminal result keeps failure visible when partial inventory evidence exists", () => {
