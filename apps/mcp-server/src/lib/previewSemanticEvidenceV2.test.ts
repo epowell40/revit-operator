@@ -87,3 +87,23 @@ test("native status alone cannot admit an unknown preview route", () => {
   });
   assert.deepEqual(evidence, { recognized: false, admitted: false, facts: [] });
 });
+
+test("workbook preview binds the exact selected instances, parameters, and output without claiming a file exists", () => {
+  const route = "/revit/export-elements-xlsx", output = "C:/fixture/rooms.xlsx";
+  const requestBody = { elementIds: [42, 43], parameterNames: ["Area", "Number"], dryRun: true };
+  const payload = { ok: true, dryRun: true, path: output, selectedCount: 2, selectedElementIds: [42, 43],
+    parameterCount: 2, parameterNames: ["Area", "Number"], artifact_receipt: {
+      schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: route, phase: "preview",
+      status: "not_started", expected_output_paths: [output], expected_export_calls: 1, export_calls: [], outputs: [] } };
+  const evaluate = (value: unknown, body: unknown = requestBody) => previewSemanticEvidenceV2({ path: route, payload: value,
+    requestBody: body, requestedEffect: "preview", authoritativePreview: true });
+  assert.equal(evaluate(payload).admitted, true);
+  assert.deepEqual(evaluate(payload).facts.map(f => f.fact_id), ["task.preview_valid", "artifact.planned_output_count"]);
+  for (const change of [{ selectedCount: 1 }, { selectedElementIds: [42, 99] }, { selectedElementIds: [42, 42] },
+    { parameterCount: 1 }, { parameterNames: ["Area", "Name"] }, { path: "C:/fixture/other.xlsx" },
+    { dryRun: false }, { ok: false }, { artifact_receipt: { ...payload.artifact_receipt, outputs: [{ path: output }] } }]) {
+    assert.equal(evaluate({ ...payload, ...change }).admitted, false, JSON.stringify(change));
+  }
+  assert.equal(evaluate(payload, { ...requestBody, elementIds: [42, 42] }).admitted, false);
+  assert.equal(evaluate(payload, { ...requestBody, parameterNames: ["Area", "area"] }).admitted, false);
+});

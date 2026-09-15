@@ -94,7 +94,7 @@ test("native PDF and workbook exports and nonwriting plans retain artifact autho
       await recordAssignmentKernelNativeResultV2("POST", route, {
         status: requested === "apply" ? "Success" : "Dry Run", ok: true, dryRun: requested === "preview", artifact_receipt: receipt,
         warnings: route === "/revit/print" ? ["Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged."] : [],
-        selectedCount: 1, ...(workbook ? { requestedCount: 1, itemsComplete: true, issueCount: 0, sheets: ["Elements", "Issues", "Readme"] } : { selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }] }), preflight: { outputs: receipt.expected_output_paths },
+        selectedCount: 1, ...(workbook ? { path: filePath, selectedElementIds: [42], parameterNames: ["Area", "Number"], parameterCount: 2, requestedCount: 1, itemsComplete: true, issueCount: 0, sheets: ["Elements", "Issues", "Readme"] } : { selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }] }), preflight: { outputs: receipt.expected_output_paths },
         canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
           requested_effect: requested, effect_state: requested === "apply" ? "applied" : "none", effect_authority: "native_receipt",
           effect_reason: requested === "apply" ? "native_artifact_export_completed" : "native_artifact_export_not_started",

@@ -1667,6 +1667,15 @@
         "backend:deferred_proposal_admission.test.ts",
         "backend:assignment_auto_goal_admission.test.ts"
       ]
+    },
+    {
+      "id": "native-workbook-preview-lacks-exact-selection-and-parameter-semantic-adapter",
+      "coverage": [
+        "mcp:lib/previewSemanticEvidenceV2.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "dotnet:OperatorWorkbookWriterTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

@@ -118,7 +118,7 @@ namespace RevitBridge.Handlers
                 new object?[] { "Model changes", "No Revit transaction or model edit is performed." }
             };
             if (p.dryRun == true) return Task.FromResult<object>(new { status = "Dry Run", ok = true, dryRun = true, path = full,
-                selectedCount = ids.Count, parameterCount = names.Count, issueCount = issues.Count - 1, issueCounts, columns = headers,
+                selectedCount = ids.Count, selectedElementIds = ids, parameterNames = names, parameterCount = names.Count, issueCount = issues.Count - 1, issueCounts, columns = headers,
                 preview = rows.Take(4).ToArray(), artifact_receipt = OperatorNativeArtifactReceipt.Preview(new[] { full }, 1, Route) });
             var capture = new OperatorNativeArtifactCapture(new[] { full }, 1, Route);
             OperatorWorkbookWriter.Write(full, new[] { new OperatorWorkbookWriter.Sheet("Elements", rows), new OperatorWorkbookWriter.Sheet("Issues", issues), new OperatorWorkbookWriter.Sheet("Readme", readme) });

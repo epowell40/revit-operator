@@ -35,11 +35,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:7ce1b9ab43e95b83975222efb32521676b79e589bdafd08940d8bfe0f260f965"
+      "sha256": "sha256:75911dbf2795eaabb4aea98b914590392e8c1844ae7ef32d215a250934740e36"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:935d0de3427bedf1274aef34325c7e9c245441417f3e36ef670e7715c2966cbb"
+      "sha256": "sha256:85495e98f572a7fe3dbc6b13977914d34496c3f2be420d8a452befbbc4b4147d"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -255,11 +255,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/previewSemanticEvidenceV2.test.ts",
-      "sha256": "sha256:f9258e4ffba0deb7dd606d0d20ebbd51d0174e25574967d5a3c8cbfb7b61f251"
+      "sha256": "sha256:76bf5c58563754050140ae8938188a3ce0c15cad4a93ee0143a9fb074bede550"
     },
     {
       "path": "apps/mcp-server/src/lib/previewSemanticEvidenceV2.ts",
-      "sha256": "sha256:deec1385d9b868efd4efd303b82594b4002659af42a89c0c451db7fc7b432a09"
+      "sha256": "sha256:89b76a82a04d9020d45a09fed3c1fc89d3dfb1eb101d9b75366500312c264adf"
     },
     {
       "path": "apps/mcp-server/src/lib/registryLookupTransport.test.ts",
@@ -6230,7 +6230,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportElementsXlsxHandler.cs",
-      "sha256": "sha256:29f3d0aafb27e843a4226f399c1ec31e2bcbb4abace242f9af0ddd65d6a9117e"
+      "sha256": "sha256:6b8e11dc606120524d8ceeb80ecfe6d8e80b8e197dec1553781a443aa7fa75f0"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportIfcHandler.cs",
@@ -6749,7 +6749,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:a6beae5537ed2b2377e7ba5b9f468271f0367f6c7b786dc8331bcab3011c1422",
+  "inputs_hash": "sha256:8c66fc412232b5f0a851bed31c5471e17be1cc22785f3e69a1dde748e9bc179b",
   "result": {
     "passed": true,
     "checks": [

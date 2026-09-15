@@ -631,7 +631,7 @@ function semanticFacts(
   const root = object(payload);
   const typedPreviewResult = evidence === "task_result"
     && domainSucceeded
-    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf", "/revit/print"].includes(path.toLowerCase());
+    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(path.toLowerCase());
   if (typedPreviewResult) {
     facts.push(...previewSemanticEvidenceV2({
       path,
