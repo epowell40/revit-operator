@@ -11,7 +11,7 @@ import { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "../src/assignments/assig
 import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
 import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
-import { beginTeammateLoopOwner, endTeammateLoopOwner, teammateLoopReceiptForOwner } from "../src/teammate_loop_runtime.js";
+import { beginTeammateLoopOwner, endTeammateLoopOwner, teammateLoopReceiptForOwner, __testOnlyResetTeammateLoopState } from "../src/teammate_loop_runtime.js";
 
 async function workspace(fn: () => Promise<void>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-rollback-handoff-"));
@@ -20,6 +20,7 @@ async function workspace(fn: () => Promise<void>) {
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1";
   __testOnlyResetGoalListCache();
+  __testOnlyResetTeammateLoopState();
   try { await runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, fn); }
   finally {
     __testOnlyResetGoalListCache();
@@ -38,7 +39,8 @@ const requestBody = { kind: "duct", viewId: 44, levelId: 4,
   connectToExisting: false, requireExistingEndpointConnections: false,
   verify: true, apply: true, visualVerify: true, visualViewId: 44, imageSize: 2200, focusPaddingFt: 6 };
 
-test("status-only blocked MEP result yields to retained rollback before corrected dynamic dispatch", () => workspace(async () => {
+for (const nativeState of ["rolled_back", "not_started"] as const)
+test(`status-only blocked MEP result yields to retained ${nativeState} before corrected dynamic dispatch`, () => workspace(async () => {
   const prompt = "Apply the attached 12x10 supply-duct redline. Use the existing rectangular supply-duct type and leave the ends open.";
   const prepared = prepareAssignmentTurn({ sessionId: "rollback-session", messageId: "redline", userText: prompt,
     toolResults: [], source: "chat", createdBy: null,
@@ -52,14 +54,14 @@ test("status-only blocked MEP result yields to retained rollback before correcte
       const failed = ++dispatches === 1;
       const payload = failed
         ? { status: "Blocked", dryRun: { status: "Blocked", message: "Selected duct type created round; rectangular is required.",
-            transaction: { status: "rolled_back", committed: false }, createdElementIds: [], modifiedElementIds: [], deletedElementIds: [] } }
+            transaction: { status: nativeState, committed: false }, createdElementIds: [], modifiedElementIds: [], deletedElementIds: [] } }
         : { status: "Success", createdElementIds: [1001], transaction: { status: "committed", committed: true } };
       const receipt = "receipt:" + lease.operation_id;
       return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: {
         schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
         operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: "result:" + lease.operation_id,
           operation_id: lease.operation_id, binding, status: failed ? "failed_after_dispatch" : "succeeded", dispatch_state: "dispatched",
-          persistent_effect: failed ? "none" : "applied", native_transaction_state: failed ? "rolled_back" : "committed", authority: "native-host",
+          persistent_effect: failed ? "none" : "applied", native_transaction_state: failed ? nativeState : "committed", authority: "native-host",
           result_schema_id: `operator-native/POST:${route}/v2`, observation_required: true, receipt_id: receipt, native_correlation_id: receipt,
           raw_payload_hash: payloadDigestV2(payload).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() },
         observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["task_result"], evidence_class: "task_result" }
@@ -76,10 +78,11 @@ test("status-only blocked MEP result yields to retained rollback before correcte
       namespace: "revit_operator", turnId: "redline-turn", tool: "revit_call_tool", arguments: { method: "POST", path: route,
         body: { ...requestBody, ductTypeId } }
     } } as any);
-    await run(101, "round-type");
+    const firstResponse = await run(101, "round-type");
     const rollback = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
     const first = Object.values(rollback.operations).find(operation => operation.requested_effect === "apply")!;
-    assert.equal(first.result?.native_transaction_state, "rolled_back");
+    assert.ok(first, JSON.stringify(firstResponse));
+    assert.equal(first.result?.native_transaction_state, nativeState);
     assert.equal(first.persistent_effect, "none");
     assert.equal(rollback.unresolved_unknown_operation_ids.length, 0);
     assert.equal(teammateLoopReceiptForOwner(runtime)!.verified, false);

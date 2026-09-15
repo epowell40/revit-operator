@@ -13,6 +13,7 @@ import { CodexMcpToolRuntime } from "../src/codex/mcp_tool_runtime.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { McpInputValidator } from "../src/codex/mcp_input_validation.js";
 import { attachmentPdf } from "./pdf_attachment.fixtures.js";
+import { circularLabelPdf } from "./pdf_source_landmarks.fixtures.js";
 
 function workspace(t: test.TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-page-reader-"));
@@ -22,6 +23,24 @@ function workspace(t: test.TestContext) {
   return root;
 }
 const upload = (session = "owner", text = true) => storeAttachmentUpload({ session_id: session, filename: "checklist.pdf", data_base64: attachmentPdf(8, text).toString("base64") });
+
+test("registered PDF delivers bounded source circle centers alongside actual rotated cropped-page pixels", async t => {
+  workspace(t);
+  const attachment = storeAttachmentUpload({ session_id: "owner", filename: "source-landmarks.pdf", data_base64: circularLabelPdf(90, true).toString("base64") });
+  const result = await readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], region: { min_u: .2, min_v: .2, max_u: .8, max_v: .8 } });
+  const adapted = adaptMcpToolCallResultToDynamicResponse(result);
+  assert.equal(adapted.contentItems.filter(item => item.type === "inputImage").length, 1);
+  const page = JSON.parse(result.content.filter(item => item.type === "text").find(item => item.text.includes("extracted_text"))!.text);
+  assert.equal(page.sha256, attachment.sha256);
+  assert.equal(page.source_landmarks.items.length, 1);
+  assert.equal(page.source_landmarks.items[0].label, "A");
+  assert.ok(Math.abs(page.source_landmarks.items[0].center.u - 60/140) < 1e-6);
+  assert.ok(Math.abs(page.source_landmarks.items[0].center.v - 80/180) < 1e-6);
+  assert.equal(page.source_landmarks.visibility_not_established, true);
+  assert.match(page.source_landmarks.note, /fresh native landmarks/);
+  assert.equal(page.image_geometry.requested_region.min_u, .2);
+  assert.ok(JSON.stringify(page).length < 14_501);
+});
 
 test("registered PDF reader and provider adapter return all three selected late pages, text, red pixels and exact coverage", async t => {
   workspace(t);

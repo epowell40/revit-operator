@@ -105,6 +105,24 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
   return journal;
 }
 
+test("accepted journal append validates one new transition without replaying its history", () => {
+  const events = [...createJournal().events()];
+  for (let i = 2; i <= 180; i++) events.push({ ...events[0]!, event_id: `append-history-${i}`, assignment_version: i,
+    event_type: "work_unit_state_changed", work_unit_id: "work-1", state: i % 2 ? "active" : "pending", reason: "Read-only audit progress" } as AssignmentEventV2);
+  const journal = new AssignmentJournalV2(events);
+  const next = { ...events.at(-1)!, event_id: "one-new-transition", assignment_version: 181, state: "active" } as AssignmentEventV2;
+  const clone = globalThis.structuredClone; let copies = 0;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => { copies++; return clone(value, options); }) as typeof structuredClone;
+    journal.append(next); journal.snapshot();
+  } finally { globalThis.structuredClone = clone; }
+  assert.ok(copies < 20, `append and snapshot must not replay 180 accepted events; observed ${copies} clones`);
+  assert.deepEqual(journal.snapshot(), reduceAssignmentEventsV2([...events, next]));
+  const before = journal.snapshot();
+  assert.throws(() => journal.append({ ...next, actor: "conflicting event identity" }), /identity was reused/);
+  assert.deepEqual(journal.snapshot(), before);
+});
+
 test("long journal rehydration validates one history without replaying every prefix", () => {
   const events = [...createJournal().events()];
   for (let i = 2; i <= 180; i++) events.push({ ...events[0]!, event_id: `history-${i}`, assignment_version: i,

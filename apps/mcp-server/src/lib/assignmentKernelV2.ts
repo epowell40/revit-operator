@@ -757,6 +757,9 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const confirmedNativeRollback = persistentEffect === "none" && !transportFailed && dispatched
     && settlement.effect_authority === "native_rollback"
     && settlement.effect_reason === "verified_native_rollback";
+  const confirmedNativePreflight = persistentEffect === "none" && !transportFailed && dispatched
+    && ["native_host", "native_transaction"].includes(text(settlement.effect_authority))
+    && settlement.effect_reason === "native_transaction_not_started";
   const artifactReceipt = object(call.observation_payload).artifact_receipt;
   const artifactEffect = !transportFailed && dispatched
     ? nativeArtifactReceiptEffectV1(artifactReceipt, call.method, call.path, call.lease.requested_effect) : null;
@@ -769,7 +772,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const nativeTransactionState = artifactEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
     : persistentEffect === "unknown" ? "unknown"
       : confirmedNativeRollback
-        ? "rolled_back" : "not_applicable";
+        ? "rolled_back" : confirmedNativePreflight ? "not_started" : "not_applicable";
   const provenance = transportFailed ? undefined : call.payload_provenance;
   if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");

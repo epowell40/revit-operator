@@ -324,6 +324,11 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
   if (operation.requested_effect === "read") {
     kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state !== "committed", "operation_read_effect_invalid", "Read result cannot claim a persistent effect.");
   }
+  if (result.native_transaction_state === "not_started") {
+    kernelAssertV2(result.authority === "native-host" && result.dispatch_state === "dispatched"
+      && result.persistent_effect === "none" && !(result.affected_target_identities?.length),
+    "operation_native_preflight_invalid", "A native preflight result must prove no model effect or affected targets.");
+  }
   const nativeArtifactEffect = nativeArtifactResultEffectV2(result);
   if (result.native_artifact_receipt !== undefined) {
     kernelAssertV2(nativeArtifactEffect !== null && result.native_artifact_receipt.phase === operation.requested_effect,
@@ -950,37 +955,44 @@ export function reduceAssignmentEventsV2(events: readonly AssignmentEventV2[]): 
 
 export class AssignmentJournalV2 {
   readonly #events: AssignmentEventV2[] = [];
+  readonly #byId = new Map<string, AssignmentEventV2>();
+  #state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map() };
 
   constructor(events: readonly AssignmentEventV2[] = []) {
-    // Rehydration validates every event in order once. Calling append here
-    // replayed every prior prefix and made each persisted action quadratic in
-    // task history, blocking the event loop during long model audits.
-    const byId = new Map<string, AssignmentEventV2>();
     for (const event of events) {
-      const existing = byId.get(event.event_id);
+      const existing = this.#byId.get(event.event_id);
       if (existing) {
         kernelAssertV2(canonicalJsonV2(existing) === canonicalJsonV2(event), "assignment_event_id_conflict", "Event identity was reused with different content.");
         continue;
       }
       const retained = structuredClone(event);
-      byId.set(retained.event_id, retained);
+      applyEvent(this.#state, retained);
+      this.#byId.set(retained.event_id, retained);
       this.#events.push(retained);
     }
-    if (this.#events.length > 0) reduceAssignmentEventsV2(this.#events);
   }
 
   append(event: AssignmentEventV2): AssignmentSnapshotV2 {
-    const existing = this.#events.find((candidate) => candidate.event_id === event.event_id);
+    const existing = this.#byId.get(event.event_id);
     if (existing) {
       kernelAssertV2(canonicalJsonV2(existing) === canonicalJsonV2(event), "assignment_event_id_conflict", "Event identity was reused with different content.");
       return this.snapshot();
     }
-    const proposed = [...this.#events, structuredClone(event)];
-    const snapshot = reduceAssignmentEventsV2(proposed);
-    this.#events.push(structuredClone(event));
-    return snapshot;
+    // A rejected event must not mutate accepted state, including clarification
+    // and supersession bookkeeping. Commit the candidate state only on success.
+    const next: ReducerStateV2 = {
+      ...this.#state,
+      ...(this.#state.snapshot ? { snapshot: structuredClone(this.#state.snapshot) } : {}),
+      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+    };
+    const retained = structuredClone(event);
+    applyEvent(next, retained);
+    this.#state = next;
+    this.#byId.set(retained.event_id, retained);
+    this.#events.push(retained);
+    return this.snapshot();
   }
 
   events(): readonly AssignmentEventV2[] { return structuredClone(this.#events); }
-  snapshot(): AssignmentSnapshotV2 { return reduceAssignmentEventsV2(this.#events); }
+  snapshot(): AssignmentSnapshotV2 { return structuredClone(current(this.#state)); }
 }

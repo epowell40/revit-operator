@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalNativeRollbackForTeammate } from "../src/teammate_canonical_settlement.js";
+import { canonicalNativeNoChangeForTeammate } from "../src/teammate_canonical_settlement.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, recordTeammateMcpResult,
   reconcileTeammateCanonicalSettlementV2, teammateLoopReceiptForOwner, __testOnlyResetTeammateLoopState } from "../src/teammate_loop_runtime.js";
 
@@ -17,7 +17,10 @@ function operation(): any {
 }
 
 test("only a matching retained native rollback can release the compatibility fence", () => {
-  assert.equal(canonicalNativeRollbackForTeammate(operation(), "session", path), true);
+  assert.equal(canonicalNativeNoChangeForTeammate(operation(), "session", path), true);
+  const preflight = operation(); preflight.result.native_transaction_state = "not_started";
+  assert.equal(canonicalNativeNoChangeForTeammate(preflight, "session", path), true,
+    "C34: native preflight proved no transaction started, so a corrected request may proceed");
   const changes: Array<(o: any) => void> = [
     o => { o.persistent_effect = "unknown"; }, o => { o.result.persistent_effect = "unknown"; },
     o => { o.result.native_transaction_state = "committed"; }, o => { o.result.native_transaction_state = "unknown"; },
@@ -28,7 +31,7 @@ test("only a matching retained native rollback can release the compatibility fen
     o => { o.result.request_identity.request_signature = "foreign"; }, o => { o.result.request_identity.path = "/revit/delete-elements"; },
     o => { delete o.result.receipt_id; }, o => { o.result.native_correlation_id = "foreign"; }
   ];
-  for (const change of changes) { const value = operation(); change(value); assert.equal(canonicalNativeRollbackForTeammate(value, "session", path), false); }
+  for (const change of changes) { const value = operation(); change(value); assert.equal(canonicalNativeNoChangeForTeammate(value, "session", path), false); }
 });
 
 test("canonical rollback permits corrected arguments, keeps attempts counted and does not verify work", () => {

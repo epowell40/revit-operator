@@ -21,6 +21,7 @@ namespace RevitBridge.Handlers
             public string? outputFolder { get; set; }
             public string? fileName { get; set; }
             public bool? dryRun { get; set; }
+            public List<OperatorWorkbookSupplementalTables.Table>? supplementalTables { get; set; }
         }
         public Task<object> Handle(UIApplication app, string jsonData)
         {
@@ -35,6 +36,10 @@ namespace RevitBridge.Handlers
             var elements = ids.Select(id => doc.GetElement(ElementIdCompat.Create(id))).ToList();
             var missingIds = ids.Where((id, i) => elements[i] == null).ToArray();
             if (missingIds.Length > 0) throw new ArgumentException("No workbook was written. Selected elements no longer exist: " + string.Join(", ", missingIds));
+            var supplemental = OperatorWorkbookSupplementalTables.Build(p.supplementalTables, elements.Select(el =>
+                new OperatorWorkbookSupplementalTables.NativeIdentity { ElementId = ElementIdCompat.GetValue(el!.Id), UniqueId = el.UniqueId, Name = el.Name ?? "" }).ToArray());
+            var supplementalSummary = supplemental.Select(sheet => new { name = sheet.Name, rowCount = sheet.Rows.Count - 1,
+                selectedTargetCoverage = "each selected native element exactly once", contentOrigin = "assistant_authored", columns = sheet.Rows[0] }).ToArray();
             var fileName = string.IsNullOrWhiteSpace(p.fileName) ? "elements_" + Guid.NewGuid().ToString("N") + ".xlsx" : p.fileName!.Trim();
             if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)) fileName += ".xlsx";
             if (fileName != Path.GetFileName(fileName) || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || fileName.Length > 180)
@@ -115,18 +120,21 @@ namespace RevitBridge.Handlers
                 new object?[] { "Exported instances", ids.Count }, new object?[] { "Requested parameters", names.Count },
                 new object?[] { "Values and units", "Numeric values use the source parameter's display unit, identified in the adjacent unit column. Display strings preserve Revit formatting. Missing, duplicate-name and unreadable fields are flagged in Elements and Issues; they are not treated as zero." },
                 new object?[] { "Engineering review", "Recorded model values are not independently verified engineering inputs. Confirm geometry and envelope, occupancy and schedules, equipment and lighting loads, ventilation requirements and project standards before load calculations. No heating/cooling loads or code compliance are calculated or certified by this export." },
+                new object?[] { "Supplemental tables", "Optional input transcriptions, proposed quantities and review tables are assistant-authored. Their supplied values and calculations are not native model facts or verified engineering results. Native identity columns are filled by Revit; each table includes every selected element once. This does not prove that the original task scope was fully selected." },
                 new object?[] { "Model changes", "No Revit transaction or model edit is performed." }
             };
+            var workbookSheets = new[] { new OperatorWorkbookWriter.Sheet("Elements", rows), new OperatorWorkbookWriter.Sheet("Issues", issues), new OperatorWorkbookWriter.Sheet("Readme", readme) }.Concat(supplemental).ToArray();
             if (p.dryRun == true) return Task.FromResult<object>(new { status = "Dry Run", ok = true, dryRun = true, path = full,
                 selectedCount = ids.Count, selectedElementIds = ids, parameterNames = names, parameterCount = names.Count, issueCount = issues.Count - 1, issueCounts, columns = headers,
-                preview = rows.Take(4).ToArray(), artifact_receipt = OperatorNativeArtifactReceipt.Preview(new[] { full }, 1, Route) });
+                supplementalTables = supplementalSummary, preview = rows.Take(4).ToArray(), artifact_receipt = OperatorNativeArtifactReceipt.Preview(new[] { full }, 1, Route) });
             var capture = new OperatorNativeArtifactCapture(new[] { full }, 1, Route);
-            OperatorWorkbookWriter.Write(full, new[] { new OperatorWorkbookWriter.Sheet("Elements", rows), new OperatorWorkbookWriter.Sheet("Issues", issues), new OperatorWorkbookWriter.Sheet("Readme", readme) });
+            OperatorWorkbookWriter.Write(full, workbookSheets);
             capture.RecordNativeExport(true);
             var receipt = capture.Complete();
             return Task.FromResult<object>(new { status = receipt.Status == "complete" ? "Success" : "ExportUnverified", ok = receipt.Status == "complete", dryRun = false,
                 path = full, outputs = new[] { full }, selectedCount = ids.Count, requestedCount = ids.Count, itemsComplete = true, parameterCount = names.Count,
-                issueCount = issues.Count - 1, issueCounts, columns = headers, sheets = new[] { "Elements", "Issues", "Readme" }, artifact_receipt = receipt });
+                selectedElementIds = ids, issueCount = issues.Count - 1, issueCounts, columns = headers,
+                sheets = workbookSheets.Select(sheet => sheet.Name).ToArray(), supplementalTables = supplementalSummary, artifact_receipt = receipt });
         }
     }
 }

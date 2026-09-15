@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 
 type PdfJsLike = {
   getDocument: (options: Record<string, unknown>) => { promise: Promise<any> };
+  OPS: Record<string, number>;
 };
 
 let cachedPdfJs: Promise<PdfJsLike> | null = null;

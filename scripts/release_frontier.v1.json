@@ -116,7 +116,10 @@
     "discovered_input_projection.test.ts",
     "read_attachment_redline.test.ts",
     "pdf_source_annotations.test.ts",
-    "goals_service.test.ts"
+    "goals_service.test.ts",
+    "pdf_source_landmarks.test.ts",
+    "pdf_source_landmarks_pdfjs.test.ts",
+    "assignment_mutation_acknowledgment.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -196,7 +199,8 @@
     "ExportedRasterFrameGeometryTests",
     "MepDuctProfilePolicyTests",
     "MepDuctTypeSelectionPolicyTests",
-    "MepRouteSizeInputPolicyTests"
+    "MepRouteSizeInputPolicyTests",
+    "OperatorWorkbookSupplementalTablesTests"
   ],
   "failure_families": [
     {
@@ -1841,6 +1845,44 @@
       "coverage": [
         "backend:supported_tool_inventory.test.ts",
         "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "native-preflight-no-transaction-is-collapsed-and-corrected-duct-retry-remains-blocked",
+      "coverage": [
+        "backend:teammate_native_rollback_handoff.test.ts",
+        "backend:teammate_canonical_settlement.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "pdf-circle-centers-estimated-from-pixels-without-bounded-source-landmarks",
+      "coverage": [
+        "backend:pdf_source_landmarks.test.ts",
+        "backend:pdf_source_landmarks_pdfjs.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-workbook-omits-supplied-airflows-proposals-or-selected-space-rows",
+      "coverage": [
+        "dotnet:OperatorWorkbookSupplementalTablesTests",
+        "dotnet:OperatorWorkbookWriterTests",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "saved-answer-refresh-is-superseded-by-status-poll-and-task-does-not-continue",
+      "coverage": [
+        "backend:assignment_mutation_acknowledgment.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "accepted-journal-append-and-snapshot-repeat-whole-payload-history",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
       ]
     }
   ],

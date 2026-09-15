@@ -601,7 +601,7 @@ test("drafting view legacy success stays unknown while committed identity surviv
 
 test("plan-only view response cannot manufacture native rollback or preview completion", async () => {
   for (const [effect, authority, reason, state] of [
-    ["none", "native_transaction", "native_transaction_not_started", "not_applicable"],
+    ["none", "native_transaction", "native_transaction_not_started", "not_started"],
     ["unknown", "native_host", "native_handler_returned_without_authoritative_settlement", "unknown"],
     ["none", "native_receipt", "no_effect_reported", "not_applicable"]
   ] as const) {
@@ -1716,7 +1716,7 @@ test("transaction group canonical authority retains committed view and collatera
 
 test("visibility settlement distinguishes pretransaction rejection, commit, and unknown preview", async () => {
   for (const [effect, requested, authority, reason, state] of [
-    ["none", "apply", "native_host", "native_transaction_not_started", "not_applicable"],
+    ["none", "apply", "native_host", "native_transaction_not_started", "not_started"],
     ["applied", "apply", "native_transaction", "native_transaction_committed", "committed"],
     ["unknown", "preview", "native_host", "native_handler_returned_without_authoritative_settlement", "unknown"]
   ] as const) {

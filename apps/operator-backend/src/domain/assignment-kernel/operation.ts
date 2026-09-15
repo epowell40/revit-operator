@@ -91,7 +91,7 @@ export interface ObservationCommitInputV2 {
   verification_relevance?: readonly string[];
 }
 
-export type NativeTransactionStateV2 = "not_applicable" | "committed" | "rolled_back" | "unknown";
+export type NativeTransactionStateV2 = "not_applicable" | "not_started" | "committed" | "rolled_back" | "unknown";
 export type OperationResultStatusV2 = "succeeded" | "completed_without_native_dispatch"
   | "failed_before_dispatch" | "failed_after_dispatch" | "timed_out" | "canceled";
 

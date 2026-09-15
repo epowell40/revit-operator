@@ -1,7 +1,7 @@
 import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
 import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
-import { canonicalNativeRollbackForTeammate } from "./teammate_canonical_settlement.js";
+import { canonicalNativeNoChangeForTeammate } from "./teammate_canonical_settlement.js";
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
@@ -1157,7 +1157,7 @@ export function reconcileTeammateCanonicalSettlementV2(gate: TeammateMcpGate, op
   if (separator < 0 || state.apply_action_id !== call.path.slice(0, separator)
     || state.apply_signature !== call.signature) return false;
   const sessionId = state.key.slice(0, state.key.lastIndexOf("::"));
-  if (!canonicalNativeRollbackForTeammate(operation, sessionId, call.path.slice(separator + 1))) return false;
+  if (!canonicalNativeNoChangeForTeammate(operation, sessionId, call.path.slice(separator + 1))) return false;
   const canonicalInput = operation!.input;
   const canonicalBody = Object.prototype.hasOwnProperty.call(canonicalInput, "body") ? canonicalInput.body : canonicalInput;
   if (actionSignature(call.path.slice(separator + 1), structuredActionBody(canonicalBody)) !== call.signature) return false;
