@@ -1,3 +1,4 @@
+import type { DiscoveredAssignmentInputV2 } from "./input_registry.js";
 import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_spec.js";
 import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
 import type { CriterionEvaluationV2, AssignmentOutcomeV2 } from "./criteria.js";
@@ -26,7 +27,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "execution_control_requested"; command_id: string; action: "pause" | "resume"; expected_command_id: string | null }
   | { event_type: "run_superseded"; superseded_by_generation: number }
   | { event_type: "work_unit_state_changed"; work_unit_id: WorkUnitIdV2; state: AssignmentWorkUnitStateV2; reason: string }
-  | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string }
+  | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string; declaration?: DiscoveredAssignmentInputV2 }
   | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown }
   | { event_type: "provider_call_recorded"; call_id: string; provider: string; model: string; reasoning_effort: string | null; success: boolean }
   | {

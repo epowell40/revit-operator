@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { requestedWorkbookAssessment } from "../artifact_export_intent.js";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
   ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
@@ -184,6 +185,8 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
       && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))
       && criterionSpecs.some(criterion => criterion.semantic_fact_requirements.includes("task.result_available"))
       ? { result_delivery_required: true } : {}),
+    ...(effect === "apply" && requestedWorkbookAssessment(input.goal.objective)
+      ? { result_delivery_required: true, result_assessment_required: true } : {}),
     criteria: criterionSpecs,
     input_variables: inputVariables,
     work_units: [

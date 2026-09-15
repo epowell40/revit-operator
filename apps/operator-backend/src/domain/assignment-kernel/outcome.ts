@@ -1,10 +1,11 @@
-import type { AssignmentInputVariableV2, AssignmentSpecV2 } from "./assignment_spec.js";
+import { assignmentInputVariablesV2 } from "./input_registry.js";
+import type { AssignmentInputVariableV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 import { executionFailureOutcomeV2 } from "./progress/execution_failure.js";
 
-function requiredInputsKnown(spec: AssignmentSpecV2, snapshot: AssignmentSnapshotV2): boolean {
-  return spec.input_variables.every((input: AssignmentInputVariableV2) => !input.required
+function requiredInputsKnown(snapshot: AssignmentSnapshotV2): boolean {
+  return assignmentInputVariablesV2(snapshot).every((input: AssignmentInputVariableV2) => !input.required
     || input.value_state === "known"
     || Object.prototype.hasOwnProperty.call(snapshot.input_values, input.variable_id));
 }
@@ -60,7 +61,7 @@ export function verificationOperationHasVerifiedPostconditionV2(
 }
 
 export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): AssignmentOutcomeV2 {
-  if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot.spec, snapshot)) {
+  if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot)) {
     return "awaiting_user_input";
   }
   if (snapshot.pending_review_ids.length > 0) return "awaiting_user_review";

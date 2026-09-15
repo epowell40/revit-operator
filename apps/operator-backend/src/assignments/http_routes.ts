@@ -253,6 +253,7 @@ export async function handleAssignmentHttpRoute(
         binding,
         clarification_id: String(body?.clarification_id ?? "").trim(),
         variable_ids: Array.isArray(body?.variable_ids) ? body.variable_ids.map(String) : [],
+        ...(Array.isArray(body?.new_variable_ids) ? { new_variable_ids: body.new_variable_ids.map(String) } : {}),
         question: String(body?.question ?? "").trim()
       });
       writeJson(res, 202, { ok: true, assignment_snapshot_v2: snapshot });

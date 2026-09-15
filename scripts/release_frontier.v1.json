@@ -111,7 +111,8 @@
     "result_projection_delivery.test.ts",
     "tool_progress_delivery.test.ts",
     "workbook_export_intent.test.ts",
-    "deferred_proposal_admission.test.ts"
+    "deferred_proposal_admission.test.ts",
+    "discovered_input_projection.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1675,6 +1676,27 @@
         "mcp:lib/assignmentKernelV2.test.ts",
         "backend:native_artifact_contract_v2.test.ts",
         "dotnet:OperatorWorkbookWriterTests"
+      ]
+    },
+    {
+      "id": "discovered-engineering-input-cannot-be-asked-or-resumed-with-immutable-spec",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "new-unanswered-question-is-lost-behind-resolved-history-in-model-status",
+      "coverage": [
+        "backend:discovered_input_projection.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "verified-workbook-file-silently-omits-requested-analysis-and-decisions",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:workbook_export_intent.test.ts"
       ]
     }
   ],

@@ -1,3 +1,4 @@
+import { appendDiscoveredInputV2, assignmentInputVariablesV2, discoveredInputDependenciesV2, validDiscoveredInputIdV2, type DiscoveredAssignmentInputV2 } from "../domain/assignment-kernel/input_registry.js";
 import { createHash } from "node:crypto";
 import {
   canonicalJsonV2,
@@ -133,6 +134,7 @@ export function requestAssignmentInputV2(input: Readonly<{
   binding: AssignmentKernelBindingInputV2;
   clarification_id: string;
   variable_ids: readonly string[];
+  new_variable_ids?: readonly string[];
   question: string;
 }>): AssignmentSnapshotV2 {
   let snapshot = context(input.binding).snapshot;
@@ -142,19 +144,43 @@ export function requestAssignmentInputV2(input: Readonly<{
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(clarificationId)) throw new Error("assignment_kernel_v2_clarification_id_invalid");
   if (!question) throw new Error("assignment_kernel_v2_clarification_question_required");
   if (variableIds.length < 1) throw new Error("assignment_kernel_v2_input_variable_required");
+  const newVariableIds = input.new_variable_ids ?? [];
+  if (newVariableIds.length > 1 || (newVariableIds.length && (variableIds.length !== 1 || newVariableIds[0] !== variableIds[0])))
+    throw new Error("assignment_kernel_v2_input_declaration_invalid");
+  const declarations = new Map<string, DiscoveredAssignmentInputV2>();
+  let preflight = snapshot;
+  for (const variableId of newVariableIds) {
+    if (!validDiscoveredInputIdV2(variableId)) throw new Error("assignment_kernel_v2_input_declaration_id_invalid");
+    if (snapshot.discovered_inputs?.[variableId]) continue;
+    const declaration: DiscoveredAssignmentInputV2 = {
+      variable: { variable_id: variableId, value_state: "needs_input", required: true, sensitive: false },
+      dependent_work_unit_ids: discoveredInputDependenciesV2(snapshot)
+    };
+    preflight = appendDiscoveredInputV2(preflight, declaration);
+    declarations.set(variableId, declaration);
+  }
   for (const variableId of variableIds) {
-    if (!snapshot.spec.input_variables.some(variable => variable.variable_id === variableId)) throw new Error("assignment_kernel_v2_input_variable_unknown");
+    if (!assignmentInputVariablesV2(preflight).some(variable => variable.variable_id === variableId)) throw new Error("assignment_kernel_v2_input_variable_unknown");
   }
   for (const variableId of variableIds) {
     // A provider cannot reopen an authenticated answer by calling it missing.
     // Changing an answer requires a separate user-owned revision, not a question.
     if (Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId)) continue;
+    if (declarations.has(variableId) || snapshot.discovered_inputs?.[variableId]) {
+      const prior = snapshot.clarifications[clarificationId];
+      if (prior) {
+        if (prior.variable_id !== variableId || prior.question !== question.slice(0, 1_200))
+          throw new Error("assignment_kernel_v2_input_declaration_integrity_conflict");
+        if (!prior.resolved_at && snapshot.pending_input_variable_ids.includes(variableId)) continue;
+      }
+    }
     snapshot = appendCurrentAssignmentKernelEventV2({
       goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding,
       event_id: `input-requested:${clarificationId}:${variableId}`,
       actor: "operator-runtime",
-      body: { event_type: "input_requested", variable_id: variableId, clarification_id: clarificationId, question: question.slice(0, 1_200) }
+      body: { event_type: "input_requested", variable_id: variableId, clarification_id: clarificationId, question: question.slice(0, 1_200),
+        ...(declarations.has(variableId) ? { declaration: declarations.get(variableId)! } : {}) }
     }).snapshot;
   }
   const pendingGoal = getGoal(input.binding.assignment_id);
@@ -181,7 +207,7 @@ export function supplyAssignmentInputResultV2(input: Readonly<{
   if (!resolved) throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   let snapshot = resolved.snapshot;
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(input.clarification_id.trim())) throw new Error("assignment_kernel_v2_clarification_id_invalid");
-  const normalized = normalizeAssignmentInputsV2({ spec: snapshot.spec, external_values: input.external_values, aliases: input.aliases });
+  const normalized = normalizeAssignmentInputsV2({ spec: snapshot.spec, additional_variables: Object.values(snapshot.discovered_inputs ?? {}).map(item => item.variable), external_values: input.external_values, aliases: input.aliases });
   if (Object.keys(normalized).length < 1) throw new Error("assignment_kernel_v2_input_value_required");
   const entries = Object.entries(normalized).map(([variableId, value]) => ({
     variableId,

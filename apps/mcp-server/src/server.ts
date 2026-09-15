@@ -1123,10 +1123,11 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
   }
 );
 
-server.tool("operator_request_assignment_input", "Ask one focused question for stable V2 Assignment input variables. Trusted Assignment/run/session binding is injected by the host and is not accepted from model arguments.",
+server.tool("operator_request_assignment_input", "Ask one focused task question using stable variableIds. For one decision discovered during work, also put its ID in newVariableIds; it becomes required without changing task authority. The host supplies lifecycle binding.",
   {
     clarificationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/),
     variableIds: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,159}$/)).min(1).max(32),
+    newVariableIds: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,159}$/)).min(1).max(1).optional(),
     question: z.string().min(1).max(1_200)
   },
   async (args) => {
@@ -1140,6 +1141,7 @@ server.tool("operator_request_assignment_input", "Ask one focused question for s
         session_id: binding.session_id,
         clarification_id: args.clarificationId,
         variable_ids: args.variableIds,
+        ...(args.newVariableIds ? { new_variable_ids: args.newVariableIds } : {}),
         question: args.question
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };

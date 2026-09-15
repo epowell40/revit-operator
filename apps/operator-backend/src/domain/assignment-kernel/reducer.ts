@@ -1,3 +1,4 @@
+import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
@@ -218,7 +219,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
   for (const dependencyId of workUnit.dependency_ids) kernelAssertV2(["complete", "retained"].includes(snapshot.work_unit_states[dependencyId] ?? ""), "operation_dependency_incomplete", "Operation dependencies must be complete or retained.");
-  for (const variableId of workUnit.input_variable_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "operation_input_missing", "Operation requires a known stable input variable.");
+  for (const variableId of workUnitInputVariableIdsV2(snapshot, workUnit.work_unit_id)) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "operation_input_missing", "Operation requires a known stable input variable.");
   if (role === "root") {
     kernelAssertV2(!operation.parent_operation_id && !operation.root_operation_id,
       "operation_root_relation_invalid", "A root operation cannot cite a parent or another root operation.");
@@ -500,7 +501,7 @@ function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation:
   }
   if (evaluation.basis === "desired_state_equivalence") {
     kernelAssertV2(snapshot.spec.requested_effect === "apply", "criterion_noop_not_apply", "Desired-state equivalence is only meaningful for an apply Assignment.");
-    const requiredVariables = new Set(snapshot.spec.work_units.flatMap((unit) => unit.input_variable_ids));
+    const requiredVariables = new Set(snapshot.spec.work_units.flatMap((unit) => workUnitInputVariableIdsV2(snapshot, unit.work_unit_id)));
     for (const variableId of requiredVariables) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "criterion_noop_desired_state_missing", "Desired-state equivalence requires every admitted desired-state input.");
   }
 }
@@ -594,7 +595,11 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = { ...snapshot, work_unit_states: { ...snapshot.work_unit_states, [event.work_unit_id]: event.state } };
         break;
       case "input_requested": {
-        const input = snapshot.spec.input_variables.find((candidate) => candidate.variable_id === event.variable_id);
+        if (event.declaration) {
+          kernelAssertV2(event.declaration.variable?.variable_id === event.variable_id, "input_declaration_binding_invalid", "Question and declared variable must agree.");
+          snapshot = appendDiscoveredInputV2(snapshot, event.declaration);
+        }
+        const input = assignmentInputVariablesV2(snapshot).find((candidate) => candidate.variable_id === event.variable_id);
         kernelAssertV2(input, "input_variable_unknown", "Input variable is not in AssignmentSpecV2.");
         kernelAssertV2(!state.clarificationByVariable.has(event.variable_id), "input_clarification_already_pending", "Input variable already has an unresolved clarification.");
         state.clarificationByVariable.set(event.variable_id, event.clarification_id);

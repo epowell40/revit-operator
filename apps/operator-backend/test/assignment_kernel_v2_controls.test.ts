@@ -991,3 +991,211 @@ test("dynamic criterion handoff projects status after canonical evaluation", () 
     assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), canonicalResponse.assignment_snapshot_v2);
   } finally { endTeammateLoopOwner(owner); }
 }));
+
+test("new engineering decisions persist through two questions and process restart without rewriting task or authority", () => workspace(() => {
+  const original = "Prepare a proposed zoning schedule. Keep unlike room uses separate, give corner rooms their own zones, and aim for groups no larger than 600 square feet. Do not draw zones or place VAVs yet.";
+  const { binding, snapshot } = start(original);
+  assert.equal(snapshot.spec.requested_effect, "read");
+  assert.deepEqual(snapshot.spec.input_variables, []);
+  const question = { binding, clarification_id: "choose-floor", variable_ids: ["floor_name"],
+    new_variable_ids: ["floor_name"], question: "Which floor should I use for the proposed zoning schedule?" };
+  const waiting = requestAssignmentInputV2(question as any);
+  assert.deepEqual(waiting.spec, snapshot.spec);
+  assert.deepEqual(waiting.pending_input_variable_ids, ["floor_name"]);
+  assert.equal(requestAssignmentInputV2(question as any).assignment_version, waiting.assignment_version);
+  assert.equal(advanceAssignmentKernelProgressV2({ binding }).decision.decision, "request_user_input");
+  assert.throws(() => supplyAssignmentInputResultV2({ binding, clarification_id: "choose-floor", external_values: { unknown: "L2" } }), /unknown/);
+  assert.throws(() => supplyAssignmentInputResultV2({ binding: { ...binding, session_id: "other-session" }, clarification_id: "choose-floor", external_values: { floor_name: "L2" } }), /binding/);
+  const answer = { binding, clarification_id: "choose-floor", external_values: { floor_name: "L2" } };
+  supplyAssignmentInputResultV2(answer);
+  assert.equal(supplyAssignmentInputResultV2(answer).idempotent, true);
+  assert.throws(() => supplyAssignmentInputResultV2({ ...answer, external_values: { floor_name: "L4" } }), /integrity_conflict/);
+  const second = requestAssignmentInputV2({ binding, clarification_id: "corner-definition", variable_ids: ["corner_definition"],
+    new_variable_ids: ["corner_definition"], question: "Should corner rooms mean spaces with exterior walls facing two directions?" } as any);
+  assert.equal(second.input_values.floor_name, "L2");
+  assert.deepEqual(second.pending_input_variable_ids, ["corner_definition"]);
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+    `import { getAssignmentKernelSnapshotV2 } from './src/assignments/assignment_kernel_v2_store.ts'; process.stdout.write(JSON.stringify(getAssignmentKernelSnapshotV2(${JSON.stringify(binding.assignment_id)})));`
+  ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr);
+  const replay = JSON.parse(child.stdout);
+  assert.deepEqual(replay.spec, snapshot.spec);
+  assert.deepEqual(replay.input_values, second.input_values);
+  assert.deepEqual(replay.pending_input_variable_ids, ["corner_definition"]);
+  supplyAssignmentInputResultV2({ binding, clarification_id: "corner-definition", external_values: { corner_definition: "Yes: exterior walls facing two directions; keep uncertain exposure separate for review." } });
+  const complete = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  assert.deepEqual(complete.spec, snapshot.spec);
+  assert.equal(complete.input_values.floor_name, "L2");
+  assert.match(String(complete.input_values.corner_definition), /uncertain exposure/);
+  assert.deepEqual(complete.pending_input_variable_ids, []);
+  assert.equal(complete.terminal, false, "answers alone never complete engineering work");
+  assert.throws(() => openAssignmentKernelOperationV2({ snapshot: complete, provider_turn_id: "resume", controller_request_id: "forbidden-write",
+    capability_id: "revit_call_tool", classified_effect: "apply", arguments: { method: "POST", path: "/revit/set-parameter", body: { changes: [{ elementId: 42, parameterName: "Comments", value: "not authorized" }] } } }), /effect|write|intent/);
+  assert.deepEqual(requestAssignmentInputV2(question as any).input_values, complete.input_values, "a repeated question cannot reopen an answered decision");
+}));
+
+test("discovered inputs reject reserved names and unannounced variables before journal changes", () => workspace(() => {
+  const { binding, snapshot } = start();
+  const base = { binding, clarification_id: "new-question", question: "Which floor?" };
+  for (const name of ["session_id", "principal_id", "document_fingerprint", "generation", "constructor", "prototype", "bad-name"])
+    assert.throws(() => requestAssignmentInputV2({ ...base, variable_ids: [name], new_variable_ids: [name] } as any), /invalid|forbidden/);
+  assert.throws(() => requestAssignmentInputV2({ ...base, variable_ids: ["floor_name"] }), /unknown/);
+  assert.throws(() => requestAssignmentInputV2({ ...base, variable_ids: ["floor_name"], new_variable_ids: ["room_use"] } as any), /declaration|variable/);
+  assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id)!.spec, snapshot.spec);
+  assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.assignment_version, snapshot.assignment_version);
+}));
+
+test("HTTP discovered questions keep session authority and reach compact model status and authenticated answers", () => workspace(async () => {
+  const { binding, snapshot } = start();
+  const server = http.createServer((req,res) => {
+    const auth = req.headers["x-test-no-authority"] ? {} : { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") };
+    void runWithRequestContext(auth, async () => {
+      await handleAssignmentHttpRoute(req,res,new URL(req.url!,"http://localhost"),session => {
+        if (session === binding.session_id) return true;
+        res.writeHead(403); res.end(); return false;
+      });
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
+  try {
+    const address=server.address() as import("node:net").AddressInfo;
+    const send=(route:string,body:unknown,noAuthority=false)=>fetch(`http://127.0.0.1:${address.port}/api/assignments/v2/${route}`,{
+      method:"POST",headers:{"Content-Type":"application/json",...(noAuthority?{"x-test-no-authority":"1"}:{})},body:JSON.stringify(body)});
+    const question={...binding,clarification_id:"http-floor",variable_ids:["floor_name"],new_variable_ids:["floor_name"],question:"Which floor should I inspect?"};
+    assert.equal((await send("clarifications",{...question,session_id:"foreign"})).status,403);
+    assert.equal((await send("clarifications",{...question,generation:binding.generation+1})).status,400);
+    assert.equal((await send("clarifications",question,true)).status,400);
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.assignment_version,snapshot.assignment_version);
+    const response=await send("clarifications",question);
+    assert.equal(response.status,202);
+    const waiting=await response.json() as any;
+    assert.deepEqual(waiting.assignment_snapshot_v2.spec,snapshot.spec);
+    const {projectAssignmentStatusForModel}=await import("../src/brains/assignment_status_projection.js");
+    const compact=projectAssignmentStatusForModel(waiting)!.assignment_status;
+    assert.ok(compact.pending_input_definitions.some((item:any)=>item.variable_id==="floor_name"));
+    assert.ok(compact.clarifications.some((item:any)=>item.question===question.question));
+    const oldQuestions=Object.fromEntries(Array.from({length:40},(_,i)=>[`old-${i}`,{clarification_id:`old-${i}`,variable_id:`old_${i}`,question:`Resolved question ${i}`,requested_at:"2026-09-01T00:00:00Z",resolved_at:"2026-09-01T01:00:00Z"}]));
+    const longStatus=projectAssignmentStatusForModel({...waiting,assignment_snapshot_v2:{...waiting.assignment_snapshot_v2,
+      clarifications:{...oldQuestions,...waiting.assignment_snapshot_v2.clarifications}}})!.assignment_status;
+    assert.equal(longStatus.clarifications[0].question,question.question,"active question must survive a long resolved history");
+    assert.ok(longStatus.omitted.clarifications.count > 0);
+    const badAnswer=await send("inputs",{...binding,clarification_id:"http-floor",values:{floor_name:"L2",generation:99}});
+    assert.equal(badAnswer.status,400);
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.input_values.floor_name,undefined);
+    const answered=await send("inputs",{...binding,clarification_id:"http-floor",values:{floor_name:"L2"}});
+    assert.equal(answered.status,200);
+    const saved=await answered.json() as any;
+    assert.deepEqual(saved.assignment_snapshot_v2.spec,snapshot.spec);
+    assert.deepEqual(saved.assignment_snapshot_v2.input_values,{floor_name:"L2"});
+    assert.equal(saved.assignment_snapshot_v2.terminal,false);
+  } finally { await new Promise<void>(resolve=>server.close(()=>resolve())); }
+}));
+
+test("C26 HVAC workbook replay keeps requested assessment pending after exact file verification", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Prepare a room-by-room Excel workbook of the information we can get from this model for HVAC load calculations. Check that the room or space list and the exported values are correct, keep the units clear, and flag anything important that is missing or cannot be verified. Include a short list of the decisions or other inputs you need from me. Do not change the Revit model or invent final heating and cooling loads.");
+  const outputPath = "C:/fixture/rooms.xlsx";
+  const file = { path: outputPath, size_bytes: 8251485, sha256: "a".repeat(64), exists: true, readable: true };
+  const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-elements-xlsx",
+    phase: "apply", status: "complete", expected_output_paths: [outputPath], expected_export_calls: 1, export_calls: [true],
+    outputs: [{ ...file, fresh_output: true }] };
+  const calls: string[] = [];
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (tool: string, args: any, context: any) => {
+      const lease = context.assignmentKernelV2;
+      calls.push(args.path || tool);
+      context.onMcpAccepted();
+      const native = tool === "revit_call_tool";
+      const apply = args.path === "/revit/export-elements-xlsx";
+      const payload = apply ? { ok: true, status: "Success", artifact_receipt: receipt, path: outputPath, selectedCount: 67, parameterCount: 29, issueCount: 670, issueCounts: { ambiguous_parameter: 67, missing_parameter: 335, unset: 268 } }
+        : native ? { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true, requestedPaths: [outputPath], files: [file] }
+          : tool === "revit_search_tools" ? { matches: [{ method: "POST", path: "/revit/inspect-exported-files" }] } : { artifact_receipt: receipt };
+      const facts = native ? [{ fact_id: apply ? "task.result_available" : "control.result_available", fact_class: apply ? "domain" : "control", value: true }]
+        : tool === "revit_search_tools" ? [{ fact_id: "control.capability_available", fact_class: "control", value: true,
+          cardinality: "many", identity_dimensions: ["capability_id", "method", "path"],
+          dimensions: { capability_id: tool, method: "POST", path: "/revit/inspect-exported-files" } }]
+          : [{ fact_id: "control.evidence_selection_available", fact_class: "control", value: true,
+            cardinality: "many", identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
+            dimensions: { capability_id: tool, evidence_id: "retained-export", selection_path: "payload.artifact_receipt" } }];
+      const retrieval = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1",
+        selection: { "payload.artifact_receipt": receipt }, complete: false } };
+      return { content: tool === "operator_retrieve_evidence" ? [{ type: "text", text: JSON.stringify(retrieval) }] : [], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `handoff:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded",
+          dispatch_state: "dispatched", persistent_effect: apply ? "applied" : "none",
+          native_transaction_state: "not_applicable", authority: native ? "native-host" : tool === "operator_retrieve_evidence" ? "operator-evidence-store" : "operator-mcp-transport",
+          result_schema_id: native ? `operator-native/POST:${args.path}/v2` : `operator-capability/${tool}/v2`,
+          observation_required: true, request_identity: lease.request_identity, completed_at: new Date().toISOString(),
+          raw_payload_hash: payloadDigestV2(payload).digest,
+          ...(apply ? { native_artifact_receipt: receipt, affected_target_identities: [`artifact_path:${outputPath}`] } : {}) },
+        observation: { raw_payload: payload, semantic_facts: facts, verification_relevance: [apply ? "task_result" : "control"] }
+      } };
+    }
+  };
+  const loopRequest = bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
+    context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Snowdon HVAC", projectIdentity: { fingerprint: "controls-model" } } } }
+  } as any, prepared);
+  const owner = beginTeammateLoopOwner(runtime, loopRequest);
+  const run = async (id: string, tool: string, args: any) => {
+    const result = await handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call",
+      params: { namespace: "revit_operator", turnId: "pdf-handoff", tool, arguments: args } } as any) as any;
+    assert.equal(result.success, true, JSON.stringify(result));
+    if (tool === "operator_retrieve_evidence") {
+      const rendered = result.contentItems.map((item: any) => item.text).join("\n");
+      const parsed = JSON.parse(rendered);
+      assert.deepEqual(parsed.result.selection["payload.artifact_receipt"], receipt);
+      assert.equal(parsed.model_observation_index.schema, "revit-operator.model-observation-index/v2");
+      assert.equal(parsed.model_observation_index.observations[0].capability_id, "operator_retrieve_evidence");
+      assert.equal(result.contentItems.length, 1);
+    }
+  };
+  try {
+    assert.equal(snapshot.spec.result_delivery_required, true);
+    assert.equal(snapshot.spec.result_assessment_required, true);
+    await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-elements-xlsx",
+      body: { elementIds: [42], parameterNames: ["Area"], fileName: "rooms.xlsx", dryRun: false } });
+    const applied = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    const artifact = Object.values(applied.observations).find(o => o.evidence_class === "task_result")!;
+    const selected = [{ label: "Workbook", observation_id: artifact.observation_id, path: ["path"] },
+      { label: "Spaces", observation_id: artifact.observation_id, path: ["selectedCount"] },
+      { label: "Missing fields", observation_id: artifact.observation_id, path: ["issueCounts", "missing_parameter"] }];
+    const assessment = { overview: "Exported 67 spaces. Review the missing and ambiguous inputs before calculating loads.",
+      findings: [{ priority: "high" as const, title: "Missing source data", text: "335 requested fields are absent in the selected spaces.", evidence_indices: [2,3] }],
+      limitations: ["Recorded values do not establish final heating or cooling loads or code compliance."],
+      questions: ["Which occupancy, envelope and equipment-load assumptions should be used?"] };
+    assert.throws(() => buildAssignmentResultDeliveryV2(applied, selected, assessment), /ineligible/,
+      "successful export alone cannot deliver an unverified artifact");
+    await run("lookup", "revit_search_tools", { query: "verify exported workbook", max: 5, includeSchemas: true });
+    await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
+    const verified = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert.equal(verified.terminal, false, "file verification must not silently omit requested analysis");
+    assert(deriveProgressGapsV2(verified).some(g => g.kind === "result_delivery_required"));
+    assert.throws(() => buildAssignmentResultDeliveryV2(verified, selected), /assessment_required/);
+    const lookup = Object.values(verified.observations).find(o => o.authority === "operator-mcp-transport")!;
+    assert.throws(() => buildAssignmentResultDeliveryV2(verified,
+      [{ label: "Tool documentation", observation_id: lookup.observation_id, path: ["matches"] }]), /ineligible/);
+    const before = JSON.stringify(verified.criteria);
+    const delivery = buildAssignmentResultDeliveryV2(verified, selected, assessment);
+    assert.equal(JSON.stringify(verified.criteria), before, "interpretation never becomes evaluator truth");
+    for (const change of [{ status: "unverified" }, { export_calls: [false] }, { outputs: [] }]) {
+      const tampered = structuredClone(verified);
+      const op = tampered.operations[artifact.operation_id]!;
+      (op.result as any).native_artifact_receipt = { ...op.result!.native_artifact_receipt, ...change };
+      assert.throws(() => buildAssignmentResultDeliveryV2(tampered, selected, assessment), /ineligible/);
+    }
+    const final = evaluateAssignmentObservationCriteriaV2({ binding, claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id,
+      observation_ids: [artifact.observation_id] }], result_items: selected, assessment });
+    assert.equal(final.outcome, "complete");
+    const answer = renderTerminalResultV2(final);
+    assert.match(answer, /rooms.xlsx/); assert.match(answer, /335/); assert.match(answer, /occupancy, envelope/);
+    assert.deepEqual(final.spec, snapshot.spec);
+    assert.deepEqual(final.result_delivery, delivery);
+    assert.equal(Object.values(final.operations).filter(o => o.persistent_effect === "applied").length, 1);
+    const replay = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+      `import { getAssignmentKernelSnapshotV2 } from './src/assignments/assignment_kernel_v2_store.ts'; process.stdout.write(JSON.stringify(getAssignmentKernelSnapshotV2(${JSON.stringify(binding.assignment_id)})));`
+    ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.deepEqual(JSON.parse(replay.stdout).result_delivery, delivery);
+  } finally { endTeammateLoopOwner(owner); }
+}));

@@ -1,6 +1,7 @@
 import {
   AssignmentKernelErrorV2,
   type AssignmentSpecV2,
+  type AssignmentInputVariableV2,
   type InputVariableIdV2
 } from "../domain/assignment-kernel/index.js";
 
@@ -18,11 +19,12 @@ export interface AssignmentInputAliasRegistryV2 {
 
 export function normalizeAssignmentInputsV2(input: Readonly<{
   spec: AssignmentSpecV2;
+  additional_variables?: readonly AssignmentInputVariableV2[];
   external_values: Readonly<Record<string, unknown>>;
   aliases?: AssignmentInputAliasRegistryV2;
 }>): Readonly<Record<InputVariableIdV2, unknown>> {
   const lookup = new Map<string, InputVariableIdV2>();
-  for (const variable of input.spec.input_variables) {
+  for (const variable of [...input.spec.input_variables, ...(input.additional_variables ?? [])]) {
     for (const name of [variable.variable_id, ...(input.aliases?.[variable.variable_id] ?? [])]) {
       const normalized = normalizedExternalName(name);
       const prior = lookup.get(normalized);

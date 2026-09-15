@@ -48,6 +48,7 @@ export function projectAssignmentStatusForModel(value: unknown): Row | null {
     progress_blocker: exact("progress_blocker", snapshot.progress_blocker, 1800),
     provider_budget_exhausted: snapshot.provider_budget_exhausted,
     result_delivery_required: snapshot.spec?.result_delivery_required === true,
+    result_assessment_required: snapshot.spec?.result_assessment_required === true,
     result_delivery_present: snapshot.result_delivery !== undefined,
     pending_input_variable_ids: exact("pending_input_variable_ids", snapshot.pending_input_variable_ids, 1800),
     pending_review_ids: exact("pending_review_ids", snapshot.pending_review_ids, 1800),
@@ -66,8 +67,10 @@ export function projectAssignmentStatusForModel(value: unknown): Row | null {
   projection.criteria = boundedEntries("criteria", Object.values(row(snapshot.criteria)), 5000);
   const pending = new Set(list(snapshot.pending_input_variable_ids));
   projection.pending_input_definitions = boundedEntries("pending_input_definitions",
-    list(snapshot.spec?.input_variables).filter(item => pending.has(item.variable_id)), 2200, 12);
-  projection.clarifications = boundedEntries("clarifications", Object.values(row(snapshot.clarifications)), 2200, 12);
+    [...list(snapshot.spec?.input_variables), ...Object.values(row(snapshot.discovered_inputs)).map(item => row(item).variable)].filter(item => item && pending.has(item.variable_id)), 2200, 12);
+  const questionHistory = Object.values(row(snapshot.clarifications)).reverse();
+  projection.clarifications = boundedEntries("clarifications",
+    [...questionHistory.filter(item => !row(item).resolved_at), ...questionHistory.filter(item => row(item).resolved_at)], 2200, 12);
   projection.execution_failures = boundedEntries("execution_failures", Object.values(row(snapshot.execution_failures)).slice(-8), 1800, 8);
   projection.retained_history = {
     operations: Object.keys(row(snapshot.operations)).length,

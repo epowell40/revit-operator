@@ -1,3 +1,4 @@
+import { workUnitInputVariableIdsV2 } from "../input_registry.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
@@ -113,7 +114,7 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
       criterion_ids: snapshot.spec.criteria.filter(criterion => criterion.required).map(criterion => criterion.criterion_id),
       work_unit_ids: ["work-primary", "work-evidence"], required_fact_ids: [],
       current_observation_ids: Object.values(snapshot.observations).filter(observation => observation.evidence_class === "task_result").map(observation => observation.observation_id),
-      reason: "A successful read is not the delivered answer. Address every part of the request. Call operator_evaluate_assignment_criteria with at most 32 concise native resultItems (label, observationId, path). For simple counts, lists or sample reports, omit assessment and include the requested names, values and scope directly in resultItems. For an audit, review, comparison or gap list, also supply assessment: overview, prioritized findings citing 1-based evidence_indices into resultItems, limitations and up to three questions. Put requested answer values in the findings, not only in folded evidence. Assessment is assistant interpretation, not native proof or engineering certification. Select scalars or small scalar arrays, not whole inventories. The terminal answer renders this delivery; later free text cannot replace it. Presentation cannot create semantic facts or passing criteria."
+      reason: (snapshot.spec.result_assessment_required ? "The exported file is verified, but the requested analysis is still owed. Do not export again. Select the verified artifact path, record/issue counts and exact-file verification as resultItems; include assessment findings, limitations and the requested decisions/questions. " : "") + "A successful read is not the delivered answer. Address every part of the request. Call operator_evaluate_assignment_criteria with at most 32 concise native resultItems (label, observationId, path). For simple counts, lists or sample reports, omit assessment and include the requested names, values and scope directly in resultItems. For an audit, review, comparison or gap list, also supply assessment: overview, prioritized findings citing 1-based evidence_indices into resultItems, limitations and up to three questions. Put requested answer values in the findings, not only in folded evidence. Assessment is assistant interpretation, not native proof or engineering certification. Select scalars or small scalar arrays, not whole inventories. The terminal answer renders this delivery; later free text cannot replace it. Presentation cannot create semantic facts or passing criteria."
     });
   }
   for (const operation of Object.values(snapshot.operations)) {
@@ -162,7 +163,7 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     });
   }
   for (const variableId of snapshot.pending_input_variable_ids) {
-    const workUnits = snapshot.spec.work_units.filter((unit) => unit.input_variable_ids.includes(variableId));
+    const workUnits = snapshot.spec.work_units.filter((unit) => workUnitInputVariableIdsV2(snapshot, unit.work_unit_id).includes(variableId));
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA,
       gap_id: `input:${variableId}`,

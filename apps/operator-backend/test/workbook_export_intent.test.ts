@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { requestedWorkbookExport } from "../src/artifact_export_intent.js";
+import { requestedWorkbookExport, requestedWorkbookAssessment } from "../src/artifact_export_intent.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
@@ -57,6 +57,8 @@ test("ordinary chat creates an immutable apply owner but canonical admission sti
       toolResults: [], source: "chat", createdBy: "principal", requestContext: context })!;
     const snapshot = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
     assert.equal(snapshot.spec.requested_effect, "apply");
+    assert.equal(snapshot.spec.result_delivery_required, true);
+    assert.equal(snapshot.spec.result_assessment_required, true);
     for (const args of [{ ...exportArgs, path: "/revit/set-parameters" }, { ...exportArgs, path: "/revit/delete" }]) {
       assert.throws(() => openAssignmentKernelOperationV2({ snapshot, controller_request_id: "blocked", provider_turn_id: "turn",
         capability_id: "revit_call_tool", classified_effect: "apply", arguments: args }), /user_no_model_write_limit/);
@@ -71,4 +73,12 @@ test("ordinary chat creates an immutable apply owner but canonical admission sti
     }
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("requested workbook analysis is distinct from a plain export, preview, or prohibited file", () => {
+  assert.equal(requestedWorkbookAssessment(prompt), true);
+  assert.equal(requestedWorkbookAssessment("Create an Excel workbook of spaces. Flag missing values and list questions."), true);
+  for (const request of ["Export an Excel workbook of rooms.", "Preview the Excel workbook and flag missing values.",
+    "Review the room values without writing any files.", "Prepare an Excel workbook. Do not save any files."])
+    assert.equal(requestedWorkbookAssessment(request), false, request);
 });

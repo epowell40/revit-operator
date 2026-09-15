@@ -1,3 +1,4 @@
+import type { DiscoveredAssignmentInputV2 } from "./input_registry.js";
 import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
@@ -17,6 +18,7 @@ export interface AssignmentSnapshotV2 {
   spec: AssignmentSpecV2;
   current_binding: AssignmentBindingV2;
   execution_control?: Readonly<{ state: "paused" | "running"; command_id: string; changed_at: string }>;
+  discovered_inputs?: Readonly<Record<InputVariableIdV2, DiscoveredAssignmentInputV2>>;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
   pending_input_variable_ids: readonly InputVariableIdV2[];
   clarifications: Readonly<Record<string, Readonly<{

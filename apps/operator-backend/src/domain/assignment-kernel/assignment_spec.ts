@@ -58,6 +58,8 @@ export interface AssignmentSpecV2 {
   semantic_evidence_contract?: "revit-operator.semantic-evidence-contract/v2";
   /** A generic read must deliver selected evidence values before it can finish. */
   result_delivery_required?: boolean;
+  /** Requested analysis remains a separate obligation after artifact verification. */
+  result_assessment_required?: boolean;
   criteria: readonly AssignmentCriterionSpecV2[];
   input_variables: readonly AssignmentInputVariableV2[];
   work_units: readonly AssignmentWorkUnitSpecV2[];

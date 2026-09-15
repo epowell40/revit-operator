@@ -1,4 +1,6 @@
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 
 export interface AssignmentResultItemV2 {
@@ -63,10 +65,18 @@ export function validateAssignmentAssessmentV2(value: unknown, items: readonly A
 export function resultObservationEligibilityV2(snapshot: AssignmentSnapshotV2, observationId: string): "result" | "diagnostic" | "ineligible" {
   const observation = snapshot.observations[observationId];
   const operation = observation ? snapshot.operations[observation.operation_id] : undefined;
-  if (!observation || !sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
-      || observation.evidence_class !== "task_result"
+  if (!observation || !operation || !sameAssignmentBindingV2(snapshot.current_binding, observation.binding)
       || !["native-host", "dynamic-runtime"].includes(observation.authority)
-      || operation?.requested_effect !== "read" || operation.settlement_state !== "settled") return "ineligible";
+      || operation.settlement_state !== "settled") return "ineligible";
+  const applied = operation.requested_effect === "apply" ? operation
+    : operation.verification_of_operation_id ? snapshot.operations[operation.verification_of_operation_id] : undefined;
+  const verifiedArtifact = snapshot.spec.requested_effect === "apply" && snapshot.spec.result_delivery_required
+    && applied && nativeArtifactResultEffectV2(applied.result) === "applied"
+    && appliedOperationHasVerifiedPostconditionV2(snapshot, applied.operation_id);
+  const artifactResult = verifiedArtifact && observation.authority === "native-host"
+    && (operation.requested_effect === "apply" && observation.evidence_class === "task_result"
+      || operation.requested_effect === "read" && operation.purpose === "verification" && observation.evidence_class === "verification");
+  if (!artifactResult && (operation.requested_effect !== "read" || observation.evidence_class !== "task_result")) return "ineligible";
   if (operation.result?.status === "succeeded") return "result";
   if (observation.authority === "dynamic-runtime" && operation.result?.status === "failed_after_dispatch"
       && operation.result.persistent_effect === "none") return "diagnostic";
@@ -75,7 +85,7 @@ export function resultObservationEligibilityV2(snapshot: AssignmentSnapshotV2, o
 
 /** Presentation never manufactures semantic facts or changes criterion truth. */
 export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, delivery: AssignmentResultDeliveryV2): void {
-  if (!snapshot.spec.result_delivery_required || snapshot.spec.requested_effect !== "read") {
+  if (!snapshot.spec.result_delivery_required || !["read", "apply"].includes(snapshot.spec.requested_effect)) {
     throw new Error("assignment_result_delivery_not_required");
   }
   if (!Array.isArray(delivery.items) || delivery.items.length < 1 || delivery.items.length > 32
@@ -102,6 +112,7 @@ export function validateResultDeliveryV2(snapshot: AssignmentSnapshotV2, deliver
       throw new Error("assignment_result_observation_ineligible");
     }
   }
+  if (snapshot.spec.result_assessment_required && !delivery.assessment) throw new Error("assignment_result_assessment_required");
   if (delivery.assessment !== undefined) validateAssignmentAssessmentV2(delivery.assessment, delivery.items);
 }
 

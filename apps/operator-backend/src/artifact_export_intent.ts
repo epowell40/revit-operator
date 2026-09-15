@@ -11,6 +11,12 @@ export function requestedWorkbookExport(userText: string): boolean {
   return /(?:^|[.!?;\n]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:prepare|create|make|produce|generate|write|save|export)\b[^.!?;\n]{0,180}\b(?:excel|xlsx|workbook|spreadsheet)\b/i.test(text);
 }
 
+/** File creation alone cannot satisfy an explicitly requested review or input list. */
+export function requestedWorkbookAssessment(userText: string): boolean {
+  return requestedWorkbookExport(userText)
+    && /\b(?:check|verify|review|audit|assess|compare|flag|missing|unverified|decisions|questions|inputs? you need)\b/i.test(userText);
+}
+
 export function authorizedArtifactExportPath(userText: string, path: string | undefined): boolean {
   return path === "/revit/export-elements-xlsx" && requestedWorkbookExport(userText);
 }

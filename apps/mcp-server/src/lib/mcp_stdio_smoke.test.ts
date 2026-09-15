@@ -493,6 +493,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const schedulesTool = tools.tools.find(tool => tool.name === "revit_list_schedules");
   const v2CriteriaTool = tools.tools.find(tool => tool.name === "operator_evaluate_assignment_criteria");
   const v2InputTool = tools.tools.find(tool => tool.name === "operator_request_assignment_input");
+  assert.equal((v2InputTool?.inputSchema as any)?.properties?.newVariableIds?.maxItems, 1);
+  assert.match(v2InputTool!.description!, /newVariableIds/);
+  for (const newVariableIds of [["bad-name"], ["floor_name", "corner_definition"]]) {
+    const denied = await client.callTool({ name: "operator_request_assignment_input", arguments: {
+      clarificationId: "new-floor", variableIds: ["floor_name"], newVariableIds, question: "Which floor?" } });
+    assert.equal(denied.isError, true);
+    assert.match(JSON.stringify(denied.content), /Input validation error/);
+  }
   for (const tool of [v2CriteriaTool, v2InputTool]) {
     const properties = (tool?.inputSchema as any)?.properties ?? {};
     for (const lifecycleField of ["assignmentId", "runId", "generation", "sessionId", "principalId"]) {
