@@ -1,6 +1,6 @@
 import { compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
-import { modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
+import { getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 
 /** Code mode joins text blocks with newlines. Keep a retrieved JSON selection
@@ -84,7 +84,15 @@ export function adaptMcpToolCallResultToDynamicResponse(
   // result itself creates an evidence-reference recursion in which the model
   // can never consume the requested fields. The V2 settlement path still
   // retains the retrieval result and its projection durably for audit/recovery.
-  const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence" || result?.isError === true;
+  // Discovery data is control information, already filtered by the tool handler.
+  // Keep complete small instructions visible instead of requiring a retrieval
+  // just to learn how to call a tool. Reserve space for the observation index;
+  // omitted or oversized results must still use the supplied projection budget.
+  const discovery = context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc";
+  const textOnly = content.length === 1 && content[0]?.type === "text" && typeof content[0].text === "string";
+  const exposeBoundedDiscovery = discovery && textOnly && (context?.omitted ?? 0) === 0
+    && Buffer.byteLength(content[0].text, "utf8") <= Math.max(0, getEvidenceContextBudget().item_bytes - 2048);
+  const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence" || result?.isError === true || exposeBoundedDiscovery;
   const hasProjectionContext = Array.isArray(context?.projections)
     && (context!.projections!.length > 0 || (context?.omitted ?? 0) > 0) && !exposeFocusedRetrieval;
   if (hasProjectionContext) {

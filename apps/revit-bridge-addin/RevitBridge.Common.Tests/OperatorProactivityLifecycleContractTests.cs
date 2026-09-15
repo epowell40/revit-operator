@@ -11,7 +11,7 @@ namespace RevitBridge.Common.Tests
         public void WarningsWatcherCannotPermanentlyOccupyTheExternalEventQueue()
         {
             var source = ReadRepoFile(
-                "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorProactivityService.cs");
+                "revit-bridge-addin", "RevitBridge", "Operator", "OperatorProactivityService.cs");
             Assert.Contains("private async Task WarningsWatcherLoopAsync", source);
             Assert.Contains("CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)", source);
             Assert.Contains("hostReadTimeout.CancelAfter(TimeSpan.FromSeconds(5))", source);
@@ -45,6 +45,7 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("_eventService?.ExecutePendingOnIdling(uiApplication)", app);
             Assert.Contains("_eventService?.HasPendingWork == true", app);
             Assert.Contains("args.SetRaiseWithoutDelay()", app);
+            Assert.Contains("_eventService?.HasActiveIdleLease == true", app);
             Assert.DoesNotContain("SetHostDocumentAvailableAfterDelay", app);
 
             var eventService = ReadRepoFile(
@@ -53,6 +54,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("if (_queue.IsEmpty) return false", eventService);
             Assert.Contains("Execute(app)", eventService);
             Assert.Contains("MaintainRaiseUntilStartedAsync(item)", eventService);
+            Assert.Contains("_activeIdleLease.RecordActivity()", eventService);
+            Assert.Contains("_activeIdleLease.Stop()", eventService);
             Assert.Contains("TimeSpan.FromMilliseconds(250)", eventService);
             Assert.Contains("PostMessage(windowHandle, WmNull", eventService);
             Assert.Contains("SignalHostMessageLoop();", eventService);

@@ -103,7 +103,8 @@
     "codex_tool_catalog.test.ts",
     "result_delivery_diagnostics.test.ts",
     "requirements_store.test.ts",
-    "requirements_parallel_planning.test.ts"
+    "requirements_parallel_planning.test.ts",
+    "bounded_evidence_delivery.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -173,7 +174,9 @@
     "OperatorUiWakeSchedulerTests",
     "OperatorEmbeddedNavigationTests",
     "OperatorDesktopLauncherTests",
-    "OperatorPaneIntegrationContractTests"
+    "OperatorPaneIntegrationContractTests",
+    "OperatorActiveIdleLeaseTests",
+    "OperatorProactivityLifecycleContractTests"
   ],
   "failure_families": [
     {
@@ -1566,6 +1569,22 @@
         "backend:codex_app_server_compatibility.test.ts",
         "backend:result_delivery_diagnostics.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "small-native-results-and-discovery-instructions-require-redundant-retrieval",
+      "coverage": [
+        "backend:bounded_evidence_delivery.test.ts",
+        "backend:evidence_projection.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "native-default-idle-between-provider-calls-delays-sequential-api-work",
+      "coverage": [
+        "dotnet:OperatorActiveIdleLeaseTests",
+        "dotnet:OperatorProactivityLifecycleContractTests",
+        "dotnet:OperatorUiWakeSchedulerTests"
       ]
     }
   ],

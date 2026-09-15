@@ -65,6 +65,9 @@ export type EvidenceProjectionV1 = {
   target_scope: string[];
   key_counts: Record<string, number>;
   key_facts: Record<string, string | number | boolean | null>;
+  // Exact small native JSON payload, retained with the same evidence identity.
+  // Its presence does not change observation class or prove inventory coverage.
+  inline_payload?: unknown;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];

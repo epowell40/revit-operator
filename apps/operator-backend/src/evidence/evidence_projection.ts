@@ -262,6 +262,19 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     else if (candidate.target_scope.length > 4) candidate = { ...candidate, target_scope: candidate.target_scope.slice(0, 4), truncated: true };
     else break;
   }
+  // Avoid a second model round trip merely to expand a small native result.
+  // StoreEvidence has already screened and persisted these exact bytes. Never
+  // inline untrusted input or an ambiguous MCP envelope, and never truncate a
+  // payload into something that could be mistaken for a complete result.
+  if (ref.trust_level === "authoritative_native" || ref.trust_level === "authoritative_readback") {
+    const row = safeRecord(raw);
+    const isEnvelope = row && (Array.isArray(row.content) || Object.prototype.hasOwnProperty.call(row, "structuredContent"));
+    const payload = isEnvelope ? extractMcpStructuredPayload(raw)?.payload : row;
+    if (payload !== undefined && payload !== null) {
+      const expanded = { ...candidate, inline_payload: payload };
+      if (projectionBytes(expanded) <= maxBytes) candidate = expanded;
+    }
+  }
   const projected_bytes = projectionBytes(candidate);
   if (projected_bytes > maxBytes) throw new Error(`Evidence projection cannot fit configured ${maxBytes}-byte item budget.`);
   return { ...candidate, projected_bytes };

@@ -258,11 +258,11 @@ namespace RevitBridge
                         instance._revitCourierWorker?.SetHostDocumentAvailable();
                     else
                         instance._revitCourierWorker?.SetHostDocumentUnavailable();
-                    // If a background request is waiting, ask Revit to keep this idle session
-                    // alive and pump the exact same single-flight item on the API thread. This
-                    // complements the non-UI wake loop in RevitEventService without keeping an
-                    // otherwise idle Revit process in continuous-idle mode.
-                    if (instance._eventService?.HasPendingWork == true)
+                    // Keep the supported idle session open across short agent reasoning gaps.
+                    // Only an actual API callback renews the bounded lease; idle ticks do not.
+                    // No model work runs outside ExternalEvent/Idling, and normal idle resumes
+                    // after the lease expires or the service shuts down.
+                    if (instance._eventService?.HasPendingWork == true || instance._eventService?.HasActiveIdleLease == true)
                         args.SetRaiseWithoutDelay();
                     instance._eventService?.ExecutePendingOnIdling(uiApplication);
                 }

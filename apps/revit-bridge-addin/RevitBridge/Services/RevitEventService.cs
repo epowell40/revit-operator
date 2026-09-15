@@ -61,6 +61,7 @@ namespace RevitBridge.Services
         private readonly Action<string>? _diagnosticSink;
         private OperatorRevitQueueDiagnostic? _diagnosticOwner;
         private readonly OperatorUiWakeScheduler _uiWake;
+        private readonly OperatorActiveIdleLease _activeIdleLease = new OperatorActiveIdleLease();
         private int _stopping;
         private long _lastWakeDiagnosticTicks;
         private long _lastMessageWakeDiagnosticTicks;
@@ -177,6 +178,7 @@ namespace RevitBridge.Services
         }
 
         internal bool HasPendingWork => Volatile.Read(ref _inFlight) != 0 && !_queue.IsEmpty;
+        internal bool HasActiveIdleLease => _activeIdleLease.IsActive;
 
         internal bool ExecutePendingOnIdling(UIApplication app)
         {
@@ -232,6 +234,7 @@ namespace RevitBridge.Services
         {
             Interlocked.Exchange(ref _stopping, 1);
             _uiWake.Stop();
+            _activeIdleLease.Stop();
         }
 
         private void SignalHostMessageLoop()
@@ -368,6 +371,8 @@ namespace RevitBridge.Services
                 // by ExternalEventRequest.Pending and MaintainRaiseUntilStartedAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
                 OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "released", item.Diagnostic);
+                if (Volatile.Read(ref item.ExecutionState) == QueueItem.Started)
+                    _activeIdleLease.RecordActivity();
             }
 
             if (canceled)

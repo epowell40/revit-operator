@@ -124,6 +124,6 @@ export function modelEvidenceEnvelope(projections: EvidenceProjectionV1[], omitt
     schema: MODEL_EVIDENCE_ENVELOPE_SCHEMA,
     evidence_projections: projections,
     omitted,
-    retrieval: "Use a named evidence_id with a focused field/item/text/target selector when more authoritative evidence is required."
+    retrieval: "Read inline_payload when present. Retrieve a named evidence_id only for missing fields or images; preserve reported paging and scope limits."
   };
 }
