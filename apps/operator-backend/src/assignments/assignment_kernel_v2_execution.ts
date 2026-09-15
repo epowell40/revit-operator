@@ -35,7 +35,8 @@ import {
   operationTargetSelectorV2,
   verificationCapabilityAdmissionV2
 } from "../verification/verification_capability_admission_v2.js";
-import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
+import { assertEvidenceStoreInputSafe, readAuthoritativeEvidence, readEvidenceRef, storeEvidence } from "../evidence/evidence_store.js";
+import { projectEvidence } from "../evidence/evidence_projection.js";
 import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
@@ -795,7 +796,24 @@ export function commitAssignmentKernelObservationV2(
     const observation = operation.observation_ids.length > 0
       ? snapshot.observations[operation.observation_ids[operation.observation_ids.length - 1]!]
       : undefined;
-    return { snapshot, result: operation.result, observation: observation ?? null, evidence_refs: [], evidence_projections: [] };
+    if (!observation) return { snapshot, result: operation.result, observation: null, evidence_refs: [], evidence_projections: [] };
+    // Native/MCP settlement can precede model delivery. Rehydrate the exact
+    // retained observation so duplicate delivery cannot bypass context budgets.
+    // This reads only: no new evidence, journal event, operation or native call.
+    if (!observation.raw_payload_ref.startsWith("evidence:")) throw new Error("assignment_kernel_v2_retained_evidence_reference_invalid");
+    const ref = readEvidenceRef(observation.raw_payload_ref.slice("evidence:".length));
+    if (ref.source !== `assignment_kernel_v2:${lease.capability_id}`
+      || ref.trust_level !== (operation.result.authority === "native-host" ? "authoritative_native" : "host_observed")) {
+      throw new Error("Evidence retained native provenance mismatch.");
+    }
+    const raw = JSON.parse(readAuthoritativeEvidence(ref, {
+      session_id: lease.binding.session_id, assignment_id: lease.assignment_id,
+      run_id: lease.binding.run_id, generation: lease.binding.generation,
+      attempt_id: lease.operation_id
+    }).toString("utf8"));
+    if (stableHash(raw) !== operation.result.raw_payload_hash) throw new Error("Evidence retained native payload hash mismatch.");
+    return { snapshot, result: operation.result, observation, evidence_refs: [ref],
+      evidence_projections: [projectEvidence(ref, raw, getEvidenceContextBudget().item_bytes)] };
   }
   if (operation.settlement_state !== "retaining_observation" || !operation.observation_commit) {
     throw new Error("assignment_kernel_v2_observation_commit_not_pending");

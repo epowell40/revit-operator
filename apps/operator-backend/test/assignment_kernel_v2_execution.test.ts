@@ -170,6 +170,8 @@ import {
 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
 import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { assembleBoundedEvidenceContext } from "../src/evidence/model_context_budget.js";
+import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dynamic_result_adapter.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal, transitionGoal } from "../src/goals/service.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "../src/assignments/model_call_budget.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
@@ -359,7 +361,64 @@ test("duplicate native delivery is idempotent and does not create a second opera
   assert.deepEqual(second.snapshot, first.snapshot);
   assert.equal(Object.keys(second.snapshot.operations).length, 1);
   assert.equal(Object.keys(second.snapshot.observations).length, 1);
+  assert.deepEqual(second.evidence_refs, first.evidence_refs);
+  assert.deepEqual(second.evidence_projections, first.evidence_projections);
 }));
+
+test("settled native delivery after reload reaches the bounded model adapter without replaying work", () => {
+  for (const large of [false, true]) workspace(() => {
+    const { snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duplicate-budget", provider_turn_id: "turn-budget",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const payload = large ? { items: Array.from({length: 1000}, (_, id) => ({id, name: `Room ${id}`, description: "x".repeat(120)})) }
+      : { sheetNumber: "M206", export: { path: "artifacts/captures/titleblock.png" } };
+    const raw = envelope(lease.operation_id, lease.binding, payload);
+    raw.content[0]!.text = JSON.stringify(payload);
+    const first = settleAssignmentKernelOperationV2(lease, raw);
+    __testOnlyResetGoalListCache();
+    const second = settleAssignmentKernelOperationV2(lease, raw, {storeEvidence() { throw Error("Settled delivery must never store or dispatch again"); }});
+    assert.deepEqual(second.snapshot, first.snapshot);
+    assert.deepEqual(second.evidence_refs, first.evidence_refs);
+    const bounded = assembleBoundedEvidenceContext({ projections: [...second.evidence_projections], ...lease.binding });
+    const response = adaptMcpToolCallResultToDynamicResponse(raw, {tool: "inventory.read", projections: bounded.projections, omitted: bounded.omitted});
+    const text = (response.contentItems[0] as {text: string}).text;
+    const presented = JSON.parse(text);
+    assert.equal(presented.schema, "revit-operator.model-evidence-envelope.v1");
+    assert.equal(presented.evidence_projections[0].content_hash, first.evidence_refs[0]!.content_hash);
+    if (large) {
+      assert.ok(Buffer.byteLength(text) < 10000);
+      assert.equal(presented.evidence_projections[0].inline_payload, undefined);
+    } else assert.deepEqual(presented.evidence_projections[0].inline_payload, payload);
+  });
+});
+
+test("settled native delivery rejects missing, corrupt and wrong-scope evidence without changing native truth", () => {
+  for (const variant of ["missing", "hash", "replaced_payload", "session", "attempt", "generation", "source", "trust"]) workspace(() => {
+    const { goal, snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: `bad-${variant}`, provider_turn_id: "turn-bad",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const raw = envelope(lease.operation_id, lease.binding, {total: 2});
+    const first = settleAssignmentKernelOperationV2(lease, raw);
+    const ref = first.evidence_refs[0]!;
+    const refFile = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "evidence", "refs", `${ref.evidence_id}.json`);
+    if (variant === "missing") fs.unlinkSync(refFile);
+    else if (variant === "hash") fs.appendFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, ref.artifact_location), "corruption");
+    else if (variant === "replaced_payload") {
+      const replacement = JSON.stringify({total: 99});
+      fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, ref.artifact_location), replacement);
+      fs.writeFileSync(refFile, JSON.stringify({...ref, byte_count: Buffer.byteLength(replacement),
+        content_hash: `sha256:${createHash("sha256").update(replacement).digest("hex")}`}));
+    }
+    else fs.writeFileSync(refFile, JSON.stringify({...ref, ...(variant === "session" ? {session_id: "foreign"}
+      : variant === "attempt" ? {attempt_id: "foreign"} : variant === "source" ? {source: "foreign"}
+        : variant === "trust" ? {trust_level: "untrusted_caller"} : {generation: ref.generation! + 1})}));
+    __testOnlyResetGoalListCache();
+    assert.throws(() => settleAssignmentKernelOperationV2(lease, raw), /Evidence.*(?:not found|hash|scope|generation|provenance)/i);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), first.snapshot);
+  });
+});
 
 test("Candidate 50 non-native capability result commits durable control evidence without advancing the task criterion", () => workspace(() => {
   const { goal, snapshot } = setup();

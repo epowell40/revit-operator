@@ -103,7 +103,7 @@ import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse,
 
 test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /Navigation: check revit_get_context after activation/);
+  assert.match(instructions, /activate its returned view ID with `revit_activate_view`, then check `revit_get_context`/);
   assert.match(instructions, /Context is control evidence; resultItems require task_result Observations/);
   assert.match(instructions, /capture the target and present its name\/number, not internal IDs or raw paths/);
 });
@@ -479,6 +479,38 @@ test("Codex instructions use bounded bulk sheet parameter readback and target-aw
 
 test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
   assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_open_model"), true);
+});
+
+test("common sheet navigation exposes the complete typed sequence before discovery", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  for (const tool of ["revit_list_sheets", "revit_activate_view", "revit_get_context", "revit_capture_sheet_region"]) {
+    assert.equal(EAGER_OPERATOR_MCP_TOOLS.has(tool), true, tool);
+    assert.ok(instructions.includes(`\`${tool}\``), tool);
+  }
+  assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_delete_elements"), false);
+  assert.match(instructions, /Do not search for these known tools or record a separate execution strategy/);
+  assert.match(instructions, /then check `revit_get_context`/);
+  assert.match(instructions, /For visual review, capture the target/);
+});
+
+test("MCP namespace presents navigation schemas eagerly and leaves unrelated tools deferred", async () => {
+  const names = ["revit_list_sheets", "revit_activate_view", "revit_get_context", "revit_capture_sheet_region", "revit_delete_elements"];
+  const tools = names.map(name => ({name, description: `Native contract for ${name}`,
+    inputSchema: {type: "object", properties: {target: {type: "string"}}, additionalProperties: false}}));
+  let listings = 0;
+  const runtime = new CodexMcpToolRuntime({backendCwd: process.cwd(), workspaceRoot: process.cwd(), codexHome: process.cwd(), spawnEnv: {}});
+  (runtime as any).client = {listTools: async () => {listings += 1; return {tools};}, close: async () => {}};
+  try {
+    const namespace = await runtime.getDynamicToolNamespace();
+    for (const source of tools) {
+      const delivered = namespace.tools.find((tool: any) => tool.name === source.name);
+      assert.deepEqual(delivered.inputSchema, source.inputSchema);
+      assert.equal(delivered.description, source.description);
+      assert.equal(delivered.deferLoading, source.name === "revit_delete_elements");
+    }
+    assert.equal(await runtime.getDynamicToolNamespace(), namespace);
+    assert.equal(listings, 1);
+  } finally {runtime.stop();}
 });
 
 test("Codex file delivery instructions match artifact authority and allow supporting verification recovery", () => {

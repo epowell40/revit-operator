@@ -16,6 +16,9 @@ test("provider-neutral instruction gives the model three representations without
   assert.match(instruction, /company\/project\/user-specific rules/i);
   assert.match(instruction, /Do not route by prompt keywords or regexes/i);
   assert.match(instruction, /grants no capability, admission, approval, or authorization/i);
+  assert.match(instruction, /simple read or view-navigation sequence using known typed tools, execute directly/);
+  assert.match(instruction, /do not spend a separate tool call recording the strategy/);
+  assert.match(instruction, /For complex work, record the selected_substrate/);
 });
 
 test("strategy evidence is bounded, exact, and explicitly non-authorizing", () => {

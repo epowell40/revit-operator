@@ -106,7 +106,8 @@
     "requirements_parallel_planning.test.ts",
     "bounded_evidence_delivery.test.ts",
     "brain.test.ts",
-    "existing_conditions_source_disposition_ledger.test.ts"
+    "existing_conditions_source_disposition_ledger.test.ts",
+    "execution_strategy.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1596,6 +1597,22 @@
         "backend:existing_conditions_source_disposition_ledger.test.ts",
         "backend:conversation_assignment_isolation.test.ts",
         "backend:assignment_kernel_v2_provider_failure.test.ts"
+      ]
+    },
+    {
+      "id": "native-double-settlement-loses-evidence-projection-and-bypasses-model-budget",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:bounded_evidence_delivery.test.ts",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "routine-sheet-navigation-requires-deferred-search-and-standalone-strategy-roundtrips",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:execution_strategy.test.ts",
+        "backend:direct_revit_execution_authorization.test.ts"
       ]
     }
   ],

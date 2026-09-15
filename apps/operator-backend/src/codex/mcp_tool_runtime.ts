@@ -47,6 +47,8 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "revit_get_context",
   "revit_open_model",
   "revit_list_sheets",
+  "revit_activate_view",
+  "revit_capture_sheet_region",
   "revit_list_schedules",
   "revit_update_schedule_cell",
   "revit_replace_schedule_values",
