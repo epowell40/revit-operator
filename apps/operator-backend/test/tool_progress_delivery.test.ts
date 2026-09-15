@@ -29,7 +29,7 @@ test("current tool stages replace stale commentary without fabricating completio
   emit("item/completed", { type: "agentMessage", phase: "commentary", id: "initial", text: "I will check the spaces." });
   for (const [tool, expected] of [
     ["operator_discover_capabilities", "Finding the right tool…"], ["revit_list_rooms", "Reading model information…"],
-    ["operator_retrieve_evidence", "Reviewing the collected information…"], ["write_excel", "Preparing the workbook…"],
+    ["operator_retrieve_evidence", "Reviewing the collected information…"],
     ["operator_run_dynamic_revit_program", "Working through the next step…"], ["operator_evaluate_assignment_criteria", "Checking the result…"],
     ["operator_request_assignment_input", "Preparing a question…"]
   ]) {
@@ -37,6 +37,18 @@ test("current tool stages replace stale commentary without fabricating completio
       emit("item/started", { type, id: tool, tool });
       assert.equal(progress.at(-1), expected);
     }
+  }
+  for (const [path, expected] of [["/revit/get-parameters", "Reading model information…"],
+    ["/revit/export-elements-xlsx", "Preparing the workbook…"], ["/revit/inspect-exported-files", "Checking the exported file…"],
+    ["/revit/capture-sheet-region", "Capturing the view…"]]) {
+    for (const type of ["dynamicToolCall", "mcpToolCall"]) for (const argumentsValue of [{ path, body: { confidential: "Do not display" } }, JSON.stringify({ path })]) {
+      emit("item/started", { type, tool: "revit_call_tool", arguments: argumentsValue });
+      assert.equal(progress.at(-1), expected);
+    }
+  }
+  for (const argumentsValue of ["bad JSON", " ".repeat(16_385), { path: "/revit/export-elements-xlsx?secret=value" }, { path: "../export-elements-xlsx" }]) {
+    emit("item/started", { type: "dynamicToolCall", tool: "revit_call_tool", arguments: argumentsValue });
+    assert.equal(progress.at(-1), "Working through the next step…");
   }
   const count = progress.length;
   emit("item/started", { type: "dynamicToolCall", tool: "write_excel" }, "old-turn");
@@ -65,7 +77,7 @@ test("streaming brain forwards tool progress through both read and buffered muta
           const observer = createCodexTurnNotificationObserver({ sessionId: "progress-gate", threadId: "thread", turnId: "turn",
             modelTelemetry: { observe() {} }, assignmentObserver: { observe() {} }, freshEvidenceRequirement: { required: false } as any,
             webEvidenceRequirement: { required: false } as any, mcpRuntime: null, onProgress: callbacks.onProgress, onDelta: callbacks.onDelta });
-          observer.observe({ method: "item/started", threadId: "thread", params: { turnId: "turn", item: { type: "dynamicToolCall", tool: "revit_get_parameters" } } } as any);
+          observer.observe({ method: "item/started", threadId: "thread", params: { turnId: "turn", item: { type: "dynamicToolCall", tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42] } } } } } as any);
           return { version: "operator.backend.v1", assistant_message: "The requested work needs further verification.", actions: [] } as any;
         }
       });

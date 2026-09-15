@@ -56,6 +56,7 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
 }
 
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
+  if (hasDeferredProposalOnlyFraming(text)) return true;
   if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
   if (MODEL_CHANGE_PROHIBITION.test(text)) return true;
   if (/\bwithout\s+(?:changing|modifying|editing|saving)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/i.test(text)) return true;
@@ -79,6 +80,17 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
   if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
   return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
+}
+
+/** Planning a proposed result before a deferred drawing/placement stage is read work. */
+export function hasDeferredProposalOnlyFraming(text: string): boolean {
+  const deferred = /\b(?:do not|don't|dont|never)\s+(?:draw|place|create|build|tag|route|connect|modify|edit)\b[^.!?;\n]{0,180}\b(?:yet|for now)\b/i.exec(text);
+  if (!deferred) return false;
+  const proposal = text.slice(0, deferred.index);
+  if (!/\b(?:prepare|outline|develop|describe|review|assess)\b[^.!?;\n]{0,100}\b(?:proposed|proposal|plan|options)\b/i.test(proposal)) return false;
+  // A separately requested present edit keeps its existing authority. A
+  // scoped instruction to defer a different edit is not a global read limit.
+  return !/(?:^|[.!?;]\s*|\b(?:then|and|also)\s+)(?:please\s+)?(?:draw|place|create|delete|remove|move|modify|edit|set|update|rename|tag|route|connect)\b/i.test(proposal);
 }
 
 /** A requested what-if demonstration is noncommitting, unlike an instruction to delete. */

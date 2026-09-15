@@ -31,9 +31,17 @@ export type CodexTurnNotificationSnapshot = {
 /** Runtime stage text is descriptive, never an assertion that an effect succeeded. */
 function toolProgressStage(item: any): string | undefined {
   if (!["dynamicToolCall", "mcpToolCall"].includes(item?.type)) return undefined;
-  const tool = typeof item.tool === "string" ? item.tool : "";
+  let tool = typeof item.tool === "string" ? item.tool : "";
+  if (tool === "revit_call_tool") {
+    let args = item.arguments;
+    if (typeof args === "string" && args.length <= 16_384) { try { args = JSON.parse(args); } catch { args = null; } }
+    const path = args && typeof args === "object" && !Array.isArray(args) ? args.path : null;
+    // Only the bounded route contributes to progress text. Never display parameters or other argument data.
+    if (typeof path === "string" && /^\/revit\/[a-z][a-z0-9-]{0,100}$/.test(path)) tool = "revit_" + path.slice(7).replace(/-/g, "_");
+  }
   if (["operator_evaluate_assignment_criteria"].includes(tool)) return "Checking the result…";
-  if (["operator_request_assignment_input", "request_user_input"].includes(tool)) return "Preparing a question…";
+  if (["operator_request_assignment_input", "operator_request_clarification", "request_user_input"].includes(tool)) return "Preparing a question…";
+  if (tool === "revit_inspect_exported_files") return "Checking the exported file…";
   if (["operator_discover_capabilities", "revit_search_tools", "revit_tool_doc"].includes(tool)) return "Finding the right tool…";
   if (tool === "operator_retrieve_evidence") return "Reviewing the collected information…";
   if (/capture/.test(tool)) return "Capturing the view…";

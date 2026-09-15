@@ -23,6 +23,6 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
       capability_id: snapshot.operations[observation.operation_id]?.capability_id
     })),
     omitted: Math.max(0, observations.length - 32),
-    usage: "Use observation_id only for its eligible_criterion_ids. resultItems require result_item_eligibility=result; diagnostic permits only failed-read execution_status/diagnostics/logs. Control and verification evidence cannot become resultItems. Use evidence_id for missing payload fields. Operation IDs are not Observation IDs."
+    usage: "Criteria use eligible_criterion_ids. resultItems require eligibility=result; diagnostic permits execution_status/diagnostics/logs only. Retrieve missing fields by evidence_id. Never substitute operation IDs."
   });
 }

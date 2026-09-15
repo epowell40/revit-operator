@@ -110,7 +110,8 @@
     "execution_strategy.test.ts",
     "result_projection_delivery.test.ts",
     "tool_progress_delivery.test.ts",
-    "workbook_export_intent.test.ts"
+    "workbook_export_intent.test.ts",
+    "deferred_proposal_admission.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1658,6 +1659,13 @@
         "dotnet:OperatorWorkbookWriterTests",
         "mcp:lib/generalAgentCapabilityDiscovery.test.ts",
         "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "proposed-engineering-analysis-with-deferred-drawing-is-admitted-as-model-write",
+      "coverage": [
+        "backend:deferred_proposal_admission.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
       ]
     }
   ],

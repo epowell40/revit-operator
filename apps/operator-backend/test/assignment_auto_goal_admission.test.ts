@@ -41,6 +41,8 @@ for (const [effect, prompt, facts] of [
   ["read", "What is the diameter of the selected duct?", ["task.result_available"]],
   ["read", "Which system does this belong to?", ["task.result_available"]],
   ["read", "Give me a CSV of the Level 4 equipment: name, family/type, level, and location in feet.", ["task.result_available"]],
+  ["read", "First prepare a proposed zoning schedule for one floor and identify rooms where you need my input. Do not draw the zones or place VAVs yet.", ["task.result_available"]],
+  ["apply", "Prepare a proposed layout, then place the devices.", ["task.result_available"]],
   ["read", "Our Revit add-in uses ElementId.IntegerValue. Find out what needs to change for Revit 2026 while keeping Revit 2023 support. Explain the fix; do not edit the add-in.", ["task.result_available"]],
   ["preview", "Run a rollback preview moving the selected device one foot east. Do not commit.", ["task.preview_valid"]],
   ["preview", "Pick an accessory on this plan and show me what would be removed or disconnected if we deleted it. Leave it in place for now.", ["task.preview_valid"]],

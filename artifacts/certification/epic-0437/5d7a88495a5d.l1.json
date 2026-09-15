@@ -1140,7 +1140,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_evidence.ts",
-      "sha256": "sha256:6b900aa3d0476e2e6d11270b82c7e1113f1c423f63c3306c5fb77970f62f92db"
+      "sha256": "sha256:96c7ea92720b25bc42b3ae50ecbd52f2a8653b71e0cd5bfec3f8d91fd1af0572"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
@@ -1148,7 +1148,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:3b37d0548d1391ecc46c0fb043c192c25c205c5ab2e15a9ff1c316cff82075c6"
+      "sha256": "sha256:38125cdf92c5c9928ddfdc396df9dbba439bde480dafc9c03d0557fbd9b212df"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1188,7 +1188,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_notification_observer.ts",
-      "sha256": "sha256:8a300806d1f11a06ed66e080888c5c8cd20027ae752b3bd4bc53f12c1052be66"
+      "sha256": "sha256:323e79d329c22ce38d44d40429643f67e4bbbf66ae848d5a268970c506580748"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_profile.ts",
@@ -2525,7 +2525,7 @@
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
-      "sha256": "sha256:58a1916c6b49c78327d8cecd5695c0c004abc27e6559f8adfca4ee57f881f04b"
+      "sha256": "sha256:5c09cd8ada201187825e2b4912af1979b51383f948fafc8bd6c216297689d3f8"
     },
     {
       "path": "apps/operator-backend/src/openai_client.ts",
@@ -3117,7 +3117,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_auto_goal_admission.test.ts",
-      "sha256": "sha256:f8820f0bc95a89570b75bb550365f2b19b48686cd876178fd41b8531c1158035"
+      "sha256": "sha256:9b6514398c55d934fec91a57a47575e01d7ed5bcc0bec828dd03974d35917c4f"
     },
     {
       "path": "apps/operator-backend/test/assignment_control_plane.test.ts",
@@ -3370,6 +3370,10 @@
     {
       "path": "apps/operator-backend/test/conversation_assignment_isolation.test.ts",
       "sha256": "sha256:5b4f3a9919f1454209a54465eed8e91548dab6128ac0175bffe7aceff88ecb13"
+    },
+    {
+      "path": "apps/operator-backend/test/deferred_proposal_admission.test.ts",
+      "sha256": "sha256:7e18ab3d3a3b2adbe44482fb4e814a47e9d7cf143fb5d4b2e83f186392915a9b"
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
@@ -4313,7 +4317,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_progress_delivery.test.ts",
-      "sha256": "sha256:90c3e865341d3eb651d634ed4b6e24da1818164e42985133717f9f2f58b2c21d"
+      "sha256": "sha256:c9dcce17b3c08d0b654b3732fa8c572d9e1f0aefd8dc9194e4674e5d9eeb0e80"
     },
     {
       "path": "apps/operator-backend/test/tool_registry_audit.test.ts",
@@ -6745,7 +6749,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:be8d8f2ab463ac90660fc943ce4e3d1c2ddb65ff11c7ac31a720e43784f582c2",
+  "inputs_hash": "sha256:a6beae5537ed2b2377e7ba5b9f468271f0367f6c7b786dc8331bcab3011c1422",
   "result": {
     "passed": true,
     "checks": [
