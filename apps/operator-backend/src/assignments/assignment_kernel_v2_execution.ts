@@ -1,3 +1,4 @@
+import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
 import { createHash } from "node:crypto";
 import { authorizedArtifactExportPath } from "../artifact_export_intent.js";
 import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
@@ -706,6 +707,8 @@ function commitInput(
       && deterministicallyTargetBound
       && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
         ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/mep-route-workflow"
+          ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,

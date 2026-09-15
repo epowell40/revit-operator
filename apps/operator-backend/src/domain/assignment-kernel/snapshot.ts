@@ -20,6 +20,7 @@ export interface AssignmentSnapshotV2 {
   execution_control?: Readonly<{ state: "paused" | "running"; command_id: string; changed_at: string }>;
   discovered_inputs?: Readonly<Record<InputVariableIdV2, DiscoveredAssignmentInputV2>>;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
+  input_invalidated_operation_ids?: readonly OperationIdV2[];
   pending_input_variable_ids: readonly InputVariableIdV2[];
   clarifications: Readonly<Record<string, Readonly<{
     clarification_id: string;

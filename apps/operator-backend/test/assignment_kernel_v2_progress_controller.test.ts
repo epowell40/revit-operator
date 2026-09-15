@@ -529,6 +529,20 @@ test("pending apply cannot pass unverified completion prose while clarification 
   assert.equal(finalCodexAssignmentMessageV2({ ...snapshot, outcome: "awaiting_user_input" }, "Which plan?"), "Which plan?");
 });
 
+test("committed model edit receives a truthful pending handoff without granting verified completion", () => {
+  const base=journal().snapshot();
+  const snapshot={...base,spec:{...base.spec,requested_effect:"apply" as const},operations:{edit:{operation_id:"edit",binding:base.current_binding,
+    requested_effect:"apply",persistent_effect:"applied",settlement_state:"settled",result:{binding:base.current_binding,
+      status:"succeeded",authority:"native-host",native_transaction_state:"committed"}}}} as any;
+  assert.equal(finalCodexAssignmentMessageV2(snapshot,"Everything is complete."),"Applied one model edit. Final verification is incomplete; the task and remaining checks are saved.");
+  assert.equal(snapshot.terminal,false);
+  for(const change of ["unknown","none"]){const copy=structuredClone(snapshot);copy.operations.edit.persistent_effect=change;
+    assert.doesNotMatch(finalCodexAssignmentMessageV2(copy,"Everything is complete."),/Applied one/);}
+  const foreign=structuredClone(snapshot);foreign.operations.edit.result.binding={...foreign.current_binding,generation:foreign.current_binding.generation+1};
+  assert.doesNotMatch(finalCodexAssignmentMessageV2(foreign,"Everything is complete."),/Applied one/);
+  assert.match(finalCodexAssignmentMessageV2({...snapshot,unresolved_unknown_operation_ids:["other-edit"]},""),/could not confirm/);
+});
+
 test("input stop shows only unanswered questions and never hides an uncertain model effect", () => {
   const snapshot = { ...journal().snapshot(), outcome: "awaiting_user_input" as const, clarifications: {
     old: { clarification_id: "old", variable_id: "old", question: "Answered already?", requested_at: "2026-09-01T00:00:00Z", resolved_at: "2026-09-01T01:00:00Z" },

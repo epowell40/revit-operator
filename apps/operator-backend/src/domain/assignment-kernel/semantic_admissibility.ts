@@ -1,4 +1,5 @@
 import { sameAssignmentBindingV2 } from "./identity.js";
+import { operationUsesCurrentInputsV2 } from "./input_result_freshness.js";
 import type { AssignmentCriterionSpecV2, RequestedEffectV2 } from "./assignment_spec.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
@@ -144,6 +145,7 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
   if (!sameAssignmentBindingV2(input.snapshot.current_binding, input.observation.binding)) return denied("observation_binding_not_current");
   const operation = input.snapshot.operations[input.observation.operation_id] ?? null;
   if (!operation) return denied("observation_operation_missing");
+  if (!operationUsesCurrentInputsV2(input.snapshot, operation)) return denied("operation_predates_authenticated_input", operation);
   if (operation.settlement_state !== "settled" || operation.result?.status !== "succeeded") return denied("operation_not_successfully_settled", operation);
   if (!operation.fulfillment_role || !operation.eligible_criterion_ids) return denied("operation_fulfillment_contract_missing", operation);
   if (!operation.eligible_criterion_ids.includes(input.criterion.criterion_id)) return denied("operation_not_eligible_for_criterion", operation);

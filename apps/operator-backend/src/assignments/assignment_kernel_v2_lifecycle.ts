@@ -239,7 +239,8 @@ export function supplyAssignmentInputResultV2(input: Readonly<{
       binding: snapshot.current_binding,
       event_id: eventId,
       actor: "authenticated-user",
-      body: { event_type: "input_supplied", variable_id: variableId, clarification_id: input.clarification_id, value }
+      body: { event_type: "input_supplied", variable_id: variableId, clarification_id: input.clarification_id, value,
+        result_freshness: "invalidate_dependent_results_v1" }
     }).snapshot;
   }
   const resumedGoal = getGoal(input.binding.assignment_id);

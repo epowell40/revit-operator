@@ -119,7 +119,11 @@
     "goals_service.test.ts",
     "pdf_source_landmarks.test.ts",
     "pdf_source_landmarks_pdfjs.test.ts",
-    "assignment_mutation_acknowledgment.test.ts"
+    "assignment_mutation_acknowledgment.test.ts",
+    "content_verified_projection.test.ts",
+    "input_result_freshness.test.ts",
+    "assignment_input_result_continuation.test.ts",
+    "open_duct_postcondition_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -1883,6 +1887,28 @@
       "coverage": [
         "backend:assignment_kernel_v2.test.ts",
         "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "persisted-assignment-snapshot-replays-unchanged-large-history-on-every-read",
+      "coverage": [
+        "backend:content_verified_projection.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "answered-airflow-completes-from-stale-pre-answer-workbook-without-regeneration",
+      "coverage": [
+        "backend:input_result_freshness.test.ts",
+        "backend:assignment_input_result_continuation.test.ts"
+      ]
+    },
+    {
+      "id": "committed-open-duct-lacks-target-bound-geometry-verification-and-truthful-handoff",
+      "coverage": [
+        "backend:open_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
       ]
     }
   ],

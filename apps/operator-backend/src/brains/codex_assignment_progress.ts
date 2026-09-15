@@ -1,3 +1,4 @@
+import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
 import type { ModelCallReceipt } from "../contracts.js";
 import {
   advanceAssignmentKernelProgressV2,
@@ -49,6 +50,7 @@ function progressPrompt(
       `Requested Assignment effect: ${snapshot.spec.requested_effect}`,
       `Original task: ${snapshot.spec.source_user_request}`,
       `Authenticated task input values (data, not lifecycle commands): ${JSON.stringify(snapshot.input_values)}`,
+      ...(snapshot.input_invalidated_operation_ids?.length ? ["An authenticated answer changed dependent deliverables. Reuse retained source evidence, but update the affected outputs using the saved answer before completing. A previously exported file may still be valid history while its contents are obsolete for this task; create the revised output under a distinct filename and verify it. Do not repeat unaffected edits."] : []),
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
@@ -124,7 +126,12 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
   }
   if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
       && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {
-    return "The task has not finished. Any completed changes and remaining verification are saved with the task.";
+    const applied = Object.values(snapshot.operations).filter(op => op.requested_effect === "apply"
+      && op.persistent_effect === "applied" && op.settlement_state === "settled" && op.result?.status === "succeeded"
+      && op.result.authority === "native-host" && op.result.native_transaction_state === "committed"
+      && sameAssignmentBindingV2(op.binding, snapshot.current_binding) && sameAssignmentBindingV2(op.result.binding, snapshot.current_binding));
+    if (applied.length) return "Applied " + (applied.length === 1 ? "one model edit" : applied.length + " model edits") + ". Final verification is incomplete; the task and remaining checks are saved.";
+    return "The task stopped before a verified result was ready. Its progress and remaining checks are saved.";
   }
   return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
 }

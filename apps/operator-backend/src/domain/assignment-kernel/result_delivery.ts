@@ -1,4 +1,5 @@
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { operationUsesCurrentInputsV2 } from "./input_result_freshness.js";
 import { operationHasAppliedNativeArtifactV2 } from "./semantic_admissibility.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
@@ -70,6 +71,7 @@ export function resultObservationEligibilityV2(snapshot: AssignmentSnapshotV2, o
       || operation.settlement_state !== "settled") return "ineligible";
   const applied = operation.requested_effect === "apply" ? operation
     : operation.verification_of_operation_id ? snapshot.operations[operation.verification_of_operation_id] : undefined;
+  if (!operationUsesCurrentInputsV2(snapshot, operation) || (applied && !operationUsesCurrentInputsV2(snapshot, applied))) return "ineligible";
   const verifiedArtifact = snapshot.spec.requested_effect === "apply" && snapshot.spec.result_delivery_required
     && applied && operationHasAppliedNativeArtifactV2(applied)
     && appliedOperationHasVerifiedPostconditionV2(snapshot, applied.operation_id);

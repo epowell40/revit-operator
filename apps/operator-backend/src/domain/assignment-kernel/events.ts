@@ -28,7 +28,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "run_superseded"; superseded_by_generation: number }
   | { event_type: "work_unit_state_changed"; work_unit_id: WorkUnitIdV2; state: AssignmentWorkUnitStateV2; reason: string }
   | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string; declaration?: DiscoveredAssignmentInputV2 }
-  | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown }
+  | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown; result_freshness?: "invalidate_dependent_results_v1" }
   | { event_type: "provider_call_recorded"; call_id: string; provider: string; model: string; reasoning_effort: string | null; success: boolean }
   | {
       event_type: "provider_call_state_recorded";

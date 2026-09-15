@@ -302,6 +302,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (pathOf(apply) === "/revit/mep-route-workflow") return " For one straight rectangular duct with explicitly open ends, verify the exact created elementId after apply: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height], then POST /revit/get-connectors with includeAllRefs=true. The combined native reads must match the admitted coordinates, type, level, system, dimensions and both open ends. Parameters alone cannot verify placement or connections. This typed contract does not cover other route shapes or connected/multiple segments; do not claim those verified or repeat an applied route.";
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;

@@ -194,6 +194,7 @@ import {
   recordAssignmentProgressEpochV2
 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { openDuctPostconditionSatisfiedV2 } from "../src/verification/open_duct_postcondition_v2.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -273,6 +274,52 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
     }
   };
 }
+
+test("C35 open duct needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c35-open-duct-readback.json","utf8"));
+  const {goal,snapshot}=setup("apply");
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:"c35-route",provider_turn_id:"route-turn",
+    capability_id:"revit_call_tool",classified_effect:"apply",arguments:f.input,opened_at:"2026-09-15T20:00:00.000Z"});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const applied=envelope(apply.operation_id,apply.binding,{status:"AppliedVisualVerificationReady",createdElementIds:[1542919]},"applied");
+  Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:"operator-native/POST:/revit/mep-route-workflow/v2",affected_target_identities:f.affected,completed_at:"2026-09-15T20:00:01.000Z"});
+  settleAssignmentKernelOperationV2(apply,applied);
+  prepareCodexAssignmentProgressV2(apply.binding);
+  const read=(name:string,path:string,payload:unknown,time:string) => {
+    const lease=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,controller_request_id:name,
+      provider_turn_id:"verify-turn",capability_id:"revit_call_tool",classified_effect:"read",
+      target_tokens:["id:1542919"],
+      arguments:{method:"POST",path,body:{elementIds:[1542919],includeAllRefs:true}},opened_at:time});
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const result=envelope(lease.operation_id,lease.binding,payload);
+    Object.assign(result.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${path}/v2`,completed_at:time});
+    return settleAssignmentKernelOperationV2(lease,result).snapshot;
+  };
+  const parameters=read("parameters","/revit/get-parameters",f.parameters,"2026-09-15T20:00:02.000Z");
+  assert.equal(parameters.terminal,false);
+  assert(deriveProgressGapsV2(parameters).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  const guidance=prepareCodexAssignmentProgressV2(parameters.current_binding).prompt;
+  assert.match(guidance,/get-connectors/);
+  const verified=read("connectors","/revit/get-connectors",f.connectors,"2026-09-15T20:00:03.000Z");
+  assert(!deriveProgressGapsV2(verified).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  assert(Object.values(verified.observations).some(o=>o.facts.some(fact=>fact.fact_id==="verification.postcondition_satisfied"&&fact.value===true)));
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id),verified);
+  const subject=verified.operations[apply.operation_id]!;
+  const finalRead=Object.values(verified.operations).find(op=>op.request_identity?.path==="/revit/get-connectors")!.result!;
+  assert.equal(openDuctPostconditionSatisfiedV2(verified,subject,finalRead,f.connectors),true);
+  for(const [name,change] of [
+    ["foreign read",(s:any,a:any,r:any)=>r.binding={...r.binding,assignment_id:"other"}],
+    ["unknown edit",(s:any,a:any)=>a.persistent_effect="unknown"],
+    ["model read",(s:any,a:any,r:any)=>r.authority="dynamic-runtime"],
+    ["wrong payload hash",(s:any,a:any,r:any)=>r.raw_payload_hash="0".repeat(64)],
+    ["read before edit",(s:any,a:any,r:any)=>r.completed_at="2020-01-01T00:00:00Z"],
+    ["corrupt retained hash",(s:any)=>{const op=Object.values(s.operations).find((op:any)=>op.request_identity?.path==="/revit/get-parameters") as any; s.observations[op.observation_ids[0]].raw_payload_hash="0".repeat(64);}],
+    ["intervening edit",(s:any,a:any)=>s.operations.other={...a,operation_id:"other"}]
+  ] as Array<[string,(s:any,a:any,r:any)=>void]>) {
+    const s=structuredClone(verified), a=s.operations[apply.operation_id]!, r=structuredClone(finalRead);
+    change(s,a,r);assert.equal(openDuctPostconditionSatisfiedV2(s,a,r,f.connectors),false,name);
+  }
+}));
 
 test("plan-only preview settles without invented rollback and permits the authorized apply", () => workspace(() => {
   const { goal, snapshot } = setup("apply");

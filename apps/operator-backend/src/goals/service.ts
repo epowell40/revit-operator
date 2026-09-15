@@ -1,3 +1,4 @@
+import { readJsonWithBackup as readJson } from "./content_verified_projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -270,17 +271,6 @@ function writeJson(filePath: string, value: unknown): void {
     if (handle !== null) fs.closeSync(handle);
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
   }
-}
-
-function readJson<T>(filePath: string): T | null {
-  for (const candidate of [filePath, `${filePath}.previous`]) {
-    try {
-      if (fs.existsSync(candidate)) return JSON.parse(fs.readFileSync(candidate, "utf8")) as T;
-    } catch {
-      // A torn/corrupt primary falls back to the last atomically replaced copy.
-    }
-  }
-  return null;
 }
 
 function withGoalLock<T>(goalId: string, fn: () => T): T {
@@ -835,6 +825,12 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
 
 export function __testOnlyResetGoalListCache(): void {
   resetGoalListCaches();
+}
+
+/** Internal storage path; authoritative callers must validate its actual bytes. */
+export function getGoalStoragePath(goalId: string): string | null {
+  const id = clip(goalId, 160);
+  return id ? goalPath(id) : null;
 }
 
 export function getGoal(goalId: string): GoalRecord | null {

@@ -1,4 +1,5 @@
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
+import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
@@ -619,6 +620,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         break;
       }
       case "input_supplied":
+        kernelAssertV2(event.result_freshness === undefined || event.result_freshness === "invalidate_dependent_results_v1", "input_result_freshness_invalid", "Input result freshness must use the host contract.");
         kernelAssertV2(state.clarificationByVariable.get(event.variable_id) === event.clarification_id, "clarification_binding_invalid", "Input does not resolve the current clarification.");
         state.clarificationByVariable.delete(event.variable_id);
         snapshot = {
@@ -630,6 +632,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
             [event.clarification_id]: { ...snapshot.clarifications[event.clarification_id]!, resolved_at: event.occurred_at }
           }
         };
+        // Explicit event version preserves historical replay while all newly
+        // authenticated answers invalidate dependent pre-answer results.
+        if (event.result_freshness === "invalidate_dependent_results_v1") snapshot = invalidateDependentInputResultsV2(snapshot, event.variable_id);
         break;
       case "provider_call_recorded":
         kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider-call telemetry requires a stable call identity.");

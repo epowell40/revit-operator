@@ -1,3 +1,4 @@
+import { createContentVerifiedProjection } from "../goals/content_verified_projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +12,7 @@ import {
   type AssignmentSnapshotV2,
   type AssignmentSpecV2
 } from "../domain/assignment-kernel/index.js";
-import { getGoal, listGoalsForSession, mutateGoalRecord, type GoalRecord, type GoalStatus } from "../goals/service.js";
+import { getGoal, getGoalStoragePath, listGoalsForSession, mutateGoalRecord, type GoalRecord, type GoalStatus } from "../goals/service.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
 export const ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA = "revit-operator.assignment-kernel-journal/v2" as const;
@@ -173,13 +174,20 @@ function eventDigest(event: AssignmentEventV2): string {
   return createHash("sha256").update(canonicalJsonV2(event), "utf8").digest("hex");
 }
 
-export function getAssignmentKernelSnapshotV2(goalId: string): AssignmentSnapshotV2 | null {
-  const goal = getGoal(goalId);
-  if (!goal) return null;
-  const record = normalizeAssignmentKernelJournalV2(goal.assignment_kernel_v2);
-  // Replay the complete journal once. Constructing an append-only journal here
-  // revalidated every prefix and made ordinary discovery quadratic in events.
+const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentSnapshotV2 | null>((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as { assignment_kernel_v2?: unknown }).assignment_kernel_v2;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Partial<AssignmentKernelJournalRecordV2>;
+  if (record.schema !== ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA || !Array.isArray(record.events)) return null;
+  // The fresh parsed record is private to this projection. The pure reducer
+  // validates and copies each event; do not clone the complete history twice.
   return record.events.length > 0 ? reduceAssignmentEventsV2(record.events) : null;
+});
+
+export function getAssignmentKernelSnapshotV2(goalId: string): AssignmentSnapshotV2 | null {
+  const filePath = getGoalStoragePath(goalId);
+  return filePath ? assignmentSnapshotProjection.read(filePath) : null;
 }
 
 export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentEventV2): AssignmentKernelAppendResultV2 {

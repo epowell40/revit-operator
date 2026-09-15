@@ -460,3 +460,42 @@ test("multiple V2 criteria require an explicit semantic-fact contract instead of
     ["task.result_available"], ["result.payload_hash"]
   ]);
 }));
+
+test("content-verified snapshot reads avoid replay while changed bytes and invalid history remain authoritative", () => workspace(() => {
+  const { goal, binding } = fixture();
+  const outcome = getAssignmentKernelSnapshotV2(goal.id)!.outcome;
+  for (let version = 2; version <= 38; version++) {
+    appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, version, { event_type: "outcome_derived", outcome, reason: "Retained history for snapshot replay." }));
+  }
+  const before = getAssignmentKernelSnapshotV2(goal.id)!;
+  const clone = globalThis.structuredClone;
+  let clones = 0;
+  globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => {
+    clones++;
+    return clone(value, options);
+  }) as typeof structuredClone;
+  let warm;
+  try { warm = getAssignmentKernelSnapshotV2(goal.id)!; }
+  finally { globalThis.structuredClone = clone; }
+  assert.deepEqual(warm, before);
+  assert.ok(clones <= 4, `Warm snapshot replayed retained history (${clones} clones).`);
+  warm.spec.source_user_request = "Caller mutation";
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
+
+  const file = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "artifacts", "goals", goal.id, "goal.json");
+  const bytes = fs.readFileSync(file, "utf8");
+  const stamp = fs.statSync(file);
+  const persisted = JSON.parse(bytes);
+  persisted.assignment_kernel_v2.events[0].spec.source_user_request = "Return the different inventory.";
+  const changed = JSON.stringify(persisted, null, 2) + "\n";
+  assert.equal(Buffer.byteLength(changed), Buffer.byteLength(bytes));
+  fs.writeFileSync(file, changed);
+  fs.utimesSync(file, stamp.atime, stamp.mtime);
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.spec.source_user_request, "Return the different inventory.");
+
+  persisted.assignment_kernel_v2.events.at(-1).assignment_version = 99;
+  fs.writeFileSync(file, JSON.stringify(persisted, null, 2) + "\n");
+  fs.utimesSync(file, stamp.atime, stamp.mtime);
+  assert.throws(() => getAssignmentKernelSnapshotV2(goal.id), /version/i,
+    "Semantic rejection cannot fall back to the valid previous file or prior cached snapshot.");
+}));

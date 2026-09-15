@@ -1,3 +1,5 @@
+import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+import { appliedOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/index.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { resultObservationEligibilityV2 } from "../domain/assignment-kernel/result_delivery.js";
 
@@ -22,6 +24,11 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
       eligible_criterion_ids: observation.eligible_criterion_ids,
       capability_id: snapshot.operations[observation.operation_id]?.capability_id
     })),
+    pending_verification: Object.values(snapshot.operations)
+      .filter(op => op.requested_effect === "apply" && op.persistent_effect === "applied" && op.settlement_state === "settled"
+        && sameAssignmentBindingV2(op.binding, snapshot.current_binding) && !appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id))
+      .slice(0, 8).map(op => ({ operation_id: op.operation_id, affected_targets: op.result?.affected_target_identities ?? [],
+        guidance: verificationCapabilityGuidanceV2({ capability_id: op.capability_id, path: op.request_identity?.path, target_id: op.target.target_id }) })),
     omitted: Math.max(0, observations.length - 32),
     usage: "Criteria use eligible_criterion_ids. resultItems require eligibility=result; diagnostic permits execution_status/diagnostics/logs only. Retrieve missing fields by evidence_id. Never substitute operation IDs."
   });
