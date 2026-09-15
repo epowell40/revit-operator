@@ -1,9 +1,12 @@
 using System;
 using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 namespace RevitBridge.Common
 {
@@ -56,6 +59,50 @@ namespace RevitBridge.Common
         }
 
         private string GetGrantFilePath() => _grantFilePath;
+
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle OpenPublicationFile(string path, uint access, uint share, IntPtr security, uint creation, uint attributes, IntPtr template);
+
+        [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool RenamePublicationFile(SafeFileHandle handle, int informationClass, IntPtr information, uint size);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PublicationRenameInfo
+        {
+            public uint Flags;
+            public IntPtr RootDirectory;
+            public uint FileNameLength;
+            public char FileName;
+        }
+
+        private static void PublishGrantFile(string temporary, string target)
+        {
+            // Windows 10+ POSIX rename keeps existing readers on the old complete
+            // file while subsequent opens see the new complete file. ReplaceFile
+            // has a transient sharing/name gap; MoveFileEx rejects held readers.
+            // Never fall back to deleting/truncating the active grant or ignoring
+            // read-only/access-control failures on an unsupported filesystem.
+            const uint DeleteAccess = 0x10000, SharedReadWriteDelete = 0x7, OpenExisting = 3;
+            const int FileRenameInfoEx = 22;
+            const uint ReplaceExistingAndPosixSemantics = 0x3;
+            using var handle = OpenPublicationFile(temporary, DeleteAccess, SharedReadWriteDelete, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+            if (handle.IsInvalid)
+                throw new IOException("Could not open the completed write grant for publication.", new Win32Exception(Marshal.GetLastWin32Error()));
+            var name = Encoding.Unicode.GetBytes(Path.GetFullPath(target));
+            var offset = Marshal.OffsetOf<PublicationRenameInfo>(nameof(PublicationRenameInfo.FileName)).ToInt32();
+            var size = checked(Marshal.SizeOf<PublicationRenameInfo>() + name.Length + sizeof(char));
+            var information = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(new PublicationRenameInfo { Flags = ReplaceExistingAndPosixSemantics, FileNameLength = (uint)name.Length }, information, false);
+                Marshal.Copy(name, 0, IntPtr.Add(information, offset), name.Length);
+                Marshal.WriteInt16(information, offset + name.Length, 0);
+                if (!RenamePublicationFile(handle, FileRenameInfoEx, information, (uint)size))
+                    throw new IOException("Could not publish the complete write grant.", new Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            finally { Marshal.FreeHGlobal(information); }
+        }
 
         private string ReadGrantFile()
         {
@@ -146,12 +193,7 @@ namespace RevitBridge.Common
                 try
                 {
                     File.WriteAllText(temporary, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                    if (File.Exists(target)) File.Replace(temporary, target, null);
-                    else
-                    {
-                        try { File.Move(temporary, target); }
-                        catch (IOException) when (File.Exists(target)) { File.Replace(temporary, target, null); }
-                    }
+                    PublishGrantFile(temporary, target);
                 }
                 finally { if (File.Exists(temporary)) File.Delete(temporary); }
 

@@ -1751,6 +1751,13 @@
         "backend:brain.test.ts",
         "backend:assignment_kernel_v2_lifecycle.test.ts"
       ]
+    },
+    {
+      "id": "concurrent-native-grant-publication-temporarily-hides-the-active-file",
+      "coverage": [
+        "dotnet:OperatorWriteGrantRenewalTests",
+        "dotnet:OperatorWriteGrantAdmissionTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

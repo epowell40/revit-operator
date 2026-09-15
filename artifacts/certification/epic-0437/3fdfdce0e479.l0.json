@@ -4761,7 +4761,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorWriteGrantRenewalTests.cs",
-      "sha256": "sha256:9d16aebc19add04b4ec949041808113935e05dee70695420cd85608b14be4859"
+      "sha256": "sha256:12e97f7a9be9ce87e1879b4741131339a85aade408d6775abcb7fbe5d746266d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ParameterReadPagingPolicyTests.cs",
@@ -5278,7 +5278,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWriteGrant.cs",
-      "sha256": "sha256:7ac0d76e9234401f47612d626e83e738847c5afc4bc66400189126b697e4d157"
+      "sha256": "sha256:96805c197604ec0de2fbbaa684b38141f9743f0fa5e761afb090806ab1721410"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ParameterReadPagingPolicy.cs",
@@ -6773,7 +6773,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:8cf764146a8451b239d40527af2775d7de5e479f2169ebcd830b51ce5c77d10f",
+  "inputs_hash": "sha256:56f1bd0fd2fdd261699644a4f6f69445e0f3d2a4a6f65363fde7e3a1b066a563",
   "result": {
     "passed": true,
     "checks": [
