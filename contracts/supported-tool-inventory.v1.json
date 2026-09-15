@@ -503,8 +503,7 @@
     "web_fetch_evidence",
     "workspace_pdf_merge",
     "workspace_pdf_reorder",
-    "workspace_rename_file",
-    "write_excel"
+    "workspace_rename_file"
   ],
   "internal_routes": [
     {

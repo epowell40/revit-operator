@@ -115,7 +115,8 @@
     "deferred_proposal_admission.test.ts",
     "discovered_input_projection.test.ts",
     "read_attachment_redline.test.ts",
-    "pdf_source_annotations.test.ts"
+    "pdf_source_annotations.test.ts",
+    "goals_service.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -192,7 +193,10 @@
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
     "OperatorWorkbookWriterTests",
-    "ExportedRasterFrameGeometryTests"
+    "ExportedRasterFrameGeometryTests",
+    "MepDuctProfilePolicyTests",
+    "MepDuctTypeSelectionPolicyTests",
+    "MepRouteSizeInputPolicyTests"
   ],
   "failure_families": [
     {
@@ -1806,6 +1810,37 @@
       "coverage": [
         "backend:assignment_kernel_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-duct-preview-omits-observed-rollback-and-quarantines-the-next-authorized-edit",
+      "coverage": [
+        "dotnet:MepDuctTypeSelectionPolicyTests",
+        "dotnet:MepDuctProfilePolicyTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/previewSemanticEvidenceV2.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-brief-tables-and-late-instructions-are-flattened-or-truncated-before-resume",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:goals_service.test.ts"
+      ]
+    },
+    {
+      "id": "scoped-engineering-workbook-request-is-refused-as-unauthorized-file-creation",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
+      ]
+    },
+    {
+      "id": "advertised-legacy-workbook-writer-has-no-executable-assignment-effect-contract",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
       ]
     }
   ],

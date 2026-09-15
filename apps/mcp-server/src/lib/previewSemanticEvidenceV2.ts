@@ -1,5 +1,6 @@
 import { normalizeTextNoteTextV1, textNoteRoundTripMatchesV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactReceiptEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { admitsMepDuctPreview } from "./mepDuctPreviewEvidence.js";
 
 type Scalar = string | number | boolean | null;
 
@@ -78,6 +79,13 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
+  if (path === "/revit/create-duct" || path === "/revit/create-mep-route" && object(input.payload).kind === "duct") {
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && admitsMepDuctPreview(path, input.payload, input.requestBody);
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true }
+    ] : [] };
+  }
   if (path === "/revit/export-elements-xlsx") {
     const result = object(input.payload), receipt = object(result.artifact_receipt), request = object(input.requestBody);
     const ids = request.elementIds, names = request.parameterNames;

@@ -629,9 +629,9 @@ function semanticFacts(
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
   }
   const root = object(payload);
-  const typedPreviewResult = evidence === "task_result"
-    && domainSucceeded
-    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(path.toLowerCase());
+  // The typed adapter owns route recognition; keep admission and published
+  // semantic facts on the same registry so new adapters cannot lose their proof.
+  const typedPreviewResult = evidence === "task_result" && domainSucceeded;
   if (typedPreviewResult) {
     facts.push(...previewSemanticEvidenceV2({
       path,

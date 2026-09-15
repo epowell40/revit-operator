@@ -156,9 +156,29 @@ namespace RevitBridge.Logic.Handlers.MEP
                 totalLength += len;
             }
 
+            string? requiredDuctShape = null;
+            if (kind == "duct")
+            {
+                try
+                {
+                    for (var i = 0; i < routeSegmentCount; i++)
+                    {
+                        var segmentSize = MepRoutingUtil.ChooseSize(kind, segmentSizeTexts[i], p.diameter, p.pipeSize, p.sizePolicy, new List<string>());
+                        var shape = MepDuctProfilePolicy.Resolve(p.ductShape, segmentSize.WidthFt, segmentSize.HeightFt, segmentSize.DiameterFt);
+                        if (requiredDuctShape != null && requiredDuctShape != shape)
+                            throw new ArgumentException("One route uses one duct type. Split mixed-profile segments into separate routes with compatible types.");
+                        requiredDuctShape = shape;
+                    }
+                }
+                catch (ArgumentException ex)
+                {
+                    return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = ex.Message, warnings });
+                }
+            }
+
             MEPSystemType? sysType = kind == "conduit" ? null : MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
             MepRoutingUtil.DuctTypeResolution? ductTypeResolution = kind == "duct"
-                ? MepRoutingUtil.ResolveDuctType(doc, p.ductTypeId, p.ductType)
+                ? MepRoutingUtil.ResolveDuctType(doc, p.ductTypeId, p.ductType, requiredDuctShape)
                 : null;
             DuctType? dType = ductTypeResolution?.Selected;
             MepRoutingUtil.PipeTypeResolution? pipeTypeResolution = kind == "pipe"
@@ -554,7 +574,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 level = ctx.Level == null ? null : new { id = ElementIdCompat.GetValue(ctx.Level.Id), name = ctx.Level.Name, elevation = ctx.Level.Elevation },
                 systemType = sysType == null ? null : new { id = ElementIdCompat.GetValue(sysType.Id), name = sysType.Name },
-                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name, familyName = dType.FamilyName },
+                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name, familyName = dType.FamilyName, shape = dType.Shape.ToString().ToLowerInvariant() },
                 pipeType = pType == null ? null : new { id = ElementIdCompat.GetValue(pType.Id), name = pType.Name },
                 conduitType = conduitType == null ? null : new { id = ElementIdCompat.GetValue(conduitType.Id), name = conduitType.Name }
             };

@@ -37,8 +37,7 @@ const certifiedSafeNonRevitAliases = [
   "web_fetch_evidence",
   "workspace_pdf_merge",
   "workspace_pdf_reorder",
-  "workspace_rename_file",
-  "write_excel"
+  "workspace_rename_file"
 ].sort();
 const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=", "base64");
 
@@ -224,11 +223,13 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 93, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 92, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
+
+  assert.equal(laboratoryNames.includes("write_excel"), false, "Unsettled legacy workbook writer is not advertised as executable.");
 
   const hostedGeneralNames = await listToolsForExposureEnv({
     REVIT_OPERATOR_MODE: "hosted",
@@ -425,12 +426,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 93, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal(tools.tools.length, 92, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
+  for (const field of ["ductSize", "width", "height", "diameter", "ductTypeId", "ductShape"])
+    assert.ok(ductSchema.properties?.[field], `The executable duct alias must expose ${field}.`);
   assert.equal([...names].filter(name => name.startsWith("revit_")).length, 74, "Laboratory mode must preserve retained revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   // Retirement must remove discovery and executable aliases before either transport.
   const retiredPrototypeAliases = [
-    "revit_place_vavs", "revit_run_thermal_zoning", "revit_run_load_calc", "revit_run_code_check"
+    "revit_place_vavs", "revit_run_thermal_zoning", "revit_run_load_calc", "revit_run_code_check", "write_excel"
   ];
   const requestsBeforeRetiredCalls = { backend: backendRequests, bridge: bridgeRequests.length };
   for (const name of retiredPrototypeAliases) {

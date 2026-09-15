@@ -162,8 +162,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "web_fetch_evidence",
   "workspace_pdf_merge",
   "workspace_pdf_reorder",
-  "workspace_rename_file",
-  "write_excel"
+  "workspace_rename_file"
 ]);
 
 function isRegisteredMcpToolExposed(name: string): boolean {
@@ -3407,12 +3406,14 @@ server.tool("revit_create_text", "Create a text note on a view/sheet.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_create_duct", "Create a duct segment.", 
+server.tool("revit_create_duct", "Create one straight duct with explicit size, compatible native type selection, geometry readback and an observed transaction receipt. Use dryRun only for a requested preview.", 
   { 
     levelName: z.string(), 
     startX: z.number(), startY: z.number(), startZ: z.number(),
     endX: z.number(), endY: z.number(), endZ: z.number(),
     systemType: z.string().optional(), ductType: z.string().optional(),
+    ductTypeId: z.number().int().positive().optional(), ductShape: z.enum(["round", "rectangular", "oval"]).optional(),
+    ductSize: z.string().optional(), width: z.string().optional(), height: z.string().optional(), diameter: z.string().optional(),
     dryRun: z.boolean().default(false).describe("If true, simulates creation and returns expected result without applying changes.")
   },
   async (args) => {
@@ -4092,26 +4093,6 @@ server.tool("read_excel", "Read data from an Excel file.",
       if (!sheet) throw new Error("Sheet not found");
       const data = xlsx.utils.sheet_to_json(sheet);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
-});
-
-server.tool("write_excel", "Write data to an Excel file.", 
-  { filePath: z.string(), sheetName: z.string().default("Sheet1"), data: z.array(z.record(z.any())) },
-  async ({ filePath, sheetName, data }) => {
-    try {
-      const fullPath = resolveFileUnderWorkspace(filePath);
-      try { fs.mkdirSync(path.dirname(fullPath), { recursive: true }); } catch { /* ignore */ }
-      const workbook = fs.existsSync(fullPath) ? xlsx.readFile(fullPath) : xlsx.utils.book_new();
-      const worksheet = xlsx.utils.json_to_sheet(data);
-      
-      if (workbook.Sheets[sheetName]) {
-        workbook.Sheets[sheetName] = worksheet;
-      } else {
-        xlsx.utils.book_append_sheet(workbook, worksheet, sheetName);
-      }
-      
-      xlsx.writeFile(workbook, fullPath);
-      return { content: [{ type: "text", text: `Successfully wrote ${data.length} rows to ${fullPath}` }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 

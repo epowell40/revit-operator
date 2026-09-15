@@ -16,6 +16,25 @@ const prompt = "Prepare a room-by-room Excel workbook of the information we can 
 const context = { revit: { source: { live: true }, process_id: 42, document: { title: "Rooms", path: "C:/fixture/Rooms.rvt", projectIdentity: { fingerprint: "model" } } } };
 const exportArgs = { method: "POST", path: "/revit/export-elements-xlsx", body: { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx", dryRun: false } };
 
+test("scoped workbook briefs retain file authority through normal admission and no-model-write guards", () => {
+  for (const text of [
+    "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.",
+    "For these spaces, please prepare an Excel workbook. Do not change the model.",
+    "Using the open model, export a workbook of spaces. Flag missing values. Do not change Revit."
+  ]) {
+    assert.equal(requestedWorkbookExport(text), true, text);
+    assert.equal(classifyAutoGoalRequest(text).requestedEffect, "apply");
+    const owner = {}, lease = beginTeammateLoopOwner(owner, { user_text: text, context } as any);
+    try {
+      assert.equal(guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: exportArgs }).allowed, true);
+      assert.equal(guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/delete", body: { elementIds: [42] } } }).allowed, false);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+  for (const text of ["For these spaces, should we prepare an Excel workbook?", "For these spaces, do not prepare an Excel workbook.",
+    "Using the open model, explain how to prepare an Excel workbook.", "For these spaces, prepare a workbook without writing any output files."])
+    assert.equal(requestedWorkbookExport(text), false, text);
+});
+
 test("C25 workbook request authorizes one file capability while preserving the no-model-write boundary", () => {
   assert.equal(requestedWorkbookExport(prompt), true);
   assert.equal(classifyAutoGoalRequest(prompt).requestedEffect, "apply");

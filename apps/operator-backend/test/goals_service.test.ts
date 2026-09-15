@@ -41,6 +41,18 @@ import {
 
 const TEST_AUTHORITY_SECRET = "goal-authority-unit-test-secret-32-bytes-minimum";
 
+test("task briefs keep literal structure and reject oversize input instead of silently clipping it", () => withWorkspace(() => {
+  const brief = "Prepare the workbook.\n\n| Space | Flow |\n| 301 | 600 |\n\n" + "  Keep this review condition.\n".repeat(220);
+  const goal = createGoal({ title: "Engineering brief", objective: brief, acceptance_criteria: ["Deliver the requested file"] });
+  assert.equal(goal.objective, brief.trim());
+  assert.equal(getGoal(goal.id)!.objective, brief.trim());
+  const revised = brief + "\nFinal condition: ask about the missing return flow.";
+  assert.equal(updateGoal(goal.id, { objective: revised }).objective, revised);
+  assert.throws(() => updateGoal(goal.id, { objective: "x".repeat(20_001) }), /20,000 characters/);
+  assert.equal(getGoal(goal.id)!.objective, revised, "rejected input cannot alter the saved brief");
+  assert.throws(() => createGoal({ title: "Too large", objective: "x".repeat(20_001), acceptance_criteria: ["Keep all instructions"] }), /20,000 characters/);
+}));
+
 function withWorkspace<T>(fn: (authority: LocalGoalEvidenceAuthority) => T): T {
   const prev = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goals-"));

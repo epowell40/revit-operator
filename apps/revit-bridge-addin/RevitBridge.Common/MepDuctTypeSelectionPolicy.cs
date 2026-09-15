@@ -9,6 +9,7 @@ namespace RevitBridge.Common
         public long Id { get; set; }
         public string Name { get; set; } = string.Empty;
         public string FamilyName { get; set; } = string.Empty;
+        public string Shape { get; set; } = "unknown";
     }
 
     public sealed class MepDuctTypeSelection
@@ -29,18 +30,29 @@ namespace RevitBridge.Common
         public static MepDuctTypeSelection Resolve(
             IEnumerable<MepDuctTypeCandidate>? source,
             long? requestedId,
-            string? requestedName)
+            string? requestedName,
+            string? requestedShape = null)
         {
-            var candidates = (source ?? Array.Empty<MepDuctTypeCandidate>())
+            var all = (source ?? Array.Empty<MepDuctTypeCandidate>())
                 .Where(x => x != null)
                 .OrderBy(x => x.Id)
                 .ToList();
+            var shape = (requestedShape ?? string.Empty).Trim().ToLowerInvariant();
+            if (shape.Length > 0 && shape != "round" && shape != "rectangular" && shape != "oval")
+                return new MepDuctTypeSelection { Candidates = all, Error = "ductShape must be round, rectangular, or oval." };
+            var candidates = shape.Length == 0 ? all : all.Where(x =>
+                string.Equals(x.Shape, shape, StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (requestedId.HasValue)
             {
-                var byId = candidates.Where(x => x.Id == requestedId.Value).ToList();
+                var byId = all.Where(x => x.Id == requestedId.Value).ToList();
                 if (byId.Count == 1)
                 {
+                    if (shape.Length > 0 && !string.Equals(byId[0].Shape, shape, StringComparison.OrdinalIgnoreCase))
+                        return new MepDuctTypeSelection {
+                            Candidates = candidates,
+                            Error = $"Duct type id {requestedId.Value} has native profile '{byId[0].Shape}', but the requested size/ductShape requires '{shape}'. Select an explicitly compatible duct type; no transaction was started."
+                        };
                     return new MepDuctTypeSelection { Selected = byId[0], Candidates = byId };
                 }
 
@@ -64,7 +76,7 @@ namespace RevitBridge.Common
                     Candidates = candidates,
                     Ambiguous = candidates.Count > 1,
                     Error = candidates.Count == 0
-                        ? "No duct types are loaded."
+                        ? shape.Length > 0 ? $"No loaded duct type has the required native '{shape}' profile." : "No duct types are loaded."
                         : "Multiple duct types are loaded; provide ductTypeId or a unique ductType name."
                 };
             }

@@ -27,7 +27,10 @@ export type AutoGoalDecision = {
 };
 
 export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
-  const text = (userText ?? "").replace(/\s+/g, " ").trim();
+  const objective = (userText ?? "").trim();
+  // Classification and titles use a compact copy. The immutable assignment
+  // keeps tables, code indentation and paragraph boundaries from the brief.
+  const text = objective.replace(/\s+/g, " ");
   const signals: string[] = [];
   if (!text) return empty(text);
   if (MULTI_ACTION.test(text)) signals.push("multiple Revit actions or batch scope");
@@ -63,7 +66,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     score,
     signals,
     title: makeTitle(text),
-    objective: text,
+    objective,
     requestedEffect,
     // Automatic admission describes one requested outcome. Evidence provenance
     // and bounded retries are kernel policies, not additional domain criteria

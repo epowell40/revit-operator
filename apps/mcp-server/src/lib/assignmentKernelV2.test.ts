@@ -4,6 +4,31 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
+
+test("single-duct and route previews preserve rollback authority and typed proof at the MCP boundary", async () => {
+  for (const legacy of [false, true]) for (const variant of ["valid", "wrong_size", "missing_receipt"] as const) {
+    const f = ductPreviewFixture(legacy);
+    if (variant === "wrong_size") f.payload.segments[0].nativeSizeReadback.widthFt = 2;
+    if (variant === "missing_receipt") {
+      delete f.payload.transaction;
+      f.payload.canonical_attempt_settlement.effect_state = "unknown";
+      f.payload.canonical_attempt_settlement.effect_authority = "native_host";
+      f.payload.canonical_attempt_settlement.effect_reason = "native_handler_returned_without_authoritative_settlement";
+    }
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: f.path, body: f.body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", f.path, f.body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", f.path, f.payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, variant === "valid" ? "succeeded" : "failed_after_dispatch");
+    assert.equal(result.persistent_effect, variant === "missing_receipt" ? "unknown" : "none");
+    assert.equal(result.native_transaction_state, variant === "missing_receipt" ? "unknown" : "rolled_back");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "task.preview_valid"), variant === "valid");
+  }
+});
 
 test("blocked MEP trial is a failed operation with its authoritative rollback, while missing transaction truth stays unknown", async () => {
   for (const confirmed of [false, true]) {

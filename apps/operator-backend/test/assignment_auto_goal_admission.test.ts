@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { prepareAssignmentTurn, bindPreparedAssignmentToRequest } from "../src/assignments/turn_preparation.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
@@ -17,9 +18,58 @@ import { setAgentGoal } from "../src/goals/service.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { navigationPreservationRequests, scopedFurtherChangeRequests } from "./navigation_preservation.fixtures.js";
 
+test("multiline engineering briefs survive normal admission, provider binding and a fresh process", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-multiline-brief-"));
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const previousV2 = process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1";
+  __testOnlyResetGoalListCache();
+  const prompt = [
+    "Prepare a source-checked workbook for these spaces. Do not change Revit.",
+    "", "| Space | Supply CFM | Return CFM |", "| --- | ---: | ---: |",
+    "| 301 | 600 | 600 |", "| 307 | Ask me | Ask me |", "",
+    "Preserve this literal example when recording the review note:",
+    "```text", "  Supply:  0", "    Exhaust: 75", "```", "",
+    "Ask for missing flows. Keep the original instructions when I answer.",
+    ...Array.from({ length: 100 }, (_, index) => `Review item ${index + 1}: preserve missing or conflicting space information.`),
+    "Final constraint after 5,000 characters: do not infer the missing flows."
+  ].join("\n");
+  try {
+    runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-token") }, () => {
+      assert.equal(classifyAutoGoalRequest(prompt).objective, prompt);
+      const prepared = prepareAssignmentTurn({ sessionId: "multiline-ui", messageId: "brief", userText: prompt,
+        toolResults: [], source: "chat", createdBy: null,
+        requestContext: { revit: { document: { projectIdentity: { fingerprint: "test-model" } } } } });
+      assert.equal(prepared?.kernelVersion, 2);
+      const snapshot = getAssignmentKernelSnapshotV2(prepared!.assignmentId)!;
+      assert.equal(snapshot.spec.source_user_request, prompt);
+      assert.equal(snapshot.spec.requested_effect, "apply", "exporting the requested workbook is an artifact write");
+      const bound = bindPreparedAssignmentToRequest({ session_id: "multiline-ui", user_text: prompt } as any, prepared);
+      assert.equal((bound.context as { ui: { authoritative_user_text: string } }).ui.authoritative_user_text, prompt);
+      const storeUrl = new URL("../src/assignments/assignment_kernel_v2_store.js", import.meta.url).href;
+      const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", `
+        import { getAssignmentKernelSnapshotV2 } from ${JSON.stringify(storeUrl)};
+        const snapshot = getAssignmentKernelSnapshotV2(${JSON.stringify(prepared!.assignmentId)});
+        console.log(JSON.stringify({ source: snapshot.spec.source_user_request, terminal: snapshot.terminal }));
+      `], { encoding: "utf8", timeout: 20_000 });
+      assert.equal(child.status, 0, child.stderr || child.error?.message);
+      assert.deepEqual(JSON.parse(child.stdout), { source: prompt, terminal: false });
+    });
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousV2 === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+    else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previousV2;
+    __testOnlyResetGoalListCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 for (const [effect, prompt, facts] of [
   ...navigationPreservationRequests.map(prompt => ["read", prompt, ["task.result_available"]] as const),
   ...scopedFurtherChangeRequests.map(prompt => ["apply", prompt, ["task.result_available"]] as const),
+  ["apply", "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.", ["task.result_available"]],
   ["read", "Review the Heat Recovery Unit Summary schedule in the open model. Tell me how many equipment rows it contains, identify rows with missing Space Number or Space Name, and give me a brief prioritized assessment of what needs attention. Distinguish an actual blank schedule field from information a tool could not read. Do not change the model.", ["task.result_available"]],
   ["read", "Count the rows in the equipment schedule and identify blank fields. Do not change the model.", ["task.result_available"]],
   ["read", "Audit all air terminals and count the missing airflow values. Give me a prioritized gap list. Do not change the model.", ["task.result_available"]],

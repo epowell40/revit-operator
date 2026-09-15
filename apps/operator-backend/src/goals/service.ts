@@ -309,6 +309,12 @@ function clip(value: unknown, max = 1000): string {
   return text.length <= max ? text : `${text.slice(0, max).trim()}...`;
 }
 
+function objectiveText(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length > 20_000) throw new Error("The task brief exceeds 20,000 characters. Attach the full brief and summarize the requested work in the message.");
+  return text;
+}
+
 function asStringList(value: unknown, maxItems = 80, maxLength = 1000): string[] {
   const raw = Array.isArray(value)
     ? value
@@ -780,7 +786,7 @@ export function mutateGoalRecord(goalId: string, mutator: (goal: GoalRecord) => 
 
 export function createGoal(input: GoalCreateInput): GoalRecord {
   const title = clip(input.title, 180);
-  const objective = clip(input.objective, 5000);
+  const objective = objectiveText(input.objective);
   const acceptanceCriteria = asStringList(input.acceptance_criteria ?? input.acceptanceCriteria, 80, 1200);
   if (!title) throw new Error("title is required.");
   if (!objective) throw new Error("objective is required.");
@@ -869,7 +875,7 @@ export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const next: GoalRecord = {
     ...goal,
     title: clip(input.title, 180) || goal.title,
-    objective: clip(input.objective, 5000) || goal.objective,
+    objective: objectiveText(input.objective) || goal.objective,
     acceptance_criteria: (input.acceptance_criteria ?? input.acceptanceCriteria) !== undefined
       ? asStringList(input.acceptance_criteria ?? input.acceptanceCriteria, 80, 1200)
       : goal.acceptance_criteria,

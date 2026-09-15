@@ -8,7 +8,7 @@ export function requestedWorkbookExport(userText: string): boolean {
       || /\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}(?:export|write|save|create|produce|generate)\b[^.!?;\n]{0,60}\b(?:files?|workbooks?|spreadsheets?|excel|xlsx|anything|outputs?)\b/i.test(text)
       || /\bwithout\s+(?:creating|writing|saving|exporting)\b[^.!?;\n]{0,60}\b(?:files?|workbooks?|spreadsheets?|outputs?)\b/i.test(text)
       || /\b(?:do not|don't|dont|never)\b[^.!?;\n]{0,70}\b(?:anything|any files)\b/i.test(text)) return false;
-  return /(?:^|[.!?;\n]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:prepare|create|make|produce|generate|write|save|export)\b[^.!?;\n]{0,180}\b(?:excel|xlsx|workbook|spreadsheet)\b/i.test(text);
+  return /(?:^|[.!?;\n]\s*|\bthen\s+)(?:(?:for|using|from|with|in)\s+[^.!?;\n,]{1,100},\s*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:prepare|create|make|produce|generate|write|save|export)\b[^.!?;\n]{0,180}\b(?:excel|xlsx|workbook|spreadsheet)\b/i.test(text);
 }
 
 /** File creation alone cannot satisfy an explicitly requested review or input list. */

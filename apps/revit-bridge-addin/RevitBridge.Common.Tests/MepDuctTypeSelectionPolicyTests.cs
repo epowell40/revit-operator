@@ -8,9 +8,9 @@ namespace RevitBridge.Common.Tests
     {
         private static readonly List<MepDuctTypeCandidate> Candidates = new List<MepDuctTypeCandidate>
         {
-            new MepDuctTypeCandidate { Id = 30, Name = "Default", FamilyName = "Oval Duct" },
-            new MepDuctTypeCandidate { Id = 10, Name = "Default", FamilyName = "Rectangular Duct" },
-            new MepDuctTypeCandidate { Id = 20, Name = "Default", FamilyName = "Round Duct" }
+            new MepDuctTypeCandidate { Id = 30, Name = "Default", FamilyName = "Oval Duct", Shape = "oval" },
+            new MepDuctTypeCandidate { Id = 10, Name = "Default", FamilyName = "Rectangular Duct", Shape = "rectangular" },
+            new MepDuctTypeCandidate { Id = 20, Name = "Default", FamilyName = "Round Duct", Shape = "round" }
         };
 
         [Fact]
@@ -68,6 +68,43 @@ namespace RevitBridge.Common.Tests
 
             Assert.NotNull(result.Selected);
             Assert.Equal(30, result.Selected!.Id);
+        }
+
+        [Theory]
+        [InlineData("round", 20)]
+        [InlineData("rectangular", 10)]
+        [InlineData("oval", 30)]
+        public void RequestedNativeShapeResolvesOnlyCompatibleType(string shape, long expected)
+        {
+            var result = MepDuctTypeSelectionPolicy.Resolve(Candidates, null, "Default", shape);
+            Assert.Equal(expected, result.Selected!.Id);
+        }
+
+        [Fact]
+        public void IncompatibleExplicitIdentityNeverFallsBackAndReturnsCompatibleCandidates()
+        {
+            var result = MepDuctTypeSelectionPolicy.Resolve(Candidates, 20, "Default", "rectangular");
+            Assert.Null(result.Selected);
+            Assert.Single(result.Candidates);
+            Assert.Equal(10, result.Candidates[0].Id);
+            Assert.Contains("round", result.Error);
+            Assert.Contains("rectangular", result.Error);
+            Assert.Contains("no transaction", result.Error);
+            Assert.Null(MepDuctTypeSelectionPolicy.Resolve(Candidates, null, "Round Duct", "rectangular").Selected);
+            Assert.Null(MepDuctTypeSelectionPolicy.Resolve(Candidates, 999, "Default", "rectangular").Selected);
+        }
+
+        [Fact]
+        public void UnknownProfilesAndAmbiguousCompatibleTypesRemainUnresolved()
+        {
+            var unknown = new MepDuctTypeCandidate { Id = 40, Name = "Rectangular sounding name", FamilyName = "Rectangular Duct" };
+            Assert.Null(MepDuctTypeSelectionPolicy.Resolve(new[] { unknown }, null, null, "rectangular").Selected);
+            var sameShape = new MepDuctTypeCandidate { Id = 50, Name = "Default", Shape = "rectangular" };
+            var result = MepDuctTypeSelectionPolicy.Resolve(new[] { Candidates[0], sameShape, Candidates[1], Candidates[2] }, null, "Default", "rectangular");
+            Assert.Null(result.Selected);
+            Assert.True(result.Ambiguous);
+            Assert.Equal(2, result.Candidates.Count);
+            Assert.Null(MepDuctTypeSelectionPolicy.Resolve(Candidates, null, null, "square").Selected);
         }
     }
 }
