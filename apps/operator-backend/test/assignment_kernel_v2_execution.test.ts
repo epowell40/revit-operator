@@ -275,14 +275,15 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
   };
 }
 
-test("C35 open duct needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+for (const route of ["/revit/mep-route-workflow", "/revit/create-duct"]) test(route + " open duct needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
   const f=JSON.parse(fs.readFileSync("test/fixtures/c35-open-duct-readback.json","utf8"));
+  if(route==="/revit/create-duct"){const b=f.input.body; f.input={method:"POST",path:route,body:{startPoint:b.points[0],endPoint:b.points[1],levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,dryRun:false}};}
   const {goal,snapshot}=setup("apply");
   const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:"c35-route",provider_turn_id:"route-turn",
     capability_id:"revit_call_tool",classified_effect:"apply",arguments:f.input,opened_at:"2026-09-15T20:00:00.000Z"});
   markAssignmentKernelOperationDispatchStartedV2(apply);
   const applied=envelope(apply.operation_id,apply.binding,{status:"AppliedVisualVerificationReady",createdElementIds:[1542919]},"applied");
-  Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:"operator-native/POST:/revit/mep-route-workflow/v2",affected_target_identities:f.affected,completed_at:"2026-09-15T20:00:01.000Z"});
+  Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${route}/v2`,affected_target_identities:f.affected,completed_at:"2026-09-15T20:00:01.000Z"});
   settleAssignmentKernelOperationV2(apply,applied);
   prepareCodexAssignmentProgressV2(apply.binding);
   const read=(name:string,path:string,payload:unknown,time:string) => {

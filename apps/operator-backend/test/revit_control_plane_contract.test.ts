@@ -410,3 +410,16 @@ test("Revit batch settlement forwards the exact fencing token", () => {
   assert.match(batch, /claim_token is required to settle this fenced batch claim/);
   assert.match(batch, /Stale or invalid batch claim_token/);
 });
+
+test("workbook destination admission and execution share the read-only path guard before any write",()=>{
+  const validator=addinFile("RevitBridge/Operator/OperatorActionSchemaValidator.cs");
+  const branch=validator.slice(validator.indexOf('if (string.Equals(path, "/revit/export-elements-xlsx"'),validator.indexOf('if (string.Equals(path, "/revit/import-elements-xlsx-updates"'));
+  assert.match(branch,/OperatorWorkbookExportPath.TryValidateRequest/);
+  const server=addinFile("RevitBridge/Server/RevitHttpServer.cs");
+  const destinationCheck=server.indexOf("OperatorWorkbookExportPath.TryValidateRequest");
+  assert(destinationCheck>0 && destinationCheck<server.indexOf("result = await _eventService.Run",destinationCheck));
+  const handler=addinFile("RevitBridge/Handlers/ExportElementsXlsxHandler.cs");
+  assert(handler.indexOf("OperatorWorkbookExportPath.Resolve")<handler.indexOf("OperatorWorkbookWriter.Write"));
+  const guard=addinFile("RevitBridge.Common/OperatorWorkbookExportPath.cs");
+  assert.doesNotMatch(guard,/Directory.CreateDirectory|File.Write|OperatorWorkbookWriter.Write/);
+});

@@ -115,7 +115,7 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
 
 export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
   if (snapshot?.unresolved_unknown_operation_ids.length) {
-    return "I could not confirm whether the model edit completed. The task needs reconciliation against the existing model before another edit can be attempted.";
+    return "I could not confirm whether the requested change completed. The task and remaining checks are saved; I need to verify the result before retrying.";
   }
   if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   if (snapshot && !snapshot.terminal && snapshot.outcome === "awaiting_user_input") {

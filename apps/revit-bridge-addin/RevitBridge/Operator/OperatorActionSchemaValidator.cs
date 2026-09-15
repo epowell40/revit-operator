@@ -5382,6 +5382,7 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (!OperatorWorkbookExportPath.TryValidateRequest(WorkspacePaths.GetWorkspaceRoot(), obj.Value, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 return true;
             }

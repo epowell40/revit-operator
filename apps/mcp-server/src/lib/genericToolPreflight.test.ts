@@ -449,7 +449,7 @@ test("MEP fragments accept all bundled endpoint and repair modes and reject inco
   }
   for (const path of ["/revit/create-duct", "/revit/create-pipe"]) {
     const flat = { startX: 0, startY: 0, startZ: 0, endX: 1, endY: 2, endZ: 3 };
-    const points = [{ xyz: [0, 0] }, { xyz: [0, 0, 0, 99] }, { x: 0, y: 0 }, { xIn: 0, yIn: 0 }, { xPx: 0, yPx: 0 }];
+    const points = [{ xyz: [0, 0] }, { xyz: [0, 0, 0] }, { x: 0, y: 0 }, { xIn: 0, yIn: 0 }, { xPx: 0, yPx: 0 }];
     assert.equal(validate(path, flat), null);
     for (const point of points) assert.equal(validate(path, { startPoint: point, endPoint: point, frameId: "frame" }), null);
     for (const bad of [{}, { ...flat, endZ: undefined }, { startPoint: {}, endPoint: { xyz: [0, 0] } },
@@ -470,4 +470,25 @@ test("MEP fragments accept all bundled endpoint and repair modes and reject inco
     { ...repairs[2], flexPoints: [[0, 0, 0]] }, { ...repairs[3], connectorChanges: [] },
     { ...repairs[3], elementId: 0 }, { ...repairs[0], invented: true }, { kind: "unknown" }])
     assert.equal(validate("/revit/repair-mep-connectors", { repair })?.request_dispatched, false);
+});
+
+test("retained C36 pixel z is rejected before MEP dispatch while explicit world elevation remains valid",()=>{
+  const fragments=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json",import.meta.url),"utf8"));
+  const validate=(point:any,frameId:any="frame")=>preflightKnownGenericToolBody({method:"POST",path:"/revit/create-duct",request_schema:{type:"object",allOf:[fragments.mep_curve_endpoints]}},{frameId,startPoint:point,endPoint:point});
+  for(const point of [{xPx:1208,yPx:1002,z:44.16666666667046},{xIn:2,yIn:3,z:44},{x:2,y:3,z:44},{xyz:[1,2,3,4]},{xyz:[1,2,3],z:44},{xyz:[1,2,3],xPx:1,yPx:2}])assert.equal(validate(point)?.request_dispatched,false);
+  for(const point of [{xyz:[1,2,44.16666666667046]},{xPx:1208,yPx:1002},{xIn:1,yIn:2}])assert.equal(validate(point),null);
+  assert.equal(validate({x:1,y:2,z:44},null),null);
+});
+
+test("workbook schema publishes content provenance and complete target coverage before export",()=>{
+  const contracts=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json",import.meta.url),"utf8"));
+  const schema=contracts["/revit/export-elements-xlsx"];
+  const validate=(body:any)=>preflightKnownGenericToolBody({method:"POST",path:"/revit/export-elements-xlsx",request_schema:schema},body);
+  const good={elementIds:[99,100],parameterNames:["Area","Number"],fileName:"review.xlsx",supplementalTables:[{name:"Review",contentKind:"review",columns:["Input"],rows:[{elementId:99,values:[null]},{elementId:100,values:[0]}]}]};
+  assert.equal(validate(good),null);
+  for(const kind of ["native","engineering_verified","user_input","proposal"]){const f=structuredClone(good);f.supplementalTables[0]!.contentKind=kind;assert.equal(validate(f)?.request_dispatched,false);}
+  const nested=structuredClone(good) as any;nested.supplementalTables[0].rows[0].values=[{}];assert.equal(validate(nested)?.request_dispatched,false);
+  assert.match(schema.properties.outputFolder.description,/default is artifacts\/xlsx/);
+  assert.match(schema.properties.supplementalTables.description,/each selected elementId exactly once/);
+  assert.match(schema.properties.supplementalTables.description,/review row even/);
 });

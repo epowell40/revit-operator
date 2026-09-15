@@ -40,13 +40,7 @@ namespace RevitBridge.Handlers
                 new OperatorWorkbookSupplementalTables.NativeIdentity { ElementId = ElementIdCompat.GetValue(el!.Id), UniqueId = el.UniqueId, Name = el.Name ?? "" }).ToArray());
             var supplementalSummary = supplemental.Select(sheet => new { name = sheet.Name, rowCount = sheet.Rows.Count - 1,
                 selectedTargetCoverage = "each selected native element exactly once", contentOrigin = "assistant_authored", columns = sheet.Rows[0] }).ToArray();
-            var fileName = string.IsNullOrWhiteSpace(p.fileName) ? "elements_" + Guid.NewGuid().ToString("N") + ".xlsx" : p.fileName!.Trim();
-            if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)) fileName += ".xlsx";
-            if (fileName != Path.GetFileName(fileName) || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || fileName.Length > 180)
-                throw new ArgumentException("fileName must be a simple workbook name without directories or invalid characters.");
-            var folderInput = string.IsNullOrWhiteSpace(p.outputFolder) ? Path.Combine("artifacts", "xlsx") : p.outputFolder!;
-            var full = WorkspacePaths.ResolveFileUnderWorkspace(Path.Combine(folderInput, fileName));
-            if (File.Exists(full)) throw new IOException("The workbook already exists. Choose a new file name.");
+            var full = OperatorWorkbookExportPath.Resolve(WorkspacePaths.GetWorkspaceRoot(), p.outputFolder, p.fileName);
 
             var headers = new List<object?> { "UniqueId", "ElementId", "Category", "Name" };
             foreach (var name in names) headers.AddRange(new object?[] { name + " | value", name + " | unit", name + " | display", name + " | status" });

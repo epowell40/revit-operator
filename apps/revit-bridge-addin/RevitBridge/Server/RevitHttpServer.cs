@@ -913,6 +913,15 @@ namespace RevitBridge.Server
                 {
                     string body = requestBody;
 
+                    // This destination check is read-only and precedes the
+                    // native queue. An invalid export path has no file effect.
+                    if (path == "/revit/export-elements-xlsx")
+                    {
+                        using var workbookRequest = JsonDocument.Parse(body);
+                        if (!OperatorWorkbookExportPath.TryValidateRequest(WorkspacePaths.GetWorkspaceRoot(), workbookRequest.RootElement, out var workbookError))
+                            throw new ArgumentException(workbookError);
+                    }
+
                     // Support GET query-string style for documentation endpoints (human/tooling convenience).
                     // Operator tool calls from the agent typically use POST bodies (no query support in action runner).
                     var isDocEndpoint =

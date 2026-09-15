@@ -1,3 +1,4 @@
+import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
@@ -13,13 +14,15 @@ const samePoint = (a: unknown, b: number[]): boolean => point(a) && a.every((n, 
  * ends, explicit world coordinates, type, level, size and system. This is a
  * native desired-state check, not visual/redline interpretation certification. */
 export function openDuctReadbackMatchesV2(input: unknown, affected: readonly string[], parameters: unknown, connectors: unknown): boolean {
-  const request = record(input), body = record(request.body);
+  const request = record(input), compatibility = request.path === "/revit/create-duct";
+  const body = compatibility ? explicitCreateDuctIntentV2(input) : record(request.body);
+  if (!body) return false;
   const allowed = new Set(["kind", "viewId", "roomNumber", "levelId", "systemType", "ductTypeId", "ductShape", "ductSize", "sizePolicy", "elevationPolicy", "routingMode", "points", "connectSegments", "connectToExisting", "requireExistingEndpointConnections", "verify", "apply", "visualVerify", "visualViewId", "imageSize", "focusPaddingFt"]);
-  if (request.path !== "/revit/mep-route-workflow" || body.kind !== "duct" || body.apply !== true
+  if ((!compatibility && request.path !== "/revit/mep-route-workflow") || body.kind !== "duct" || body.apply !== true
       || body.routingMode !== "polyline" || body.ductShape !== "rectangular"
       || body.sizePolicy !== "explicit_required" || body.elevationPolicy !== "explicit_required"
       || body.connectSegments !== false || body.connectToExisting !== false || body.requireExistingEndpointConnections !== false
-      || !positiveId(body.ductTypeId) || !positiveId(body.levelId) || Object.keys(body).some(key => !allowed.has(key))
+      || (!compatibility && !positiveId(body.ductTypeId)) || !positiveId(body.levelId) || Object.keys(body).some(key => !allowed.has(key))
       || !Array.isArray(body.points) || body.points.length !== 2 || body.points.some((p: unknown) => Object.keys(record(p)).some(k => k !== "xyz") || !point(record(p).xyz))) return false;
   const points = body.points.map((p: unknown) => record(p).xyz as number[]);
   if (samePoint(points[0], points[1])) return false;
@@ -36,7 +39,7 @@ export function openDuctReadbackMatchesV2(input: unknown, affected: readonly str
   const p = record(record(paramRows[0]).parameters), row = record(read.results[0]);
   if (p["System Classification"] !== body.systemType || !near(p["Reference Level"], body.levelId)
       || !near(p.Width, Number(size[1])/12) || !near(p.Height, Number(size[2])/12)
-      || row.id !== id || row.ok !== true || row.category !== "OST_DuctCurves" || row.typeId !== body.ductTypeId
+      || row.id !== id || row.ok !== true || row.category !== "OST_DuctCurves" || (!positiveId(row.typeId) || body.ductTypeId !== undefined && row.typeId !== body.ductTypeId)
       || row.connectorCount !== 2 || row.returnedConnectorCount !== 2 || row.openPhysicalConnectorCount !== 2
       || row.connectorScanTruncated !== false || !Array.isArray(row.connectors) || row.connectors.length !== 2) return false;
   const ends = row.connectors.map(record);
@@ -52,7 +55,7 @@ export function openDuctReadbackMatchesV2(input: unknown, affected: readonly str
  * model-written report, preview, foreign binding or pre-edit read can qualify. */
 export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, current: OperationResultV2, payload: unknown): boolean {
   const applied = subject.result;
-  if (subject.request_identity?.path !== "/revit/mep-route-workflow" || subject.requested_effect !== "apply"
+  if (!["/revit/mep-route-workflow", "/revit/create-duct"].includes(subject.request_identity?.path ?? "") || subject.requested_effect !== "apply"
       || subject.persistent_effect !== "applied" || subject.settlement_state !== "settled"
       || applied?.authority !== "native-host" || applied.status !== "succeeded" || applied.native_transaction_state !== "committed"
       || !sameAssignmentBindingV2(subject.binding, snapshot.current_binding) || !sameAssignmentBindingV2(applied.binding, snapshot.current_binding)

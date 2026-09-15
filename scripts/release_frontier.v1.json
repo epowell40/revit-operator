@@ -204,7 +204,9 @@
     "MepDuctProfilePolicyTests",
     "MepDuctTypeSelectionPolicyTests",
     "MepRouteSizeInputPolicyTests",
-    "OperatorWorkbookSupplementalTablesTests"
+    "OperatorWorkbookSupplementalTablesTests",
+    "DraftPointCoordinatePolicyTests",
+    "OperatorWorkbookExportPathTests"
   ],
   "failure_families": [
     {
@@ -1909,6 +1911,42 @@
         "backend:open_duct_postcondition_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts",
         "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "shared-model-and-current-view-question-falls-through-to-slow-assignment",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:session_history_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "view-plane-point-silently-discards-world-elevation",
+      "coverage": [
+        "dotnet:DraftPointCoordinatePolicyTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "straight-create-duct-compatibility-path-lacks-native-postcondition-verification",
+      "coverage": [
+        "backend:open_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "workbook-path-rejection-becomes-unknown-write-and-prevents-corrected-export",
+      "coverage": [
+        "dotnet:OperatorWorkbookExportPathTests",
+        "backend:revit_control_plane_contract.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "workbook-schema-omits-provenance-and-selected-target-coverage",
+      "coverage": [
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorWorkbookSupplementalTablesTests"
       ]
     }
   ],

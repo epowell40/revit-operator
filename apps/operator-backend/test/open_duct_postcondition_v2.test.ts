@@ -41,3 +41,28 @@ test("wrong geometry, type, level, system, dimensions, partial rows or connected
   ];
   for(const [name,change] of cases){const f=fixture();change(f);assert.equal(matches(f),false,name);}
 });
+
+test("C36 pixel elevation failure never verifies; explicit world duct intent accepts only matching native readback", () => {
+  const retained=JSON.parse(fs.readFileSync("test/fixtures/c36-open-duct-wrong-elevation.json","utf8"));
+  assert.equal(matches(retained),false);
+  const intended=structuredClone(retained);
+  intended.input.body.startPoint={xyz:[...retained.connectors.results[0].connectors[1].origin.slice(0,2),retained.input.body.startPoint.z]};
+  intended.input.body.endPoint={xyz:[...retained.connectors.results[0].connectors[0].origin.slice(0,2),retained.input.body.endPoint.z]};
+  assert.equal(matches(intended),false,"retained native wrong-height geometry remains a failure");
+  // Synthetic corrected neighbor tests the contract; it is not live qualification.
+  for(const end of intended.connectors.results[0].connectors)end.origin[2]=retained.input.body.startPoint.z;
+  assert.equal(matches(intended),true,"native auto-selected type is explicit in authoritative readback");
+  intended.input.body.ductTypeId=intended.connectors.results[0].typeId;
+  assert.equal(matches(intended),true);
+  for(const [label,change] of [
+    ["wrong explicit type",(f:any)=>f.input.body.ductTypeId++],
+    ["missing native type",(f:any)=>delete f.connectors.results[0].typeId],
+    ["mixed coordinates",(f:any)=>f.input.body.startX=1],
+    ["extra effect",(f:any)=>f.input.body.insulationThickness=1],
+    ["preview",(f:any)=>f.input.body.dryRun=true],
+    ["wrong height",(f:any)=>f.connectors.results[0].connectors[0].origin[2]-=12],
+    ["omitted elevation",(f:any)=>f.input.body.startPoint.xyz.pop()]
+  ] as Array<[string,(f:any)=>void]>){const f=structuredClone(intended);change(f);assert.equal(matches(f),false,label);}
+  const flat=structuredClone(intended);for(const prefix of ["start","end"]){for(const [i,axis]of ["X","Y","Z"].entries())flat.input.body[prefix+axis]=flat.input.body[prefix+"Point"].xyz[i];delete flat.input.body[prefix+"Point"];}
+  assert.equal(matches(flat),true);
+});

@@ -6,6 +6,9 @@ export function contextQuestionKind(body = {}) {
       || (body.assignment_generation !== undefined && body.assignment_generation !== null)) return null;
   const text = String(body.user_text || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text || text.length > 1024) return null;
+  // A shared access verb may name the model and its current view. Match the
+  // entire request before clause splitting so no extra instruction is lost.
+  if (coordinatedModelViewQuestion(text.replace(/[?!.;]+$/g, ""))) return "connection";
   // Every clause must independently be an identity question. Never select a
   // matching substring and discard an attached instruction or model query.
   const clauses = text.replace(/[?!.;]+$/g, "").split(/[?!.;]+\s*|,\s*(?:and\s+)?|\s+and\s+/);
@@ -16,6 +19,12 @@ export function contextQuestionKind(body = {}) {
   if (unique.size === 1) return kinds[0];
   if (unique.has("selection")) return "overview";
   return unique.has("connection") ? "connection" : "model";
+}
+
+function coordinatedModelViewQuestion(text) {
+  const model = "(?:(?:the|my|our|this) )?(?:(?:currently )?(?:open|active|current) )?(?:revit )?(?:model|project|document)";
+  const view = "(?:(?:the|my|our|its) )?(?:open|active|current) (?:revit )?view";
+  return new RegExp(`^(?:please )?(?:can|could|do) you (?:see|access|read) (?:${model} and ${view}|${view} and ${model})$`).test(text);
 }
 
 function singleContextQuestionKind(text) {

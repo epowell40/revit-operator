@@ -120,3 +120,24 @@ test("compound identity replay answers every bounded question with one authorize
   assert.equal(reads, 4);
   assert.match(ui.renderContextReply("connection", { ok: true, data: { document: { title: "Pilot" } } }), /didn’t report an active view/);
 });
+
+test("shared model and view access question uses one fresh identity read without swallowing work", async () => {
+  let reads = 0, authorizations = 0;
+  const deps = { verifySession: async () => { authorizations++; }, readContext: async () => { reads++; return fresh(); } };
+  const positive = ["Can you see the open model and current view?", "Could you access my Revit project and the active view?",
+    "Please can you read our model and its current view?", "Can you see the current view and the open model?"];
+  for (const prompt of positive) {
+    assert.equal(ui.contextQuestionKind(request(prompt)), "connection", prompt);
+    assert.match(await ui.tryContextReply(request(prompt), deps), /Yes.*Snowdon HVAC.*Level 2/);
+  }
+  for (const prompt of ["Can you see the open model and current view and rename it?",
+    "Can you see the open model and current view? Delete the ducts.",
+    "Can you see the open model and current view geometry?", "Can you see the open model and current view of the duct connections?",
+    "Can you see the model and selected elements?", "Can you see the open model and every view?",
+    "Can you see the open model and current view, then export it?"])
+    assert.equal(await ui.tryContextReply(request(prompt), deps), null, prompt);
+  for (const extra of [{ attachments: [{ id: "pdf" }] }, { user_attachments: [{}] }, { pending_attachments: [{}] },
+    { assignment_id: "task" }, { assignment_run_id: "run" }, { assignment_generation: 0 }, { tool_results: [{}] }])
+    assert.equal(await ui.tryContextReply(request(positive[0], extra), deps), null);
+  assert.equal(reads, positive.length); assert.equal(authorizations, reads);
+});

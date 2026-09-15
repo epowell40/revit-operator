@@ -8,7 +8,8 @@ import { createHmac } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
 
-test("conversation HTTP history survives backend restart and rejects another principal", async t => {
+for (const identityPrompt of ["Can you see the open model? What view is active?", "Can you see the open model and current view?"]) {
+test("conversation HTTP history survives backend restart and rejects another principal: " + identityPrompt, async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-history-http-"));
   const socket = net.createServer().listen(0, "127.0.0.1");
   await once(socket, "listening");
@@ -48,7 +49,7 @@ test("conversation HTTP history survives backend restart and rejects another pri
   const createdResponse = await fetch(base + "/session/new", { method: "POST", headers: headers("alice") });
   assert.equal(createdResponse.status, 200);
   const created = await createdResponse.json() as { session_id: string };
-  const body = { version: "operator.backend.v1", session_id: created.session_id, message_id: "native-question", user_text: "Can you see the open model? What view is active?",
+  const body = { version: "operator.backend.v1", session_id: created.session_id, message_id: "native-question", user_text: identityPrompt,
     ui_observation: { ok: true, data: { document: { title: "Pilot", activeView: { name: "L2" } } } } };
   const written = await fetch(base + "/session/ui-context", { method: "POST", headers: headers("alice"), body: JSON.stringify(body) });
   assert.equal(written.status, 200, await written.text());
@@ -71,6 +72,7 @@ test("conversation HTTP history survives backend restart and rejects another pri
   assert.equal(mixed.status, 400);
   assert.equal(((await (await fetch(historyUrl, { headers: headers("alice") })).json()) as { messages: unknown[] }).messages.length, 2);
 });
+}
 
 test("first new turn after a cold session preserves the earlier durable conversation", async () => {
   process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-history-recovery-"));

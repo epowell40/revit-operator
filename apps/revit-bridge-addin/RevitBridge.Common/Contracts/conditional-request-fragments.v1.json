@@ -34,13 +34,14 @@
                     "items": {
                       "type": "number"
                     },
-                    "minItems": 2
+                    "minItems": 2,
+                    "maxItems": 3
                   }
                 },
                 "required": [
                   "xyz"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
@@ -59,19 +60,45 @@
                   },
                   "y": {
                     "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
                   }
                 },
                 "required": [
                   "x",
                   "y"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
               "startPoint"
             ],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "anyOf": [
+              {
+                "properties": {
+                  "frameId": {
+                    "type": "null"
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "properties": {
+                  "startPoint": {
+                    "properties": {
+                      "z": {
+                        "type": "null"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
           },
           {
             "type": "object",
@@ -90,7 +117,7 @@
                   "xIn",
                   "yIn"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
@@ -115,7 +142,7 @@
                   "xPx",
                   "yPx"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               },
               "frameId": {
                 "type": "string",
@@ -163,13 +190,14 @@
                     "items": {
                       "type": "number"
                     },
-                    "minItems": 2
+                    "minItems": 2,
+                    "maxItems": 3
                   }
                 },
                 "required": [
                   "xyz"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
@@ -188,19 +216,45 @@
                   },
                   "y": {
                     "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
                   }
                 },
                 "required": [
                   "x",
                   "y"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
               "endPoint"
             ],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "anyOf": [
+              {
+                "properties": {
+                  "frameId": {
+                    "type": "null"
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "properties": {
+                  "endPoint": {
+                    "properties": {
+                      "z": {
+                        "type": "null"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
           },
           {
             "type": "object",
@@ -219,7 +273,7 @@
                   "xIn",
                   "yIn"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
@@ -244,7 +298,7 @@
                   "xPx",
                   "yPx"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               },
               "frameId": {
                 "type": "string",

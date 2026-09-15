@@ -707,7 +707,7 @@ function commitInput(
       && deterministicallyTargetBound
       && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
         ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
-        : verificationSubject.request_identity?.path === "/revit/mep-route-workflow"
+        : ["/revit/mep-route-workflow", "/revit/create-duct"].includes(verificationSubject.request_identity?.path ?? "")
           ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,

@@ -1199,3 +1199,11 @@ test("supporting discovery counts changed selectors but rejects unbound, failed,
   const reordered = discoveryStep(after, "reordered", "/revit/views", { semanticGroups: ["hvac"], action: "list", limit: 1 });
   assert.equal(buildProgressEpochV2({ before: after, after: reordered, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:11.000Z" }).genuine_progress, false);
 });
+
+test("uncertain workbook effect never claims that a Revit model edit happened",()=>{
+  const snapshot={...journal().snapshot(),unresolved_unknown_operation_ids:["export"]};
+  const message=finalCodexAssignmentMessageV2(snapshot,"");
+  assert.match(message,/could not confirm.*requested change/);
+  assert.match(message,/verify the result before retrying/);
+  assert.doesNotMatch(message,/model edit|completed successfully/);
+});
