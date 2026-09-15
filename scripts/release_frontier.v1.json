@@ -134,7 +134,9 @@
     "lib/supportedToolInventory.test.ts",
     "lib/dynamicRuntimeInstallation.test.ts",
     "lib/dynamicAssignmentIntegration.test.ts",
-    "lib/generalAgentCapabilityDiscovery.test.ts"
+    "lib/generalAgentCapabilityDiscovery.test.ts",
+    "viewFrameImage.test.ts",
+    "spatialObservationV1.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_ux.test.js",
@@ -1733,6 +1735,21 @@
       "coverage": [
         "dotnet:OperatorAttemptSettlementTests",
         "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "native-view-frame-export-delivers-only-metadata-before-redline-placement",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "mcp:spatialObservationV1.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "incomplete-redline-budget-handoff-becomes-annotation-only-failure-and-hides-applied-effects",
+      "coverage": [
+        "backend:brain.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts"
       ]
     }
   ],

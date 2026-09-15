@@ -19,6 +19,7 @@ import {
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
+import { viewFrameImageContent } from "./viewFrameImage.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -2027,7 +2028,7 @@ server.tool("revit_export_view_frame", "Export active view image + deterministic
       const data = await callRevit("/revit/export-view-frame", "POST", { viewId, imageSize, folder, includeMapping }, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return viewFrameImageContent(data);
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
 );

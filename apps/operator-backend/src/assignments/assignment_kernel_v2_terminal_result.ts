@@ -116,9 +116,15 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     ?? nativeResultPresentationV2(snapshot, supportingObservationIds)
     ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";
+  const effects = Object.values(snapshot.operations).map(operation => operation.result?.persistent_effect);
+  const incompleteEffectSummary = effects.includes("unknown")
+    ? " An edit outcome is still unknown. Check the existing result before any retry."
+    : effects.includes("applied")
+      ? " Changes were applied before the task stopped. Check the saved results before retrying."
+      : "";
   const resultSummary = complete
     ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
-    : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.`
+    : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
       + (successfulSummary ? `\n\nRetained partial results:\n${successfulSummary}` : "");
   return {
     schema: TERMINAL_RESULT_V2_SCHEMA,

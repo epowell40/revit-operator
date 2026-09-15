@@ -305,6 +305,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       }));
       return;
     }
+    if (requestUrl.pathname === "/revit/export-view-frame") {
+      res.end(JSON.stringify({frameId:"frame-stdio-1",path:observationImagePath,viewId:42,widthPx:1200,heightPx:675,
+        mapping:{mode:"2d_affine",topLeftXyz:[0,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[0,0,0]}}));
+      return;
+    }
     if (requestUrl.pathname === "/revit/export-visible-elements") {
       observationBodies.push(JSON.parse(requestBody || "{}"));
       res.end(JSON.stringify({
@@ -563,6 +568,13 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.match(observationText, /"schemaVersion": "spatial-observation\/v1"/);
   assert.equal((observation as any).content.some((item: any) => item.type === "image" && item.mimeType === "image/png"), true);
   assert.deepEqual(observationBodies[0], { imageSize: 1200, includeLinked: false, limit: 2, includeMapping: true, includeGeometry: true });
+
+  const viewFrame = await withTimeout(client.callTool({
+    name: "revit_export_view_frame", arguments: {viewId:42,imageSize:1200,includeMapping:true}
+  }), "delivering the exported view image with its mapping over stdio");
+  assert.equal((viewFrame as any).content.some((item:any)=>item.type==="image" && item.mimeType==="image/png"),true,
+    "The exported Revit image must reach the model, not only its filename and mapping.");
+  assert.match((viewFrame as any).content.find((item:any)=>item.type==="text").text,/frame-stdio-1/);
 
   const sheetCount = await withTimeout(client.callTool({
     name: "revit_list_sheets",

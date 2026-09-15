@@ -15,7 +15,7 @@ const ANNOTATION_ONLY_RE =
   /\b(annotation\s*only|text\s*only|coordination\s*note\s*only|not\s+a\s+model\s+element|do\s+not\s+(?:model|modify\s+the\s+model|create\s+(?:a\s+)?duct|write\s+model)|no\s+model\s+change)\b/i;
 const TEXT_ANNOTATION_RE = /\b(text\s*note|detail\s*annotation|annotation|coordination\s*note|red\s+text)\b/i;
 const COMPLETION_RE = /\b(done|complete|completed|created|modified|updated|placed|added|picked\s+up|implemented)\b/i;
-const BLOCKER_RE = /\b(cannot|can't|could\s+not|was\s+not\s+able|blocked|failed|no\s+model\s+change|did\s+not\s+make|not\s+created|not\s+modified|requires\s+confirmation)\b/i;
+const BLOCKER_RE = /\b(cannot|can't|could\s+not|was\s+not\s+able|blocked|failed|no\s+model\s+change|did\s+not\s+(?:make|complete)|has\s+not\s+finished|not\s+created|not\s+modified|requires\s+confirmation)\b/i;
 const ANNOTATION_DISCLOSURE_RE = /\b(annotation\s*only|text\s*note|not\s+a\s+model\s+element|no\s+duct\s+element|no\s+model\s+change|not\s+a\s+modeled)\b/i;
 
 const TEXT_ONLY_PATHS = new Set([

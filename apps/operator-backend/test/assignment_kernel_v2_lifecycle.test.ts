@@ -322,6 +322,24 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   }), /terminal_immutable/);
 }));
 
+test("incomplete terminal handoffs disclose applied effects without claiming verified completion", () => workspace(() => {
+  const {goal}=setup("apply");
+  const base=settleRead(goal.id).settled.snapshot;
+  for(const effect of ["none","applied","unknown"] as const){
+    const stopped=structuredClone(base);
+    stopped.terminal=true;stopped.outcome="blocked";stopped.terminal_reason="provider_call_budget_exhausted";
+    const operation=Object.values(stopped.operations)[0]!;
+    operation.persistent_effect=effect;operation.result!.persistent_effect=effect;
+    const before=JSON.stringify(stopped);
+    const message=renderTerminalResultV2(stopped);
+    assert.match(message,/did not complete/);
+    assert.equal(message.includes("Changes were applied before the task stopped"),effect==="applied");
+    assert.equal(message.includes("An edit outcome is still unknown"),effect==="unknown");
+    assert.doesNotMatch(message,/requested work completed|Postcondition verified/);
+    assert.equal(JSON.stringify(stopped),before,"Presentation must not change saved effects or lifecycle");
+  }
+}));
+
 test("provider failure cannot replace task success derived while terminal handoff was deferred", () => workspace(() => {
   const { goal, binding } = setup();
   const barrier = beginAssignmentKernelTerminalBarrierV2({ binding, barrier_id: "provider-request:terminal-handoff" });

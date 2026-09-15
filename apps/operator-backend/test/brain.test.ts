@@ -566,6 +566,19 @@ test("finalizeDecision replaces blank no-op responses with a fallback explanatio
   assert.match(res.assistant_message, /attachment turn/i);
 });
 
+test("finalizeDecision preserves incomplete task handoffs for modeled redlines", () => {
+  const req=mkReq("Apply the attached 12x10 supply-duct redline in Unit 405 on sheet M104.");
+  for(const message of [
+    "The requested work did not complete: provider call budget exhausted.",
+    "The task has not finished. Any completed changes and remaining verification are saved with the task.",
+    "The requested work did not complete: provider call budget exhausted. Changes were applied before the task stopped. Check the saved results before retrying."
+  ]){
+    const result=__testOnlyFinalizeDecision(req,{version:OPERATOR_BACKEND_CONTRACT_VERSION,assistant_message:message,actions:[]});
+    assert.equal(result.assistant_message,message);
+    assert.deepEqual(result.actions,[]);
+  }
+});
+
 test("finalizeDecision blocks text-only completion for modeled duct redlines", () => {
   const req = {
     ...mkReq("Pick up the attached marked.pdf redline: add the 11 x 10 SOUND LINED supply duct near Unit 405."),

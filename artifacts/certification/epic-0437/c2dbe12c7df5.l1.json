@@ -227,7 +227,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:41a988c3505907139257957487f6d212cd07f3f424b38dd2f7e049bbca220e03"
+      "sha256": "sha256:fe474616c10267da16e6e32563b1d1bcd3b2c5bd8a995ab8b1d417184199c3c3"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -424,7 +424,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:87b0e15986ec4f49c93070ca4d8be6e251f8c20942d8eebe5c01f46288d1e4cf"
+      "sha256": "sha256:305a6a340d571b47c7bc4bda83e6d342806fcc92b7415d76ba45cc2bb78f1a02"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -505,6 +505,14 @@
     {
       "path": "apps/mcp-server/src/types/ml-random-forest.d.ts",
       "sha256": "sha256:478a91959f5ff5930e8a3604af24b82426c2603333bc2ce18cc77c140aa71d9f"
+    },
+    {
+      "path": "apps/mcp-server/src/viewFrameImage.test.ts",
+      "sha256": "sha256:93b021a649b95307dec5fb49170eb66d477fed080c8efd84ecbb5e4d5af05519"
+    },
+    {
+      "path": "apps/mcp-server/src/viewFrameImage.ts",
+      "sha256": "sha256:7ed74b2e212fbdfd8ab16ac64887737bd992a3d1bbe0a7c2d799ad3ed9e69336"
     },
     {
       "path": "apps/mcp-server/tsconfig.json",
@@ -632,7 +640,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_terminal_result.ts",
-      "sha256": "sha256:a843690e49f618111d1a6d72a32994e48d135daedaa65cd9aafcacdeeff4de76"
+      "sha256": "sha256:700a554c7b6f6db53598a676db4a713686547be96231b486e913b0be4c2cd9e5"
     },
     {
       "path": "apps/operator-backend/src/assignments/async_tool_settlement.ts",
@@ -1148,7 +1156,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:e4488882f4639930a9422e9cfdbdb92a6e34ace8c26623e0dfb7c158d116f976"
+      "sha256": "sha256:9652716c39c711b510646dedea206a4f15b1ad4fceccee545ada46cb6ed72da1"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -2921,7 +2929,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/model_redline_guard.ts",
-      "sha256": "sha256:67399f7654ac020f8b0ea605a525da910190e16c7accfe42e8e7e235432b4fb5"
+      "sha256": "sha256:bb05295345243d48e3af9296865d1992e7b2dbe6f11e5a4b9e38f04dc1d94d48"
     },
     {
       "path": "apps/operator-backend/src/verification/native_artifact_contract_v2.ts",
@@ -3165,7 +3173,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:c69cda852929133d673d8c05c8ab92e11907add7d15836ba3ae3248221cddce2"
+      "sha256": "sha256:5774eb4067f05c37777cc2bfdd042968173e62094ae63500f97bf397377bcb0a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_pause_http.test.ts",
@@ -3297,7 +3305,7 @@
     },
     {
       "path": "apps/operator-backend/test/brain.test.ts",
-      "sha256": "sha256:624393c5b244463cd0e0c3d913f92e04b4f59087ee651ca7e39dfc6d6881ba49"
+      "sha256": "sha256:9436272f5ccfe46aa74b7862c10fcc63b19ce6547e2f7e0a758301d1f433f48e"
     },
     {
       "path": "apps/operator-backend/test/candidate51_v2_session_receipt_coherence.test.ts",
@@ -6765,7 +6773,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:b295a40a6191abda722fead11739f294fd1b1aae65e8ffbd63a1f2700eaf97de",
+  "inputs_hash": "sha256:8cf764146a8451b239d40527af2775d7de5e479f2169ebcd830b51ce5c77d10f",
   "result": {
     "passed": true,
     "checks": [
