@@ -1712,6 +1712,28 @@
         "backend:assignment_kernel_v2_controls.test.ts",
         "backend:assignment_kernel_v2_progress_controller.test.ts"
       ]
+    },
+    {
+      "id": "advertised-room-array-field-selectors-return-missing-retained-values",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "valid-evidence-pages-falsely-exhaust-progress-while-missing-fields-mint-knowledge",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "mcp:lib/evidenceRetrievalSelectorContract.test.ts"
+      ]
+    },
+    {
+      "id": "blocked-mep-trial-loses-native-rollback-truth-and-is-reported-as-uncertain-apply",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

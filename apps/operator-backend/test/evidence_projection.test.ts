@@ -29,6 +29,41 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("seven-space zoning replay resolves all 49 advertised array fields", { concurrency: false }, () => withWorkspace(() => {
+  const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/evidence-seven-spaces.json", import.meta.url), "utf8"));
+  const stored = storeEvidence({ scope, source: "regression:seven-space-zoning", trust_level: "authoritative_native",
+    raw: { ok: true, result: fixture.rooms } }, 4096);
+  const selected = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Review zoning attributes",
+    fields: fixture.fields, max_bytes: 50000 });
+  const expected = Object.fromEntries(fixture.fields.map((field: string) => {
+    const match = /^payload\.result\[(\d+)\]\.(.+)$/.exec(field)!;
+    const value = match[2]!.split(".").reduce((row: any, key: string) => row[key], fixture.rooms[Number(match[1])]);
+    assert.notEqual(value, undefined, field);
+    return [field, value];
+  }));
+  assert.equal(Object.keys(expected).length, 49);
+  assert.deepEqual(selected.missing_fields, []);
+  assert.deepEqual(selected.selection, expected);
+  assert.ok(selected.returned_bytes < 50000);
+}));
+
+test("array field selectors preserve literal keys and nulls while rejecting executable or inherited paths", { concurrency: false }, () => withWorkspace(() => {
+  const stored = storeEvidence({ scope, source: "regression:array-paths", trust_level: "authoritative_native",
+    raw: { items: [{ nested: [[null, 42]], "literal.key[0]": "literal" }], "items[0].name": "flattened" } }, 4096);
+  const read = (fields: string[]) => retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Inspect nested fields", fields });
+  const selected = read(["payload.items[0].nested[0][0]", "payload.items[0].nested[0][1]", "payload.items[0].literal.key[0]",
+    "payload.items[0].name", "payload.items[7].name", "payload.items[0].toString"]);
+  assert.deepEqual(selected.selection, { "payload.items[0].nested[0][0]": null, "payload.items[0].nested[0][1]": 42,
+    "payload.items[0].literal.key[0]": "literal", "payload.items[0].name": "flattened", "payload.items[7].name": null,
+    "payload.items[0].toString": null });
+  assert.deepEqual(selected.missing_fields, ["payload.items[7].name", "payload.items[0].toString"]);
+  for (const field of ["payload.items[-1]", "payload.items[01]", "payload.items[1.5]", "payload.items[9007199254740992]",
+    "payload.items[process.exit()]", "payload.items[0].__proto__", "payload.constructor[0]", "payload.items[0].prototype", "payload.items[0"])
+    assert.throws(() => read([field]), /Invalid typed field path/, field);
+  assert.throws(() => retrieveEvidence({ scope: { ...scope, generation: 3 }, evidence_id: stored.ref.evidence_id,
+    purpose: "Inspect nested fields", fields: ["payload.items[0].nested[0][1]"] }), /generation/);
+}));
+
 test("advertised inventory facts are retrievable and absent fields differ from actual null values", { concurrency: false }, () => withWorkspace(() => {
   const items = Array.from({length:37},(_,i)=>({elementId:i+1,category:"Mechanical Equipment",familyName:"Example",typeName:"Unit"}));
   const stored=storeEvidence({scope,source:"native:inventory",trust_level:"authoritative_native",raw:{count:37,itemsComplete:true,items,actualNull:null}},4096);

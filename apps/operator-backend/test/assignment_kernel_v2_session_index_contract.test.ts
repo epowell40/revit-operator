@@ -20,6 +20,27 @@ import {
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { loadAssignmentKernelPublicationsV2 } from "../src/benchmark/assignment_kernel_v2_collection.js";
 
+test("retained array pages expose stable positions and missing fields expose no available knowledge", () => {
+  const result = { schema: "revit-operator.evidence-retrieval.v1", evidence_ref: { evidence_id: "ev1_page" },
+    selection: [{ id: 201 }, { id: 202 }], pagination: { path: "payload.result", start: 1, requested_count: 2, returned_count: 2, total_items: 7 } };
+  const selections = (value: unknown) => assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence", value)
+    .filter(fact => fact.fact_id === "control.evidence_selection_available");
+  const facts = selections({ ok: true, result });
+  assert.deepEqual(facts.map(fact => fact.dimensions?.selection_path), ["payload.result[1]", "payload.result[2]"]);
+  assert.ok(facts.every(fact => fact.fact_class === "control" && fact.cardinality === "many"));
+  assert.deepEqual(selections({ ok: true, purpose: "changed", result: JSON.parse(JSON.stringify(result)) }), facts);
+  for (const invalid of [{ ...result, schema: "untrusted" }, { ...result, selection: [] },
+    { ...result, pagination: { ...result.pagination, start: -1 } },
+    { ...result, pagination: { ...result.pagination, returned_count: 1 } },
+    { ...result, pagination: { ...result.pagination, requested_count: 257 } },
+    { ...result, pagination: { ...result.pagination, total_items: 2 } },
+    { ...result, pagination: { ...result.pagination, start: Number.MAX_SAFE_INTEGER } }])
+    assert.deepEqual(selections({ ok: true, result: invalid }), []);
+  assert.deepEqual(selections({ ok: false, result }), []);
+  const focused = { ...result, selection: { "payload.absent": null, "payload.actualNull": null }, missing_fields: ["payload.absent"], pagination: undefined };
+  assert.deepEqual(selections({ ok: true, result: focused }).map(fact => fact.dimensions?.selection_path), ["payload.actualNull"]);
+});
+
 const index = {
   schema: "revit-operator.assignment-kernel-session-index/v2" as const,
   session_id: "session-v2",

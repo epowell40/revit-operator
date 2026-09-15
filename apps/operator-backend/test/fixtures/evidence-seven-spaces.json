@@ -1,0 +1,219 @@
+{
+  "source": "Disposable Snowdon sample C28 retained L2 evidence, focused fields only",
+  "rooms": [
+    {
+      "id": 1410856,
+      "number": "201",
+      "name": "Electrical 201",
+      "area": 14.972222222222143,
+      "location": {
+        "x": 49.41927083333337,
+        "y": 6.005208333333177,
+        "z": 8.083333333337128
+      },
+      "warnings": [],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": 48.0104166666667,
+            "maxX": 50.67708333333337,
+            "minY": 3.1354166666665226,
+            "maxY": 8.749999999999833
+          }
+        }
+      }
+    },
+    {
+      "id": 1410860,
+      "number": "200",
+      "name": "Corridor 200",
+      "area": 596.0810546875023,
+      "location": {
+        "x": -12.042567802083402,
+        "y": 5.6250000000000355,
+        "z": 8.083333333337128
+      },
+      "warnings": [],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": -39.36458333333345,
+            "maxX": 47.6041666666667,
+            "minY": 2.50000000000003,
+            "maxY": 18.61458333333328
+          }
+        }
+      }
+    },
+    {
+      "id": 1410864,
+      "number": "202",
+      "name": "Live/Work Unit 202",
+      "area": 838.8674045138763,
+      "location": {
+        "x": -34.94531249999959,
+        "y": -12.692708333333213,
+        "z": 8.083333333337128
+      },
+      "warnings": [],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": -49.03124999999939,
+            "maxX": -20.739583333333144,
+            "minY": -27.604166666666583,
+            "maxY": 2.2395833333334862
+          }
+        }
+      }
+    },
+    {
+      "id": 1410869,
+      "number": "203",
+      "name": "Studio Unit 203",
+      "area": 592.8782552083436,
+      "location": {
+        "x": -29.859375000000007,
+        "y": 25.61458333333355,
+        "z": 8.083333333337128
+      },
+      "warnings": [
+        "Room boundary segment with invalid host element id encountered.",
+        "Room boundary segment with invalid host element id encountered."
+      ],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": -39.11458333333346,
+            "maxX": -20.73958333333328,
+            "minY": 9.260416666666755,
+            "maxY": 41.69791666666705
+          }
+        }
+      }
+    },
+    {
+      "id": 1410870,
+      "number": "204",
+      "name": "Two Story Studio Unit 204",
+      "area": 569.3934193013047,
+      "location": {
+        "x": -8.333333333333307,
+        "y": 25.614583333333528,
+        "z": 8.083333333337128
+      },
+      "warnings": [],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": -19.760416666666696,
+            "maxX": 3.093750000000073,
+            "minY": 9.260416666666698,
+            "maxY": 41.69791666666705
+          }
+        }
+      }
+    },
+    {
+      "id": 1410873,
+      "number": "205",
+      "name": "Live/Work Unit 205",
+      "area": 1105.1572265625239,
+      "location": {
+        "x": 22.416666666666853,
+        "y": 25.61458333333345,
+        "z": 8.083333333337128
+      },
+      "warnings": [
+        "Room boundary segment with invalid host element id encountered.",
+        "Room boundary segment with invalid host element id encountered.",
+        "Room boundary segment with invalid host element id encountered.",
+        "Room boundary segment with invalid host element id encountered.",
+        "Room boundary segment with invalid host element id encountered."
+      ],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": 4.072916666666739,
+            "maxX": 40.760416666666956,
+            "minY": 9.260416666666579,
+            "maxY": 41.69791666666705
+          }
+        }
+      }
+    },
+    {
+      "id": 1411772,
+      "number": "T2",
+      "name": "Trash T2",
+      "area": 29.81933593749949,
+      "location": {
+        "x": 6.294216770950229,
+        "y": 17.04905440441323,
+        "z": 8.083333333337128
+      },
+      "warnings": [],
+      "boundary": {
+        "sideClassification": {
+          "extentsInView": {
+            "minX": 4.072916666666831,
+            "maxX": 8.916666666666746,
+            "minY": 13.79687499999931,
+            "maxY": 19.953124999999318
+          }
+        }
+      }
+    }
+  ],
+  "fields": [
+    "payload.result[0].id",
+    "payload.result[0].number",
+    "payload.result[0].name",
+    "payload.result[0].area",
+    "payload.result[0].location",
+    "payload.result[0].boundary.sideClassification.extentsInView",
+    "payload.result[0].warnings",
+    "payload.result[1].id",
+    "payload.result[1].number",
+    "payload.result[1].name",
+    "payload.result[1].area",
+    "payload.result[1].location",
+    "payload.result[1].boundary.sideClassification.extentsInView",
+    "payload.result[1].warnings",
+    "payload.result[2].id",
+    "payload.result[2].number",
+    "payload.result[2].name",
+    "payload.result[2].area",
+    "payload.result[2].location",
+    "payload.result[2].boundary.sideClassification.extentsInView",
+    "payload.result[2].warnings",
+    "payload.result[3].id",
+    "payload.result[3].number",
+    "payload.result[3].name",
+    "payload.result[3].area",
+    "payload.result[3].location",
+    "payload.result[3].boundary.sideClassification.extentsInView",
+    "payload.result[3].warnings",
+    "payload.result[4].id",
+    "payload.result[4].number",
+    "payload.result[4].name",
+    "payload.result[4].area",
+    "payload.result[4].location",
+    "payload.result[4].boundary.sideClassification.extentsInView",
+    "payload.result[4].warnings",
+    "payload.result[5].id",
+    "payload.result[5].number",
+    "payload.result[5].name",
+    "payload.result[5].area",
+    "payload.result[5].location",
+    "payload.result[5].boundary.sideClassification.extentsInView",
+    "payload.result[5].warnings",
+    "payload.result[6].id",
+    "payload.result[6].number",
+    "payload.result[6].name",
+    "payload.result[6].area",
+    "payload.result[6].location",
+    "payload.result[6].boundary.sideClassification.extentsInView",
+    "payload.result[6].warnings"
+  ]
+}

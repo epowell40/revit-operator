@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace RevitBridge.Common
@@ -77,6 +78,24 @@ namespace RevitBridge.Common
 
         public static OperatorNativeTransactionReceipt NotStarted(IEnumerable<long>? targetElementIds = null)
             => new OperatorNativeTransactionReceipt("not_started", false, Array.Empty<long>(), targetElementIds);
+
+        public static OperatorNativeTransactionReceipt FromObservedStatus(string status, IEnumerable<long> affected)
+        {
+            if (status == "Committed") return Committed(affected);
+            if (status == "RolledBack") return RolledBack(affected);
+            if (status == "Uninitialized") return NotStarted();
+            return Unknown(status, affected);
+        }
+
+        // Composite workflows must forward only the last attempted transaction
+        // stage. A successful trial cannot establish the outcome of a later apply.
+        public static object? LastAttemptedStage(object preview, object? apply, bool applyAttempted)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(applyAttempted ? apply : preview));
+            var stage = document.RootElement;
+            return stage.ValueKind == JsonValueKind.Object && stage.TryGetProperty("transaction", out var receipt)
+                ? receipt.Clone() : (object?)null;
+        }
 
         public static OperatorNativeTransactionReceipt Unknown(string nativeStatus, IEnumerable<long>? targetElementIds = null)
         {

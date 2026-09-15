@@ -60,13 +60,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
             if (p.points == null || p.points.Count < 2)
             {
-                return Task.FromResult<object>(new { status = "Blocked", error = "At least two route points are required.", warnings });
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = "At least two route points are required.", warnings });
             }
             if (p.requireExistingEndpointConnections && !p.connectToExisting)
             {
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     error = "requireExistingEndpointConnections=true requires connectToExisting=true.",
                     warnings
                 });
@@ -76,7 +77,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var requestedWorkset = ResolveRequestedWorkset(doc, p.worksetId, p.worksetName, out var worksetError);
             if (!string.IsNullOrWhiteSpace(worksetError))
             {
-                return Task.FromResult<object>(new { status = "Blocked", error = worksetError, warnings });
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = worksetError, warnings });
             }
             var ctxReq = new MepRoutingUtil.RoutingContextRequest
             {
@@ -94,7 +95,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             warnings.AddRange(ctx.Warnings);
             if (ctx.Level == null)
             {
-                return Task.FromResult<object>(new { status = "Blocked", error = "Could not resolve a level for this route.", warnings });
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = "Could not resolve a level for this route.", warnings });
             }
 
             var routeSegmentCount = Math.Max(0, p.points.Count - 1);
@@ -105,6 +106,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     error = "Size is required by sizePolicy=explicit_required.",
                     plannedRoute = BuildPlanOnly(p.points, p.frameId, ctx.RecommendedZ, warnings),
                     selected = BuildSelected(ctx, null, null, null, null),
@@ -126,6 +128,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     error = "At least one route point is missing an explicit usable Z and elevationPolicy=explicit_required.",
                     plannedRoute = BuildPlan(resolvedPoints),
                     recommendedElevation = ctx.ToResponse("Ok"),
@@ -148,7 +151,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var len = resolvedPoints[i].DistanceTo(resolvedPoints[i + 1]);
                 if (len <= 1e-6)
                 {
-                    return Task.FromResult<object>(new { status = "Blocked", error = $"Route segment {i + 1} has zero length.", warnings });
+                    return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = $"Route segment {i + 1} has zero length.", warnings });
                 }
                 totalLength += len;
             }
@@ -174,6 +177,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     error = kind == "duct" && dType == null && !string.IsNullOrWhiteSpace(ductTypeResolution?.Receipt.Error)
                         ? ductTypeResolution!.Receipt.Error
                         : kind == "conduit" && conduitType == null && !string.IsNullOrWhiteSpace(conduitTypeResolution?.Error)
@@ -386,9 +390,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                         warnings.Add($"Connector verification found {openConnectorCount} open connector(s) on created route elements.");
                     }
 
+                    var completionStatus = p.dryRun ? tx.RollBack() : tx.Commit();
+                    var expectedStatus = p.dryRun ? TransactionStatus.RolledBack : TransactionStatus.Committed;
+                    if (completionStatus != expectedStatus)
+                        throw new InvalidOperationException($"Native route transaction returned {completionStatus}, expected {expectedStatus}.");
+                    var transaction = OperatorNativeTransactionReceipt.FromObservedStatus(completionStatus.ToString(), createdIds.Concat(fittingIds));
                     var result = new
                     {
                         status,
+                        transaction,
                         dryRun = p.dryRun,
                         kind,
                         plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
@@ -433,13 +443,13 @@ namespace RevitBridge.Logic.Handlers.MEP
                         rolledBack = p.dryRun
                     };
 
-                    if (p.dryRun) tx.RollBack();
-                    else tx.Commit();
                     return Task.FromResult<object>(result);
                 }
                 catch (Exception ex)
                 {
-                    try { tx.RollBack(); } catch { }
+                    try { if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack(); } catch { }
+                    TransactionStatus observedStatus;
+                    try { observedStatus = tx.GetStatus(); } catch { observedStatus = TransactionStatus.Error; }
                     return Task.FromResult<object>(new
                     {
                         status = "Blocked",
@@ -448,7 +458,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                         createdElementIds = new List<long>(),
                         plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
                         warnings,
-                        rolledBack = true
+                        rolledBack = observedStatus == TransactionStatus.RolledBack,
+                        transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observedStatus.ToString(), createdIds.Concat(fittingIds))
                     });
                 }
             }

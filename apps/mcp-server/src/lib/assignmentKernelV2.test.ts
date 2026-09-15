@@ -4,6 +4,36 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+
+test("blocked MEP trial is a failed operation with its authoritative rollback, while missing transaction truth stays unknown", async () => {
+  for (const confirmed of [false, true]) {
+    const body = { kind: "duct", points: [{ xyz: [-26.62, -12.05, 42.125] }, { xyz: [13.79, -12.05, 42.125] }],
+      ductTypeId: 139186, ductShape: "rectangular", ductSize: "12x10", apply: true, connectToExisting: false };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/mep-route-workflow", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/mep-route-workflow", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/mep-route-workflow", {
+        status: "Blocked", workflowMode: "applyRequested", executionOrder: ["resolve-routing-context", "dry-run-create-route"],
+        dryRun: { status: "Blocked", error: "Selected duct type created shape 'round', but requested size/ductShape requires 'rectangular'.",
+          dryRun: true, createdElementIds: [], rolledBack: true }, applyResult: null,
+        visualVerification: { status: "SkippedBlockedDryRun", reason: "The dry-run did not pass, so no model write or visual export was attempted." },
+        ...(confirmed ? { transaction: { status: "rolled_back", committed: false, modified_element_ids: [], affected_element_ids: [] } } : {}),
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "mep-trial-replay",
+          requested_effect: "apply", effect_state: confirmed ? "none" : "unknown", effect_authority: confirmed ? "native_rollback" : "native_host",
+          effect_reason: confirmed ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement",
+          request_dispatched: true, affected_target_identities: [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, confirmed ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, confirmed ? "rolled_back" : "unknown");
+    assert.equal(result.error_code, "native_domain_operation_failed");
+    assert.equal(result.observation_required, true);
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});
 import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";

@@ -443,9 +443,26 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
     value: status,
     dimensions: { capability_id: definition.capability_id }
   }];
-  if (evidenceResult && evidenceId) {
+  if (evidenceResult?.schema === "revit-operator.evidence-retrieval.v1" && evidenceId
+      && payload.ok !== false && evidenceResult.ok !== false) {
     const selection = record(evidenceResult.selection);
-    for (const selectionPath of Object.keys(selection ?? {}).sort().slice(0, 64)) {
+    const missingFields = new Set(Array.isArray(evidenceResult.missing_fields) ? evidenceResult.missing_fields : []);
+    const paths = Object.keys(selection ?? {}).filter(path => !missingFields.has(path)).sort().slice(0, 64);
+    const page = record(evidenceResult.pagination);
+    const rows = evidenceResult.selection;
+    // A page contributes only its actual retained array positions. Repeated or
+    // overlapping pages cannot manufacture progress by changing page sizes,
+    // purpose, timestamps or payload contents. These remain control-only facts.
+    if (Array.isArray(rows) && rows.length > 0 && rows.length <= 256 && page
+        && typeof page.path === "string" && page.path.length > 0 && page.path.length <= 480
+        && !/[\u0000-\u001f]/.test(page.path)
+        && Number.isSafeInteger(page.start) && page.start >= 0
+        && Number.isSafeInteger(page.requested_count) && page.requested_count >= rows.length && page.requested_count <= 256
+        && page.returned_count === rows.length
+        && Number.isSafeInteger(page.total_items) && page.total_items >= page.start + rows.length) {
+      for (let index = 0; index < rows.length; index += 1) paths.push(`${page.path}[${page.start + index}]`);
+    }
+    for (const selectionPath of paths) {
       const boundedPath = boundedControlText(selectionPath, 512);
       if (!boundedPath) continue;
       const dimensions = {

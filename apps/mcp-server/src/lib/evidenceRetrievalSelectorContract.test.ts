@@ -4,9 +4,25 @@ import path from "node:path";
 import test from "node:test";
 import {
   EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA,
+  assignmentKernelControlEvidenceFactsV2,
   parseEvidenceRetrievalSelectorV1,
   selectExactEvidenceTargetsV1
 } from "@revitoperator/assignment-kernel-v2-contracts";
+
+test("MCP retained page facts survive transport without giving missing selections domain authority", () => {
+  const result = { schema: "revit-operator.evidence-retrieval.v1", evidence_ref: { evidence_id: "ev1_page" },
+    selection: [{ id: 201 }, { id: 202 }], pagination: { path: "payload.result", start: 1, requested_count: 2, returned_count: 2, total_items: 7 } };
+  const facts = (value: unknown) => assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence", value)
+    .filter(fact => fact.fact_id === "control.evidence_selection_available");
+  const expected = facts({ ok: true, result });
+  assert.deepEqual(expected.map(fact => fact.dimensions?.selection_path), ["payload.result[1]", "payload.result[2]"]);
+  assert.ok(expected.every(fact => fact.fact_class === "control"));
+  assert.deepEqual(facts(JSON.parse(JSON.stringify({ ok: true, result }))), expected);
+  assert.deepEqual(facts({ ok: true, result: { ...result, pagination: { ...result.pagination, returned_count: 3 } } }), []);
+  assert.deepEqual(facts({ ok: true, result: { ...result, selection: [] } }), []);
+  assert.deepEqual(facts({ ok: false, result }), []);
+  assert.deepEqual(facts({ ok: true, result: { ...result, selection: { "payload.absent": null }, missing_fields: ["payload.absent"] } }), []);
+});
 
 type GoldenVectors = {
   selector_schema: string;

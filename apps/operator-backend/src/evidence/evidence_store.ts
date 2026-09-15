@@ -347,12 +347,17 @@ function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {
 function selectPath(root: unknown, dottedPath: string, missing: unknown = null): unknown {
   if (!dottedPath || dottedPath === "$" || dottedPath.includes("..") || /[\\/\u0000]/.test(dottedPath)) throw new Error("Invalid typed field path.");
   const segments = dottedPath.replace(/^\$\.?/, "").split(".");
-  if (segments.some(segment => !segment || segment === "__proto__" || segment === "constructor" || segment === "prototype")) {
-    throw new Error("Invalid typed field path.");
-  }
+  const tokens = segments.map(segment => {
+    const match = /^([^\[\]]*)((?:\[(?:0|[1-9]\d*)\])*)$/.exec(segment);
+    if (!match || !segment || ["__proto__", "constructor", "prototype"].includes(match[1]!))
+      throw new Error("Invalid typed field path.");
+    const indices = [...match[2]!.matchAll(/\[(\d+)\]/g)].map(item => Number(item[1]));
+    if (indices.some(item => !Number.isSafeInteger(item))) throw new Error("Invalid typed field path.");
+    return { key: match[1]!, indices };
+  });
   let value: unknown = root;
   for (let index = 0; index < segments.length;) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return missing;
+    if (!value || typeof value !== "object") return missing;
     const row = value as Record<string, unknown>;
     let matchedKey: string | null = null;
     let nextIndex = index;
@@ -368,9 +373,24 @@ function selectPath(root: unknown, dottedPath: string, missing: unknown = null):
       nextIndex = end;
       break;
     }
-    if (!matchedKey) return missing;
-    value = row[matchedKey];
-    index = nextIndex;
+    if (matchedKey !== null) {
+      value = row[matchedKey];
+      index = nextIndex;
+      continue;
+    }
+    // Bracket indices are emitted by the evidence projection itself. Traverse
+    // only literal own properties and array slots; never evaluate a selector.
+    const token = tokens[index]!;
+    if (token.key) {
+      if (!Object.hasOwn(row, token.key)) return missing;
+      value = row[token.key];
+    }
+    if (!token.indices.length) return missing;
+    for (const slot of token.indices) {
+      if (!Array.isArray(value) || !Object.hasOwn(value, slot)) return missing;
+      value = value[slot];
+    }
+    index += 1;
   }
   return value;
 }

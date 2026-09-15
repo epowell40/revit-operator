@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { assignmentKernelControlEvidenceFactsV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { storeEvidence, retrieveEvidence } from "../src/evidence/evidence_store.js";
+import { __closeForTests } from "../src/memory/sqlite_store.js";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -1051,6 +1057,53 @@ function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: 
       { fact_id: "control.payload_hash", fact_class: "control", value: `hash-${id}` }] };
   return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
 }
+
+test("seven retained room pages progress through the real store and controller but overlapping rereads stop", { concurrency: false }, () => {
+  const prior = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-page-progress-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/evidence-seven-spaces.json", import.meta.url), "utf8"));
+    const stored = storeEvidence({ scope: binding, source: "regression:seven-space-pages", trust_level: "authoritative_native",
+      raw: { ok: true, result: fixture.rooms } }, 4096);
+    let snapshot = journal().snapshot();
+    for (let step = 0; step < 9; step += 1) {
+      const start = step < 7 ? step : 1;
+      const count = step < 7 ? 1 : step - 6;
+      const retrieved = retrieveEvidence({ scope: binding, evidence_id: stored.ref.evidence_id,
+        purpose: `Review room page ${step}`, item_range: { path: "payload.result", start, count }, max_bytes: 50000 });
+      const id = `page-${step}`;
+      const obs: ObservationV2 = { ...observation(id, `observation-${id}`), authority: "operator-evidence-store",
+        result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+        facts: assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence", { ok: true, result: retrieved }),
+        verification_relevance: ["control"], fulfillment_role: "supporting_control", evidence_class: "control",
+        capability_id: "operator_retrieve_evidence", eligible_criterion_ids: [] };
+      const op: OperationV2 = { ...operation(id), capability_id: "operator_retrieve_evidence", purpose: "evidence_read",
+        fulfillment_role: "supporting_control", delegation_authority_id: undefined, advances_criterion_ids: [], eligible_criterion_ids: [],
+        input: { evidenceId: stored.ref.evidence_id, itemRange: { path: "payload.result", start, count }, purpose: `page ${step}` },
+        dispatch_state: "dispatched", dispatch_authority: "mcp", settlement_state: "settled", observation_ids: [obs.observation_id],
+        result: { ...result(id), authority: obs.authority, result_schema_id: obs.result_schema_id }, settled_at: "2026-08-26T20:00:05.000Z" };
+      const after = { ...snapshot, operations: { ...snapshot.operations, [id]: op },
+        observations: { ...snapshot.observations, [obs.observation_id]: obs },
+        observation_versions: { ...snapshot.observation_versions, [obs.observation_id]: step + 2 }, in_flight_operation_ids: [], quiescent: true };
+      const epoch = buildProgressEpochV2({ before: snapshot, after, stated_gap_ids: ["criterion:criterion-inventory"],
+        admitted_operation_ids: [id], recorded_at: `2026-08-26T20:00:${String(step + 6).padStart(2, "0")}.000Z` });
+      assert.equal(epoch.genuine_progress, step < 7, `page ${step}`);
+      assert.ok(obs.facts.every(fact => fact.fact_class === "control"));
+      snapshot = { ...after, progress_epochs: [...snapshot.progress_epochs, epoch] };
+      const decision = decideAssignmentProgressV2({ snapshot, budget, now: "2026-08-26T20:00:20.000Z" });
+      assert.equal(decision.decision, step < 8 ? "admit_reasoning_turn" : "blocked");
+      if (step === 8) assert.match(JSON.stringify(decision), /no_progress_budget_exhausted/);
+    }
+    assert.equal(snapshot.terminal, false);
+    assert.deepEqual(snapshot.criteria, {});
+  } finally {
+    __closeForTests();
+    if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = prior;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("continued drawing task retains raw token costs without exhausting the default budget during SDK discovery", () => {
   const j = journal();
