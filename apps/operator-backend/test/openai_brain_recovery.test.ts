@@ -3505,7 +3505,10 @@ test("codex instructions explicitly tell the sidecar not to stop at missing comm
   assert.match(instructions, /Execution ladder:/);
   assert.match(instructions, /Do not stop with a vague statement like 'I can't find the command'/);
   assert.match(instructions, /registration must not require rooms, spaces, room tags, or matching room names/i);
-  assert.match(instructions, /exterior envelope\/corners, stairs and elevators, shafts, grids and columns/i);
+  assert.match(instructions, /visually confirmed labeled grid axes via native Grid locationCurve/i);
+  assert.match(instructions, /otherwise use stable exterior corners, stairs, elevators, shafts and columns/i);
+  assert.match(instructions, /not native curve endpoints: use axis intersections/i);
+  assert.match(instructions, /separate wall or stair outside the fit/i);
 });
 
 test("responses api text extraction still exports a compact helper", () => {

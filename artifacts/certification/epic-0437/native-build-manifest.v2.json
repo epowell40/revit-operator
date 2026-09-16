@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:71ee27a6aaefe5d4b5044d554afe8b112d1a1bc569159f8bd4e8bb2b744c430a",
-  "source_inputs_hash": "sha256:5682ac9e2e43db55a09a08d1fe45e5e8bc9e49792a7a34d1f49393c401c76be6",
+  "policy_hash": "sha256:548c691a1fd90fca3a2065d4da5e604ca4ed72b7dc5b289f56d8dc924568979b",
+  "source_inputs_hash": "sha256:112401532318bb1e18cedfa1ce237ce3be005464c1d03a71fcaad96b32c65869",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -1219,7 +1219,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:85fb0d8b34907e7cd962fb5eaa830e97afa4b1a38b53bdc3e6e66c921a43b456"
+      "sha256": "sha256:d42bf2116253ddf22d4045bb624a1598ec8e2ba957dc703c3260487410906137"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -4320,7 +4320,7 @@
     },
     {
       "path": "apps/operator-backend/test/openai_brain_recovery.test.ts",
-      "sha256": "sha256:e441d0013d2063d4e02f9725bd7776bd9c82c547611106c3f52734918a822611"
+      "sha256": "sha256:7b42e805b1d504cd0944495420e81186dfb7124d91d5d0e33f5fb1c631bb8d0a"
     },
     {
       "path": "apps/operator-backend/test/openai_brain_redline_targeting.test.ts",
@@ -7217,15 +7217,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:5724cb41d044fe73f7113ba085e908868c43b631e35beb9f7b0cbb18f9d71582"
+      "sha256": "sha256:3ed21b161e6dc8023f56ad0bbb267dbdd89ca5fc326aadcf8b0778637526577a"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:d6b008304ecb2c1239934f153e8447b81332bf2b51470cc919f73227aa00d379"
+      "sha256": "sha256:2e15d56f610eaf4e8f9f51a91fd855d098e255e821d22868f5ab0f19ec73f588"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:59c6c347389b1cbbc7ba0dac2b86f7d2a67f0c28e0d79ace1ac215909525db94"
+      "sha256": "sha256:282ee84a32f1262e84be4f58628fc1c585dec99b975c98ca4c4d570fe2238e4c"
     }
   },
   "runtime_dependencies": [
@@ -7272,19 +7272,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:5724cb41d044fe73f7113ba085e908868c43b631e35beb9f7b0cbb18f9d71582",
+      "sha256": "sha256:3ed21b161e6dc8023f56ad0bbb267dbdd89ca5fc326aadcf8b0778637526577a",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:59c6c347389b1cbbc7ba0dac2b86f7d2a67f0c28e0d79ace1ac215909525db94",
+      "sha256": "sha256:282ee84a32f1262e84be4f58628fc1c585dec99b975c98ca4c4d570fe2238e4c",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:d6b008304ecb2c1239934f153e8447b81332bf2b51470cc919f73227aa00d379",
+      "sha256": "sha256:2e15d56f610eaf4e8f9f51a91fd855d098e255e821d22868f5ab0f19ec73f588",
       "host": null
     },
     {
@@ -7372,6 +7372,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:c8f664bdc87dec57722921252430457fc8ce450902c133412f9979108e51a052",
-  "built_at_utc": "2026-09-16T20:43:41.131Z"
+  "runtime_dependencies_hash": "sha256:48ab86b8da66c133b48921715ccfc1ec8aa393cfce49bf2570f22ff4ffffd065",
+  "built_at_utc": "2026-09-16T20:54:03.381Z"
 }

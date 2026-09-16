@@ -1228,7 +1228,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:85fb0d8b34907e7cd962fb5eaa830e97afa4b1a38b53bdc3e6e66c921a43b456"
+      "sha256": "sha256:d42bf2116253ddf22d4045bb624a1598ec8e2ba957dc703c3260487410906137"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -4329,7 +4329,7 @@
     },
     {
       "path": "apps/operator-backend/test/openai_brain_recovery.test.ts",
-      "sha256": "sha256:e441d0013d2063d4e02f9725bd7776bd9c82c547611106c3f52734918a822611"
+      "sha256": "sha256:7b42e805b1d504cd0944495420e81186dfb7124d91d5d0e33f5fb1c631bb8d0a"
     },
     {
       "path": "apps/operator-backend/test/openai_brain_redline_targeting.test.ts",
@@ -7221,7 +7221,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:5682ac9e2e43db55a09a08d1fe45e5e8bc9e49792a7a34d1f49393c401c76be6",
+  "inputs_hash": "sha256:112401532318bb1e18cedfa1ce237ce3be005464c1d03a71fcaad96b32c65869",
   "result": {
     "passed": true,
     "checks": [
