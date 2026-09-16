@@ -520,7 +520,11 @@
     },
     {
       "path": "apps/mcp-server/src/viewFrameImage.ts",
-      "sha256": "sha256:3a9453c67455d9b9b8d30f95b7642913f40dc1bd236168125b5ac8d193f4e2df"
+      "sha256": "sha256:1776b812d30f4f3650dd515161cfc3f865bf66db33cdde313c86897032d6d88e"
+    },
+    {
+      "path": "apps/mcp-server/src/workflowImage.test.ts",
+      "sha256": "sha256:6ffc79036bcaba4b3a1b24a7762c31750b44de56a6a85d91f89d5ce8e400657d"
     },
     {
       "path": "apps/mcp-server/tsconfig.json",
@@ -2952,6 +2956,10 @@
       "sha256": "sha256:d4c3d261553a2c07c324826f3aab162695de9f0e8e1bb23a2919f3f82d211da4"
     },
     {
+      "path": "apps/operator-backend/src/verification/connected_duct_readback_v2.ts",
+      "sha256": "sha256:00a7eea698eda0a1a0540357a7686a346c12d244b7430079d34a0f8da129bd53"
+    },
+    {
       "path": "apps/operator-backend/src/verification/generated_parameter_postcondition_v2.ts",
       "sha256": "sha256:446749b2a5d3391fd8473eff381a56ca908b1e6ecfece715070e06295d2cf880"
     },
@@ -2969,7 +2977,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/open_duct_postcondition_v2.ts",
-      "sha256": "sha256:a8bb2c07dd84baf6464d749d5dc73fc62f82c31bb67de08a33c52ba4708acab0"
+      "sha256": "sha256:473816e9544529a215022e87092e3b8c8fc0c803eb3ea7a349456f0818139024"
     },
     {
       "path": "apps/operator-backend/src/verification/redline_visual_verification_gate.ts",
@@ -2985,7 +2993,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/verification_capability_admission_v2.ts",
-      "sha256": "sha256:0f8f244972f7993617cf1b467da6556990a04c7321503181a17d7cc5eb888252"
+      "sha256": "sha256:ac5013ec5d8132234251fce6ee25052dd54503f5b586b49cf665658b0c3b84d3"
     },
     {
       "path": "apps/operator-backend/src/verification/verification_payload_boundary_v2.ts",
@@ -3209,7 +3217,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:fe3563206fbc3aef8fa70cb5dc010206d9d9160b5bbfea62e7cf5369de58bc02"
+      "sha256": "sha256:889e022d9585e6c909655bf95702c3a2d0665e22421aeb73b9246956b767c100"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -3381,7 +3389,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:6edeee2088f8aa48384b16b31c04b07b113fa62c7befaeea608f3f140db09355"
+      "sha256": "sha256:16d0613b30e63ce703ee3b25f00faecd0612ae52ce77509301d89a086f59e778"
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_lifecycle.test.ts",
@@ -3426,6 +3434,10 @@
     {
       "path": "apps/operator-backend/test/computer_run_settlement.test.ts",
       "sha256": "sha256:89d5e9456187343b03b2156d464eec97da1683e5c9c4d986a0473a0d17f74b3a"
+    },
+    {
+      "path": "apps/operator-backend/test/connected_duct_postcondition_v2.test.ts",
+      "sha256": "sha256:de4808f1ed4678c3171773e63be084ad0f0892063190748cc344704c5ca72eae"
     },
     {
       "path": "apps/operator-backend/test/content_verified_projection.test.ts",
@@ -3826,6 +3838,10 @@
     {
       "path": "apps/operator-backend/test/fixtures/c36-open-duct-wrong-elevation.json",
       "sha256": "sha256:737cd279e5dbe4753f6b5afbb6f11e866a3e8ee9dfdec04fbde9a91f1acf9cf5"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/c37-connected-duct-readback.json",
+      "sha256": "sha256:eff70992542d4d1436717354643bc1f492e7199e07318f5a49c37e55762c7505"
     },
     {
       "path": "apps/operator-backend/test/fixtures/codex_app_server_fixture.js",
@@ -6905,7 +6921,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:e86feb0871091f2ad61c51a5bc49b368ead3f5bd259b940dbed618cd022b6a68",
+  "inputs_hash": "sha256:e01e19d22b8e655c3a8f61c363487b3e3a4a2de58df1c3de84f41272602a57a5",
   "result": {
     "passed": true,
     "checks": [

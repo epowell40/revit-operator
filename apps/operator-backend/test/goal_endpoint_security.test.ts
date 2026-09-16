@@ -320,7 +320,8 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
       OPERATOR_JWT_ISSUER: "",
       OPERATOR_JWT_AUDIENCE: "",
       OPERATOR_WORKSPACE_ROOT: workspace,
-      OPERATOR_BRAIN: "rule"
+      OPERATOR_BRAIN: "rule",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0"
     },
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -575,7 +576,8 @@ test("principal auto-goals bind ownership to the requester so approval authority
       OPERATOR_JWT_AUDIENCE: "",
       OPERATOR_GOAL_AUTHORITY_SECRET: authoritySecret,
       OPERATOR_WORKSPACE_ROOT: workspace,
-      OPERATOR_BRAIN: "rule"
+      OPERATOR_BRAIN: "rule",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0"
     },
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -678,7 +680,8 @@ test("principal-bound session ids cannot be shadowed or claimed by another tenan
         OPERATOR_AUTH_MODE: "principal_jwt",
         OPERATOR_JWT_SECRET: secret,
         OPERATOR_WORKSPACE_ROOT: workspace,
-        OPERATOR_BRAIN: "rule"
+        OPERATOR_BRAIN: "rule",
+        OPERATOR_ASSIGNMENT_KERNEL_V2: "0"
       },
       stdio: ["ignore", "ignore", "pipe"]
     });
@@ -724,7 +727,8 @@ test("shared-token local mode retains goal endpoint behavior without a multi-use
       OPERATOR_AUTH_MODE: "shared_token",
       OPERATOR_TOKEN: token,
       OPERATOR_WORKSPACE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goal-local-")),
-      OPERATOR_BRAIN: "rule"
+      OPERATOR_BRAIN: "rule",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0"
     },
     stdio: ["ignore", "ignore", "pipe"]
   });

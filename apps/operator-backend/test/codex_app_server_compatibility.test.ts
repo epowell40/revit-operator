@@ -3,6 +3,22 @@ import { EventEmitter } from "node:events";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
 
+test("post-change route pixels survive bounded evidence projection and are distinct from JSON evidence",()=>{
+  const raw={status:"AppliedVisualVerificationReady",image_delivery:{available:true},visualVerification:{capturePath:"artifacts/captures/selection/route.jpg"}};
+  const projections=[{schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_route_json",media_type:"application/json",byte_count:9645},
+    {schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_route_image",media_type:"image/jpeg",byte_count:24}] as any;
+  const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify(raw)},
+    {type:"image",data:"bmF0aXZlLXBvc3QtY2hhbmdl",mimeType:"image/jpeg"}]},{tool:"revit_call_tool",projections,omitted:0});
+  attachDynamicObservationContext(response,"revit_call_tool",JSON.stringify({schema:"revit-operator.model-observation-index/v2",pending_verification:[{operation_id:"route"}]}));
+  assert.equal(response.success,true);
+  assert.deepEqual(response.contentItems.filter(x=>x.type==="inputImage"),[{type:"inputImage",imageUrl:"data:image/jpeg;base64,bmF0aXZlLXBvc3QtY2hhbmdl"}]);
+  const text=response.contentItems.filter(x=>x.type==="inputText").map(x=>x.text).join("\n");
+  assert.match(text,/ev1_route_json/);assert.match(text,/ev1_route_image/);assert.match(text,/pending_verification/);
+  const unavailable=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify({...raw,image_delivery:{available:false}})}]},
+    {tool:"revit_call_tool",projections:[projections[0]],omitted:0});
+  assert.equal(unavailable.contentItems.some(x=>x.type==="inputImage"),false,"metadata never synthesizes a visual observation");
+});
+
 test("actual dynamic response includes envelope overhead and never restores raw data when every projection is omitted", { concurrency: false }, () => {
   const prior=process.env.OPERATOR_WORKSPACE_ROOT;
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"dynamic-response-budget-"));

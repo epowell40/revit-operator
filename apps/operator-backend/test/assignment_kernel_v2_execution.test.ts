@@ -275,22 +275,23 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
   };
 }
 
-for (const route of ["/revit/mep-route-workflow", "/revit/create-duct"]) test(route + " open duct needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
-  const f=JSON.parse(fs.readFileSync("test/fixtures/c35-open-duct-readback.json","utf8"));
+for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-readback"], ["/revit/create-duct","c35-open-duct-readback"], ["/revit/mep-route-workflow","c37-connected-duct-readback"]]) test(route + " " + fixtureName + " needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+  const f=JSON.parse(fs.readFileSync(`test/fixtures/${fixtureName}.json`,"utf8"));
+  const targetId=Number(f.affected[0].split(":")[1]);
   if(route==="/revit/create-duct"){const b=f.input.body; f.input={method:"POST",path:route,body:{startPoint:b.points[0],endPoint:b.points[1],levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,dryRun:false}};}
   const {goal,snapshot}=setup("apply");
   const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:"c35-route",provider_turn_id:"route-turn",
     capability_id:"revit_call_tool",classified_effect:"apply",arguments:f.input,opened_at:"2026-09-15T20:00:00.000Z"});
   markAssignmentKernelOperationDispatchStartedV2(apply);
-  const applied=envelope(apply.operation_id,apply.binding,{status:"AppliedVisualVerificationReady",createdElementIds:[1542919]},"applied");
+  const applied=envelope(apply.operation_id,apply.binding,{status:"AppliedVisualVerificationReady",createdElementIds:[targetId]},"applied");
   Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${route}/v2`,affected_target_identities:f.affected,completed_at:"2026-09-15T20:00:01.000Z"});
   settleAssignmentKernelOperationV2(apply,applied);
   prepareCodexAssignmentProgressV2(apply.binding);
   const read=(name:string,path:string,payload:unknown,time:string) => {
     const lease=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,controller_request_id:name,
       provider_turn_id:"verify-turn",capability_id:"revit_call_tool",classified_effect:"read",
-      target_tokens:["id:1542919"],
-      arguments:{method:"POST",path,body:{elementIds:[1542919],includeAllRefs:true}},opened_at:time});
+      target_tokens:[`id:${targetId}`],
+      arguments:{method:"POST",path,body:{elementIds:[targetId],includeAllRefs:true}},opened_at:time});
     markAssignmentKernelOperationDispatchStartedV2(lease);
     const result=envelope(lease.operation_id,lease.binding,payload);
     Object.assign(result.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${path}/v2`,completed_at:time});

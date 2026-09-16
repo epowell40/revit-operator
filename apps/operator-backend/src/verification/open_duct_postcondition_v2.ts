@@ -1,4 +1,5 @@
 import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
+import { connectedDuctReadbackMatchesV2 } from "./connected_duct_readback_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
@@ -14,6 +15,7 @@ const samePoint = (a: unknown, b: number[]): boolean => point(a) && a.every((n, 
  * ends, explicit world coordinates, type, level, size and system. This is a
  * native desired-state check, not visual/redline interpretation certification. */
 export function openDuctReadbackMatchesV2(input: unknown, affected: readonly string[], parameters: unknown, connectors: unknown): boolean {
+  if (connectedDuctReadbackMatchesV2(input, affected, parameters, connectors)) return true;
   const request = record(input), compatibility = request.path === "/revit/create-duct";
   const body = compatibility ? explicitCreateDuctIntentV2(input) : record(request.body);
   if (!body) return false;

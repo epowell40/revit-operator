@@ -123,7 +123,8 @@
     "content_verified_projection.test.ts",
     "input_result_freshness.test.ts",
     "assignment_input_result_continuation.test.ts",
-    "open_duct_postcondition_v2.test.ts"
+    "open_duct_postcondition_v2.test.ts",
+    "connected_duct_postcondition_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -147,7 +148,8 @@
     "lib/dynamicAssignmentIntegration.test.ts",
     "lib/generalAgentCapabilityDiscovery.test.ts",
     "viewFrameImage.test.ts",
-    "spatialObservationV1.test.ts"
+    "spatialObservationV1.test.ts",
+    "workflowImage.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_ux.test.js",
@@ -1947,6 +1949,20 @@
       "coverage": [
         "mcp:lib/genericToolPreflight.test.ts",
         "dotnet:OperatorWorkbookSupplementalTablesTests"
+      ]
+    },
+    {
+      "id": "connected-round-duct-is-correct-but-open-rectangular-only-verifier-stalls-completion",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "committed-route-workflow-capture-remains-text-only-and-image-retrieval-fails",
+      "coverage": [
+        "mcp:workflowImage.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
       ]
     }
   ],
