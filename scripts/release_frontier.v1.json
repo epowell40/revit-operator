@@ -161,6 +161,7 @@
     "workflowImage.test.ts"
   ],
   "desktop_tests": [
+    "test/assignment_workspace_v2.test.js",
     "test/assignment_workspace_ux.test.js",
     "test/simple_assistant_ui.test.js",
     "test/sidecar_secure_integration.test.js",
