@@ -68,6 +68,8 @@ export type EvidenceProjectionV1 = {
   // Exact small native JSON payload, retained with the same evidence identity.
   // Its presence does not change observation class or prove inventory coverage.
   inline_payload?: unknown;
+  /** Host documentation only: not eligible for task completion or verification. */
+  tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];

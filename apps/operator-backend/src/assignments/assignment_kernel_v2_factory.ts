@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { requiresDurableWorkPlan } from "./work_plan_intent.js";
 import { requestedWorkbookAssessment } from "../artifact_export_intent.js";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -180,6 +181,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     binding,
     source_user_request: input.goal.objective,
     requested_effect: effect,
+    ...(effect === "apply" && requiresDurableWorkPlan(input.goal.objective) ? { work_plan_required: true } : {}),
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
     ...(effect === "read"
       && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))

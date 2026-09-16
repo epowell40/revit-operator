@@ -130,6 +130,7 @@ export const SUPPORTED_STANDALONE_ROUTES: readonly string[] = Object.freeze([
 export const SUPPORTED_MCP_ALIASES: readonly string[] = Object.freeze([
   "operator_discover_capabilities",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
   "operator_request_assignment_input",

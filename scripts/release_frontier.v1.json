@@ -136,7 +136,9 @@
     "task_memory_prompt.test.ts",
     "drawing_observability.test.ts",
     "existing_conditions_reconstruction.test.ts",
-    "route_connectivity.test.ts"
+    "route_connectivity.test.ts",
+    "family_placement_postcondition_v2.test.ts",
+    "work_plan_projection.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -161,7 +163,8 @@
     "lib/generalAgentCapabilityDiscovery.test.ts",
     "viewFrameImage.test.ts",
     "spatialObservationV1.test.ts",
-    "workflowImage.test.ts"
+    "workflowImage.test.ts",
+    "lib/workPlanStdio.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -223,7 +226,8 @@
     "DraftPointCoordinatePolicyTests",
     "OperatorWorkbookExportPathTests",
     "TemporaryAnnotationCropTests",
-    "HostedPlacementPreflightTests"
+    "HostedPlacementPreflightTests",
+    "AbsolutePlacementCorrectionTests"
   ],
   "failure_families": [
     {
@@ -2132,6 +2136,38 @@
       "coverage": [
         "backend:route_connectivity.test.ts",
         "backend:existing_conditions_reconstruction.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ],
+      "id": "whole-area-created-family-summary-ids-alias-loses-verification-target"
+    },
+    {
+      "coverage": [
+        "dotnet:AbsolutePlacementCorrectionTests",
+        "backend:family_placement_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ],
+      "id": "whole-area-family-placement-adds-level-elevation-and-echoes-requested-position"
+    },
+    {
+      "id": "whole-area-task-cannot-retain-and-independently-close-multiple-branches",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:work_plan_projection.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-tool-documentation-projection-hides-schema-and-wastes-provider-round-trips",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
       ]
     }
   ],

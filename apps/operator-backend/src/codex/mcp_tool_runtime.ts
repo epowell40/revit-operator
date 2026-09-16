@@ -42,6 +42,7 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_request_clarification",
   "operator_request_assignment_input",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "revit_ping",

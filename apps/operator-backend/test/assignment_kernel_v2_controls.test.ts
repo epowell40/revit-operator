@@ -61,6 +61,43 @@ function start(prompt = "Count all air devices in the model.") {
   return { prepared, binding: prepared.bindingV2!, snapshot: getAssignmentKernelSnapshotV2(prepared.assignmentId)! };
 }
 
+test("multi-room checklist HTTP retains scope across reload and rejects foreign or stale updates", () => workspace(async () => {
+  const { binding } = start("Reconstruct all ductwork in both units from the record drawing.");
+  const server = http.createServer((req, res) => {
+    void runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, async () => {
+      await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
+        if (session === binding.session_id) return true;
+        res.writeHead(403).end(); return false;
+      });
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address() as import("node:net").AddressInfo;
+    const send = (body: unknown) => fetch(`http://127.0.0.1:${address.port}/api/assignments/v2/work-plan`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const body = { ...binding, action: "declare", declaration: { items: ["unit403", "unit407"].map(item_id => ({ item_id,
+      description: `Reconstruct all visible branches in ${item_id}`, source_basis: "M104 source PDF" })), assumptions: ["Unshown elevation inferred"] } };
+    assert.equal((await send({ ...body, session_id: "foreign" })).status, 403);
+    assert.equal((await send({ ...body, generation: 99 })).status, 409);
+    assert.equal((await send(body)).status, 200);
+    __testOnlyResetGoalListCache();
+    const status = await send({ ...binding, action: "status", start: 1 });
+    assert.equal(status.status, 200);
+    const restored = await status.json() as any;
+    assert.equal(restored.work_plan.scope.items[0].item_id, "unit407");
+    assert.equal(restored.work_plan.total_count, 2);
+    assert.equal(restored.outcome, "active");
+    assert.equal((await send(body)).status, 409);
+    assert.equal((await send({ ...binding, action: "complete", item_id: "unit403", operation_ids: ["invented"] })).status, 409);
+    assert.equal((await send({ ...binding, action: "status", start: -1 })).status, 409);
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.work_plan!.items.length, 2);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+}));
+
 test("document reader inspects late pages beside a paused model task without changing its outcome or enabling native tools", () => workspace(async root => {
   const { prepared, binding } = start();
   controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-before-docs", expected_command_id: null });

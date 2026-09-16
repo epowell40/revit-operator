@@ -1,4 +1,5 @@
 import type http from "node:http";
+import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { recoverRetainedAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -218,6 +219,19 @@ export async function handleAssignmentHttpRoute(
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/work-plan") {
+    try {
+      const body = await readJson(req, 256_000) as JsonMap | null;
+      const binding = v2Binding(body);
+      if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any,
+        item_id: body?.item_id as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
+        operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number });
+      writeJson(res, 200, result);
+    } catch (error) { writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/criteria/evaluate") {

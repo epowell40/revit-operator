@@ -29,6 +29,63 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("whole-area tool documentation replay supplies exact input schemas within the existing evidence budget", () => withWorkspace(() => {
+  for (const name of ["c42-route-tool-doc", "c42-hosted-tool-doc"]) {
+    const raw = JSON.parse(fs.readFileSync(`test/fixtures/${name}.json`, "utf8"));
+    const original = JSON.parse(raw.content[0].text);
+    const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_tool_doc", trust_level: "host_observed", raw }, 8192);
+    const doc = stored.projection.tool_documentation;
+    assert(doc);
+    assert.equal(doc.completion_eligible, false);
+    assert.equal(stored.projection.trust_level, "host_observed");
+    assert.equal(stored.projection.inline_payload, undefined);
+    assert.deepEqual(stored.projection.key_facts, {});
+    assert.equal(doc.tools[0]!.path, original.path);
+    assert.deepEqual(doc.tools[0]!.request_schema, original.request_schema);
+    assert.deepEqual(doc.tools[0]!.required_fields, original.required_fields);
+    assert(stored.projection.projected_bytes <= 8192);
+    assert.equal(doc.complete, false);
+    const recovered = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Check full retained documentation", fields: ["payload.request_schema"] });
+    assert.deepEqual((recovered.selection as any)["payload.request_schema"], original.request_schema);
+    assert.equal(stored.ref.content_hash, "sha256:" + createHash("sha256").update(JSON.stringify(raw)).digest("hex"));
+  }
+}));
+
+test("whole-area catalog replay exposes exact tool paths and required inputs with explicit omissions", () => withWorkspace(() => {
+  const raw = JSON.parse(fs.readFileSync("test/fixtures/c42-tool-search.json", "utf8"));
+  const original = JSON.parse(raw.content[0].text);
+  const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_search_tools", trust_level: "host_observed", raw }, 8192);
+  const doc = stored.projection.tool_documentation;
+  assert(doc && doc.tools.length >= 4);
+  assert.equal(doc.total_tools, original.matches.length);
+  for (const [index, tool] of doc.tools.entries()) {
+    assert.equal(tool.path, original.matches[index].path);
+    assert.deepEqual(tool.required_fields, original.matches[index].required_fields);
+    assert.equal(tool.request_schema, undefined);
+    assert(doc.omitted_paths.includes(`payload.matches[${index}].request_schema`));
+  }
+  assert.equal(doc.complete, false);
+  assert.equal(doc.completion_eligible, false);
+  assert(stored.projection.projected_bytes <= 8192);
+}));
+
+test("documentation projections reject untrusted, unrelated and ambiguous sources and preserve tight budgets", () => withWorkspace(() => {
+  const raw = JSON.parse(fs.readFileSync("test/fixtures/c42-route-tool-doc.json", "utf8"));
+  for (const variation of [
+    { source: "caller:revit_tool_doc", trust_level: "host_observed" as const, raw },
+    { source: "assignment_kernel_v2:revit_tool_doc", trust_level: "untrusted_caller" as const, raw },
+    { source: "assignment_kernel_v2:revit_tool_doc", trust_level: "host_observed" as const, raw: { ...raw, structuredContent: { path: "/revit/different" } } },
+    { source: "assignment_kernel_v2:revit_tool_doc", trust_level: "host_observed" as const, raw: { ...raw, isError: true } }
+  ]) assert.equal(storeEvidence({ scope, ...variation }, 8192).projection.tool_documentation, undefined);
+  assert.throws(() => storeEvidence({ scope, source: "assignment_kernel_v2:revit_tool_doc", trust_level: "host_observed", raw }, 1500), /cannot fit configured/);
+  for (const budget of [2048, 4096, 8192]) {
+    const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_tool_doc", trust_level: "host_observed", raw }, budget);
+    assert(stored.projection.projected_bytes <= budget);
+    const doc = stored.projection.tool_documentation;
+    if (doc && !doc.tools[0]!.request_schema) assert(doc.omitted_paths.includes("payload.request_schema"));
+  }
+}));
+
 test("seven-space zoning replay resolves all 49 advertised array fields", { concurrency: false }, () => withWorkspace(() => {
   const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/evidence-seven-spaces.json"), "utf8"));
   const stored = storeEvidence({ scope, source: "regression:seven-space-zoning", trust_level: "authoritative_native",

@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
@@ -10,80 +12,299 @@ namespace RevitBridge.Logic.Handlers
 {
     public class CreateFamilyInstanceHandler : IRequestHandler
     {
-        public class Params
+        private sealed class CreatedInstance
         {
-            public string familyName { get; set; }
-            public string symbolName { get; set; }
-            public string levelName { get; set; }
+            public int index { get; set; }
+            public long id { get; set; }
+            public string? name { get; set; }
+            public string? family { get; set; }
+            public string? familyName { get; set; }
+            public string? symbol { get; set; }
+            public string? symbolName { get; set; }
+            public string? typeName { get; set; }
             public double x { get; set; }
             public double y { get; set; }
             public double z { get; set; }
         }
 
+        private sealed class PlannedInstance
+        {
+            public int index { get; set; }
+            public double x { get; set; }
+            public double y { get; set; }
+            public double z { get; set; }
+            public double rotationDegrees { get; set; }
+        }
+
+        public class Params
+        {
+            public string? familyName { get; set; }
+            public string? symbolName { get; set; }
+            public string? typeName { get; set; } // alias for symbolName
+            public string? levelName { get; set; }
+            public long? viewId { get; set; }
+            public string? sheetNumber { get; set; }
+            public double x { get; set; }
+            public double y { get; set; }
+            public double z { get; set; }
+            public int? count { get; set; }
+            public double? spacingX { get; set; }
+            public double? spacingY { get; set; }
+            public double? spacingZ { get; set; }
+            public double? rotationDegrees { get; set; }
+            public bool? dryRun { get; set; }
+        }
+
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            var p = JsonSerializer.Deserialize<Params>(jsonData);
-            var doc = app.ActiveUIDocument.Document;
+            var p = string.IsNullOrWhiteSpace(jsonData)
+                ? new Params()
+                : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
 
-            using (Transaction trans = new Transaction(doc, "Create Family Instance"))
+            var symbolName = (p.symbolName ?? p.typeName ?? "").Trim();
+            if (symbolName.Length == 0)
+                throw new InvalidOperationException("create-family-instance requires symbolName (or typeName).");
+
+            var dryRun = p.dryRun ?? false;
+            var requestedCount = p.count ?? 1;
+            if (requestedCount < 1) requestedCount = 1;
+            if (requestedCount > 200) requestedCount = 200;
+
+            var targetView = ResolveTargetView(doc, p.viewId, p.sheetNumber);
+            var level = ResolveLevel(doc, p.levelName, targetView);
+
+            var symbol = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .Cast<FamilySymbol>()
+                .FirstOrDefault(s =>
+                    (string.IsNullOrWhiteSpace(p.familyName) || s.FamilyName.Equals(p.familyName, StringComparison.OrdinalIgnoreCase)) &&
+                    s.Name.Equals(symbolName, StringComparison.OrdinalIgnoreCase));
+            if (symbol == null)
             {
-                trans.Start();
-
-                // 1. Find Level
-                Level level = null;
-                if (!string.IsNullOrEmpty(p.levelName))
-                {
-                    level = new FilteredElementCollector(doc)
-                        .OfClass(typeof(Level))
-                        .Cast<Level>()
-                        .FirstOrDefault(l => l.Name.Equals(p.levelName, StringComparison.OrdinalIgnoreCase));
-                }
-                if (level == null) level = doc.ActiveView.GenLevel;
-
-                // 2. Find Family Symbol
-                FamilySymbol symbol = new FilteredElementCollector(doc)
-                    .OfClass(typeof(FamilySymbol))
-                    .Cast<FamilySymbol>()
-                    .FirstOrDefault(s => 
-                        (string.IsNullOrEmpty(p.familyName) || s.FamilyName.Equals(p.familyName, StringComparison.OrdinalIgnoreCase)) &&
-                        s.Name.Equals(p.symbolName, StringComparison.OrdinalIgnoreCase));
-
-                if (symbol == null)
-                    throw new Exception($"Could not find Family Symbol '{p.symbolName}' (Family: '{p.familyName ?? "Any"}'). Load it first.");
-
-                if (!symbol.IsActive) symbol.Activate();
-
-                // 3. Create
-                XYZ point = new XYZ(p.x, p.y, p.z);
-                FamilyInstance instance;
-                
-                // Some families require a host (Level/Face). Simplest is non-hosted or level-hosted.
-                // We'll try standard creation.
-                try 
-                {
-                    instance = doc.Create.NewFamilyInstance(point, symbol, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                }
-                catch
-                {
-                    // Fallback for face-based or other complex families? 
-                    // For now, simpler overload
-                    instance = doc.Create.NewFamilyInstance(point, symbol, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                }
-
-                trans.Commit();
-
-                return Task.FromResult<object>(new 
-                { 
-                    id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id), 
-                    name = instance.Name, 
-                    family = instance.Symbol.FamilyName,
-                    familyName = instance.Symbol.FamilyName,
-                    symbol = instance.Symbol.Name,
-                    symbolName = instance.Symbol.Name,
-                    typeName = instance.Symbol.Name
-                });
+                throw new InvalidOperationException($"Could not find Family Symbol '{symbolName}' (Family: '{p.familyName ?? "Any"}'). Load it first.");
             }
+
+            var dx = p.spacingX ?? 0.0;
+            var dy = p.spacingY ?? 0.0;
+            var dz = p.spacingZ ?? 0.0;
+            var rotationDegrees = p.rotationDegrees ?? 0.0;
+
+            var created = new List<CreatedInstance>();
+            var planned = new List<PlannedInstance>();
+            void CreateRows(ISet<long> nativeCreated)
+            {
+                if (!symbol.IsActive)
+                {
+                    symbol.Activate();
+                    doc.Regenerate();
+                }
+
+                for (int i = 0; i < requestedCount; i++)
+                {
+                    var point = new XYZ(
+                        p.x + (i * dx),
+                        p.y + (i * dy),
+                        p.z + (i * dz));
+
+                    var instance = CreateInstanceAtPoint(doc, symbol, level, targetView, point);
+                    nativeCreated.Add(RevitBridge.Common.ElementIdCompat.GetValue(instance.Id));
+                    if (Math.Abs(rotationDegrees) > 1e-9)
+                    {
+                        RotateAboutZ(doc, instance.Id, point, rotationDegrees);
+                    }
+
+                    doc.Regenerate();
+                    var observedPoint = (instance.Location as LocationPoint)?.Point
+                        ?? throw new InvalidOperationException("Created family did not expose a point location; placement cannot be verified.");
+                    // Some level-based native overloads add the level elevation to
+                    // the supplied Z. Our request coordinates are absolute model feet.
+                    // Read the actual insertion and correct it inside the same transaction.
+                    if (targetView == null)
+                    {
+                        var requested = new[] { point.X, point.Y, point.Z };
+                        var actual = new[] { observedPoint.X, observedPoint.Y, observedPoint.Z };
+                        if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested, actual))
+                        {
+                            var delta = RevitBridge.Common.AbsolutePlacementCorrection.Delta(requested, actual);
+                            ElementTransformUtils.MoveElement(doc, instance.Id, new XYZ(delta[0], delta[1], delta[2]));
+                            doc.Regenerate();
+                            observedPoint = (instance.Location as LocationPoint)?.Point
+                                ?? throw new InvalidOperationException("Created family location disappeared after placement correction.");
+                            if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested,
+                                new[] { observedPoint.X, observedPoint.Y, observedPoint.Z }))
+                                throw new InvalidOperationException("Native family placement did not reach the requested model-space point.");
+                        }
+                    }
+
+                    if (dryRun)
+                    {
+                        planned.Add(new PlannedInstance
+                        {
+                            index = i,
+                            x = observedPoint.X,
+                            y = observedPoint.Y,
+                            z = observedPoint.Z,
+                            rotationDegrees = rotationDegrees
+                        });
+                    }
+                    else
+                    {
+                        created.Add(new CreatedInstance
+                        {
+                            index = i,
+                            id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id),
+                            name = instance.Name,
+                            family = instance.Symbol?.FamilyName,
+                            familyName = instance.Symbol?.FamilyName,
+                            symbol = instance.Symbol?.Name,
+                            symbolName = instance.Symbol?.Name,
+                            typeName = instance.Symbol?.Name,
+                            x = observedPoint.X,
+                            y = observedPoint.Y,
+                            z = observedPoint.Z
+                        });
+                    }
+                }
+
+            }
+
+            object? TargetViewPayload() => targetView == null ? null : new
+            {
+                id = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id), name = targetView.Name
+            };
+            if (!dryRun)
+            {
+                var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Create Family Instance", nativeCreated =>
+                {
+                    CreateRows(nativeCreated);
+                    doc.Regenerate();
+                    var first = created.FirstOrDefault();
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "Placed", ["dryRun"] = false, ["count"] = created.Count,
+                        ["id"] = first?.id ?? 0, ["name"] = first?.name,
+                        ["family"] = symbol.FamilyName, ["familyName"] = symbol.FamilyName,
+                        ["symbol"] = symbol.Name, ["symbolName"] = symbol.Name, ["typeName"] = symbol.Name,
+                        ["levelName"] = level?.Name, ["targetView"] = TargetViewPayload(), ["instances"] = created
+                    };
+                });
+                return Task.FromResult<object>(result);
+            }
+
+            using (var trans = new Transaction(doc, "Create Family Instance Preview"))
+            {
+                try
+                {
+                    trans.Start();
+                    CreateRows(new HashSet<long>());
+                    var status = trans.RollBack();
+                    return Task.FromResult<object>(new
+                    {
+                        status = status == TransactionStatus.RolledBack ? "Dry Run" : "Blocked",
+                        dryRun = true, requestedCount, familyName = symbol.FamilyName,
+                        symbolName = symbol.Name, levelName = level?.Name, targetView = TargetViewPayload(), planned,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.FromObservedStatus(status.ToString(), Array.Empty<long>())
+                    });
+                }
+                catch (Exception error)
+                {
+                    string status;
+                    try { status = trans.GetStatus() == TransactionStatus.Started ? trans.RollBack().ToString() : trans.GetStatus().ToString(); }
+                    catch { status = "unknown"; }
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Blocked", success = false, error = error.Message,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.FromObservedStatus(status, Array.Empty<long>())
+                    });
+                }
+            }
+        }
+
+        private static View? ResolveTargetView(Document doc, long? viewId, string? sheetNumber)
+        {
+            if (viewId.HasValue && viewId.Value > 0)
+            {
+                return doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(viewId.Value)) as View;
+            }
+
+            var number = (sheetNumber ?? "").Trim();
+            if (number.Length == 0) return null;
+
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewSheet))
+                .Cast<ViewSheet>()
+                .FirstOrDefault(s => (s.SheetNumber ?? "").Trim().Equals(number, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static Level? ResolveLevel(Document doc, string? levelName, View? targetView)
+        {
+            var requestedLevelName = (levelName ?? "").Trim();
+            if (requestedLevelName.Length > 0)
+            {
+                var byName = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Level))
+                    .Cast<Level>()
+                    .FirstOrDefault(l => (l.Name ?? "").Trim().Equals(requestedLevelName, StringComparison.OrdinalIgnoreCase));
+                if (byName == null)
+                    throw new InvalidOperationException($"Level '{requestedLevelName}' not found.");
+                return byName;
+            }
+
+            if (targetView?.GenLevel != null) return targetView.GenLevel;
+            if (doc.ActiveView?.GenLevel != null) return doc.ActiveView.GenLevel;
+
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .OrderBy(l => l.Elevation)
+                .FirstOrDefault();
+        }
+
+        private static FamilyInstance CreateInstanceAtPoint(Document doc, FamilySymbol symbol, Level? level, View? targetView, XYZ point)
+        {
+            Exception? firstError = null;
+
+            if (targetView != null)
+            {
+                try
+                {
+                    return doc.Create.NewFamilyInstance(point, symbol, targetView);
+                }
+                catch (Exception ex)
+                {
+                    firstError = ex;
+                }
+            }
+
+            if (level != null)
+            {
+                try
+                {
+                    return doc.Create.NewFamilyInstance(point, symbol, level, StructuralType.NonStructural);
+                }
+                catch (Exception ex)
+                {
+                    firstError ??= ex;
+                }
+            }
+
+            try
+            {
+                return doc.Create.NewFamilyInstance(point, symbol, StructuralType.NonStructural);
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex;
+                throw new InvalidOperationException($"Failed to create family instance '{symbol.FamilyName} : {symbol.Name}'. {firstError?.Message}", ex);
+            }
+        }
+
+        private static void RotateAboutZ(Document doc, ElementId elementId, XYZ origin, double rotationDegrees)
+        {
+            var radians = rotationDegrees * (Math.PI / 180.0);
+            var axis = Line.CreateBound(origin, origin + XYZ.BasisZ);
+            ElementTransformUtils.RotateElement(doc, elementId, axis, radians);
         }
     }
 }
-

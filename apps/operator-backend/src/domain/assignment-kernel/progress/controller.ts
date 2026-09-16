@@ -1,4 +1,5 @@
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
+import { workPlanPendingV2 } from "../work_plan.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
@@ -108,6 +109,15 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
+  if (workPlanPendingV2(snapshot)) gaps.push({
+    schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "work-plan:scope", kind: "work_plan_required",
+    criterion_ids: snapshot.spec.criteria.filter(c => c.required).map(c => c.criterion_id),
+    work_unit_ids: ["work-primary", "work-discovery", "work-evidence"], required_fact_ids: [], current_observation_ids: [],
+    reason: snapshot.work_plan
+      ? "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
+        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds. One item cannot complete the entire request."
+      : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Decompose the full requested area into independently verifiable room/system/branch items, with source basis and explicit assumptions. Include all required work; declare at least two items. Planning cannot authorize extra work or establish native completion."
+  });
   if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "result:delivery", kind: "result_delivery_required",
@@ -553,6 +563,7 @@ export function buildProgressEpochV2(input: Readonly<{
     stated_gap_ids: input.stated_gap_ids
   })) progressReasons.push("execution_strategy_selected");
   if (canonicalJsonV2(input.before.work_unit_states) !== canonicalJsonV2(input.after.work_unit_states)) progressReasons.push("work_unit_changed");
+  if (canonicalJsonV2(input.before.work_plan ?? null) !== canonicalJsonV2(input.after.work_plan ?? null)) progressReasons.push("work_unit_changed");
   if (input.before.outcome !== input.after.outcome && input.after.outcome !== "active") progressReasons.push("terminal_derived");
   return {
     schema: PROGRESS_EPOCH_V2_SCHEMA,

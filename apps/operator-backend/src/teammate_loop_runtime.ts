@@ -504,6 +504,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // calls Revit nor creates fresh truth or consumes the Revit discovery budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
   if (tool === "operator_request_clarification") return call("interaction");
+  if (tool === "operator_manage_work_plan") return call("interaction");
   if (tool === "operator_request_assignment_input") return call("interaction"); if (tool === "operator_evaluate_assignment_criteria") return call("completion_claim");
   if (tool === "operator_submit_noop_completion") return call("completion_claim");
   if (tool === "operator_submit_read_completion") return call("completion_claim");

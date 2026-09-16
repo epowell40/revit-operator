@@ -95,13 +95,13 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     preferred_target_field: "elementId"
   }],
   ["/revit/get-element-summary", {
-    semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
+    semantic_outputs: ["element.identity", "element.classification", "element.location", "family.placement"],
+    principal_target_fields: ["id", "ids", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["revit_get_element_summary", {
-    semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
+    semantic_outputs: ["element.identity", "element.classification", "element.location", "family.placement"],
+    principal_target_fields: ["id", "ids", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["/revit/get-parameters", {
@@ -240,6 +240,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if (path === "/revit/create-family-instance") return ["family.placement"];
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
   if (path === "/revit/visibility") return ["view.visibility_properties"];
@@ -302,6 +303,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (pathOf(apply) === "/revit/create-family-instance") return " Verify every created family instance with POST /revit/get-element-summary, elementIds=[all created instance IDs], or revit_get_element_summary with ids=[all created instance IDs]. The native readback must match model-space XYZ in feet, family/type, requested level, rotation and batch spacing. The create response only identifies the new elements; its coordinates cannot independently verify placement. Connector reads alone cannot verify the insertion point. View-based placement needs a separate verification contract.";
   if (["/revit/mep-route-workflow", "/revit/create-duct"].includes(pathOf(apply))) return " For one straight duct with explicit world XYZ coordinates in model feet, verify the exact created elementId after apply: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height,Diameter], then POST /revit/get-connectors with elementIds=[the created duct only] and includeAllRefs=true. The combined native reads must match the admitted coordinates, type, level, system and dimensions. Supported endpoint contracts are rectangular with explicitly open ends, or round/rectangular with both existing endpoint connections required; connected endpoints must have physical external references. Parameters alone cannot verify placement or connections. This does not certify PDF interpretation, visual review, multiple segments or extra effects. Inspect the delivered post-change image separately; a JSON evidence ID is not an image ID. Do not repeat an applied route.";
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);

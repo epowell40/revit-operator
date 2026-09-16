@@ -1,4 +1,5 @@
 import { AssignmentJournalV2 } from "../domain/assignment-kernel/index.js";
+import { projectWorkPlan } from "../assignments/work_plan_projection.js";
 import type { GoalRecord } from "./service.js";
 
 /** Read-only prompt projection; it never writes Assignment truth. */
@@ -24,6 +25,7 @@ export function formatAssignmentKernelV2GoalContext(goal: GoalRecord): string | 
     `generation: ${snapshot.current_binding.generation}`,
     `assignment_version: ${snapshot.assignment_version}`,
     `requested_effect: ${snapshot.spec.requested_effect}`,
+    `durable_work_plan: ${JSON.stringify(projectWorkPlan(snapshot.work_plan) ?? (snapshot.spec.work_plan_required ? "Declare before editing using operator_manage_work_plan." : null))}`,
     `source_user_request: ${snapshot.spec.source_user_request}`,
     `outcome: ${snapshot.outcome}`,
     `quiescent: ${snapshot.quiescent}`,

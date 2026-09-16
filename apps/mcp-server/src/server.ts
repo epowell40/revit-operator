@@ -151,6 +151,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_request_clarification",
   "operator_request_assignment_input",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "operator_record_execution_strategy",
@@ -1075,6 +1076,36 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
     }
   }
 );
+
+server.tool("operator_manage_work_plan", "Retain the complete multi-part task checklist before model edits. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Complete each item only after all its operations have independent native verification; cite distinct operation IDs. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart.",
+  {
+    action: z.enum(["declare", "complete", "status"]),
+    start: z.number().int().min(0).max(128).optional(),
+    operationStart: z.number().int().min(0).max(100000).optional(),
+    assumptionStart: z.number().int().min(0).max(32).optional(),
+    items: z.array(z.object({ itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/), description: z.string().min(1).max(800), sourceBasis: z.string().min(1).max(800) }).strict()).min(1).max(128).optional(),
+    assumptions: z.array(z.string().min(1).max(800)).max(16).optional(),
+    itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/).optional(),
+    operationIds: z.array(z.string().min(1).max(240)).min(1).max(128).optional()
+  }, async args => {
+    try {
+      const binding = currentAssignmentKernelV2Binding();
+      if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      if (args.action === "declare" && (!args.items || args.itemId || args.operationIds)) throw new Error("work_plan_declaration_arguments_invalid");
+      if (args.action === "complete" && (!args.itemId || !args.operationIds || args.items || args.assumptions)) throw new Error("work_plan_completion_arguments_invalid");
+      if (args.action === "status" && (args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("work_plan_status_arguments_invalid");
+      const result = await createOperatorBackendClient().manageAssignmentWorkPlanV2({
+        assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation, session_id: binding.session_id,
+        action: args.action,
+        ...(args.start !== undefined ? { start: args.start } : {}),
+        ...(args.operationStart !== undefined ? { operation_start: args.operationStart } : {}),
+        ...(args.assumptionStart !== undefined ? { assumption_start: args.assumptionStart } : {}),
+        ...(args.items ? { declaration: { items: args.items.map(item => ({ item_id: item.itemId, description: item.description, source_basis: item.sourceBasis })), assumptions: args.assumptions ?? [] } } : {}),
+        ...(args.itemId ? { item_id: args.itemId, operation_ids: args.operationIds } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] }; }
+  });
 
 server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status without model-authored pass/fail status. For required read-result delivery, select retained native values with resultItems; those presentation paths never determine criterion truth.",
   {

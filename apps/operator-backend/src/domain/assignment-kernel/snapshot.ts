@@ -49,6 +49,7 @@ export interface AssignmentSnapshotV2 {
   outcome: AssignmentOutcomeV2;
   terminal: boolean;
   result_delivery?: AssignmentResultDeliveryV2;
+  work_plan?: import("./work_plan.js").AssignmentWorkPlanV2;
   terminal_reason?: string;
   in_flight_operation_ids: readonly OperationIdV2[];
   unresolved_unknown_operation_ids: readonly OperationIdV2[];
