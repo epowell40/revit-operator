@@ -3397,7 +3397,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:16d0613b30e63ce703ee3b25f00faecd0612ae52ce77509301d89a086f59e778"
+      "sha256": "sha256:4bf709fe4e91a0c931cb5af84cb273ddc33297844f76b6eeefb1d089c89b7fdb"
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_lifecycle.test.ts",
@@ -6985,7 +6985,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:4e50d878a9ed763bdfe6cc3319f4aea4aeae92caf0392842db7725a75a202a05",
+  "inputs_hash": "sha256:4b85618972c15f0ebb0f2b23d1b071035ade56b3c6ec77fe8006f6357b5c6d8c",
   "result": {
     "passed": true,
     "checks": [

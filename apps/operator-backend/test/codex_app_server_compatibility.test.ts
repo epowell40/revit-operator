@@ -543,12 +543,11 @@ test("Codex file delivery instructions match artifact authority and allow suppor
 
 test("Codex instructions reuse known primitives before capability discovery", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /reuse an exact primitive/i);
-  assert.match(instructions, /Call `operator_discover_capabilities` only when/i);
-  assert.match(instructions, /session-cached/i);
-  assert.match(instructions, /document\/model results are never satisfied from that cache/i);
+  assert.match(instructions, /reuse known primitives and schemas/i);
+  assert.match(instructions, /use `operator_discover_capabilities` only when/i);
+  assert.match(instructions, /Discovery metadata is cached and refreshable; model data is not/i);
   assert.match(instructions, /very next Revit action must be a target-bound readback/i);
-  assert.match(instructions, /do not repeat synonymous searches/i);
+  assert.match(instructions, /Never repeat synonymous searches/i);
   assert.match(instructions, /Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount/i);
   assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
 });
