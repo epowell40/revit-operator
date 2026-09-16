@@ -68,6 +68,8 @@ namespace RevitBridge.Logic.Handlers
             public long? hostElementId { get; set; }
             public long? linkedHostElementId { get; set; }
             public bool? hostVerified { get; set; }
+            public long? levelId { get; set; }
+            public bool? levelVerified { get; set; }
             public long? ownerViewId { get; set; }
             public double? locationX { get; set; }
             public double? locationY { get; set; }
@@ -90,8 +92,17 @@ namespace RevitBridge.Logic.Handlers
             public double ProjectionDistanceFt { get; set; }
         }
 
+        private sealed class ResolvedHostFace
+        {
+            public Reference Reference { get; set; } = null!;
+            public XYZ Point { get; set; } = null!;
+            public XYZ Direction { get; set; } = null!;
+            public double DistanceFt { get; set; }
+        }
+
         public class PlacementResult
         {
+            public OperatorNativeTransactionReceipt transaction { get; set; } = OperatorNativeTransactionReceipt.NotStarted();
             public string status { get; set; } = "Unknown";
             public string? familyPlacementType { get; set; }
             public bool requiresExplicitHost { get; set; }
@@ -142,10 +153,10 @@ namespace RevitBridge.Logic.Handlers
                             ?? throw new Exception($"View {p.viewId.Value} not found.");
                         defaultLevel = targetView.GenLevel;
                     }
-                    if (defaultLevel == null)
+                    if (!string.IsNullOrWhiteSpace(p.levelName))
                     {
-                        defaultLevel = levels
-                            .FirstOrDefault(l => l.Name.Equals(p.levelName ?? "", StringComparison.OrdinalIgnoreCase));
+                        defaultLevel = levels.FirstOrDefault(l => l.Name.Equals(p.levelName.Trim(), StringComparison.OrdinalIgnoreCase))
+                            ?? throw new Exception($"Level {p.levelName} not found.");
                     }
                     var levelByName = levels
                         .GroupBy(l => l.Name ?? "", StringComparer.OrdinalIgnoreCase)
@@ -200,7 +211,7 @@ namespace RevitBridge.Logic.Handlers
                             .ToList();
                     }
 
-                    var plannedOrCreatedPoints = new List<(XYZ point, long? host, long? linked)>();
+                    var plannedOrCreatedPoints = new List<(XYZ point, long? host, long? linked, long? level)>();
 
                     for (int i = 0; i < (p.instances?.Count ?? 0); i++)
                     {
@@ -237,6 +248,8 @@ namespace RevitBridge.Logic.Handlers
                             levelPlacementPoint = new XYZ(point.X, point.Y, point.Z - instanceLevel!.Elevation);
                         }
 
+                        using var instanceScope = new SubTransaction(doc);
+                        instanceScope.Start();
                         try
                         {
                             if (instData.linkedHostElementId.HasValue && (!instData.hostElementId.HasValue || instData.linkedHostElementId.Value <= 0))
@@ -246,6 +259,24 @@ namespace RevitBridge.Logic.Handlers
                                 throw new Exception(
                                     $"Family {symbol.FamilyName} / {symbol.Name} requires an explicit host " +
                                     $"({familyPlacementType}); provide hostElementId or use a hosted-placement workflow.");
+                            }
+
+                            Element? resolvedHost = null;
+                            ResolvedHostFace? resolvedFace = null;
+                            if (instData.hostElementId.HasValue)
+                            {
+                                resolvedHost = doc.GetElement(ToElementId(instData.hostElementId.Value));
+                                if (resolvedHost == null || resolvedHost is ElementType)
+                                    throw new Exception("The requested host is unavailable or is not a model instance.");
+                                // Validate and project before deduplication. Existing instances cannot
+                                // make an incomplete host selector valid or change the placement point.
+                                LinkedHostPlacementPolicy.Validate(resolvedHost is RevitLinkInstance,
+                                    familyPlacementType == FamilyPlacementType.WorkPlaneBased, instData.linkedHostElementId);
+                                if (familyPlacementType == FamilyPlacementType.WorkPlaneBased)
+                                {
+                                    resolvedFace = ResolveClosestHostFace(resolvedHost, point, instData.linkedHostElementId);
+                                    idempotencyPoint = resolvedFace.Point;
+                                }
                             }
 
                             if (useIdempotency && toleranceFt > 0.0)
@@ -258,14 +289,28 @@ namespace RevitBridge.Logic.Handlers
                                         && (familyPlacementType != FamilyPlacementType.ViewBased || targetView != null && candidate.OwnerViewId == targetView.Id);
                                 }).ToList();
                                 var sameHostPlanned = plannedOrCreatedPoints
-                                    .Where(x => x.host == instData.hostElementId && x.linked == instData.linkedHostElementId)
+                                    .Where(x => x.host == instData.hostElementId && x.linked == instData.linkedHostElementId && x.level == (instanceLevel == null ? (long?)null : ElementIdCompat.GetValue(instanceLevel.Id)))
                                     .Select(x => x.point).ToList();
                                 var match = FindEquivalent(sameHostExisting, sameHostPlanned, idempotencyPoint, toleranceFt);
                                 if (match.found)
                                 {
+                                    if (match.existingElementId.HasValue)
+                                    {
+                                        var existing = (FamilyInstance)doc.GetElement(ToElementId(match.existingElementId.Value));
+                                        if (resolvedFace != null && HostedPlacementUtil.ReadInstanceLevelId(existing) != ElementIdCompat.GetValue(instanceLevel!.Id))
+                                            throw new Exception("The matching hosted instance does not retain the requested level; reconcile it before retrying placement.");
+                                        PopulateNativeReadback(doc, targetView, existing, instResult);
+                                        instResult.hostElementId = instData.hostElementId;
+                                        instResult.linkedHostElementId = instData.linkedHostElementId;
+                                        instResult.hostVerified = instData.hostElementId.HasValue ? true : (bool?)null;
+                                        instResult.levelId = HostedPlacementUtil.ReadInstanceLevelId(existing);
+                                        instResult.levelVerified = resolvedFace != null ? true : (bool?)null;
+                                    }
                                     instResult.status = "skipped";
                                     instResult.elementId = match.existingElementId;
                                     instResult.reason = "idempotent: matching instance exists within tolerance";
+                                    if (instanceScope.Commit() != TransactionStatus.Committed)
+                                        throw new Exception("Idempotent placement scope did not settle.");
                                     result.skippedCount++;
                                     result.results.Add(instResult);
                                     continue;
@@ -276,7 +321,7 @@ namespace RevitBridge.Logic.Handlers
                             XYZ actualPlacementPoint = point;
                             if (instData.hostElementId.HasValue)
                             {
-                                Element host = doc.GetElement(ToElementId(instData.hostElementId.Value));
+                                Element host = resolvedHost!;
                                 if (host == null) throw new Exception($"Host element {instData.hostElementId.Value} not found.");
                                 if (host is ElementType) throw new Exception($"Host element {instData.hostElementId.Value} is an element type; expected an instance element.");
                                 LinkedHostPlacementPolicy.Validate(host is RevitLinkInstance,
@@ -286,7 +331,7 @@ namespace RevitBridge.Logic.Handlers
                                 {
                                     if (familyPlacementType == FamilyPlacementType.WorkPlaneBased)
                                     {
-                                        var facePlacement = PlaceOnClosestHostFace(doc, host, point, symbol, instData.linkedHostElementId);
+                                        var facePlacement = PlaceOnResolvedHostFace(doc, resolvedFace!, symbol);
                                         fi = facePlacement.Instance;
                                         actualPlacementPoint = facePlacement.ProjectedPoint;
                                         if (facePlacement.ProjectionDistanceFt > 0.5)
@@ -343,6 +388,11 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             if (fi == null) throw new Exception("Failed to create family instance.");
+                            if (resolvedFace != null && !HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(fi, instanceLevel!, instResult.warnings))
+                            {
+                                doc.Delete(fi.Id);
+                                throw new Exception("Face-hosted placement did not retain the requested level; placement was discarded.");
+                            }
 
                             if (requestedWorkset != null)
                             {
@@ -397,7 +447,17 @@ namespace RevitBridge.Logic.Handlers
                             SetParameter(fi, "ROS_AutoGenerated", "1");
                             doc.Regenerate();
                             PopulateNativeReadback(doc, targetView, fi, instResult);
-                            if (instData.linkedHostElementId.HasValue)
+                            if (resolvedFace != null)
+                            {
+                                instResult.levelId = HostedPlacementUtil.ReadInstanceLevelId(fi);
+                                instResult.levelVerified = instResult.levelId == ElementIdCompat.GetValue(instanceLevel!.Id);
+                                if (instResult.levelVerified != true)
+                                {
+                                    doc.Delete(fi.Id);
+                                    throw new Exception("Face-hosted placement lost the requested level after parameters and regeneration.");
+                                }
+                            }
+                            if (resolvedFace != null)
                             {
                                 if (!MatchesExplicitHost(fi, instData.hostElementId!.Value, instData.linkedHostElementId)
                                     || !instResult.locationX.HasValue || !instResult.locationY.HasValue || !instResult.locationZ.HasValue
@@ -421,7 +481,9 @@ namespace RevitBridge.Logic.Handlers
                                     $"View-based placement {failedId} did not retain owner view {ElementIdCompat.GetValue(targetView.Id)} " +
                                     "with collector and view-specific bounding-box proof; placement was discarded.");
                             }
-                            plannedOrCreatedPoints.Add((idempotencyPoint, instData.hostElementId, instData.linkedHostElementId));
+                            if (instanceScope.Commit() != TransactionStatus.Committed)
+                                throw new Exception("Family instance scope did not commit.");
+                            plannedOrCreatedPoints.Add((idempotencyPoint, instData.hostElementId, instData.linkedHostElementId, instanceLevel == null ? (long?)null : ElementIdCompat.GetValue(instanceLevel.Id)));
 
                             if (p.dryRun)
                             {
@@ -440,6 +502,11 @@ namespace RevitBridge.Logic.Handlers
                         }
                         catch (Exception ex)
                         {
+                            if (instanceScope.GetStatus() == TransactionStatus.Started)
+                            {
+                                if (instanceScope.RollBack() != TransactionStatus.RolledBack)
+                                    throw new Exception("Failed instance rollback was not confirmed.", ex);
+                            }
                             instResult.status = "failed";
                             instResult.reason = ex.Message;
                             result.failedCount++;
@@ -453,19 +520,34 @@ namespace RevitBridge.Logic.Handlers
                     if (p.dryRun)
                     {
                         result.status = result.failedCount > 0 ? "PlannedWithErrors" : "Planned";
-                        t.RollBack();
+                        var observed = t.RollBack();
+                        result.transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observed.ToString(), result.elementIds);
+                        if (observed != TransactionStatus.RolledBack) throw new Exception("Family preview rollback was not confirmed.");
                     }
                     else
                     {
                         result.status = result.failedCount > 0 ? "PlacedWithErrors" : "Placed";
-                        t.Commit();
+                        var observed = t.Commit();
+                        result.transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observed.ToString(), result.elementIds);
+                        if (observed != TransactionStatus.Committed) throw new Exception("Family placement commit was not confirmed.");
                     }
                 }
                 catch (Exception ex)
                 {
                     result.status = "Failed";
                     result.error = ex.Message;
-                    t.RollBack();
+                    try { if (t.GetStatus() == TransactionStatus.Started) t.RollBack(); } catch { }
+                    result.transaction = OperatorNativeTransactionReceipt.FromObservedStatus(t.GetStatus().ToString(), result.elementIds);
+                    if (t.GetStatus() == TransactionStatus.RolledBack)
+                    {
+                        result.placedCount = 0;
+                        result.elementIds.Clear();
+                        foreach (var item in result.results.Where(item => item.status == "created"))
+                        {
+                            item.status = "rolled_back";
+                            item.elementId = null;
+                        }
+                    }
                 }
             }
 
@@ -545,16 +627,22 @@ namespace RevitBridge.Logic.Handlers
                    familyPlacementType == FamilyPlacementType.WorkPlaneBased;
         }
 
-        private static HostFacePlacement PlaceOnClosestHostFace(
-            Document doc,
+        private static ResolvedHostFace ResolveClosestHostFace(
             Element host,
             XYZ requestedPoint,
-            FamilySymbol symbol,
             long? linkedHostElementId)
         {
             if (host is ReferencePlane referencePlane)
             {
-                return PlaceOnReferencePlane(doc, referencePlane, requestedPoint, symbol);
+                var planeNormal = referencePlane.Normal.Normalize();
+                var signedDistance = (requestedPoint - referencePlane.BubbleEnd).DotProduct(planeNormal);
+                return new ResolvedHostFace
+                {
+                    Reference = referencePlane.GetReference() ?? throw new Exception("Reference plane has no placement reference."),
+                    Point = requestedPoint - planeNormal.Multiply(signedDistance),
+                    Direction = TangentDirection(planeNormal),
+                    DistanceFt = Math.Abs(signedDistance)
+                };
             }
 
             var options = new Options
@@ -584,51 +672,20 @@ namespace RevitBridge.Logic.Handlers
             var referenceDirection = TangentDirection(normal);
             var placementReference = link == null ? selected.face.Reference : selected.face.Reference.CreateLinkReference(link);
             var modelPoint = transform.OfPoint(selected.projection.XYZPoint);
-            var instance = doc.Create.NewFamilyInstance(
-                placementReference,
-                modelPoint,
-                referenceDirection,
-                symbol);
-            if (instance == null) throw new Exception("Revit face-based placement returned no family instance.");
-            return new HostFacePlacement
+            return new ResolvedHostFace
             {
-                Instance = instance,
-                ProjectedPoint = modelPoint,
-                ProjectionDistanceFt = selected.distance
+                Reference = placementReference,
+                Point = modelPoint,
+                Direction = referenceDirection,
+                DistanceFt = selected.distance
             };
         }
 
-        private static HostFacePlacement PlaceOnReferencePlane(
-            Document doc,
-            ReferencePlane referencePlane,
-            XYZ requestedPoint,
-            FamilySymbol symbol)
+        private static HostFacePlacement PlaceOnResolvedHostFace(Document doc, ResolvedHostFace face, FamilySymbol symbol)
         {
-            var hostReference = referencePlane.GetReference();
-            if (hostReference == null)
-            {
-                throw new Exception(
-                    $"Reference plane {RevitBridge.Common.ElementIdCompat.GetValue(referencePlane.Id)} has no placement reference.");
-            }
-
-            var normal = referencePlane.Normal.Normalize();
-            var origin = referencePlane.BubbleEnd;
-            var signedDistance = (requestedPoint - origin).DotProduct(normal);
-            var projectedPoint = requestedPoint - normal.Multiply(signedDistance);
-            var referenceDirection = TangentDirection(normal);
-            var instance = doc.Create.NewFamilyInstance(
-                hostReference,
-                projectedPoint,
-                referenceDirection,
-                symbol);
-            if (instance == null) throw new Exception("Revit reference-plane placement returned no family instance.");
-
-            return new HostFacePlacement
-            {
-                Instance = instance,
-                ProjectedPoint = projectedPoint,
-                ProjectionDistanceFt = Math.Abs(signedDistance)
-            };
+            var instance = doc.Create.NewFamilyInstance(face.Reference, face.Point, face.Direction, symbol);
+            if (instance == null) throw new Exception("Revit face-based placement returned no family instance.");
+            return new HostFacePlacement { Instance = instance, ProjectedPoint = face.Point, ProjectionDistanceFt = face.DistanceFt };
         }
 
         private static void CollectFaceCandidates(

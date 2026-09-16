@@ -234,7 +234,8 @@
     "AbsolutePlacementCorrectionTests",
     "OperatorIdleDiagnosticTests",
     "MepCurveJointPolicyTests",
-    "LinkedHostPlacementPolicyTests"
+    "LinkedHostPlacementPolicyTests",
+    "FamilyPlacementRecoveryTests"
   ],
   "failure_families": [
     {
@@ -2262,6 +2263,34 @@
       "coverage": [
         "mcp:lib/familyPlacementSchema.test.ts",
         "dotnet:LinkedHostPlacementPolicyTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-linked-host-validation-bypassed-by-idempotency",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-face-projection-plans-duplicate-at-existing-position",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-face-hosted-device-misses-requested-schedule-level",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-family-placement-has-no-authoritative-transaction-settlement",
+      "coverage": [
+        "dotnet:FamilyPlacementRecoveryTests",
+        "backend:assignment_typed_native_settlement.test.ts"
       ]
     }
   ],

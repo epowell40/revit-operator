@@ -2,7 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {z} from 'zod';
 import {familyPlacementToolShape} from './familyPlacementSchema.js';
+import fs from 'node:fs';
 const schema=z.object(familyPlacementToolShape);
+
+test('C46 exact failure requests survive MCP serialization without dropping recovery constraints',()=>{
+ const replay=JSON.parse(fs.readFileSync(new URL('../../src/lib/fixtures/c46-linked-face-placement.json',import.meta.url),'utf8'));
+ for(const [name,entry] of Object.entries(replay.cases) as [string,any][]){
+  const parsed=schema.parse(entry.request);
+  assert.deepEqual(parsed.instances,entry.request.instances,name);
+  assert.equal(parsed.levelName,'L4');
+  assert.equal(parsed.viewId,1363433);
+  assert.equal(parsed.familySymbolId,1380250);
+  assert.equal(parsed.dryRun,entry.request.dryRun);
+  if(name!=='apply')assert.deepEqual(parsed.idempotency,entry.request.idempotency);
+ }
+ // The MCP has no native host-class knowledge. It must retain a missing linked
+ // selector for authoritative native validation, never infer the whole link's face.
+ assert.equal(schema.parse(replay.cases['missing-linked-host'].request).instances[0].linkedHostElementId,undefined);
+ assert.equal(schema.parse(replay.cases['wrong-linked-host'].request).instances[0].linkedHostElementId,2095209);
+ assert.equal(schema.parse(replay.cases['projected-repeat'].request).instances[0].z,39.6666666667);
+ assert.equal(replay.cases.apply.result.transaction,undefined);
+});
 
 test('direct room linked ceiling request retains exact native host, type and absolute coordinates',()=>{
  const body={familySymbolId:1380250,levelName:'L4',viewId:1363433,

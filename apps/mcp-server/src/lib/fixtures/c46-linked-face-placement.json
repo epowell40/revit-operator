@@ -1,0 +1,432 @@
+{
+  "purpose": "Actual C46 direct native diagnostic; not an Operator benchmark. No corrected outcomes are claimed as observed.",
+  "candidate": "c428fe060473d4d1ad5b4c1023d0b65f7036cc89",
+  "cases": {
+    "apply": {
+      "request": {
+        "levelName": "L4",
+        "dryRun": false,
+        "familySymbolId": 1380250,
+        "viewId": 1363433,
+        "instances": [
+          {
+            "coordinateMode": "absolute_model",
+            "hostElementId": 1362429,
+            "z": 40.1666666667,
+            "x": -34.7975,
+            "y": -6.688,
+            "linkedHostElementId": 2095221
+          }
+        ],
+        "symbolName": "12\" x 12\""
+      },
+      "result": {
+        "status": "Placed",
+        "familyPlacementType": "WorkPlaneBased",
+        "requiresExplicitHost": true,
+        "unhostedWorkPlanePlacementAllowed": false,
+        "placedCount": 1,
+        "skippedCount": 0,
+        "failedCount": 0,
+        "selectedWorksetId": null,
+        "selectedWorksetName": null,
+        "elementIds": [
+          1542920
+        ],
+        "results": [
+          {
+            "index": 0,
+            "status": "created",
+            "elementId": 1542920,
+            "reason": null,
+            "coordinateMode": "absolute_model",
+            "requestedLocationX": -34.7975,
+            "requestedLocationY": -6.688,
+            "requestedLocationZ": 40.1666666667,
+            "absoluteModelCorrectionDistanceFt": null,
+            "absoluteModelLocationVerified": true,
+            "worksetId": null,
+            "worksetName": null,
+            "worksetVerified": null,
+            "familySymbolId": 1380250,
+            "hostElementId": 1362429,
+            "linkedHostElementId": 2095221,
+            "hostVerified": true,
+            "ownerViewId": null,
+            "locationX": -34.7975,
+            "locationY": -6.688000000000001,
+            "locationZ": 40.166666666666444,
+            "inTargetViewCollector": true,
+            "viewSpecificBoundingBoxAvailable": true,
+            "bboxMinX": -35.29750000000004,
+            "bboxMinY": -7.188000000000082,
+            "bboxMinZ": 40.16666666666654,
+            "bboxMaxX": -34.29749999999995,
+            "bboxMaxY": -6.188000000000001,
+            "bboxMaxZ": 40.276041666666444,
+            "warnings": []
+          }
+        ],
+        "warnings": [],
+        "error": null
+      }
+    },
+    "exact-repeat": {
+      "request": {
+        "levelName": "L4",
+        "dryRun": true,
+        "familySymbolId": 1380250,
+        "viewId": 1363433,
+        "instances": [
+          {
+            "coordinateMode": "absolute_model",
+            "hostElementId": 1362429,
+            "z": 40.1666666667,
+            "x": -34.7975,
+            "y": -6.688,
+            "linkedHostElementId": 2095221
+          }
+        ],
+        "symbolName": "12\" x 12\"",
+        "idempotency": {
+          "enabled": true,
+          "toleranceFt": 0.01
+        }
+      },
+      "result": {
+        "status": "Planned",
+        "familyPlacementType": "WorkPlaneBased",
+        "requiresExplicitHost": true,
+        "unhostedWorkPlanePlacementAllowed": false,
+        "placedCount": 0,
+        "skippedCount": 1,
+        "failedCount": 0,
+        "selectedWorksetId": null,
+        "selectedWorksetName": null,
+        "elementIds": [],
+        "results": [
+          {
+            "index": 0,
+            "status": "skipped",
+            "elementId": 1542920,
+            "reason": "idempotent: matching instance exists within tolerance",
+            "coordinateMode": "absolute_model",
+            "requestedLocationX": -34.7975,
+            "requestedLocationY": -6.688,
+            "requestedLocationZ": 40.1666666667,
+            "absoluteModelCorrectionDistanceFt": null,
+            "absoluteModelLocationVerified": null,
+            "worksetId": null,
+            "worksetName": null,
+            "worksetVerified": null,
+            "familySymbolId": null,
+            "hostElementId": null,
+            "linkedHostElementId": null,
+            "hostVerified": null,
+            "ownerViewId": null,
+            "locationX": null,
+            "locationY": null,
+            "locationZ": null,
+            "inTargetViewCollector": null,
+            "viewSpecificBoundingBoxAvailable": null,
+            "bboxMinX": null,
+            "bboxMinY": null,
+            "bboxMinZ": null,
+            "bboxMaxX": null,
+            "bboxMaxY": null,
+            "bboxMaxZ": null,
+            "warnings": []
+          }
+        ],
+        "warnings": [],
+        "error": null
+      }
+    },
+    "projected-repeat": {
+      "request": {
+        "levelName": "L4",
+        "dryRun": true,
+        "familySymbolId": 1380250,
+        "viewId": 1363433,
+        "instances": [
+          {
+            "coordinateMode": "absolute_model",
+            "hostElementId": 1362429,
+            "z": 39.6666666667,
+            "x": -34.7975,
+            "y": -6.688,
+            "linkedHostElementId": 2095221
+          }
+        ],
+        "symbolName": "12\" x 12\"",
+        "idempotency": {
+          "enabled": true,
+          "toleranceFt": 0.01
+        }
+      },
+      "result": {
+        "status": "Planned",
+        "familyPlacementType": "WorkPlaneBased",
+        "requiresExplicitHost": true,
+        "unhostedWorkPlanePlacementAllowed": false,
+        "placedCount": 0,
+        "skippedCount": 0,
+        "failedCount": 0,
+        "selectedWorksetId": null,
+        "selectedWorksetName": null,
+        "elementIds": [],
+        "results": [
+          {
+            "index": 0,
+            "status": "planned",
+            "elementId": null,
+            "reason": "dryRun: rolled back",
+            "coordinateMode": "absolute_model",
+            "requestedLocationX": -34.7975,
+            "requestedLocationY": -6.688,
+            "requestedLocationZ": 39.6666666667,
+            "absoluteModelCorrectionDistanceFt": null,
+            "absoluteModelLocationVerified": true,
+            "worksetId": null,
+            "worksetName": null,
+            "worksetVerified": null,
+            "familySymbolId": 1380250,
+            "hostElementId": 1362429,
+            "linkedHostElementId": 2095221,
+            "hostVerified": true,
+            "ownerViewId": null,
+            "locationX": -34.7975,
+            "locationY": -6.688000000000001,
+            "locationZ": 40.166666666666444,
+            "inTargetViewCollector": true,
+            "viewSpecificBoundingBoxAvailable": true,
+            "bboxMinX": -35.29750000000004,
+            "bboxMinY": -7.188000000000082,
+            "bboxMinZ": 40.16666666666654,
+            "bboxMaxX": -34.29749999999995,
+            "bboxMaxY": -6.188000000000001,
+            "bboxMaxZ": 40.276041666666444,
+            "warnings": []
+          }
+        ],
+        "warnings": [],
+        "error": null
+      }
+    },
+    "missing-linked-host": {
+      "request": {
+        "levelName": "L4",
+        "dryRun": true,
+        "familySymbolId": 1380250,
+        "viewId": 1363433,
+        "instances": [
+          {
+            "coordinateMode": "absolute_model",
+            "hostElementId": 1362429,
+            "z": 40.1666666667,
+            "x": -34.7975,
+            "y": -6.688
+          }
+        ],
+        "symbolName": "12\" x 12\"",
+        "idempotency": {
+          "enabled": true,
+          "toleranceFt": 0.01
+        }
+      },
+      "result": {
+        "status": "Planned",
+        "familyPlacementType": "WorkPlaneBased",
+        "requiresExplicitHost": true,
+        "unhostedWorkPlanePlacementAllowed": false,
+        "placedCount": 0,
+        "skippedCount": 1,
+        "failedCount": 0,
+        "selectedWorksetId": null,
+        "selectedWorksetName": null,
+        "elementIds": [],
+        "results": [
+          {
+            "index": 0,
+            "status": "skipped",
+            "elementId": 1542920,
+            "reason": "idempotent: matching instance exists within tolerance",
+            "coordinateMode": "absolute_model",
+            "requestedLocationX": -34.7975,
+            "requestedLocationY": -6.688,
+            "requestedLocationZ": 40.1666666667,
+            "absoluteModelCorrectionDistanceFt": null,
+            "absoluteModelLocationVerified": null,
+            "worksetId": null,
+            "worksetName": null,
+            "worksetVerified": null,
+            "familySymbolId": null,
+            "hostElementId": null,
+            "linkedHostElementId": null,
+            "hostVerified": null,
+            "ownerViewId": null,
+            "locationX": null,
+            "locationY": null,
+            "locationZ": null,
+            "inTargetViewCollector": null,
+            "viewSpecificBoundingBoxAvailable": null,
+            "bboxMinX": null,
+            "bboxMinY": null,
+            "bboxMinZ": null,
+            "bboxMaxX": null,
+            "bboxMaxY": null,
+            "bboxMaxZ": null,
+            "warnings": []
+          }
+        ],
+        "warnings": [],
+        "error": null
+      }
+    },
+    "wrong-linked-host": {
+      "request": {
+        "levelName": "L4",
+        "dryRun": true,
+        "familySymbolId": 1380250,
+        "viewId": 1363433,
+        "instances": [
+          {
+            "coordinateMode": "absolute_model",
+            "hostElementId": 1362429,
+            "z": 40.1666666667,
+            "x": -34.7975,
+            "y": -6.688,
+            "linkedHostElementId": 2095209
+          }
+        ],
+        "symbolName": "12\" x 12\"",
+        "idempotency": {
+          "enabled": true,
+          "toleranceFt": 0.01
+        }
+      },
+      "result": {
+        "status": "Planned",
+        "familyPlacementType": "WorkPlaneBased",
+        "requiresExplicitHost": true,
+        "unhostedWorkPlanePlacementAllowed": false,
+        "placedCount": 0,
+        "skippedCount": 0,
+        "failedCount": 0,
+        "selectedWorksetId": null,
+        "selectedWorksetName": null,
+        "elementIds": [],
+        "results": [
+          {
+            "index": 0,
+            "status": "planned",
+            "elementId": null,
+            "reason": "dryRun: rolled back",
+            "coordinateMode": "absolute_model",
+            "requestedLocationX": -34.7975,
+            "requestedLocationY": -6.688,
+            "requestedLocationZ": 40.1666666667,
+            "absoluteModelCorrectionDistanceFt": null,
+            "absoluteModelLocationVerified": true,
+            "worksetId": null,
+            "worksetName": null,
+            "worksetVerified": null,
+            "familySymbolId": 1380250,
+            "hostElementId": 1362429,
+            "linkedHostElementId": 2095209,
+            "hostVerified": true,
+            "ownerViewId": null,
+            "locationX": -34.7975,
+            "locationY": -6.688000000000001,
+            "locationZ": 41.39583333333311,
+            "inTargetViewCollector": true,
+            "viewSpecificBoundingBoxAvailable": true,
+            "bboxMinX": -35.29750000000004,
+            "bboxMinY": -7.188000000000082,
+            "bboxMinZ": 41.39583333333321,
+            "bboxMaxX": -34.29749999999995,
+            "bboxMaxY": -6.188000000000001,
+            "bboxMaxZ": 41.50520833333311,
+            "warnings": [
+              "Requested point was projected 1.229 ft to the closest referenced host face."
+            ]
+          }
+        ],
+        "warnings": [],
+        "error": null
+      }
+    }
+  },
+  "independent_readback": [
+    {
+      "path": "/revit/native-api-ops",
+      "result": {
+        "linkId": {
+          "id": 1362429
+        },
+        "linkedHostId": {
+          "id": 2095221
+        },
+        "linkValue": 1362429,
+        "linkedHostValue": 2095221,
+        "point": {
+          "x": -34.7975,
+          "y": -6.688000000000001,
+          "z": 40.166666666666444
+        }
+      }
+    },
+    {
+      "path": "/revit/get-parameters",
+      "result": [
+        {
+          "id": 1542920,
+          "uniqueId": "316b298c-3117-4435-b9b6-7c401fa6f333-00178b08",
+          "name": "12\" x 12\"",
+          "category": "Air Terminals",
+          "categoryId": -2008013,
+          "parameters": {
+            "Level": "-1",
+            "Schedule Level": "-1",
+            "Elevation from Level": "0",
+            "Host": "Linked Revit Model : Snowdon Towers Sample Architectural.rvt"
+          },
+          "parameterDetails": [
+            {
+              "name": "Level",
+              "value": "-1",
+              "valueString": "",
+              "storageType": "ElementId",
+              "isReadOnly": true,
+              "parameterId": -1002062
+            },
+            {
+              "name": "Schedule Level",
+              "value": "-1",
+              "valueString": "",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1001365
+            },
+            {
+              "name": "Elevation from Level",
+              "value": "0",
+              "valueString": "0' - 0\"",
+              "storageType": "Double",
+              "isReadOnly": true,
+              "parameterId": -1001360
+            },
+            {
+              "name": "Host",
+              "value": "Linked Revit Model : Snowdon Towers Sample Architectural.rvt",
+              "valueString": "Linked Revit Model : Snowdon Towers Sample Architectural.rvt",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1001363
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
