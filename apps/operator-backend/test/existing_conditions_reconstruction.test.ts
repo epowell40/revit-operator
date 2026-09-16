@@ -455,6 +455,53 @@ test("scores a semantically exact reconstruction with new Revit element ids", ()
   assert.deepEqual(result.failure_classifications, []);
 });
 
+test("drawing-only grading preserves required ductwork while excluding unshown device attributes", () => {
+  const expected=truth();
+  expected.snapshot.elements[0]!.parameters={Airflow:1200};
+  expected.snapshot.elements[0]!.family="Original manufacturer";
+  const actual=candidate();
+  actual.snapshot.elements[0]!.parameters={Airflow:0};
+  actual.snapshot.elements[0]!.family="Compatible family";
+  expected.evaluation_policy={drawing_observability:{schema_version:1,source_evidence_sha256:SOURCE_HASH,elements:[{
+    key:"truth-a",existence:"required",unobserved_attributes:["family","parameters"],reason:"Record plan labels duct size but not manufacturer or airflow."
+  }]}};
+  const before=JSON.stringify(expected),candidateBefore=JSON.stringify(actual.snapshot);
+  const result=scoreExistingConditionsReconstruction(expected,actual);
+  assert.equal(result.passed,true);assert.equal(result.score,100);
+  assert.equal(JSON.stringify(expected),before);assert.equal(JSON.stringify(actual.snapshot),candidateBefore);
+  actual.snapshot.elements[0]!.size!.width_ft=3;
+  assert.ok(scoreExistingConditionsReconstruction(expected,actual).score<100,"shown size remains graded");
+});
+
+test("ambiguous connected terminal may be absent without excusing missing required ducts or ceiling devices",()=>{
+  const terminal:ExistingConditionsElement={key:"uncertain-terminal",kind:"family_instance",discipline:"mechanical",role:"air_terminal",category:"Air Terminals",location:{x:10,y:10,z:9}};
+  const expected=truth([duct("truth-a"),duct("truth-b",20),terminal]);
+  expected.snapshot.connections.push({a:"truth-a",b:terminal.key,kind:"physical"});
+  expected.evaluation_policy={drawing_observability:{schema_version:1,source_evidence_sha256:SOURCE_HASH,elements:[{
+    key:terminal.key,existence:"ambiguous",unobserved_attributes:["family","type","size","parameters"],reason:"Small untagged duct-mounted symbol cannot be resolved from the record scan."
+  }]}};
+  const actual=candidate();actual.snapshot.open_connector_count=3;
+  assert.equal(scoreExistingConditionsReconstruction(expected,actual).passed,true);
+  const present=candidate([...actual.snapshot.elements,{...terminal,key:"new-terminal"}]);
+  present.snapshot.connections.push({a:"new-901",b:"new-terminal",kind:"physical"});
+  assert.equal(scoreExistingConditionsReconstruction(expected,present).passed,true,"matching optional device is not a false positive");
+  expected.evaluation_policy!.drawing_observability!.elements[0]!.existence="required";
+  assert.ok(scoreExistingConditionsReconstruction(expected,actual).failure_classifications.includes("incomplete_reconstruction"));
+  expected.evaluation_policy!.drawing_observability!.elements[0]!.existence="ambiguous";
+  actual.snapshot.elements.pop();actual.snapshot.connections=[];
+  assert.ok(scoreExistingConditionsReconstruction(expected,actual).failure_classifications.includes("incomplete_reconstruction"));
+});
+
+test("drawing visibility waivers require matching source evidence and cannot hide a duct",()=>{
+  for(const variant of ["wrong-source","optional-duct","unknown-key","unknown-field"]){
+    const expected=truth();
+    expected.evaluation_policy={drawing_observability:{schema_version:1,source_evidence_sha256:variant==="wrong-source"?"f".repeat(64):SOURCE_HASH,elements:[{
+      key:variant==="unknown-key"?"absent":"truth-a",existence:variant==="optional-duct"?"ambiguous":"required",unobserved_attributes:variant==="unknown-field"?["endpoints" as any]:["family"],reason:"Test evidence boundary"
+    }]}};
+    assert.equal(scoreExistingConditionsReconstruction(expected,candidate()).valid_run,false,variant);
+  }
+});
+
 test("scoring rejects evaluator receipts replayed from another fixture, workflow, or attempt", () => {
   const actual = candidate();
   const expected = EXPECTED_RUNS.get(actual)!;
@@ -1096,6 +1143,33 @@ test("a partial coverage receipt cannot satisfy a complete bounded-region fixtur
   const result = scoreExistingConditionsReconstruction(expected, actual);
   assert.equal(result.valid_run, false);
   assert.ok(result.invalid_reasons.includes("bounded_mep_region_coverage_partial"));
+});
+
+test("whole-area physical route policy rejects disconnected native segments despite perfect traced geometry", () => {
+  const expected = truth([plumbingPipe("truth-sanitary", 0, 20)]);
+  expected.discipline = "plumbing";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 2;
+  requireCompletePlumbingRouteCoverage(expected, ["truth-sanitary"]);
+  expected.evaluation_policy!.require_physical_route_connectivity = true;
+  const actual = candidate([plumbingPipe("new-a", 0, 10), plumbingPipe("new-b", 10, 20)]);
+  actual.discipline = "plumbing";
+  actual.snapshot.connections = [{ a: "new-a", b: "new-b", kind: "physical" }];
+  actual.snapshot.open_connector_count = 2;
+  attachCompletePlumbingCoverage(actual);
+  assert.equal(scoreExistingConditionsReconstruction(expected, actual).passed, true);
+  delete expected.evaluation_policy!.bounded_mep_region_coverage;
+  expected.evaluation_policy!.visible_route_keys = ["truth-sanitary"];
+  assert.equal(scoreExistingConditionsReconstruction(expected, actual).passed, true);
+  expected.evaluation_policy!.visible_route_keys.push("missing");
+  assert.ok(scoreExistingConditionsReconstruction(expected, actual).invalid_reasons.includes("visible_route_keys_invalid"));
+  expected.evaluation_policy!.visible_route_keys = ["truth-sanitary"];
+  actual.snapshot.connections = [];
+  const rejected = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(rejected.metrics.mep_route_trace_recall, 1);
+  assert.equal(rejected.metrics.connectivity, 0);
+  assert.equal(rejected.passed, false);
+  assert.ok(rejected.failure_classifications.includes("connectivity_mismatch"));
 });
 
 test("bounded MEP route trace is independent of harmless native segment splits", () => {

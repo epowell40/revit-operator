@@ -275,7 +275,7 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
   };
 }
 
-for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-readback"], ["/revit/create-duct","c35-open-duct-readback"], ["/revit/mep-route-workflow","c37-connected-duct-readback"]]) test(route + " " + fixtureName + " needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-readback"], ["/revit/create-duct","c35-open-duct-readback"], ["/revit/mep-route-workflow","c37-connected-duct-readback"], ["/revit/mep-route-workflow","c41-connected-duct-alias-readback"]]) test(route + " " + fixtureName + " needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
   const f=JSON.parse(fs.readFileSync(`test/fixtures/${fixtureName}.json`,"utf8"));
   const targetId=Number(f.affected[0].split(":")[1]);
   if(route==="/revit/create-duct"){const b=f.input.body; f.input={method:"POST",path:route,body:{startPoint:b.points[0],endPoint:b.points[1],levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,dryRun:false}};}

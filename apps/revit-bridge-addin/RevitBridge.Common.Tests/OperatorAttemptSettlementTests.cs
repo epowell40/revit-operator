@@ -9,6 +9,16 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorAttemptSettlementTests
     {
+        [Fact]
+        public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
+        {
+            var result = HostedPlacementPreflight.CheckHost(false, "OneLevelBased", 1464223, null)!;
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/create-similar-from-instance");
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            result.Remove("transaction");
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/create-similar-from-instance").EffectState);
+        }
         [Theory]
         [InlineData(true, "none", "native_rollback")]
         [InlineData(false, "unknown", "native_host")]

@@ -67,6 +67,9 @@ export type ExistingConditionsGroundTruth = {
     dry_run_receipt_sha256: string;
   };
   evaluation_policy?: {
+    drawing_observability?: import("./drawing_observability.js").DrawingObservabilityPolicyV1;
+    require_physical_route_connectivity?: boolean;
+    visible_route_keys?: string[];
     require_evaluator_change_receipt?: boolean;
     elevation_evidence?: "plan_visible" | "project_context" | "not_visible";
     required_discipline_coverage?: ExistingConditionsDisciplineCoverageRequirement[];

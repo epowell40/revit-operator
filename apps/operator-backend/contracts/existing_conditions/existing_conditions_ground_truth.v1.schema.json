@@ -19,8 +19,28 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "visible_route_keys": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "require_physical_route_connectivity": { "type": "boolean" },
         "require_evaluator_change_receipt": { "type": "boolean" },
         "elevation_evidence": { "enum": ["plan_visible", "project_context", "not_visible"] },
+        "drawing_observability": {
+          "type": "object", "additionalProperties": false,
+          "required": ["schema_version", "source_evidence_sha256", "elements"],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "source_evidence_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+            "elements": { "type": "array", "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["key", "existence", "unobserved_attributes", "reason"],
+              "properties": {
+                "key": { "type": "string", "minLength": 1 },
+                "existence": { "enum": ["required", "ambiguous"] },
+                "reason": { "type": "string", "minLength": 1 },
+                "unobserved_attributes": { "type": "array", "uniqueItems": true, "items": { "enum": ["family", "type", "size", "parameters", "system_type", "system_classification"] } }
+              }
+            } }
+          }
+        },
         "required_discipline_coverage": {
           "type": "array",
           "minItems": 2,

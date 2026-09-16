@@ -133,7 +133,10 @@
     "teammate_evidence_paging.test.ts",
     "codex_partial_verification.test.ts",
     "memory_task_scope.test.ts",
-    "task_memory_prompt.test.ts"
+    "task_memory_prompt.test.ts",
+    "drawing_observability.test.ts",
+    "existing_conditions_reconstruction.test.ts",
+    "route_connectivity.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -219,7 +222,8 @@
     "OperatorWorkbookSupplementalTablesTests",
     "DraftPointCoordinatePolicyTests",
     "OperatorWorkbookExportPathTests",
-    "TemporaryAnnotationCropTests"
+    "TemporaryAnnotationCropTests",
+    "HostedPlacementPreflightTests"
   ],
   "failure_families": [
     {
@@ -2099,6 +2103,35 @@
         "desktop:test/browser_asset_freshness.test.js",
         "desktop:test/assignment_workspace_v2.test.js",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "connected-duct-native-name-and-size-aliases-rejected-after-successful-reconstruction",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "missing-create-similar-host-is-misclassified-as-uncertain-write",
+      "coverage": [
+        "dotnet:HostedPlacementPreflightTests",
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "record-drawing-reconstruction-graded-against-unshown-device-properties",
+      "coverage": [
+        "backend:drawing_observability.test.ts",
+        "backend:existing_conditions_reconstruction.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-route-grading-ignores-native-connectivity",
+      "coverage": [
+        "backend:route_connectivity.test.ts",
+        "backend:existing_conditions_reconstruction.test.ts"
       ]
     }
   ],

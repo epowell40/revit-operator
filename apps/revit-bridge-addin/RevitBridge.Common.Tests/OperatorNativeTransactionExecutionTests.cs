@@ -12,6 +12,22 @@ namespace RevitBridge.Common.Tests
         [Theory]
         [InlineData("Committed", "applied")]
         [InlineData("RolledBack", "none")]
+        [InlineData("Pending", "unknown")]
+        public void FamilyPlacementReportsPersistedCreationOnlyAfterCommit(string status, string effect)
+        {
+            var result = OperatorNativeTransactionExecution.Execute(() => "Started", () => status,
+                () => "RolledBack", () => status,
+                () => new Dictionary<string, object?> { ["status"] = "Placed", ["id"] = 1543001L },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()),
+                () => new[] { 1543001L });
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/create-family-instance");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(status == "Committed", settlement.AffectedTargetIdentities.Contains("element_id:1543001"));
+            if (status != "Committed") Assert.False(result.ContainsKey("id"));
+        }
+        [Theory]
+        [InlineData("Committed", "applied")]
+        [InlineData("RolledBack", "none")]
         public void WrapperMatchedInventoryFlowsThroughTransactionSettlement(string status, string effect)
         {
             var document = new string(new[] { 'o', 'p', 'e', 'n' });

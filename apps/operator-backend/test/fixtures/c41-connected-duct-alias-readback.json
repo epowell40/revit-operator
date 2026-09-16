@@ -1,0 +1,262 @@
+{
+  "provenance": "Retained C41 disposable Snowdon Unit 403 native readback. Request and native parameter/connector rows preserved; no session credentials or machine paths.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/mep-route-workflow",
+    "requireKnownPath": true,
+    "body": {
+      "kind": "duct",
+      "points": [
+        {
+          "x": -33.61458333333336,
+          "y": -1.3993376534148356,
+          "z": 42.833333333337116
+        },
+        {
+          "x": -33.61458333333343,
+          "y": -13.399337653414879,
+          "z": 42.833333333337116
+        }
+      ],
+      "viewId": 1363433,
+      "roomNumber": "403",
+      "levelName": "L4",
+      "levelId": 1362791,
+      "systemType": "Exhaust Air",
+      "ductType": "Tees",
+      "ductShape": "round",
+      "ductSize": "4\"",
+      "diameter": "4\"",
+      "sizePolicy": "explicit_required",
+      "elevationPolicy": "explicit_required",
+      "routingMode": "polyline",
+      "connectSegments": true,
+      "connectToExisting": true,
+      "requireExistingEndpointConnections": true,
+      "externalConnectionToleranceFt": 0.05,
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "visualViewId": 1363433,
+      "imageSize": 1800,
+      "focusPaddingFt": 4
+    }
+  },
+  "affected": [
+    "element_id:1542937"
+  ],
+  "parameters": {
+    "items": [
+      {
+        "id": 1542937,
+        "uniqueId": "adee880f-f71f-4527-aa87-75e945547b5f-00178b19",
+        "name": "Tees",
+        "category": "Ducts",
+        "categoryId": -2008000,
+        "parameters": {
+          "System Classification": "Exhaust Air",
+          "Reference Level": "1362791",
+          "Diameter": "0.333333333333333"
+        },
+        "parameterDetails": [
+          {
+            "name": "System Classification",
+            "value": "Exhaust Air",
+            "valueString": "Exhaust Air",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140325
+          },
+          {
+            "name": "Reference Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1114000
+          },
+          {
+            "name": "Diameter",
+            "value": "0.333333333333333",
+            "valueString": "4\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114103
+          }
+        ]
+      }
+    ]
+  },
+  "connectors": {
+    "status": "Ok",
+    "requestedCount": 1,
+    "scannedElementCount": 1,
+    "failedElementCount": 0,
+    "matchedElementCount": 1,
+    "totalScannedConnectorCount": 2,
+    "physicallyConnectedConnectorCount": 2,
+    "openPhysicalConnectorCount": 0,
+    "connectorScanTruncatedElementCount": 0,
+    "filter": "allConnectors",
+    "results": [
+      {
+        "id": 1542937,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Exhaust Air 17",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333336,
+              -1.3993376534148356,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333336,
+                -1.3993376534148356,
+                42.833333333337116
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465180,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1465180,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333343,
+              -13.399337653414879,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333343,
+                -13.399337653414879,
+                42.833333333337116
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465208,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1465208,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      }
+    ],
+    "warnings": []
+  }
+}

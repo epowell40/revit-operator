@@ -4,6 +4,29 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+test("missing create-similar host is correctable only with authoritative not-started receipt", async () => {
+  const route="/revit/create-similar-from-instance",body={exemplarElementId:1464223,placements:[{pointXyz:[-37.2,-2.7,42.32152230971508],label:"HRU403"}],levelName:"L4",dryRun:false};
+  for(const confirmed of [true,false]) {
+    const decorated=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"apply"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,{
+        status:"Blocked",success:false,applied:false,errorCode:"create_similar_host_required",
+        error:"No host element was available for create-similar. No transaction was started.",
+        ...(confirmed?{transaction:{status:"not_started",committed:false,affected_element_ids:[]}}:{}),
+        canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",
+          effect_state:confirmed?"none":"unknown",effect_authority:confirmed?"native_transaction":"native_host",
+          effect_reason:confirmed?"native_transaction_not_started":"native_handler_returned_without_authoritative_settlement",request_dispatched:true}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,"failed_after_dispatch");
+    assert.equal(result.persistent_effect,confirmed?"none":"unknown");
+    assert.equal(result.native_transaction_state,confirmed?"not_started":"unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_id==="task.result_available"&&f.value===true),false);
+  }
+});
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
 
 test('atomic branch-network rollback is a failed operation; child commits and rollback prose cannot fabricate persistence', async () => {

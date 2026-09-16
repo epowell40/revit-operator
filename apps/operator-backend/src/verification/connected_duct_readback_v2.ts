@@ -17,11 +17,12 @@ const samePoint=(a:unknown,b:number[])=>{const p=point(a);return !!p&&p.every((n
  * fitting creation, worksets, or any other unverified additional effects. */
 export function connectedDuctReadbackMatchesV2(input:unknown,affected:readonly string[],parameters:unknown,connectors:unknown):boolean {
   const request=row(input),b=row(request.body);
-  const allowed=new Set(["kind","viewId","roomNumber","levelId","systemType","ductTypeId","ductShape","ductSize","diameter",
+  const allowed=new Set(["kind","viewId","roomNumber","levelId","levelName","systemType","ductTypeId","ductType","ductShape","ductSize","diameter",
     "sizePolicy","elevationPolicy","routingMode","points","connectSegments","connectToExisting","requireExistingEndpointConnections",
     "externalConnectionToleranceFt","verify","apply","visualVerify","visualViewId","imageSize","focusPaddingFt"]);
   if(request.path!=="/revit/mep-route-workflow"||b.kind!=="duct"||b.apply!==true||b.routingMode!=="polyline"
-    ||b.sizePolicy!=="explicit_required"||b.elevationPolicy!=="explicit_required"||!id(b.levelId)||!id(b.ductTypeId)
+    ||b.sizePolicy!=="explicit_required"||b.elevationPolicy!=="explicit_required"||!id(b.levelId)
+    ||(b.ductTypeId===undefined?typeof b.ductType!=="string"||!b.ductType.trim():!id(b.ductTypeId))
     ||typeof b.connectSegments!=="boolean"||b.connectToExisting!==true||b.requireExistingEndpointConnections!==true
     ||Object.keys(b).some(k=>!allowed.has(k))||!Array.isArray(b.points)||b.points.length!==2
     ||affected.length!==1||!/^element_id:[1-9][0-9]*$/.test(affected[0]!))return false;
@@ -29,10 +30,13 @@ export function connectedDuctReadbackMatchesV2(input:unknown,affected:readonly s
   if(!start||!end||samePoint(start,end))return false;
   const elementId=Number(affected[0]!.slice(11)),system=({"Supply Air":"SupplyAir","Return Air":"ReturnAir","Exhaust Air":"ExhaustAir"} as Row)[b.systemType];
   if(!id(elementId)||!system)return false;
-  if(!["round","rectangular"].includes(b.ductShape)||b.ductShape==="rectangular"&&b.diameter!==undefined
-    ||b.ductShape==="round"&&b.ductSize!==undefined&&b.diameter!==undefined)return false;
+  if(!["round","rectangular"].includes(b.ductShape)||b.ductShape==="rectangular"&&b.diameter!==undefined)return false;
   const profile=parseRouteProfileSizeV1(b.ductShape,b.diameter??b.ductSize);
   if(!profile)return false;
+  if(b.ductShape==="round"&&b.ductSize!==undefined&&b.diameter!==undefined) {
+    const alias=parseRouteProfileSizeV1("round",b.ductSize);
+    if(!alias||alias.diameter_ft===null||profile.diameter_ft===null||!near(alias.diameter_ft,profile.diameter_ft))return false;
+  }
   const {diameter_ft:diameter,width_ft:width,height_ft:height}=profile;
   const params=row(parameters).items,c=row(connectors);
   if(!Array.isArray(params)||params.length!==1||row(params[0]).id!==elementId||row(params[0]).error
@@ -40,9 +44,20 @@ export function connectedDuctReadbackMatchesV2(input:unknown,affected:readonly s
     ||c.totalScannedConnectorCount!==2||c.physicallyConnectedConnectorCount!==2||c.openPhysicalConnectorCount!==0
     ||c.connectorScanTruncatedElementCount!==0||!Array.isArray(c.results)||c.results.length!==1)return false;
   const p=row(row(params[0]).parameters),r=row(c.results[0]);
+  // Aliases are constraints on the same fresh native readback, not a rewrite
+  // of the historical operation. A supplied ID and name must both match.
+  if(!id(r.typeId)||(b.ductTypeId!==undefined&&r.typeId!==b.ductTypeId)
+    ||(b.ductType!==undefined&&(typeof b.ductType!=="string"||!b.ductType.trim()||r.typeName!==b.ductType)))return false;
+  if(b.levelName!==undefined) {
+    const details=row(params[0]).parameterDetails;
+    if(typeof b.levelName!=="string"||!b.levelName.trim()||!Array.isArray(details))return false;
+    const levels=details.filter((v:unknown)=>row(v).name==="Reference Level");
+    if(levels.length!==1||row(levels[0]).storageType!=="ElementId"
+      ||!near(row(levels[0]).value,b.levelId)||row(levels[0]).valueString!==b.levelName)return false;
+  }
   if(p["System Classification"]!==b.systemType||!near(p["Reference Level"],b.levelId)
     ||(diameter!==null?!near(p.Diameter,diameter):!near(p.Width,width!)||!near(p.Height,height!))
-    ||r.id!==elementId||r.ok!==true||r.category!=="OST_DuctCurves"||r.typeId!==b.ductTypeId
+    ||r.id!==elementId||r.ok!==true||r.category!=="OST_DuctCurves"
     ||r.connectorCount!==2||r.returnedConnectorCount!==2||r.openPhysicalConnectorCount!==0||r.connectorScanTruncated!==false
     ||!Array.isArray(r.connectors)||r.connectors.length!==2)return false;
   const ends=r.connectors.map(row);

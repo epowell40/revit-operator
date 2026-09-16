@@ -5,6 +5,22 @@ import { openDuctReadbackMatchesV2 } from "../src/verification/open_duct_postcon
 const fixture=():any=>JSON.parse(fs.readFileSync("test/fixtures/c37-connected-duct-readback.json","utf8"));
 const matches=(f:any)=>openDuctReadbackMatchesV2(f.input,f.affected,f.parameters,f.connectors);
 
+test("retained C41 consistent native name and size aliases satisfy connected readback",()=>{
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c41-connected-duct-alias-readback.json","utf8"));
+  assert.equal(matches(f),true);
+  for(const [name,change] of [
+    ["conflicting type name",(x:any)=>x.input.body.ductType="Other"],
+    ["conflicting type id",(x:any)=>x.input.body.ductTypeId=999],
+    ["conflicting level name",(x:any)=>x.input.body.levelName="L3"],
+    ["conflicting level detail id",(x:any)=>x.parameters.items[0].parameterDetails.find((p:any)=>p.name==="Reference Level").value="99"],
+    ["ambiguous level details",(x:any)=>x.parameters.items[0].parameterDetails.push({...x.parameters.items[0].parameterDetails.find((p:any)=>p.name==="Reference Level"),valueString:"Other"})],
+    ["missing level details",(x:any)=>x.parameters.items[0].parameterDetails=[]],
+    ["conflicting size aliases",(x:any)=>x.input.body.diameter='6"'],
+    ["missing native type name",(x:any)=>delete x.connectors.results[0].typeName],
+    ["unverified extra constraint",(x:any)=>x.input.body.workset="Other"]
+  ] as Array<[string,(x:any)=>void]>){const x=structuredClone(f);change(x);assert.equal(matches(x),false,name);}
+});
+
 test("retained C38 correctly located round duct with two open physical ends is not a completed connected reconstruction",()=>{
   const f=JSON.parse(fs.readFileSync("test/fixtures/c38-disconnected-round-duct-readback.json","utf8"));
   const subject=f.connectors.results.find((r:any)=>r.id===1542942);
