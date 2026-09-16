@@ -19,7 +19,8 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 216);
   assert.equal(SUPPORTED_NATIVE_ROUTES.length, 102);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 92);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 93);
+  assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
   assert.equal(excluded.length, 114);
