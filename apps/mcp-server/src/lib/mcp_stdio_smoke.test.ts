@@ -22,6 +22,7 @@ const certifiedPolicyHash = (JSON.parse(fs.readFileSync(certifiedPolicyPath, "ut
 const certifiedSafeNonRevitAliases = [
   "operator_discover_capabilities",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_request_assignment_input",
   "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
@@ -223,7 +224,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 92, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 93, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -426,7 +427,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 92, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, 93, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
   for (const field of ["ductSize", "width", "height", "diameter", "ductTypeId", "ductShape"])
     assert.ok(ductSchema.properties?.[field], `The executable duct alias must expose ${field}.`);
@@ -455,6 +456,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_record_execution_strategy",
     "operator_request_clarification",
     "operator_evaluate_assignment_criteria",
+    "operator_manage_work_plan",
     "operator_request_assignment_input",
     "operator_retrieve_evidence",
     "operator_submit_noop_completion",

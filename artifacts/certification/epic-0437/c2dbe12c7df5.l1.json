@@ -227,7 +227,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:0a2096d6937fb647ec6b018a162dfdf48cd9d0b5367507a16ad21ad7b9d51872"
+      "sha256": "sha256:29d624c1f806f87ce6adb95021aa45b22e2fbe37ceb336df72b0a096dadfaceb"
     },
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.fixtures.ts",
@@ -7089,7 +7089,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:d214736e8afe1341792ccbfd14be124d9a862caf9b4dcd741c526a7854580a42",
+  "inputs_hash": "sha256:3f2038597e3f887e2fd3963575e0b9a1d01c6ec18787efb7950dfd860cb9919c",
   "result": {
     "passed": true,
     "checks": [
