@@ -141,7 +141,9 @@
     "work_plan_projection.test.ts",
     "assignment_work_allowance_v2.test.ts",
     "work_plan_inspection.test.ts",
-    "polyline_duct_postcondition_v2.test.ts"
+    "polyline_duct_postcondition_v2.test.ts",
+    "pdf_polygon_landmarks.test.ts",
+    "pdf_polygon_landmarks_pdfjs.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2291,6 +2293,28 @@
       "coverage": [
         "dotnet:FamilyPlacementRecoveryTests",
         "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "area-c47-failed-family-rollback-classified-success-and-blocks-next-edit",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:teammate_canonical_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "area-m104-polyline-grid-bubbles-missing-from-pdf-source-landmarks",
+      "coverage": [
+        "backend:pdf_polygon_landmarks.test.ts",
+        "backend:pdf_polygon_landmarks_pdfjs.test.ts"
+      ]
+    },
+    {
+      "id": "direct-room-grid-native-axis-missing-from-find-elements-geometry",
+      "coverage": [
+        "dotnet:FindElementsGeometryContractTests",
+        "mcp:lib/findElementsAgentProjection.test.ts",
+        "backend:tool_result_compaction.test.ts"
       ]
     }
   ],

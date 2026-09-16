@@ -1,0 +1,193 @@
+{
+  "provenance": "Actual M104 Revit-exported grid 4 path and source text. No PDF element tags, hidden model identities or evaluation geometry.",
+  "source_sha256": "3a1b26f65386c8c6a4c603028a64d7b92ebbdc472ba1ebaf4a92d126e037aebc",
+  "input": {
+    "operatorList": {
+      "fnArray": [
+        12,
+        91
+      ],
+      "argsArray": [
+        [
+          1,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          [
+            13,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14,
+            14
+          ],
+          [
+            -585.07581,
+            202.76855,
+            -585.6413,
+            207.245,
+            -587.30231,
+            211.44012,
+            -589.95435,
+            215.09042,
+            -593.43091,
+            217.96646,
+            -597.51349,
+            219.88757,
+            -601.94556,
+            220.73306,
+            -606.44867,
+            220.44974,
+            -610.73981,
+            219.05545,
+            -614.54944,
+            216.63782,
+            -617.63812,
+            213.34869,
+            -619.81177,
+            209.39481,
+            -620.9339,
+            205.02457,
+            -620.9339,
+            200.51257,
+            -619.81177,
+            196.14233,
+            -617.63812,
+            192.18845,
+            -614.54944,
+            188.89932,
+            -610.73981,
+            186.48169,
+            -606.44867,
+            185.0874,
+            -601.94556,
+            184.80408,
+            -597.51349,
+            185.64954,
+            -593.43091,
+            187.57068,
+            -589.95435,
+            190.44672,
+            -587.30231,
+            194.09702,
+            -585.6413,
+            198.29214,
+            -585.07581,
+            202.76855
+          ]
+        ]
+      ]
+    },
+    "textContent": {
+      "items": [
+        {
+          "str": "4",
+          "dir": "ltr",
+          "width": 9.956,
+          "height": 19,
+          "transform": [
+            19,
+            0,
+            0,
+            19,
+            -608.1391,
+            196.03845
+          ],
+          "fontName": "g_d0_f2",
+          "hasEOL": false
+        }
+      ],
+      "styles": {
+        "g_d0_f1": {
+          "fontFamily": "sans-serif",
+          "ascent": 0.9052734375,
+          "descent": -0.2119140625,
+          "vertical": false
+        },
+        "g_d0_f2": {
+          "fontFamily": "sans-serif",
+          "ascent": 0.93896484375,
+          "descent": -0.22216796875,
+          "vertical": false
+        },
+        "g_d0_f3": {
+          "fontFamily": "sans-serif",
+          "ascent": 0.9052734375,
+          "descent": -0.2119140625,
+          "vertical": false
+        },
+        "g_d0_f4": {
+          "fontFamily": "sans-serif",
+          "ascent": 0.93896484375,
+          "descent": -0.22216796875,
+          "vertical": false
+        },
+        "g_d0_f5": {
+          "fontFamily": "sans-serif",
+          "ascent": 0.93896484375,
+          "descent": -0.22216796875,
+          "vertical": false
+        }
+      }
+    },
+    "viewport": {
+      "transform": [
+        1,
+        0,
+        0,
+        -1,
+        1512.12,
+        1080
+      ],
+      "width": 3024.24,
+      "height": 2160
+    },
+    "OPS": {
+      "save": 10,
+      "restore": 11,
+      "transform": 12,
+      "moveTo": 13,
+      "lineTo": 14,
+      "curveTo": 15,
+      "closePath": 18,
+      "constructPath": 91,
+      "paintFormXObjectBegin": 74,
+      "paintFormXObjectEnd": 75,
+      "beginAnnotation": 80,
+      "endAnnotation": 81
+    }
+  },
+  "expected": {
+    "label": "4",
+    "center": {
+      "u": 0.30060945725206994,
+      "v": 0.40612566203703704
+    },
+    "radius_u": 0.005934306635716737,
+    "radius_v": 0.008308688657407401
+  }
+}

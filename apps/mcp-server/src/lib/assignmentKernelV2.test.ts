@@ -1802,3 +1802,20 @@ test('C44 exact inventory preflight carries useful nested constraints through MC
  assert(result.input_schema_gap.issues.some((i:any)=>i.field_path==='body.limit'&&i.expected_constraint.maximum===2000));
  assert.equal(decorated.structuredContent.observation,undefined);
 });
+
+test('C47 Failed family placement remains a failed operation and preserves independent rollback authority', async () => {
+ const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c47-family-rollback.json',import.meta.url),'utf8'));
+ for(const confirmed of [true,false]) {
+  const {path:route,body}=fixture.input;
+  const decorated:any=await runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+   const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+   await markAssignmentKernelNativeRequestDispatchingV2(request);
+   const payload=structuredClone(fixture.payload); if(!confirmed)delete payload.transaction;
+   await recordAssignmentKernelNativeResultV2('POST',route,{...payload,canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',effect_state:confirmed?'none':'unknown',effect_authority:confirmed?'native_rollback':'native_host',effect_reason:confirmed?'verified_native_rollback':'native_handler_returned_without_authoritative_settlement',request_dispatched:true}},request);
+   return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool');
+  });
+  assert.equal(decorated.structuredContent.operation_result_v2.status,'failed_after_dispatch');
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,confirmed?'none':'unknown');
+  assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state,confirmed?'rolled_back':'unknown');
+ }
+});

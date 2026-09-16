@@ -1,0 +1,157 @@
+{
+  "provenance": "Direct room diagnostic, fresh native architectural grid inventory plus independent Grid.Curve endpoint reads. Expected curve summaries are explicitly derived test expectations, not a claimed Candidate 48 live result. No HVAC evaluation geometry or PDF hidden element tags.",
+  "source_records": [
+    "direct-room-landmarks.json",
+    "direct-room-datum-ops.json"
+  ],
+  "rows": [
+    {
+      "label": "4",
+      "elementId": 1363063,
+      "before_geometry": null,
+      "independent_native_curve_endpoints": {
+        "start": {
+          "x": -49.24999999999976,
+          "y": 48.009671127502095,
+          "z": 0
+        },
+        "end": {
+          "x": -49.24999999999976,
+          "y": -30.948799994868004,
+          "z": 0
+        }
+      },
+      "expected_curve_summary": {
+        "start": {
+          "x": -49.24999999999976,
+          "y": 48.009671127502095,
+          "z": 0
+        },
+        "end": {
+          "x": -49.24999999999976,
+          "y": -30.948799994868004,
+          "z": 0
+        },
+        "midpoint": {
+          "x": -49.24999999999976,
+          "y": 8.530435566317045,
+          "z": 0
+        },
+        "lengthFt": 78.9584711223701,
+        "curveType": "Line",
+        "isStraight": true
+      }
+    },
+    {
+      "label": "5",
+      "elementId": 1363064,
+      "before_geometry": null,
+      "independent_native_curve_endpoints": {
+        "start": {
+          "x": -20.24999999999977,
+          "y": 48.009671127502095,
+          "z": 0
+        },
+        "end": {
+          "x": -20.24999999999977,
+          "y": -30.948799994868004,
+          "z": 0
+        }
+      },
+      "expected_curve_summary": {
+        "start": {
+          "x": -20.24999999999977,
+          "y": 48.009671127502095,
+          "z": 0
+        },
+        "end": {
+          "x": -20.24999999999977,
+          "y": -30.948799994868004,
+          "z": 0
+        },
+        "midpoint": {
+          "x": -20.24999999999977,
+          "y": 8.530435566317045,
+          "z": 0
+        },
+        "lengthFt": 78.9584711223701,
+        "curveType": "Line",
+        "isStraight": true
+      }
+    },
+    {
+      "label": "C",
+      "elementId": 1363060,
+      "before_geometry": null,
+      "independent_native_curve_endpoints": {
+        "start": {
+          "x": 77.76976864454464,
+          "y": 2.4999999999992135,
+          "z": 0
+        },
+        "end": {
+          "x": -115.25999127660263,
+          "y": 2.4999999999992135,
+          "z": 0
+        }
+      },
+      "expected_curve_summary": {
+        "start": {
+          "x": 77.76976864454464,
+          "y": 2.4999999999992135,
+          "z": 0
+        },
+        "end": {
+          "x": -115.25999127660263,
+          "y": 2.4999999999992135,
+          "z": 0
+        },
+        "midpoint": {
+          "x": -18.745111316028996,
+          "y": 2.4999999999992135,
+          "z": 0
+        },
+        "lengthFt": 193.02975992114727,
+        "curveType": "Line",
+        "isStraight": true
+      }
+    },
+    {
+      "label": "A",
+      "elementId": 1363061,
+      "before_geometry": null,
+      "independent_native_curve_endpoints": {
+        "start": {
+          "x": 77.76976864454464,
+          "y": -27.541666666667446,
+          "z": 0
+        },
+        "end": {
+          "x": -115.25999127660263,
+          "y": -27.541666666667446,
+          "z": 0
+        }
+      },
+      "expected_curve_summary": {
+        "start": {
+          "x": 77.76976864454464,
+          "y": -27.541666666667446,
+          "z": 0
+        },
+        "end": {
+          "x": -115.25999127660263,
+          "y": -27.541666666667446,
+          "z": 0
+        },
+        "midpoint": {
+          "x": -18.745111316028996,
+          "y": -27.541666666667446,
+          "z": 0
+        },
+        "lengthFt": 193.02975992114727,
+        "curveType": "Line",
+        "isStraight": true
+      }
+    }
+  ]
+}

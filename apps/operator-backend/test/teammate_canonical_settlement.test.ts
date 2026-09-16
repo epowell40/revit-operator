@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canonicalNativeNoChangeForTeammate } from "../src/teammate_canonical_settlement.js";
@@ -89,4 +90,22 @@ test("raw status success cannot prevent authoritative rollback or release an unc
     assert.equal(guardTeammateMcpCall(owner, corrected).allowed, false);
     assert.equal(teammateLoopReceiptForOwner(owner)!.apply_attempts, 2);
   } finally { endTeammateLoopOwner(lease); }
+});
+
+test('C47 exact family rollback releases the next corrected call without claiming completion', () => {
+ const fixture=JSON.parse(readFileSync(new URL('../../test/fixtures/c47-family-rollback.json',import.meta.url),'utf8'));
+ __testOnlyResetTeammateLoopState(); const owner={};
+ const lease=beginTeammateLoopOwner(owner,{version:'operator.backend.v1',session_id:'session',message_id:'c47-replay',user_text:'Place a ceiling air terminal in L4.',context:{revit:{process_id:4242,source:{live:true},document:{title:'Model',projectIdentity:{fingerprint:'model'}}}}} as any);
+ try {
+  const first=guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:fixture.input});assert.equal(first.allowed,true);
+  recordTeammateMcpResult(owner,first,{content:[{type:'text',text:JSON.stringify(fixture.payload)}]});
+  const corrected={tool:'revit_call_tool',arguments:{...fixture.input,body:{...fixture.input.body,instances:[{x:-30.88,y:-3.95,z:8.5}]}}};
+  assert.equal(guardTeammateMcpCall(owner,corrected).allowed,false);
+  const op=operation();op.input=fixture.input;op.request_identity.path=fixture.input.path;op.result.request_identity.path=fixture.input.path;
+  const unknown=structuredClone(op);unknown.result.native_transaction_state='unknown';unknown.result.persistent_effect='unknown';
+  assert.equal(reconcileTeammateCanonicalSettlementV2(first,unknown),false);
+  assert.equal(reconcileTeammateCanonicalSettlementV2(first,op),true);
+  assert.equal(teammateLoopReceiptForOwner(owner)!.verified,false);
+  assert.equal(guardTeammateMcpCall(owner,corrected).allowed,true);
+ } finally {endTeammateLoopOwner(lease);}
 });

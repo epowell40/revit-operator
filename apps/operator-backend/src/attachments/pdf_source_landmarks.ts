@@ -15,7 +15,42 @@ const finiteArray = (value: unknown, count: number): value is ArrayLike<number> 
 const transform = (m: ArrayLike<number>, p: readonly number[]) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
 const multiply = (a: ArrayLike<number>, b: ArrayLike<number>) => [a[0]*b[0]+a[2]*b[1], a[1]*b[0]+a[3]*b[1], a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3], a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]];
 
+function polygonCircle(path: unknown, ops: Operators, matrix: number[]) {
+  if (!Array.isArray(path)) return null;
+  const [rawCodes, values] = path;
+  if (!rawCodes || !Number.isSafeInteger(rawCodes.length) || rawCodes.length < 13 || rawCodes.length > 258
+      || !finiteArray(rawCodes, rawCodes.length)) return null;
+  const codes = Array.from(rawCodes);
+  if (codes[0] !== ops.moveTo) return null;
+  const closed = codes[codes.length - 1] === ops.closePath, count = codes.length - (closed ? 1 : 0);
+  if (!codes.slice(1, count).every(code => code === ops.lineTo) || !finiteArray(values, count * 2)) return null;
+  const points = Array.from({ length: count }, (_, i) => [values[2*i], values[2*i+1]]);
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const cx = (Math.min(...xs)+Math.max(...xs))/2, cy = (Math.min(...ys)+Math.max(...ys))/2;
+  const rx = (Math.max(...xs)-Math.min(...xs))/2, ry = (Math.max(...ys)-Math.min(...ys))/2;
+  if (rx <= 0 || ry <= 0 || rx/ry < .98 || rx/ry > 1.02) return null;
+  const radius = (rx+ry)/2;
+  const gap = Math.hypot(points[0][0]-points[points.length-1][0], points[0][1]-points[points.length-1][1]);
+  if (!closed && gap > radius*.01) return null;
+  if (gap <= radius*.01) points.pop();
+  if (points.length < 12 || points.some(p => Math.abs(Math.hypot(p[0]-cx, p[1]-cy)/radius-1) > .012)) return null;
+  let total = 0, sign = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i+1)%points.length];
+    const angle = Math.atan2(a[0]-cx, a[1]-cy), next = Math.atan2(b[0]-cx, b[1]-cy);
+    const delta = Math.atan2(Math.sin(next-angle), Math.cos(next-angle));
+    if (Math.abs(delta) < 1e-6 || Math.abs(delta) > Math.PI/6+.001 || sign && Math.sign(delta) !== sign) return null;
+    sign = Math.sign(delta); total += delta;
+  }
+  if (Math.abs(Math.abs(total)-2*Math.PI) > .001) return null;
+  const xAxis = [matrix[0]*radius, matrix[1]*radius], yAxis = [matrix[2]*radius, matrix[3]*radius];
+  const a = Math.hypot(...xAxis), b = Math.hypot(...yAxis);
+  if (a <= 0 || b <= 0 || a/b < .95 || a/b > 1.05 || Math.abs(xAxis[0]*yAxis[0]+xAxis[1]*yAxis[1])/(a*b) > .02) return null;
+  return { center: transform(matrix, [cx, cy]), radius: (a+b)/2 };
+}
+
 function circularPath(path: unknown, ops: Operators, matrix: number[]) {
+  const polygon = polygonCircle(path, ops, matrix); if (polygon) return polygon;
   if (!Array.isArray(path)) return null;
   const [codes, values] = path;
   if (!finiteArray(codes, 6) || codes[0] !== ops.moveTo || codes[5] !== ops.closePath

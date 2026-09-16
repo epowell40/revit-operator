@@ -1,0 +1,85 @@
+{
+  "provenance": "Candidate 47 actual two-unit Operator test. Exact request and native failure; diagnostic source only, no hidden reconstruction truth.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/place-families",
+    "body": {
+      "levelName": "L4",
+      "familySymbolId": 1376349,
+      "allowUnhostedWorkPlanePlacement": true,
+      "instances": [
+        {
+          "x": -30.88,
+          "y": -3.95,
+          "z": 40.6666666667,
+          "coordinateMode": "absolute_model",
+          "rotationDegrees": 0
+        }
+      ],
+      "dryRun": false,
+      "idempotency": {
+        "enabled": true,
+        "toleranceFt": 0.25
+      }
+    },
+    "requireKnownPath": true
+  },
+  "payload": {
+    "transaction": {
+      "status": "rolled_back",
+      "committed": false,
+      "modified_element_ids": [],
+      "affected_element_ids": [],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "status": "Failed",
+    "familyPlacementType": "WorkPlaneBased",
+    "requiresExplicitHost": false,
+    "unhostedWorkPlanePlacementAllowed": true,
+    "placedCount": 0,
+    "skippedCount": 0,
+    "failedCount": 1,
+    "selectedWorksetId": null,
+    "selectedWorksetName": null,
+    "elementIds": [],
+    "results": [
+      {
+        "index": 0,
+        "status": "failed",
+        "elementId": null,
+        "reason": "absolute_model placement for element 1542919 did not retain the requested point; residual is 40.666666667 ft.",
+        "coordinateMode": "absolute_model",
+        "requestedLocationX": -30.88,
+        "requestedLocationY": -3.95,
+        "requestedLocationZ": 40.6666666667,
+        "absoluteModelCorrectionDistanceFt": null,
+        "absoluteModelLocationVerified": null,
+        "worksetId": null,
+        "worksetName": null,
+        "worksetVerified": null,
+        "familySymbolId": null,
+        "hostElementId": null,
+        "linkedHostElementId": null,
+        "hostVerified": null,
+        "levelId": null,
+        "levelVerified": null,
+        "ownerViewId": null,
+        "locationX": null,
+        "locationY": null,
+        "locationZ": null,
+        "inTargetViewCollector": null,
+        "viewSpecificBoundingBoxAvailable": null,
+        "bboxMinX": null,
+        "bboxMinY": null,
+        "bboxMinZ": null,
+        "bboxMaxX": null,
+        "bboxMaxY": null,
+        "bboxMaxZ": null,
+        "warnings": []
+      }
+    ],
+    "warnings": [],
+    "error": "Failed to place family instance at index 0: absolute_model placement for element 1542919 did not retain the requested point; residual is 40.666666667 ft."
+  }
+}

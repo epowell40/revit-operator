@@ -629,10 +629,12 @@ namespace RevitBridge.Logic.Handlers
                     locationPoint = XyzPayload(point.Point);
                     rotation = IsFinite(point.Rotation) ? point.Rotation : null;
                 }
-                else if (e.Location is LocationCurve curveLocation && curveLocation.Curve != null)
+                else
                 {
-                    var curve = curveLocation.Curve;
-                    locationCurve = new
+                    // Grids expose their native axis through Grid.Curve, not LocationCurve.
+                    // Presentation bounding boxes are not substitutes for that axis.
+                    var curve = e is Grid grid ? grid.Curve : (e.Location as LocationCurve)?.Curve;
+                    if (curve != null) locationCurve = new
                     {
                         start = XyzPayload(curve.GetEndPoint(0)),
                         end = XyzPayload(curve.GetEndPoint(1)),
