@@ -143,7 +143,8 @@
     "work_plan_inspection.test.ts",
     "polyline_duct_postcondition_v2.test.ts",
     "pdf_polygon_landmarks.test.ts",
-    "pdf_polygon_landmarks_pdfjs.test.ts"
+    "pdf_polygon_landmarks_pdfjs.test.ts",
+    "tool_result_compaction.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -170,7 +171,8 @@
     "spatialObservationV1.test.ts",
     "workflowImage.test.ts",
     "lib/workPlanStdio.test.ts",
-    "lib/familyPlacementSchema.test.ts"
+    "lib/familyPlacementSchema.test.ts",
+    "lib/findElementsAgentProjection.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -237,7 +239,8 @@
     "OperatorIdleDiagnosticTests",
     "MepCurveJointPolicyTests",
     "LinkedHostPlacementPolicyTests",
-    "FamilyPlacementRecoveryTests"
+    "FamilyPlacementRecoveryTests",
+    "FindElementsGeometryContractTests"
   ],
   "failure_families": [
     {
