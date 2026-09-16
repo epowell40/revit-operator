@@ -815,10 +815,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return false;
             }
 
+            var requiresElbow = RequiresCurveElbow(a, b);
             try
             {
                 if (a.IsConnectedTo(b))
                 {
+                    if (requiresElbow)
+                    {
+                        method = "elbow_required_missing";
+                        error = "The angled curve ports are directly connected without an elbow. Repair that joint before claiming a fitted route.";
+                        return false;
+                    }
                     method = "already_connected";
                     return true;
                 }
@@ -840,6 +847,13 @@ namespace RevitBridge.Logic.Handlers.MEP
                 error = ex.Message;
             }
 
+            if (requiresElbow)
+            {
+                method = "elbow_required_failed";
+                error = "A native elbow is required at this curve bend; bare ConnectTo fallback is not permitted. " + error;
+                return false;
+            }
+
             if (TryConnect(a, b, out var connectError))
             {
                 method = "connector_connect_to";
@@ -853,6 +867,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                 error = string.IsNullOrWhiteSpace(error) ? connectError : $"{error}; ConnectTo fallback: {connectError}";
             }
             return false;
+        }
+
+        private static bool RequiresCurveElbow(Connector a, Connector b)
+        {
+            if (!(a.Owner is MEPCurve) || !(b.Owner is MEPCurve)) return false;
+            try
+            {
+                var x = a.CoordinateSystem.BasisZ; var y = b.CoordinateSystem.BasisZ;
+                return !MepCurveJointPolicy.AllowsDirectConnection(new[] { x.X, x.Y, x.Z }, new[] { y.X, y.Y, y.Z });
+            }
+            catch { return true; }
         }
 
         internal static bool TryCreateTransitionElbowOrConnect(Document doc, Connector? a, Connector? b, bool preferTransition, out long? fittingId, out string method, out string? error)
@@ -870,6 +895,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 if (a.IsConnectedTo(b))
                 {
+                    if (preferTransition || RequiresCurveElbow(a, b))
+                    {
+                        method = "required_fitting_missing";
+                        error = "The curve ports are directly connected but their angle or size change requires a native fitting.";
+                        return false;
+                    }
                     method = "already_connected";
                     return true;
                 }

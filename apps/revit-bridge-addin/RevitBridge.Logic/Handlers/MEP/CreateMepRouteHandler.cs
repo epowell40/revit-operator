@@ -362,6 +362,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             excludedOwnerIds,
                             toleranceFt,
                             connectionAttempts,
+                            fittingIds,
                             ref externalEndpointFailures);
                         TryConnectExternalEndpoint(
                             doc,
@@ -371,6 +372,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             excludedOwnerIds,
                             toleranceFt,
                             connectionAttempts,
+                            fittingIds,
                             ref externalEndpointFailures);
                         doc.Regenerate();
 
@@ -507,6 +509,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             ISet<long> excludedOwnerIds,
             double toleranceFt,
             List<object> connectionAttempts,
+            List<long> fittingIds,
             ref int failureCount)
         {
             var routeConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(routeElement), endpoint, toleranceFt);
@@ -542,7 +545,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return;
             }
 
-            var connected = MepRoutingUtil.TryConnect(routeConnector, external, out var error);
+            long? fittingId = null;
+            string method;
+            string? error;
+            bool connected;
+            if (external.Owner is MEPCurve)
+                connected = MepRoutingUtil.TryCreateElbowOrConnect(doc, routeConnector, external, out fittingId, out method, out error);
+            else
+            {
+                connected = MepRoutingUtil.TryConnect(routeConnector, external, out error);
+                method = connected ? "connector_connect_to" : "failed";
+            }
+            if (fittingId.HasValue) fittingIds.Add(fittingId.Value);
             if (!connected) failureCount++;
             connectionAttempts.Add(new
             {
@@ -553,7 +567,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 externalCategory = external.Owner.Category?.Name ?? "",
                 distanceFt,
                 connected,
-                method = connected ? "connector_connect_to" : "failed",
+                method,
+                fittingId,
                 error
             });
         }

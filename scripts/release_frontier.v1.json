@@ -167,7 +167,8 @@
     "viewFrameImage.test.ts",
     "spatialObservationV1.test.ts",
     "workflowImage.test.ts",
-    "lib/workPlanStdio.test.ts"
+    "lib/workPlanStdio.test.ts",
+    "lib/familyPlacementSchema.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -231,7 +232,9 @@
     "TemporaryAnnotationCropTests",
     "HostedPlacementPreflightTests",
     "AbsolutePlacementCorrectionTests",
-    "OperatorIdleDiagnosticTests"
+    "OperatorIdleDiagnosticTests",
+    "MepCurveJointPolicyTests",
+    "LinkedHostPlacementPolicyTests"
   ],
   "failure_families": [
     {
@@ -2245,6 +2248,20 @@
       "coverage": [
         "dotnet:OperatorIdleDiagnosticTests",
         "dotnet:OperatorRevitQueueDiagnosticTests"
+      ]
+    },
+    {
+      "id": "direct-room-c44-angular-duct-join-is-physically-connected-without-required-elbow",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "dotnet:MepCurveJointPolicyTests"
+      ]
+    },
+    {
+      "id": "direct-room-c44-linked-ceiling-host-is-not-addressable-through-family-placement",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:LinkedHostPlacementPolicyTests"
       ]
     }
   ],

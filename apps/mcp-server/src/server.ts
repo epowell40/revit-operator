@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isSupportedMcpAlias, requireSupportedToolRoute } from "./lib/supportedToolInventory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import * as fs from "fs";
 import * as path from "path";
@@ -3514,26 +3515,8 @@ server.tool("revit_create_family_instance", "Place a family instance (e.g. equip
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_place_families", "Batch place family instances with dry-run, idempotency, rotation, and per-instance reporting.",
-  {
-    levelName: z.string(),
-    familyName: z.string().optional(),
-    symbolName: z.string(),
-    instances: z.array(z.object({
-      x: z.number(),
-      y: z.number(),
-      z: z.number(),
-      rotationDegrees: z.number().optional(),
-      hostElementId: z.number().optional(),
-      parameters: z.record(z.string()).optional(),
-    })),
-    dryRun: z.boolean().default(false),
-    idempotency: z.object({
-      enabled: z.boolean().default(true),
-      toleranceFt: z.number().default(0.01),
-    }).default({}),
-    behavior: z.enum(["allOrNothing", "bestEffort"]).default("allOrNothing"),
-  },
+server.tool("revit_place_families", "Batch place family instances with absolute-model coordinates, exact linked face hosting, stable family type IDs, dry-run, idempotency and per-instance reporting. A linked ceiling/wall/floor requires both the link hostElementId and linkedHostElementId. Verify actual host and location; unhosted placement is not a substitute for a requested ceiling host.",
+  familyPlacementToolShape,
   async (args) => {
     try {
       const data = await callRevit("/revit/place-families", "POST", args, {

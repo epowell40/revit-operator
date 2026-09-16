@@ -182,6 +182,14 @@
       "sha256": "sha256:c9d78d54905bad5cc1eec4bf3b8a7641d64d275a5a19b9cafaff7ced503a657a"
     },
     {
+      "path": "apps/mcp-server/src/lib/familyPlacementSchema.test.ts",
+      "sha256": "sha256:2b990e239850680e25c024c2ce4af31267b6633b359065c596855c01a14f536e"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/familyPlacementSchema.ts",
+      "sha256": "sha256:7537cc0e491cc7f445baf02f25c8fb94a40e62e42fa300936fba62b95592588e"
+    },
+    {
       "path": "apps/mcp-server/src/lib/findElementsAgentProjection.test.ts",
       "sha256": "sha256:6da2fb1e020ddf57a455b3049a2db111e442b33deb0a2dc61b1590f4775db601"
     },
@@ -440,7 +448,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:641f692a02d1e1f02312a014da304c93b5b96058bc31febf188d92fbeb6db3ae"
+      "sha256": "sha256:f7cdce3f273d4ccfd4cd45335520a98fc8303bdbe2521383194bb29f09f0ffce"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -3061,7 +3069,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/polyline_physical_proof_v2.ts",
-      "sha256": "sha256:8562ffa7bf13299a8eb6784d4a687ba848d9ca29151b596230209beac33a6562"
+      "sha256": "sha256:90d651316297b176b1455d278f9a41952582b04ea5220bdc12c80c0de0ef8f77"
     },
     {
       "path": "apps/operator-backend/src/verification/polyline_readback_v2.ts",
@@ -4020,6 +4028,14 @@
       "sha256": "sha256:e51400c48a467690ba9f9028e11d8e6b74ffaa0615d4a983e1ffbe9199478287"
     },
     {
+      "path": "apps/operator-backend/test/fixtures/direct-c44-external-fitting-contract.json",
+      "sha256": "sha256:6e85965a940d4745cf4e30d26340920617e47ca8d9804508de926fa4e8af1560"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/direct-c44-missing-corner-fitting.json",
+      "sha256": "sha256:6493940c82f2f2b738455fdb437228906f9a7336f5272cdbe7d7b6a5acbcd060"
+    },
+    {
       "path": "apps/operator-backend/test/fixtures/drafting-view-summary-readback.json",
       "sha256": "sha256:5e71290d2180a380b13163782e7ee508e80e7d405888c000df106d08a8e3d46f"
     },
@@ -4349,7 +4365,7 @@
     },
     {
       "path": "apps/operator-backend/test/polyline_duct_postcondition_v2.test.ts",
-      "sha256": "sha256:bb2571ff1dbcc0d78e6072b9d3c45ebab4c9a7b822e991e8ed6faf2c2d908794"
+      "sha256": "sha256:21d2a969923eae6d3758a27053f28d4dbf383b2e3e8e2f793e35dc8028bb71bd"
     },
     {
       "path": "apps/operator-backend/test/postcondition_verification_v2.test.ts",
@@ -4824,6 +4840,10 @@
       "sha256": "sha256:ecb03c3bd641774453ad1fb60767ed49f57d102558d5a20477ea5019d66fe616"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/LinkedHostPlacementPolicyTests.cs",
+      "sha256": "sha256:a2e61770a3f087d4a099acc4a993c92e6e01e1034475369bae81b073068c61ba"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/LinkedRoomBoundariesHandlerTests.cs",
       "sha256": "sha256:95a061cf5de9250f16e05929c5e855cf6883d104f8141536d5666a6e4b44db1d"
     },
@@ -4846,6 +4866,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/MepBranchSplitPlannerTests.cs",
       "sha256": "sha256:a74a0ac9fd66449da1da36b2abe1c111f524223f5f81c357d68ef785eea5431f"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/MepCurveJointPolicyTests.cs",
+      "sha256": "sha256:ff3538638a2e796743d1e90838b4e140df0b0ca8bb5864e6e00852e0af30cb20"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/MepDuctProfilePolicyTests.cs",
@@ -5324,6 +5348,10 @@
       "sha256": "sha256:cbce0eaab5f1971328149858edfe1fa906425c94802b71a96c0722ab5bda7018"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/LinkedHostPlacementPolicy.cs",
+      "sha256": "sha256:41193abc9f62450c9e9f4f550e97bd3262db41fb7004a0ed839f849847893d63"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/LinkedRoomBoundariesRequest.cs",
       "sha256": "sha256:e595fa55c3cd4e3a382dacd31e3bc00fa8f44a4d85e8f90b3932d49862f01100"
     },
@@ -5398,6 +5426,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/MepBranchSplitGeometryPlanner.cs",
       "sha256": "sha256:92c1df5a79e999f49b0b4d18afc5d8dfd33e4dc6f81d2488945a87a935d01e82"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/MepCurveJointPolicy.cs",
+      "sha256": "sha256:7a257680ebcfc25b67377e1c31f682a7c8b805b134a52b7dd602b8c4905ee431"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/MepDuctProfilePolicy.cs",
@@ -6106,7 +6138,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/CreateMepRouteHandler.cs",
-      "sha256": "sha256:7a5db9d5d08db0e4e3dcadfdbe32d1c93e227f056e12b951ef75f4d593dc1c4a"
+      "sha256": "sha256:f4a9f304c0deec590b06365012ffdbf3f98a38355a5b49cd0a7f3b27910f8131"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/CreatePipeBetweenConnectorsHandler.cs",
@@ -6130,7 +6162,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/GetConnectorsHandler.cs",
-      "sha256": "sha256:0877cb6096405ed3fccb9a6da6be1beee2cae07ff2080dd734e2a4ea0ab5de1e"
+      "sha256": "sha256:bffe883eca762e106a9d6928a3dbae4c43ad0512e764bfd366ca5cdb2573f9a4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/MepBranchNetworkWorkflowHandler.cs",
@@ -6142,7 +6174,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/MepRoutingUtil.cs",
-      "sha256": "sha256:76293e31e594c1a5e08d322a297a5e844ed753b485f4d96ea5b2641e4f7d6713"
+      "sha256": "sha256:7fe7162a88c3466853fa21bb5a1adc64417dba3c9dd26426fd2a6eb9588b7d0d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/MepSystemUtil.cs",
@@ -6210,7 +6242,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/PlaceFamiliesHandler.cs",
-      "sha256": "sha256:417941ee28fb1f7bc12f18b6d9cd74d36a0172cdbf184b4e1f0fadaf40b5bd0c"
+      "sha256": "sha256:8585a75eab8be1e8fee7fdd7cedafe734fd0b469fd7d3cd2380f7d8cdbcd1328"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/PlaceViewOnSheetHandler.cs",
@@ -7026,7 +7058,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:eaadf2fa2859a797bbb4056553fd16f92b44683cfe2633ef2c01993c5147da06"
+      "sha256": "sha256:3f3309bd7aa4bc5f9888b4bc9b7a2ee15d1af5549af58d7c92a2e86d4e2d1a57"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -7161,7 +7193,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:b4fe9afef461f08c177a5168d039b54dca02eb815479abf2b9aa75d1271cfc4b",
+  "inputs_hash": "sha256:75b0ed9be93f7a42b0b5c1d5177af10c143d1010dd161f669a7357a0d7452b32",
   "result": {
     "passed": true,
     "checks": [

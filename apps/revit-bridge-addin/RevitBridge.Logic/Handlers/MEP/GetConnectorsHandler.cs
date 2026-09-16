@@ -168,6 +168,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                                                 connectorIdBasis = hasReferenceConnectorId ? "revit_native_connector_id" : "unavailable",
                                                 connectorType = referenceType,
                                                 domain = TryGetConnectorPropertyValue(r, "Domain"),
+                                                shape = TryGetConnectorPropertyValue(r, "Shape"),
+                                                size = TryGetConnectorSize(r),
+                                                coordinateSystem = p.includeCoordinateSystem ? TryGetConnectorAxes(r) : null,
                                                 origin = TryGetConnectorOrigin(r),
                                                 isConnectedTo = nativeConnected
                                             };
@@ -287,6 +290,32 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return value > 0 ? value : (long?)null;
             }
             catch { return null; }
+        }
+
+        private static object? TryGetConnectorAxes(Connector connector)
+        {
+            try
+            {
+                var t = connector.CoordinateSystem;
+                return new { origin = new[] { t.Origin.X, t.Origin.Y, t.Origin.Z },
+                    basisX = new[] { t.BasisX.X, t.BasisX.Y, t.BasisX.Z },
+                    basisY = new[] { t.BasisY.X, t.BasisY.Y, t.BasisY.Z },
+                    basisZ = new[] { t.BasisZ.X, t.BasisZ.Y, t.BasisZ.Z } };
+            }
+            catch { return null; }
+        }
+
+        private static object? TryGetConnectorSize(Connector connector)
+        {
+            try
+            {
+                if (connector.Shape == ConnectorProfileType.Round)
+                    return new { kind = "round", radiusFt = connector.Radius, diameterFt = 2 * connector.Radius };
+                if (connector.Shape == ConnectorProfileType.Rectangular || connector.Shape == ConnectorProfileType.Oval)
+                    return new { kind = connector.Shape == ConnectorProfileType.Oval ? "oval" : "rect", widthFt = connector.Width, heightFt = connector.Height };
+            }
+            catch { }
+            return null;
         }
 
         private static object? TryGetConnectorOrigin(Connector connector)

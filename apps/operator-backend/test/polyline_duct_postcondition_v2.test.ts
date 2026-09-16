@@ -2,6 +2,42 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {polylineReadbackMatchesV2 as polylineReadbackDraft} from '../src/verification/polyline_readback_v2.js';
+import {polylinePhysicalProof} from '../src/verification/polyline_physical_proof_v2.js';
+
+test('direct C44 room exercise cannot verify a right-angle duct connection without an elbow',()=>{
+ const {proof}=JSON.parse(fs.readFileSync('test/fixtures/direct-c44-missing-corner-fitting.json','utf8'));
+ assert.equal(polylinePhysicalProof(proof),false,'reciprocal native ConnectTo is insufficient at a bend');
+});
+
+test('external elbow accepts native trimmed geometry and rejects missing or misplaced fitting proof',()=>{
+ const {proof}=JSON.parse(fs.readFileSync('test/fixtures/direct-c44-external-fitting-contract.json','utf8'));
+ assert.equal(polylinePhysicalProof(proof),true);
+ const changes:Record<string,(p:any)=>void>={
+  noFitting:p=>{p.fittingIds=[];p.rows=p.rows.filter((r:any)=>r.category!=='OST_DuctFitting');},
+  wrongCorner:p=>p.points[0][0]+=0.1,
+  openPolicy:p=>p.endpointPolicy='open',
+  missingFitAxes:p=>{for(const c of p.rows[1].connectors)delete c.coordinateSystem;},
+  missingPeerAxes:p=>{for(const c of p.rows[1].connectors)for(const refs of [c.connectedTo,c.physicalConnectedTo])for(const r of refs)delete r.coordinateSystem;},
+  wrongPeerSize:p=>{for(const c of p.rows[1].connectors)for(const refs of [c.connectedTo,c.physicalConnectedTo])for(const r of refs)r.size={kind:'round',radiusFt:1,diameterFt:2};},
+  missingPhysicalEdge:p=>p.rows[1].connectors[0].physicalConnectedTo=[],
+ };
+ for(const [name,change]of Object.entries(changes)){const p=structuredClone(proof);change(p);assert.equal(polylinePhysicalProof(p),false,name);}
+});
+
+test('external rigid duct needs independently read opposing peer axes and matching size',()=>{
+ const {proof}=JSON.parse(fs.readFileSync('test/fixtures/direct-c44-missing-corner-fitting.json','utf8'));
+ const p={...proof,points:proof.points.slice(1),segmentIds:[1543015],profiles:[proof.profiles[1]],rows:[proof.rows[1]]};
+ const c=p.rows[0].connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1542938);
+ const peer=proof.rows[0].connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1543015);
+ for(const r of [c.physicalConnectedTo[0],c.connectedTo.find((r:any)=>r.ownerId===1542938)]){
+  r.coordinateSystem=structuredClone(peer.coordinateSystem);r.shape=peer.shape;r.size=structuredClone(peer.size);
+ }
+ assert.equal(polylinePhysicalProof(p),false,'actual approximately right-angle native axes');
+ const straight=structuredClone(p);
+ const sc=straight.rows[0].connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1542938);
+ for(const r of [sc.physicalConnectedTo[0],sc.connectedTo.find((r:any)=>r.ownerId===1542938)])r.coordinateSystem.basisZ=sc.coordinateSystem.basisZ.map((v:number)=>-v);
+ assert.equal(polylinePhysicalProof(straight),true,'synthetic straight neighbor with independent peer-axis evidence');
+});
 
 test('retained C44 six-duct branch verifies L4 by independent native level name and ID',()=>{
  const fixture=JSON.parse(fs.readFileSync('test/fixtures/c44-level-name-polyline-readback.json','utf8'));
