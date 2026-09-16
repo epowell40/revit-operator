@@ -15,7 +15,7 @@ import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_cont
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
-import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
+import { formatTaskMemoryContext } from "../memory/task_memory_context.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
 import {
   beginRequirementsPlanningLease,
@@ -197,7 +197,8 @@ export function getOperatorAgentBaseInstructions(): string {
     "V2: evaluate criteria with criterion/Observation IDs. Ask missing input with `operator_request_assignment_input`; include a newly discovered decision ID in `newVariableIds`. The host binds the task. V1 uses legacy tools.",
     "Navigation uses direct tools: `revit_list_sheets` (exact sheet number), `revit_activate_view` (returned ID), then `revit_get_context` (verify). Do not search or record a separate strategy. Context is control evidence; resultItems require task_result Observations. For visual review use `revit_capture_sheet_region`; present the name/number, not internal IDs or raw paths.",
     "After apply succeeds, the very next Revit action must be a target-bound readback. Read-only retained-evidence retrieval, tool search, or documentation may support that verification when its exact contract is missing; those helpers cannot verify the edit themselves. Verify the committed state before another apply, including corrections.",
-    "Bound capability discovery within a turn: reuse a known typed tool or previously documented route; search once for an operation only when no known route fits; request one tool schema only after an argument-shape rejection; and do not repeat synonymous searches or rediscover a route already returned in the same turn. Preserve successful route and schema results as working memory for later steps.",
+    "Bound capability discovery within a turn: reuse a known typed tool and its exact schema; search once for an operation only when no known route fits. Before an unfamiliar write or file export, read its exact tool schema once rather than guessing arguments. After an argument-shape rejection, consult that contract before correcting the request. Do not repeat synonymous searches or rediscover a route already returned in the same turn. Preserve successful route and schema results as working memory for later steps.",
+    "Consume retained evidence in code before printing it: parse a successful JSON result, filter/map result.selection in the same execution cell, then print only the facts needed for the decision. Projected itemRange rows contain row_index, values keyed by the requested field path, and missing_fields. Do not slice a JSON string and then re-fetch the same page to recover discarded rows. Continue incomplete pages from result.pagination.next_start; a new purpose string does not make the same selection new evidence.",
     "Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount. For workbooks, inspect representative fields/units, bulk-export observed IDs, then verify the file. Never retype all parameter rows or reconstruct UniqueIds.",
     ...AGENT_RESPONSE_STYLE_LINES,
     "Infer routine details with read-only tools: resolve sheets, titleblocks and candidates. Never require tool names, element IDs or JSON from the engineer.",
@@ -542,18 +543,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && !webEvidenceRequirement.required && query
-      ? retrieveMemoryContext({ queryText: query, maxEntries: 6 })
-      : [];
-    if (mem.length > 0) {
-      const lines: string[] = [];
-      let i = 0;
-      for (const m of mem) {
-        i++;
-        lines.push(`[M${i}] (${m.scope}/${m.kind}) ${m.text}`);
-      }
-      memBlock = lines.join("\n");
-    }
+    memBlock = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && !webEvidenceRequirement.required && query
+      ? formatTaskMemoryContext(req.session_id, query, 6)
+      : "";
   } catch {
     memBlock = "";
   }
@@ -584,7 +576,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             }
             if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
             if (webEvidenceRequirement.prompt) blocks.push(webEvidenceRequirement.prompt);
-            if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
+            if (memBlock) blocks.push(memBlock);
             if (!certifiedDirect) {
               try {
                 const perms = formatCodexPermissionSummary(req.context);

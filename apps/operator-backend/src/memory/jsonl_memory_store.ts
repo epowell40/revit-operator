@@ -156,7 +156,7 @@ export function appendLongtermMemory(entry: Omit<MemoryEntry, "scope" | "ts"> & 
 
 export type RetrievedMemory = MemoryEntry & { score: number; file?: string };
 
-export function retrieveMemoryContext(args: { queryText: string; maxEntries?: number; maxBytesPerFile?: number; dailyLookbackDays?: number }): RetrievedMemory[] {
+export function retrieveMemoryContext(args: { queryText: string; maxEntries?: number; maxBytesPerFile?: number; dailyLookbackDays?: number; currentSessionId?: string }): RetrievedMemory[] {
   const qTokens = tokenize(args.queryText);
   if (qTokens.length === 0) return [];
   const qSet = new Set(qTokens);
@@ -177,6 +177,12 @@ export function retrieveMemoryContext(args: { queryText: string; maxEntries?: nu
     const raw = safeReadText(f.file, maxBytes);
     const entries = parseJsonlEntries(raw).filter(e => e.scope === f.scope);
     for (const e of entries) {
+      // Automatic task context must not turn another task's outcome into current
+      // model state. Explicit memory search omits currentSessionId and stays global.
+      // Long-term knowledge and preferences are deliberately reusable; daily work
+      // notes and facts belong only to the task which recorded them.
+      if (args.currentSessionId !== undefined && e.scope === "daily" && e.kind !== "preference"
+        && (!args.currentSessionId.trim() || e.session_id !== args.currentSessionId)) continue;
       const tokens = tokenize(e.text + " " + (Array.isArray(e.tags) ? e.tags.join(" ") : ""));
       let overlap = 0;
       for (const t of tokens) if (qSet.has(t)) overlap++;

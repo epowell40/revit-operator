@@ -131,7 +131,9 @@
     "evidence_item_projection.test.ts",
     "skill_guidance_retention.test.ts",
     "teammate_evidence_paging.test.ts",
-    "codex_partial_verification.test.ts"
+    "codex_partial_verification.test.ts",
+    "memory_task_scope.test.ts",
+    "task_memory_prompt.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2036,6 +2038,29 @@
         "backend:codex_partial_verification.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts",
         "backend:teammate_native_rollback_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "fresh-reconstruction-inherits-another-tasks-applied-change-summary",
+      "coverage": [
+        "backend:memory_task_scope.test.ts",
+        "backend:task_memory_prompt.test.ts"
+      ]
+    },
+    {
+      "id": "changed-evidence-purpose-replays-identical-selection-after-output-truncation",
+      "coverage": [
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:evidence_item_projection.test.ts",
+        "backend:task_memory_prompt.test.ts"
+      ]
+    },
+    {
+      "id": "unfamiliar-workbook-export-guesses-schema-repeatedly-without-contract-read",
+      "coverage": [
+        "backend:task_memory_prompt.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorWorkbookSupplementalTablesTests"
       ]
     }
   ],

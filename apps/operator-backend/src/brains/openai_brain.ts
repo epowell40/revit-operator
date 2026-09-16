@@ -22,7 +22,7 @@ import { getWebResearchPolicyFromEnv } from "../web_research/policy.js";
 import { fetchWebEvidence } from "../web_research/fetch.js";
 import { appendEvent, appendNotification, getRecentStepToolResults } from "../memory/sqlite_store.js";
 import { persistence } from "../persistence/persistence_manager.js";
-import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
+import { formatTaskMemoryContext } from "../memory/task_memory_context.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 import { projectContextForSpeedDiet, REVIT_MODEL_OPEN_PATH_RULE } from "../revit_host_model_inventory.js";
@@ -18915,17 +18915,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   try {
     const query = ((req.user_text ?? "").toString().trim() || pinnedGoal || "").trim();
     if (query && !isRedlineFocusedTurn(req) && mayInjectUnscopedLegacyMemory(req.context)) {
-      const mem = retrieveMemoryContext({ queryText: query, maxEntries: 8 });
-      if (mem.length > 0) {
-        lines.push("MEMORY CONTEXT (read-only; cite by [M#]):");
-        let i = 0;
-        for (const m of mem) {
-          i++;
-          const tag = Array.isArray(m.tags) && m.tags.length > 0 ? ` tags=${m.tags.slice(0, 6).join(",")}` : "";
-          lines.push(`[M${i}] (${m.scope}/${m.kind}${tag}) ${m.text}`);
-        }
-        lines.push("");
-      }
+      const mem = formatTaskMemoryContext(req.session_id, query, 8);
+      if (mem) lines.push(mem, "");
     }
   } catch {
     // ignore

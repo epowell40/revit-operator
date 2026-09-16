@@ -23,6 +23,7 @@ test("distinct successful retained-evidence pages can continue beyond eight read
    assert.deepEqual(result.selection,[{id:start}]);
    recordTeammateMcpResult(owner,gate,{content:[{type:"text",text:JSON.stringify({ok:true,result})}]});
    assert.equal(guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:args}).allowed,false,"same page cannot be replayed");
+   assert.equal(guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:{...args,purpose:"Try parsing this same page again"}}).allowed,false,"renaming purpose cannot replay the same selection");
   }
  }finally{endTeammateLoopOwner(lease);__closeForTests();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
@@ -37,6 +38,23 @@ test("evidence paging and native calls share the total attempt ceiling",()=>{
  assert.equal(gateTeammateLoopAttempt(budget,"evidence_read","next"),"total_revit_call_attempt_budget_exhausted");
  assert.equal(gateTeammateLoopAttempt(budget,"read","next"),"total_revit_call_attempt_budget_exhausted");
  assert.equal(gateTeammateLoopAttempt(budget,"interaction","clarify"),null);
+});
+
+test("evidence retry identity preserves selectors, scope and byte budgets while ignoring purpose",()=>{
+ const previous=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-evidence-identity-"));
+ process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetTeammateLoopState();
+ const owner={},lease=beginTeammateLoopOwner(owner,{version:"operator.backend.v1",session_id:"selection",message_id:"read",user_text:"Inspect retained evidence.",context:{}});
+ try{
+  const base={evidenceId:`ev1_${"b".repeat(32)}`,sessionId:"selection",purpose:"Inspect identifiers",itemRange:{path:"items",start:0,count:10,fields:["id"]},maxBytes:1024};
+  for(const args of [base,{...base,itemRange:{...base.itemRange,fields:["id","connectors"]}},
+    {...base,maxBytes:4096},{...base,itemRange:{...base.itemRange,start:10}},{...base,runId:"different-run"}]){
+   const gate=guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:args});
+   assert.equal(gate.allowed,true,"changed data selection or scope is a distinct read");
+   recordTeammateMcpResult(owner,gate,{content:[{type:"text",text:JSON.stringify({ok:true,result:{selection:[]}})}]});
+  }
+  const replay=guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:{...base,purpose:"Inspect identifiers again"}});
+  assert.equal(replay.allowed,false);
+ }finally{endTeammateLoopOwner(lease);__closeForTests();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test("host-settled failed reads stop at eight and duplicate result delivery cannot spend the failure budget twice",()=>{

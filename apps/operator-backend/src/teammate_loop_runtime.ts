@@ -373,6 +373,7 @@ function actionSignature(path: string, body: unknown): string {
   const normalizedPath = path.trim().toLowerCase().replace(/^\/revit\/transaction-(?:plan|apply)$/, "/revit/transaction").replace(/^revit_transaction_(?:plan|apply)$/, "revit_transaction");
   const source = objectValue(body);
   const ignored = new Set(["apply", "dryRun", "dry_run", "preview", "commit", "execute", "expectedPlanHash", "expected_plan_hash", "confirmationToken", "confirmation_token", "confirm", "confirmed"]);
+  if (normalizedPath === "operator_retrieve_evidence") ignored.add("purpose");
   const envelope = Object.fromEntries(Object.entries(source).filter(([key]) => !ignored.has(key)));
   if (normalizedPath === "/revit/native-api-mutation-ops") {
     const transaction = objectValue(envelope.transaction);
