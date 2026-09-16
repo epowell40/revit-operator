@@ -10,7 +10,7 @@ import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifac
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
-import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
+import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, recordTeammateEvidenceResult, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
@@ -815,6 +815,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   if (!pending) return;
   state.pending.delete(actionId);
   if (pending.effect === "discovery" && succeeded) recordSuccessfulTeammateDiscovery(state.attempt_budget, pending.signature);
+  if (pending.effect === "evidence_read") recordTeammateEvidenceResult(state.attempt_budget, succeeded);
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
     state.successful_preview_operations.add(pending.operation);

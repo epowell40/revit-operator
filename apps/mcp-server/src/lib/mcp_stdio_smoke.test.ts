@@ -829,6 +829,29 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
   }), "retrieving exact target-bound evidence through compiled MCP");
   assert.equal((targetedEvidence as any).isError, undefined, stderr.join(""));
 
+  const projectedRange = { path: "payload.items", start: 17, count: 113, fields: ["elementId", "category", "bounds.min"] };
+  const projectedEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"e".repeat(32)}`, sessionId: "session-a", assignmentId: "assignment-a",
+      runId: "run-a", generation: 1, purpose: "Read selected columns without transferring every parameter.",
+      itemRange: projectedRange, maxBytes: 100000
+    },
+    _meta: authMeta
+  }), "retrieving selected row columns through compiled MCP");
+  assert.equal((projectedEvidence as any).isError, undefined, stderr.join(""));
+  assert.deepEqual(JSON.parse(requests[3]!.body).item_range, projectedRange, "MCP schema must preserve the selected columns");
+  for (const fields of [[], ["elementId", "elementId"], ["bad\npath"]]) {
+    const before = requests.length;
+    const invalid = await withTimeout(client.callTool({
+      name: "operator_retrieve_evidence",
+      arguments: { evidenceId: `ev1_${"e".repeat(32)}`, sessionId: "session-a", purpose: "Reject malformed columns.", itemRange: { ...projectedRange, fields } },
+      _meta: authMeta
+    }), "rejecting malformed projected columns");
+    assert.equal(invalid.isError, true);
+    assert.equal(requests.length, before);
+  }
+
   const requestCountBeforeConflict = requests.length;
   const ambiguousEvidence = await withTimeout(client.callTool({
     name: "operator_retrieve_evidence",
@@ -858,6 +881,7 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
 
   assert.deepEqual(requests.map(request => request.path), [
     "/api/assignments/read-completion-claims",
+    "/evidence/retrieve",
     "/evidence/retrieve",
     "/evidence/retrieve",
     "/tools/mep/semantic-route-plan"

@@ -125,7 +125,13 @@
     "input_result_freshness.test.ts",
     "assignment_input_result_continuation.test.ts",
     "open_duct_postcondition_v2.test.ts",
-    "connected_duct_postcondition_v2.test.ts"
+    "connected_duct_postcondition_v2.test.ts",
+    "codex_transport_ownership.test.ts",
+    "codex_cold_resume_recovery.test.ts",
+    "evidence_item_projection.test.ts",
+    "skill_guidance_retention.test.ts",
+    "teammate_evidence_paging.test.ts",
+    "codex_partial_verification.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -209,7 +215,8 @@
     "MepRouteSizeInputPolicyTests",
     "OperatorWorkbookSupplementalTablesTests",
     "DraftPointCoordinatePolicyTests",
-    "OperatorWorkbookExportPathTests"
+    "OperatorWorkbookExportPathTests",
+    "TemporaryAnnotationCropTests"
   ],
   "failure_families": [
     {
@@ -1971,6 +1978,64 @@
       "coverage": [
         "mcp:workflowImage.test.ts",
         "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "old-provider-process-exit-or-late-response-corrupts-replacement-transport",
+      "coverage": [
+        "backend:codex_transport_ownership.test.ts",
+        "backend:codex_cold_resume_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "cold-resume-loses-per-call-events-and-continues-without-durable-conversation-handoff",
+      "coverage": [
+        "backend:codex_cold_resume_recovery.test.ts",
+        "backend:codex_tool_catalog.test.ts"
+      ]
+    },
+    {
+      "id": "large-retained-model-inventory-requires-many-pages-for-unneeded-parameters",
+      "coverage": [
+        "backend:evidence_item_projection.test.ts",
+        "backend:evidence_http_routes.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "successful-retained-evidence-pages-exhaust-eight-read-retry-budget",
+      "coverage": [
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "repository-boilerplate-displaces-company-and-complete-reconstruction-guidance",
+      "coverage": [
+        "backend:skill_guidance_retention.test.ts",
+        "backend:codex_tool_catalog.test.ts"
+      ]
+    },
+    {
+      "id": "distant-annotations-shrink-temporary-route-verification-capture",
+      "coverage": [
+        "dotnet:TemporaryAnnotationCropTests",
+        "mcp:workflowImage.test.ts"
+      ]
+    },
+    {
+      "id": "round-duct-created-with-open-ends-does-not-satisfy-connected-reconstruction",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "premature-compatibility-verification-claim-discards-partial-native-readback",
+      "coverage": [
+        "backend:codex_partial_verification.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:teammate_native_rollback_handoff.test.ts"
       ]
     }
   ],

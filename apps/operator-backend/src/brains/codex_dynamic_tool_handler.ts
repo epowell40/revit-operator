@@ -45,6 +45,7 @@ import {
   recordAssignmentProgressEpochV2
 } from "../assignments/assignment_kernel_v2_progress.js";
 import { deriveProgressGapsV2 } from "../domain/assignment-kernel/index.js";
+import { reconcileCanonicalToolVerification } from "../teammate_verification_state.js";
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -265,13 +266,12 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           accepted = true;
         }
       });
-      const trustedVerification = recordTeammateMcpResult(runtime, teammateGate, rawResult);
-      // The legacy loop may recognize the same readback again after the kernel
-      // has already verified its apply. Only the admitted canonical verification
-      // operation can carry that assertion; later discovery stays discovery.
-      const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
-        trustedVerification && lease.purpose === "verification" && lease.fulfillment_role === "verification"
-          ? { ...trustedVerification, operation_id: lease.operation_id } : null);
+      recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      // V2 derives postcondition truth from retained native evidence itself.
+      // A legacy target-match assertion can precede a complete multi-read check;
+      // forwarding it would reject and discard useful partial observations.
+      const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      reconcileCanonicalToolVerification(teammateGate.state, settled.snapshot, lease.operation_id);
       reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
       checkpointAssignmentKernelProgressV2({
         runtime,

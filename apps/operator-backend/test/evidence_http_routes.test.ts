@@ -35,6 +35,15 @@ test("HTTP retrieval exposes grounded summary counts, missing fields and byte-li
     const nextResponse=await retrieve({item_range:{path:"items",start:page.pagination.next_start,count:80},max_bytes:4096});
     const next=(await nextResponse.json() as any).result;
     assert.equal(next.selection[0].elementId,page.selection.at(-1).elementId+1);
+    const projectedResponse=await retrieve({item_range:{path:"items",start:17,count:4,fields:["elementId","category","absent"]},max_bytes:4096});
+    assert.equal(projectedResponse.status,200);
+    const projected=(await projectedResponse.json() as any).result;
+    assert.equal(projected.complete,false);
+    assert.deepEqual(projected.pagination.fields,["elementId","category","absent"]);
+    assert.deepEqual(projected.selection,Array.from({length:4},(_,i)=>({row_index:17+i,values:{elementId:18+i,category:"Equipment",absent:null},missing_fields:["absent"]})));
+    assert.ok(!JSON.stringify(projected.selection).includes("description"));
+    const invalidProjection=await retrieve({item_range:{path:"items",start:0,count:4,fields:[]}});
+    assert.equal(invalidProjection.status,400);
     const wrongScope=await retrieve({fields:["inventory.total"]},{session_id:"other-session"});
     assert.equal(wrongScope.status,400);
   } finally {

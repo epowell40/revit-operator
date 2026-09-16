@@ -59,6 +59,7 @@ namespace RevitBridge.Logic.Handlers
             public double? widthFt { get; set; }
             public double? heightFt { get; set; }
             public bool scopeBoxCleared { get; set; }
+            public bool annotationCropApplied { get; set; }
         }
 
         private class TraceResult
@@ -375,6 +376,7 @@ namespace RevitBridge.Logic.Handlers
                 view.CropBoxActive = true;
                 view.CropBoxVisible = false;
                 view.CropBox = newBox;
+                result.annotationCropApplied = AnnotationCropUtil.TryConfigure(view, 0.0, warnings);
                 result.applied = true;
                 result.widthFt = Math.Abs(max.X - min.X);
                 result.heightFt = Math.Abs(max.Y - min.Y);

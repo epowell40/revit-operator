@@ -50,3 +50,17 @@ test("unavailable workflow capture never encourages repeating the committed rout
   const text=JSON.parse((delivered.content[0] as {text:string}).text);
   assert.equal(text.applyResult.transaction.committed,true);assert.match(text.image_delivery.instruction,/Do not repeat/);
 });
+
+test("annotation crop outcome and warnings survive image delivery without asserting visual verification",()=>{
+  for (const applied of [true,false]) {
+    const native:any=result();
+    native.visualVerification.capture.focusCrop.annotationCropApplied=applied;
+    native.visualVerification.capture.warnings=applied?[]:["Could not bound annotations for the temporary export: native setting unavailable."];
+    const delivered=nativeViewImageContent("POST","/revit/mep-route-workflow",native,()=>({ok:true,data:"capture",mimeType:"image/jpeg"}));
+    assert.ok(delivered);assert.equal(delivered.content.length,2);
+    const text=JSON.parse((delivered.content[0] as {text:string}).text);
+    assert.deepEqual(text.visualVerification.capture,native.visualVerification.capture);
+    assert.equal(text.visualVerification.status,"CaptureReadyForAIReview");
+    assert.equal(text.image_delivery.available,true,"pixel delivery is not a claim that cropping or human visual review passed");
+  }
+});

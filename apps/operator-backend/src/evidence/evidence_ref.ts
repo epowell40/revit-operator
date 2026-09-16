@@ -107,7 +107,7 @@ export type EvidenceRetrievalRequest = {
   evidence_id: string;
   scope: EvidenceScope;
   fields?: string[];
-  item_range?: { path: string; start: number; count: number };
+  item_range?: { path: string; start: number; count: number; fields?: string[] };
   text_range?: { start: number; length: number };
   target_subset?: string[];
   image?: true;
@@ -122,7 +122,7 @@ export type EvidenceRetrievalResult = {
   returned_bytes: number;
   complete: boolean;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
-    has_more: boolean; next_start: number | null; byte_limited: boolean };
+    has_more: boolean; next_start: number | null; byte_limited: boolean; fields?: string[]; row_projection?: "selected_fields" };
   missing_fields?: string[];
   selection_origins?: Record<string, "payload" | "deterministic_projection">;
 };

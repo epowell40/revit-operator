@@ -5,6 +5,23 @@ import { openDuctReadbackMatchesV2 } from "../src/verification/open_duct_postcon
 const fixture=():any=>JSON.parse(fs.readFileSync("test/fixtures/c37-connected-duct-readback.json","utf8"));
 const matches=(f:any)=>openDuctReadbackMatchesV2(f.input,f.affected,f.parameters,f.connectors);
 
+test("retained C38 correctly located round duct with two open physical ends is not a completed connected reconstruction",()=>{
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c38-disconnected-round-duct-readback.json","utf8"));
+  const subject=f.connectors.results.find((r:any)=>r.id===1542942);
+  assert.ok(subject);assert.equal(subject.connectors.length,2);
+  assert.ok(subject.connectors.every((c:any)=>c.isPhysicallyConnected===false&&c.physicalConnectedTo.length===0));
+  assert.equal(matches(f),false);
+  // Adapt the request to the supported atomic connected-route contract and
+  // select just the subject from the evaluator's three-element readback.
+  // Recompute page counts from those retained rows; do not change connectors.
+  const p=f.input.body;
+  f.input=fixture().input;
+  Object.assign(f.input.body,{levelId:p.levelId,systemType:p.systemType,ductTypeId:p.ductTypeId,ductShape:"round",diameter:p.diameter,points:[{x:p.startX,y:p.startY,z:p.startZ},{x:p.endX,y:p.endY,z:p.endZ}]});
+  f.parameters.items=f.parameters.items.filter((r:any)=>r.id===1542942);
+  Object.assign(f.connectors,{results:[subject],requestedCount:1,scannedElementCount:1,matchedElementCount:1,totalScannedConnectorCount:2,physicallyConnectedConnectorCount:0,openPhysicalConnectorCount:2});
+  assert.equal(matches(f),false);
+});
+
 test("retained C37 connected round exhaust route can finish from complete native readback",()=>{
   const f=fixture();
   assert.equal(matches(f),true);

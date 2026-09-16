@@ -258,7 +258,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
       selector_forms: [
         "EXACTLY ONE selector is required",
         "fields",
-        "itemRange",
+        "itemRange (optional fields selects columns per row; row_index, values, missing_fields; complete=false)",
         "textRange",
         "targetSubset (exact reviewed target identities only)",
         "image",

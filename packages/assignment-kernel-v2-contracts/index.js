@@ -561,12 +561,25 @@ export function parseEvidenceRetrievalSelectorV1(value) {
         || !Number.isSafeInteger(itemRange.count) || itemRange.count < 1 || itemRange.count > 256) {
       evidenceSelectorInvalid("item_range requires path, start >= 0, and count 1..256");
     }
+    let fields;
+    if (hasOwn(itemRange, "fields")) {
+      if (!Array.isArray(itemRange.fields) || itemRange.fields.length < 1 || itemRange.fields.length > 64) {
+        evidenceSelectorInvalid("item_range.fields must contain 1..64 paths");
+      }
+      fields = itemRange.fields.map((field, index) => {
+        if (typeof field === "string" && /[\u0000-\u001f]/.test(field)) evidenceSelectorInvalid("item_range.fields must not contain control characters");
+        return boundedSelectorString(field, 512, `item_range.fields[${index}]`);
+      });
+      if (new Set(fields).size !== fields.length) evidenceSelectorInvalid("item_range.fields must be unique");
+      fields = Object.freeze(fields);
+    }
     active.push({
       kind: "item_range",
       item_range: {
         path: boundedSelectorString(itemRange.path, 512, "item_range.path"),
         start: itemRange.start,
-        count: itemRange.count
+        count: itemRange.count,
+        ...(fields ? { fields } : {})
       }
     });
   }

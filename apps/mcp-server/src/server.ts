@@ -967,7 +967,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
     fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
-    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).describe("One bounded array page. Mutually exclusive with every other selector.").optional(),
+    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256), fields: z.array(z.string()).min(1).max(64).optional() }).describe("One bounded array page. Optional fields selects columns relative to each row and returns row_index, values keyed by the exact path, and missing_fields; projected pages are always partial. Mutually exclusive with every other selector.").optional(),
     textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
     image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),

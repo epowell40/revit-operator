@@ -1,0 +1,1946 @@
+{
+  "provenance": "C38 independent evaluator readback after incomplete create-duct reconstruction; excludes caller identity and transport envelopes.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/create-duct",
+    "requireKnownPath": true,
+    "body": {
+      "levelId": 1362791,
+      "startX": -33.61458333333336,
+      "startY": -1.3993376534148356,
+      "startZ": 42.833333333337116,
+      "endX": -33.61458333333343,
+      "endY": -13.399337653414879,
+      "endZ": 42.833333333337116,
+      "systemType": "Exhaust Air",
+      "ductTypeId": 139186,
+      "ductShape": "Round",
+      "diameter": "4\"",
+      "dryRun": false
+    }
+  },
+  "affected": [
+    "element_id:1542942"
+  ],
+  "parameters": {
+    "items": [
+      {
+        "id": 1542942,
+        "uniqueId": "1bed7edf-63ce-4ed4-83ca-0674cfd5d9e6-00178b1e",
+        "name": "Tees",
+        "category": "Ducts",
+        "categoryId": -2008000,
+        "parameters": {
+          "Critical Path": "0",
+          "Image": "-1",
+          "System Abbreviation": "",
+          "Free Size": "4\"ø",
+          "Overall Size": "4\"ø",
+          "Lining Thickness": "0",
+          "Lining Type": "",
+          "Insulation Thickness": "0",
+          "Insulation Type": "",
+          "Lower End Bottom of Insulation Elevation": "10.5",
+          "Lower End Top of Insulation Elevation": "10.8333333333333",
+          "Upper End Bottom of Insulation Elevation": "10.5",
+          "Upper End Top of Insulation Elevation": "10.8333333333333",
+          "Lower End Top Elevation": "10.8333333333333",
+          "Upper End Bottom Elevation": "10.5",
+          "Lower End Centerline Elevation": "10.6666666666667",
+          "Upper End Centerline Elevation": "10.6666666666667",
+          "SU/SD from Bottom": "",
+          "Spot Centerline Elevation": "0",
+          "Spot Bottom of Insulation Elevation": "0",
+          "Spot Bottom Elevation": "0",
+          "Spot Top of Insulation Elevation": "0",
+          "Spot Top Elevation": "0",
+          "SU/SD from Top": "",
+          "Category": "-2008000",
+          "System Type": "712043",
+          "System Classification": "Exhaust Air",
+          "System Name": "Mechanical Exhaust Air 38",
+          "Slope": "0",
+          "Lower End Bottom Elevation": "10.5",
+          "Upper End Top Elevation": "10.8333333333333",
+          "Relative Roughness": "0.0009",
+          "Friction Factor": "0",
+          "Size": "4\"ø",
+          "Size Lock": "0",
+          "Additional Flow": "0",
+          "Middle Elevation": "10.6666666666667",
+          "Hydraulic Diameter": "0.333333333333333",
+          "Reynolds number": "0",
+          "Section": "1",
+          "Velocity Pressure": "0",
+          "Area": "12.5663706143592",
+          "Friction": "0",
+          "Pressure Drop": "0",
+          "Velocity": "0",
+          "Vertical Justification": "0",
+          "Horizontal Justification": "0",
+          "Diameter": "0.333333333333333",
+          "End Middle Elevation": "10.6666666666667",
+          "Start Middle Elevation": "10.6666666666667",
+          "Reference Level": "1362791",
+          "IFC Predefined Type": "",
+          "Export to IFC As": "",
+          "Export to IFC": "0",
+          "IfcGUID": "0RxNxVOyvEr8FA1dJFmbBu",
+          "Flow": "0",
+          "Design Option": "-1",
+          "Phase Demolished": "-1",
+          "Phase Created": "21885",
+          "Comments": "",
+          "Length": "12",
+          "Family and Type": "139186",
+          "Family": "139186",
+          "Type": "139186",
+          "Family Name": "",
+          "Type Name": "",
+          "Type Id": "139186",
+          "Mark": ""
+        },
+        "parameterDetails": [
+          {
+            "name": "Critical Path",
+            "value": "0",
+            "valueString": "No",
+            "storageType": "Integer",
+            "isReadOnly": true,
+            "parameterId": -1153106
+          },
+          {
+            "name": "Image",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1152385
+          },
+          {
+            "name": "System Abbreviation",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150468
+          },
+          {
+            "name": "Free Size",
+            "value": "4\"ø",
+            "valueString": "4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150435
+          },
+          {
+            "name": "Overall Size",
+            "value": "4\"ø",
+            "valueString": "4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150434
+          },
+          {
+            "name": "Lining Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150433
+          },
+          {
+            "name": "Lining Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150432
+          },
+          {
+            "name": "Insulation Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150431
+          },
+          {
+            "name": "Insulation Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150430
+          },
+          {
+            "name": "Lower End Bottom of Insulation Elevation",
+            "value": "10.5",
+            "valueString": "10' - 6\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1141029
+          },
+          {
+            "name": "Lower End Top of Insulation Elevation",
+            "value": "10.8333333333333",
+            "valueString": "10' - 10\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1141028
+          },
+          {
+            "name": "Upper End Bottom of Insulation Elevation",
+            "value": "10.5",
+            "valueString": "10' - 6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1141027
+          },
+          {
+            "name": "Upper End Top of Insulation Elevation",
+            "value": "10.8333333333333",
+            "valueString": "10' - 10\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1141026
+          },
+          {
+            "name": "Lower End Top Elevation",
+            "value": "10.8333333333333",
+            "valueString": "10' - 10\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1141024
+          },
+          {
+            "name": "Upper End Bottom Elevation",
+            "value": "10.5",
+            "valueString": "10' - 6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1141023
+          },
+          {
+            "name": "Lower End Centerline Elevation",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1141021
+          },
+          {
+            "name": "Upper End Centerline Elevation",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1141020
+          },
+          {
+            "name": "SU/SD from Bottom",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1141008
+          },
+          {
+            "name": "Spot Centerline Elevation",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140988
+          },
+          {
+            "name": "Spot Bottom of Insulation Elevation",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140987
+          },
+          {
+            "name": "Spot Bottom Elevation",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140986
+          },
+          {
+            "name": "Spot Top of Insulation Elevation",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140985
+          },
+          {
+            "name": "Spot Top Elevation",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140984
+          },
+          {
+            "name": "SU/SD from Top",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1140982
+          },
+          {
+            "name": "Category",
+            "value": "-2008000",
+            "valueString": "Ducts",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140363
+          },
+          {
+            "name": "Category",
+            "value": "-2008000",
+            "valueString": "Ducts",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140362
+          },
+          {
+            "name": "System Type",
+            "value": "712043",
+            "valueString": "Exhaust Air",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1140333
+          },
+          {
+            "name": "System Classification",
+            "value": "Exhaust Air",
+            "valueString": "Exhaust Air",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140325
+          },
+          {
+            "name": "System Name",
+            "value": "Mechanical Exhaust Air 38",
+            "valueString": "Mechanical Exhaust Air 38",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140324
+          },
+          {
+            "name": "Slope",
+            "value": "0",
+            "valueString": "0\" / 12\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140255
+          },
+          {
+            "name": "Lower End Bottom Elevation",
+            "value": "10.5",
+            "valueString": "10' - 6\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1140240
+          },
+          {
+            "name": "Upper End Top Elevation",
+            "value": "10.8333333333333",
+            "valueString": "10' - 10\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1140239
+          },
+          {
+            "name": "Relative Roughness",
+            "value": "0.0009",
+            "valueString": "0.0009",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140210
+          },
+          {
+            "name": "Friction Factor",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140208
+          },
+          {
+            "name": "Size",
+            "value": "4\"ø",
+            "valueString": "4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1114240
+          },
+          {
+            "name": "Size Lock",
+            "value": "0",
+            "valueString": "No",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1114167
+          },
+          {
+            "name": "Additional Flow",
+            "value": "0",
+            "valueString": "0 CFM",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114166
+          },
+          {
+            "name": "Middle Elevation",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114132
+          },
+          {
+            "name": "Hydraulic Diameter",
+            "value": "0.333333333333333",
+            "valueString": "4\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114129
+          },
+          {
+            "name": "Reynolds number",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114128
+          },
+          {
+            "name": "Section",
+            "value": "1",
+            "valueString": "1",
+            "storageType": "Integer",
+            "isReadOnly": true,
+            "parameterId": -1114125
+          },
+          {
+            "name": "Velocity Pressure",
+            "value": "0",
+            "valueString": "0.00 in-wg",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114121
+          },
+          {
+            "name": "Area",
+            "value": "12.5663706143592",
+            "valueString": "13 SF",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114120
+          },
+          {
+            "name": "Friction",
+            "value": "0",
+            "valueString": "0.00 in-wg/100ft",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114116
+          },
+          {
+            "name": "Pressure Drop",
+            "value": "0",
+            "valueString": "0.00 in-wg",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114108
+          },
+          {
+            "name": "Velocity",
+            "value": "0",
+            "valueString": "0 FPM",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114107
+          },
+          {
+            "name": "Vertical Justification",
+            "value": "0",
+            "valueString": "Middle",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1114106
+          },
+          {
+            "name": "Horizontal Justification",
+            "value": "0",
+            "valueString": "Center",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1114105
+          },
+          {
+            "name": "Diameter",
+            "value": "0.333333333333333",
+            "valueString": "4\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114103
+          },
+          {
+            "name": "End Middle Elevation",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114003
+          },
+          {
+            "name": "Start Middle Elevation",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1114002
+          },
+          {
+            "name": "Reference Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1114000
+          },
+          {
+            "name": "IFC Predefined Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019016
+          },
+          {
+            "name": "Export to IFC As",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019014
+          },
+          {
+            "name": "Export to IFC",
+            "value": "0",
+            "valueString": "By Type",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1019012
+          },
+          {
+            "name": "IfcGUID",
+            "value": "0RxNxVOyvEr8FA1dJFmbBu",
+            "valueString": "0RxNxVOyvEr8FA1dJFmbBu",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019000
+          },
+          {
+            "name": "Flow",
+            "value": "0",
+            "valueString": "0 CFM",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1013405
+          },
+          {
+            "name": "Design Option",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1013201
+          },
+          {
+            "name": "Phase Demolished",
+            "value": "-1",
+            "valueString": "None",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012101
+          },
+          {
+            "name": "Phase Created",
+            "value": "21885",
+            "valueString": "New Construction",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012100
+          },
+          {
+            "name": "Comments",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010106
+          },
+          {
+            "name": "Length",
+            "value": "12",
+            "valueString": "12' - 0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1004005
+          },
+          {
+            "name": "Family and Type",
+            "value": "139186",
+            "valueString": "Round Duct: Tees",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002052
+          },
+          {
+            "name": "Family",
+            "value": "139186",
+            "valueString": "Round Duct",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002051
+          },
+          {
+            "name": "Type",
+            "value": "139186",
+            "valueString": "Tees",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002050
+          },
+          {
+            "name": "Family Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002002
+          },
+          {
+            "name": "Type Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002001
+          },
+          {
+            "name": "Type Id",
+            "value": "139186",
+            "valueString": "139186",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002000
+          },
+          {
+            "name": "Mark",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1001203
+          }
+        ]
+      },
+      {
+        "id": 1465180,
+        "uniqueId": "163dfb52-e8ff-4ce3-8c1c-c35b84917839-00165b5c",
+        "name": "1.5 D",
+        "category": "Duct Fittings",
+        "categoryId": -2008010,
+        "parameters": {
+          "Image": "-1",
+          "System Abbreviation": "",
+          "Free Size": "4\"ø-4\"ø",
+          "Overall Size": "4\"ø-4\"ø",
+          "Lining Thickness": "0",
+          "Lining Type": "",
+          "Insulation Thickness": "0",
+          "Insulation Type": "",
+          "SU/SD from Bottom": "",
+          "SU/SD from Top": "",
+          "Category": "-2008010",
+          "System Type": "712043",
+          "System Classification": "Exhaust Air",
+          "System Name": "Mechanical Exhaust Air 17",
+          "Pressure Drop": "0",
+          "Use Annotation Scale": "1",
+          "Size": "4\"ø-4\"ø",
+          "Loss Method Settings": "",
+          "Loss Method": "76eff5da-2e71-45f7-b940-cc5716328ba0",
+          "IFC Predefined Type": "",
+          "Export to IFC As": "",
+          "Export to IFC": "0",
+          "IfcGUID": "0MFVjIwFzCuumSmrk4XoDb",
+          "Design Option": "-1",
+          "Volume": "0.0685367326480202",
+          "Area": "0",
+          "Phase Demolished": "-1",
+          "Phase Created": "21885",
+          "Comments": "",
+          "Host Id": "-1",
+          "Level": "1362791",
+          "Family and Type": "693820",
+          "Family": "693820",
+          "Type": "693820",
+          "Family Name": "",
+          "Type Name": "",
+          "Type Id": "693820",
+          "Elevation from Level": "10.6666666666667",
+          "Mark": "",
+          "Duct Radius": "0.166666666666667",
+          "Angle": "1.5707963267949",
+          "Center Radius": "0.5",
+          "Length1": "0.5"
+        },
+        "parameterDetails": [
+          {
+            "name": "Image",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1152385
+          },
+          {
+            "name": "System Abbreviation",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150468
+          },
+          {
+            "name": "Free Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150435
+          },
+          {
+            "name": "Overall Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150434
+          },
+          {
+            "name": "Lining Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150433
+          },
+          {
+            "name": "Lining Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150432
+          },
+          {
+            "name": "Insulation Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150431
+          },
+          {
+            "name": "Insulation Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150430
+          },
+          {
+            "name": "SU/SD from Bottom",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1141008
+          },
+          {
+            "name": "SU/SD from Top",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1140982
+          },
+          {
+            "name": "Category",
+            "value": "-2008010",
+            "valueString": "Duct Fittings",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140363
+          },
+          {
+            "name": "Category",
+            "value": "-2008010",
+            "valueString": "Duct Fittings",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140362
+          },
+          {
+            "name": "System Type",
+            "value": "712043",
+            "valueString": "Exhaust Air",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140333
+          },
+          {
+            "name": "System Classification",
+            "value": "Exhaust Air",
+            "valueString": "Exhaust Air",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140325
+          },
+          {
+            "name": "System Name",
+            "value": "Mechanical Exhaust Air 17",
+            "valueString": "Mechanical Exhaust Air 17",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140324
+          },
+          {
+            "name": "Pressure Drop",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140282
+          },
+          {
+            "name": "Use Annotation Scale",
+            "value": "1",
+            "valueString": "Yes",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1114242
+          },
+          {
+            "name": "Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1114240
+          },
+          {
+            "name": "Loss Method Settings",
+            "value": "",
+            "valueString": "",
+            "storageType": "None",
+            "isReadOnly": true,
+            "parameterId": -1114149
+          },
+          {
+            "name": "Loss Method",
+            "value": "76eff5da-2e71-45f7-b940-cc5716328ba0",
+            "valueString": "Not Defined",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1114146
+          },
+          {
+            "name": "IFC Predefined Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019016
+          },
+          {
+            "name": "Export to IFC As",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019014
+          },
+          {
+            "name": "Export to IFC",
+            "value": "0",
+            "valueString": "By Type",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1019012
+          },
+          {
+            "name": "IfcGUID",
+            "value": "0MFVjIwFzCuumSmrk4XoDb",
+            "valueString": "0MFVjIwFzCuumSmrk4XoDb",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019000
+          },
+          {
+            "name": "Design Option",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1013201
+          },
+          {
+            "name": "Volume",
+            "value": "0.0685367326480202",
+            "valueString": "0.07 CF",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1012806
+          },
+          {
+            "name": "Area",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1012805
+          },
+          {
+            "name": "Phase Demolished",
+            "value": "-1",
+            "valueString": "None",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012101
+          },
+          {
+            "name": "Phase Created",
+            "value": "21885",
+            "valueString": "New Construction",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012100
+          },
+          {
+            "name": "Comments",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010106
+          },
+          {
+            "name": "Host Id",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002108
+          },
+          {
+            "name": "Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002062
+          },
+          {
+            "name": "Family and Type",
+            "value": "693820",
+            "valueString": "Round Elbow: 1.5 D",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002052
+          },
+          {
+            "name": "Family",
+            "value": "693820",
+            "valueString": "Round Elbow",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002051
+          },
+          {
+            "name": "Type",
+            "value": "693820",
+            "valueString": "1.5 D",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002050
+          },
+          {
+            "name": "Family Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002002
+          },
+          {
+            "name": "Type Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002001
+          },
+          {
+            "name": "Type Id",
+            "value": "693820",
+            "valueString": "693820",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002000
+          },
+          {
+            "name": "Elevation from Level",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1001360
+          },
+          {
+            "name": "Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1001352
+          },
+          {
+            "name": "Mark",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1001203
+          },
+          {
+            "name": "Duct Radius",
+            "value": "0.166666666666667",
+            "valueString": "2\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": 692854
+          },
+          {
+            "name": "Angle",
+            "value": "1.5707963267949",
+            "valueString": "90.00°",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692855
+          },
+          {
+            "name": "Center Radius",
+            "value": "0.5",
+            "valueString": "6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692857
+          },
+          {
+            "name": "Length1",
+            "value": "0.5",
+            "valueString": "6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692858
+          }
+        ]
+      },
+      {
+        "id": 1465208,
+        "uniqueId": "163dfb52-e8ff-4ce3-8c1c-c35b84917839-00165b78",
+        "name": "1.5 D",
+        "category": "Duct Fittings",
+        "categoryId": -2008010,
+        "parameters": {
+          "Image": "-1",
+          "System Abbreviation": "",
+          "Free Size": "4\"ø-4\"ø",
+          "Overall Size": "4\"ø-4\"ø",
+          "Lining Thickness": "0",
+          "Lining Type": "",
+          "Insulation Thickness": "0",
+          "Insulation Type": "",
+          "SU/SD from Bottom": "",
+          "SU/SD from Top": "",
+          "Category": "-2008010",
+          "System Type": "712043",
+          "System Classification": "Exhaust Air",
+          "System Name": "Mechanical Exhaust Air 17",
+          "Pressure Drop": "0",
+          "Use Annotation Scale": "1",
+          "Size": "4\"ø-4\"ø",
+          "Loss Method Settings": "",
+          "Loss Method": "76eff5da-2e71-45f7-b940-cc5716328ba0",
+          "IFC Predefined Type": "",
+          "Export to IFC As": "",
+          "Export to IFC": "0",
+          "IfcGUID": "0MFVjIwFzCuumSmrk4XoD1",
+          "Design Option": "-1",
+          "Volume": "0.0685367326480202",
+          "Area": "0",
+          "Phase Demolished": "-1",
+          "Phase Created": "21885",
+          "Comments": "",
+          "Host Id": "-1",
+          "Level": "1362791",
+          "Family and Type": "693820",
+          "Family": "693820",
+          "Type": "693820",
+          "Family Name": "",
+          "Type Name": "",
+          "Type Id": "693820",
+          "Elevation from Level": "10.6666666666667",
+          "Mark": "",
+          "Duct Radius": "0.166666666666667",
+          "Angle": "1.5707963267949",
+          "Center Radius": "0.5",
+          "Length1": "0.5"
+        },
+        "parameterDetails": [
+          {
+            "name": "Image",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1152385
+          },
+          {
+            "name": "System Abbreviation",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150468
+          },
+          {
+            "name": "Free Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150435
+          },
+          {
+            "name": "Overall Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150434
+          },
+          {
+            "name": "Lining Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150433
+          },
+          {
+            "name": "Lining Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150432
+          },
+          {
+            "name": "Insulation Thickness",
+            "value": "0",
+            "valueString": "0\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1150431
+          },
+          {
+            "name": "Insulation Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1150430
+          },
+          {
+            "name": "SU/SD from Bottom",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1141008
+          },
+          {
+            "name": "SU/SD from Top",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1140982
+          },
+          {
+            "name": "Category",
+            "value": "-2008010",
+            "valueString": "Duct Fittings",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140363
+          },
+          {
+            "name": "Category",
+            "value": "-2008010",
+            "valueString": "Duct Fittings",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140362
+          },
+          {
+            "name": "System Type",
+            "value": "712043",
+            "valueString": "Exhaust Air",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1140333
+          },
+          {
+            "name": "System Classification",
+            "value": "Exhaust Air",
+            "valueString": "Exhaust Air",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140325
+          },
+          {
+            "name": "System Name",
+            "value": "Mechanical Exhaust Air 17",
+            "valueString": "Mechanical Exhaust Air 17",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140324
+          },
+          {
+            "name": "Pressure Drop",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1140282
+          },
+          {
+            "name": "Use Annotation Scale",
+            "value": "1",
+            "valueString": "Yes",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1114242
+          },
+          {
+            "name": "Size",
+            "value": "4\"ø-4\"ø",
+            "valueString": "4\"ø-4\"ø",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1114240
+          },
+          {
+            "name": "Loss Method Settings",
+            "value": "",
+            "valueString": "",
+            "storageType": "None",
+            "isReadOnly": true,
+            "parameterId": -1114149
+          },
+          {
+            "name": "Loss Method",
+            "value": "76eff5da-2e71-45f7-b940-cc5716328ba0",
+            "valueString": "Not Defined",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1114146
+          },
+          {
+            "name": "IFC Predefined Type",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019016
+          },
+          {
+            "name": "Export to IFC As",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019014
+          },
+          {
+            "name": "Export to IFC",
+            "value": "0",
+            "valueString": "By Type",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1019012
+          },
+          {
+            "name": "IfcGUID",
+            "value": "0MFVjIwFzCuumSmrk4XoD1",
+            "valueString": "0MFVjIwFzCuumSmrk4XoD1",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1019000
+          },
+          {
+            "name": "Design Option",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1013201
+          },
+          {
+            "name": "Volume",
+            "value": "0.0685367326480202",
+            "valueString": "0.07 CF",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1012806
+          },
+          {
+            "name": "Area",
+            "value": "0",
+            "valueString": "0",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1012805
+          },
+          {
+            "name": "Phase Demolished",
+            "value": "-1",
+            "valueString": "None",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012101
+          },
+          {
+            "name": "Phase Created",
+            "value": "21885",
+            "valueString": "New Construction",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1012100
+          },
+          {
+            "name": "Comments",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010106
+          },
+          {
+            "name": "Host Id",
+            "value": "-1",
+            "valueString": "-1",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002108
+          },
+          {
+            "name": "Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002062
+          },
+          {
+            "name": "Family and Type",
+            "value": "693820",
+            "valueString": "Round Elbow: 1.5 D",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002052
+          },
+          {
+            "name": "Family",
+            "value": "693820",
+            "valueString": "Round Elbow",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002051
+          },
+          {
+            "name": "Type",
+            "value": "693820",
+            "valueString": "1.5 D",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002050
+          },
+          {
+            "name": "Family Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002002
+          },
+          {
+            "name": "Type Name",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002001
+          },
+          {
+            "name": "Type Id",
+            "value": "693820",
+            "valueString": "693820",
+            "storageType": "ElementId",
+            "isReadOnly": true,
+            "parameterId": -1002000
+          },
+          {
+            "name": "Elevation from Level",
+            "value": "10.6666666666667",
+            "valueString": "10' - 8\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1001360
+          },
+          {
+            "name": "Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1001352
+          },
+          {
+            "name": "Mark",
+            "value": "",
+            "valueString": "",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1001203
+          },
+          {
+            "name": "Duct Radius",
+            "value": "0.166666666666667",
+            "valueString": "2\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": 692854
+          },
+          {
+            "name": "Angle",
+            "value": "1.5707963267949",
+            "valueString": "90.00°",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692855
+          },
+          {
+            "name": "Center Radius",
+            "value": "0.5",
+            "valueString": "6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692857
+          },
+          {
+            "name": "Length1",
+            "value": "0.5",
+            "valueString": "6\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": 692858
+          }
+        ]
+      }
+    ]
+  },
+  "connectors": {
+    "status": "Ok",
+    "requestedCount": 3,
+    "scannedElementCount": 3,
+    "failedElementCount": 0,
+    "matchedElementCount": 3,
+    "totalScannedConnectorCount": 6,
+    "physicallyConnectedConnectorCount": 2,
+    "openPhysicalConnectorCount": 4,
+    "connectorScanTruncatedElementCount": 0,
+    "filter": "allConnectors",
+    "results": [
+      {
+        "id": 1542942,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Exhaust Air 38",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 2,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333336,
+              -1.3993376534148356,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333336,
+                -1.3993376534148356,
+                42.833333333337116
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1542944,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333343,
+              -13.399337653414879,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333343,
+                -13.399337653414879,
+                42.833333333337116
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1542944,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1465180,
+        "ok": true,
+        "category": "OST_DuctFitting",
+        "name": "1.5 D",
+        "typeId": 693820,
+        "typeName": "1.5 D",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Exhaust Air 17",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 1,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 2,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -34.11458333333336,
+              -0.8993376534148346,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -34.11458333333336,
+                -0.8993376534148346,
+                42.833333333337116
+              ],
+              "basisX": [
+                0,
+                -1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                -1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465174,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1465174,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333336,
+              -1.3993376534148356,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333336,
+                -1.3993376534148356,
+                42.833333333337116
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465230,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1465208,
+        "ok": true,
+        "category": "OST_DuctFitting",
+        "name": "1.5 D",
+        "typeId": 693820,
+        "typeName": "1.5 D",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Exhaust Air 17",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 1,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 2,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.11458333333343,
+              -13.899337653414879,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.11458333333343,
+                -13.899337653414879,
+                42.833333333337116
+              ],
+              "basisX": [
+                0,
+                1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465206,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1465206,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.61458333333343,
+              -13.399337653414879,
+              42.833333333337116
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "ExhaustAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.16666666666666666,
+              "diameterFt": 0.3333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.61458333333343,
+                -13.399337653414879,
+                42.833333333337116
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1465230,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          }
+        ],
+        "flexGeometry": null
+      }
+    ],
+    "warnings": []
+  }
+}

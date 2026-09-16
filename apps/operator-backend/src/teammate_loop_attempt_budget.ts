@@ -2,6 +2,7 @@ export type TeammateLoopAttemptBudget = {
   total: number;
   discovery: number;
   evidence: number;
+  failed_evidence: number;
   by_signature: Map<string, number>;
   evidence_by_signature: Map<string, number>;
   successful_discovery: Set<string>;
@@ -10,7 +11,7 @@ export type TeammateLoopAttemptBudget = {
 const MAX_TOTAL_REVIT_CALL_ATTEMPTS = 64;
 const MAX_DISCOVERY_CALL_ATTEMPTS = 16;
 const MAX_FAILED_DISCOVERY_ATTEMPTS_PER_SIGNATURE = 2;
-const MAX_EVIDENCE_RETRIEVAL_ATTEMPTS = 8;
+const MAX_FAILED_EVIDENCE_RETRIEVAL_ATTEMPTS = 8;
 const MAX_EVIDENCE_RETRIEVAL_ATTEMPTS_PER_SIGNATURE = 1;
 
 const DISCOVERY_PATHS = new Set([
@@ -28,6 +29,7 @@ export function newTeammateLoopAttemptBudget(): TeammateLoopAttemptBudget {
     total: 0,
     discovery: 0,
     evidence: 0,
+    failed_evidence: 0,
     by_signature: new Map(),
     evidence_by_signature: new Map(),
     successful_discovery: new Set()
@@ -39,14 +41,17 @@ export function isTeammateDiscoveryTool(tool: string): boolean { return DISCOVER
 
 export function gateTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effect: string, signature: string): string | null {
   if (effect === "interaction") return null;
+  // Successful bounded evidence pages are useful work, not discovery retries.
+  // They share the finite total-call allowance instead of stopping after eight
+  // pages across unrelated evidence items. Keep the legacy error identifier.
+  if (budget.total >= MAX_TOTAL_REVIT_CALL_ATTEMPTS) return "total_revit_call_attempt_budget_exhausted";
   if (effect === "evidence_read") {
-    if (budget.evidence >= MAX_EVIDENCE_RETRIEVAL_ATTEMPTS) return "evidence_retrieval_attempt_budget_exhausted";
+    if (budget.failed_evidence >= MAX_FAILED_EVIDENCE_RETRIEVAL_ATTEMPTS) return "evidence_retrieval_attempt_budget_exhausted";
     if ((budget.evidence_by_signature.get(signature) ?? 0) >= MAX_EVIDENCE_RETRIEVAL_ATTEMPTS_PER_SIGNATURE) {
       return "identical_evidence_retrieval_must_be_corrected";
     }
     return null;
   }
-  if (budget.total >= MAX_TOTAL_REVIT_CALL_ATTEMPTS) return "total_revit_call_attempt_budget_exhausted";
   if (effect !== "discovery") return null;
   if (budget.successful_discovery.has(signature)) return "successful_discovery_already_available";
   if (budget.discovery >= MAX_DISCOVERY_CALL_ATTEMPTS) return "discovery_call_attempt_budget_exhausted";
@@ -56,14 +61,20 @@ export function gateTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effec
 
 export function registerTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effect: string, signature: string): void {
   if (effect === "interaction") return;
+  budget.total += 1;
   if (effect === "evidence_read") {
     budget.evidence += 1;
     budget.evidence_by_signature.set(signature, (budget.evidence_by_signature.get(signature) ?? 0) + 1);
     return;
   }
-  budget.total += 1;
   budget.by_signature.set(signature, (budget.by_signature.get(signature) ?? 0) + 1);
   if (effect === "discovery") budget.discovery += 1;
+}
+
+/** Called once when the registered host retrieval settles, never by a model
+ * claim. Failed reads remain cumulative for this turn even after a success. */
+export function recordTeammateEvidenceResult(budget: TeammateLoopAttemptBudget, succeeded: boolean): void {
+  if (!succeeded) budget.failed_evidence += 1;
 }
 
 export function recordSuccessfulTeammateDiscovery(budget: TeammateLoopAttemptBudget, signature: string): void {

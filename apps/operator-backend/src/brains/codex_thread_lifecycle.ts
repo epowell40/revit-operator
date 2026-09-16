@@ -27,8 +27,9 @@ export async function getOrCreateCodexThread(args: {
   const toolHash = tools ? codexToolCatalogHash(tools) : null;
   const catalogChanged = Boolean(existing && toolHash && getCodexThreadCapabilities(existing)?.tool_sha256 !== toolHash);
   let previousThreadId: string | null = null;
+  let handoffReason: "tool_catalog_changed" | "raw_events_unavailable" | "provider_thread_missing" = "tool_catalog_changed";
   if (existing) {
-    if (!catalogChanged && client.hasLoadedThread(existing)) {
+    if (!catalogChanged && client.hasLoadedThread(existing) && (args.monitoringOnly || client.hasRawEventThread(existing))) {
       if (args.monitoringOnly) return existing;
       if (client.getThreadInstructionBinding(existing)) {
         client.assertThreadInstructions(existing, profile);
@@ -50,10 +51,14 @@ export async function getOrCreateCodexThread(args: {
         excludeTurns: true
       });
       const resumedThreadId = resumed.thread.id;
+      const rawEventsUnavailable = !args.monitoringOnly && !client.hasRawEventThread(resumedThreadId);
+      if (!args.monitoringOnly && (catalogChanged || rawEventsUnavailable) && resumed.thread.status?.type !== "idle") {
+        throw new Error("The provider capabilities require an update while its prior thread is active. Finish or recover that turn before updating capabilities.");
+      }
       if (!args.monitoringOnly) client.assertThreadInstructions(resumedThreadId, profile);
-      if (catalogChanged) {
-        if (resumed.thread.status?.type !== "idle") throw new Error("The provider tool catalog changed while its prior thread is active. Finish or recover that turn before updating capabilities.");
+      if (catalogChanged || rawEventsUnavailable) {
         previousThreadId = resumedThreadId;
+        handoffReason = catalogChanged ? "tool_catalog_changed" : "raw_events_unavailable";
       } else {
         setCodexThreadId(threadKey, resumedThreadId);
         try {
@@ -67,7 +72,11 @@ export async function getOrCreateCodexThread(args: {
       }
     } catch (error) {
       if (!isMissingCodexThreadError(error)) throw error;
-      setCodexThreadId(threadKey, "");
+      if (args.monitoringOnly) throw error;
+      // Keep the predecessor until the replacement and its durable handoff
+      // are bound atomically. A failed start must not erase recovery context.
+      previousThreadId = existing;
+      handoffReason = "provider_thread_missing";
       try {
         appendEvent(args.sessionId, "assistant", "codex.thread.replace_missing", { thread_id: existing });
       } catch {
@@ -89,9 +98,9 @@ export async function getOrCreateCodexThread(args: {
   });
   const threadId = response.thread.id;
   bindCodexThreadCapabilities(threadKey, threadId, toolHash ?? codexToolCatalogHash([]), previousThreadId,
-    previousThreadId ? codexCapabilityHandoff(args.sessionId, previousThreadId) : "");
+    previousThreadId ? codexCapabilityHandoff(args.sessionId, previousThreadId, handoffReason) : "");
   if (previousThreadId) appendEvent(args.sessionId, "assistant", "codex.thread.capabilities_updated", {
-    previous_thread_id: previousThreadId, thread_id: threadId, tool_sha256: toolHash,
+    previous_thread_id: previousThreadId, thread_id: threadId, tool_sha256: toolHash, reason: handoffReason,
     conversation_preserved: true, assignment_restarted: false
   });
   try {
