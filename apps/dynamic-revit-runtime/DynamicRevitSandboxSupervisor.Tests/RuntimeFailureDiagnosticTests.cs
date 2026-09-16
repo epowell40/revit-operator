@@ -110,11 +110,15 @@ public sealed class AssertionProbe : IDynamicResultReferenceRevitProgramV1 {
         Assert.All(partials, value => Assert.Contains("flow-check", value.Message));
     }
 
-    [Fact]
-    public void ConstructorFailureHasSourceLocationButNoFabricatedPartialContext()
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void ConstructorFailureHasSourceLocationButNoFabricatedPartialContext(string newLine)
     {
-        var source = Source.Replace("public sealed class PartialReportProbe : IDynamicRevitProgram\n{",
-            "public sealed class PartialReportProbe : IDynamicRevitProgram\n{\n    public PartialReportProbe() { throw new InvalidOperationException(\"Constructor failed.\"); }");
+        const string executeDeclaration = "    public DynamicProgramResult Execute(DynamicRevitContext context)";
+        var source = Source.ReplaceLineEndings(newLine).Replace(executeDeclaration,
+            "    public PartialReportProbe() { throw new InvalidOperationException(\"Constructor failed.\"); }" + newLine + executeDeclaration,
+            StringComparison.Ordinal);
         var result = WorkerExecutor.Execute(new WorkerInput { Source = source });
         AssertFailure(result);
         var error = Assert.Single(result.Diagnostics);
