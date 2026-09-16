@@ -230,7 +230,8 @@
     "OperatorWorkbookExportPathTests",
     "TemporaryAnnotationCropTests",
     "HostedPlacementPreflightTests",
-    "AbsolutePlacementCorrectionTests"
+    "AbsolutePlacementCorrectionTests",
+    "OperatorIdleDiagnosticTests"
   ],
   "failure_families": [
     {
@@ -1912,7 +1913,8 @@
       "id": "saved-answer-refresh-is-superseded-by-status-poll-and-task-does-not-continue",
       "coverage": [
         "backend:assignment_mutation_acknowledgment.test.ts",
-        "backend:assignment_kernel_v2_controls.test.ts"
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "desktop:test/assignment_workspace_v2.test.js"
       ]
     },
     {
@@ -1948,7 +1950,8 @@
       "id": "shared-model-and-current-view-question-falls-through-to-slow-assignment",
       "coverage": [
         "backend:simple_context_question.test.ts",
-        "backend:session_history_recovery.test.ts"
+        "backend:session_history_recovery.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
       ]
     },
     {
@@ -2207,6 +2210,41 @@
       "coverage": [
         "backend:polyline_duct_postcondition_v2.test.ts",
         "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "whole-area-c44-level-name-polyline-has-native-proof-but-cannot-verify",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-large-native-observation-replays-and-expands-history-on-every-call",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-nullable-tool-schema-hides-correctable-nested-limit",
+      "coverage": [
+        "mcp:lib/genericToolPreflight.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-partial-stop-omits-verified-work-and-unfinished-scope",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:codex_partial_verification.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-native-queue-waits-without-idle-callback-evidence",
+      "coverage": [
+        "dotnet:OperatorIdleDiagnosticTests",
+        "dotnet:OperatorRevitQueueDiagnosticTests"
       ]
     }
   ],

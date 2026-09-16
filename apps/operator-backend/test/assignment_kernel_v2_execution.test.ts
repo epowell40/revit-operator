@@ -1,3 +1,5 @@
+import {verifiedChangePresentationV2,remainingWorkPresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
+import {renderTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import { retainWorkPlanInspectionV2 } from "../src/assignments/work_plan_inspection.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -482,7 +484,7 @@ test("whole-area HRU ids readback remains bound after durable create settlement 
   });
 });
 
-for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-readback"], ["/revit/create-duct","c35-open-duct-readback"], ["/revit/mep-route-workflow","c37-connected-duct-readback"], ["/revit/mep-route-workflow","c41-connected-duct-alias-readback"], ["/revit/mep-route-workflow","c44-polyline-readback"]]) test(route + " " + fixtureName + " needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-readback"], ["/revit/create-duct","c35-open-duct-readback"], ["/revit/mep-route-workflow","c37-connected-duct-readback"], ["/revit/mep-route-workflow","c41-connected-duct-alias-readback"], ["/revit/mep-route-workflow","c44-polyline-readback"], ["/revit/mep-route-workflow","c44-level-name-polyline-readback"]]) test(route + " " + fixtureName + " needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
   const f=JSON.parse(fs.readFileSync(`test/fixtures/${fixtureName}.json`,"utf8"));
   const targetId=Number(f.affected[0].split(":")[1]);
   const targetIds:number[]=f.affected.map((id:string)=>Number(id.split(":")[1]));
@@ -513,6 +515,23 @@ for (const [route,fixtureName] of [["/revit/mep-route-workflow","c35-open-duct-r
   assert.match(guidance,/get-connectors/);
   const verified=read("connectors","/revit/get-connectors",f.connectors,"2026-09-15T20:00:03.000Z");
   assert(!deriveProgressGapsV2(verified).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  if(fixtureName==='c44-level-name-polyline-readback'){
+   assert.equal(verifiedChangePresentationV2(verified),'Verified in Revit: 6 duct segments; 5 duct fittings.');
+   const partial=structuredClone(verified);partial.terminal=true;partial.outcome='blocked';partial.terminal_reason='no_progress_budget_exhausted';
+   partial.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[{item_id:'unit407',description:'Unit 407 ductwork and ceiling devices',source_basis:'Attached plan',declared_at:'2026-09-15T19:00:00Z',operation_ids:[]}]};
+   assert.match(renderTerminalResultV2(partial),/Verified in Revit: 6 duct segments; 5 duct fittings/);
+   assert.match(renderTerminalResultV2(partial),/Still unfinished: Unit 407 ductwork and ceiling devices/);
+   for(const change of [
+    (x:any)=>x.operations[apply.operation_id].persistent_effect='unknown',
+    (x:any)=>x.operations[apply.operation_id].result.binding.assignment_id='foreign',
+    (x:any)=>x.input_invalidated_operation_ids=[apply.operation_id],
+    (x:any)=>{for(const op of Object.values(x.operations) as any[])if(op.purpose==='verification')op.result.raw_payload_hash='0'.repeat(64);},
+    (x:any)=>{for(const op of Object.values(x.operations) as any[])if(op.purpose==='verification')op.result.completed_at='2020-01-01T00:00:00Z';},
+    (x:any)=>{for(const o of Object.values(x.observations) as any[])o.authority='dynamic-runtime';}
+   ]){const changed=structuredClone(verified);change(changed);assert.equal(verifiedChangePresentationV2(changed),null);}
+   assert.equal(remainingWorkPresentationV2(verified),null);
+  }
+
   assert(Object.values(verified.observations).some(o=>o.facts.some(fact=>fact.fact_id==="verification.postcondition_satisfied"&&fact.value===true)));
   assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id),verified);
   const subject=verified.operations[apply.operation_id]!;

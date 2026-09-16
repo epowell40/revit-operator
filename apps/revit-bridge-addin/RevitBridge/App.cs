@@ -246,26 +246,31 @@ namespace RevitBridge
             // thread can execute a newly raised ExternalEvent.
             if (instance != null)
             {
-                if (sender is UIApplication uiApplication)
+                instance._eventService?.RecordIdleEntry(sender is UIApplication);
+                try
                 {
-                    RevitUiContextSnapshot.Capture(uiApplication);
-                    // ActiveUIDocument is the authoritative host state on the Revit API
-                    // thread. A global open/close counter is unsafe here: EditFamily and
-                    // other transient documents can emit asymmetric lifecycle events and
-                    // make a still-open project look like Revit Home, which starves every
-                    // document-bound courier job while Revit is in the background.
-                    if (uiApplication.ActiveUIDocument?.Document != null)
-                        instance._revitCourierWorker?.SetHostDocumentAvailable();
-                    else
-                        instance._revitCourierWorker?.SetHostDocumentUnavailable();
-                    // Keep the supported idle session open across short agent reasoning gaps.
-                    // Only an actual API callback renews the bounded lease; idle ticks do not.
-                    // No model work runs outside ExternalEvent/Idling, and normal idle resumes
-                    // after the lease expires or the service shuts down.
-                    if (instance._eventService?.HasPendingWork == true || instance._eventService?.HasActiveIdleLease == true)
-                        args.SetRaiseWithoutDelay();
-                    instance._eventService?.ExecutePendingOnIdling(uiApplication);
+                    if (sender is UIApplication uiApplication)
+                    {
+                        RevitUiContextSnapshot.Capture(uiApplication);
+                        // ActiveUIDocument is the authoritative host state on the Revit API
+                        // thread. A global open/close counter is unsafe here: EditFamily and
+                        // other transient documents can emit asymmetric lifecycle events and
+                        // make a still-open project look like Revit Home, which starves every
+                        // document-bound courier job while Revit is in the background.
+                        if (uiApplication.ActiveUIDocument?.Document != null)
+                            instance._revitCourierWorker?.SetHostDocumentAvailable();
+                        else
+                            instance._revitCourierWorker?.SetHostDocumentUnavailable();
+                        // Keep the supported idle session open across short agent reasoning gaps.
+                        // Only an actual API callback renews the bounded lease; idle ticks do not.
+                        // No model work runs outside ExternalEvent/Idling, and normal idle resumes
+                        // after the lease expires or the service shuts down.
+                        if (instance._eventService?.HasPendingWork == true || instance._eventService?.HasActiveIdleLease == true)
+                            args.SetRaiseWithoutDelay();
+                        instance._eventService?.ExecutePendingOnIdling(uiApplication);
+                    }
                 }
+                finally { instance._eventService?.RecordIdleExit(); }
             }
         }
 

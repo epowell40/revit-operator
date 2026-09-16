@@ -1,3 +1,5 @@
+import {manageAssignmentWorkPlan} from '../src/assignments/assignment_work_plan.js';
+import {settleAssignmentKernelExecutionFailureV2} from '../src/assignments/assignment_kernel_v2_execution_failure.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,32 +21,35 @@ import {finalizeCanonicalAssignment} from '../src/assignments/canonical_finaliza
 import {settleCodexAssignmentProgressV2} from '../src/brains/codex_assignment_progress.js';
 import {renderTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 
-for(const variant of ['connected','connected-c40','open-ends','wrong-height','create-round','create-rectangular'] as const)test(`dynamic handler retains partial native verification without a premature compatibility assertion: ${variant}`,async()=>{
+for(const variant of ['connected','connected-c40','open-ends','wrong-height','create-round','create-rectangular','polyline-area-partial'] as const)test(`dynamic handler retains partial native verification without a premature compatibility assertion: ${variant}`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-partial-verification-'));
  const keys=['OPERATOR_WORKSPACE_ROOT','OPERATOR_ASSIGNMENT_KERNEL_V2'],old=keys.map(k=>process.env[k]);
  process.env.OPERATOR_WORKSPACE_ROOT=root;process.env.OPERATOR_ASSIGNMENT_KERNEL_V2='1';__testOnlyResetGoalListCache();__testOnlyResetTeammateLoopState();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const fixtureName=variant==='connected-c40'?'c40-connected-duct-readback':variant==='create-round'?'c38-disconnected-round-duct-readback':variant==='create-rectangular'?'c35-open-duct-readback':'c37-connected-duct-readback';
+  const partialArea=variant==='polyline-area-partial';
+  const fixtureName=partialArea?'c44-level-name-polyline-readback':variant==='connected-c40'?'c40-connected-duct-readback':variant==='create-round'?'c38-disconnected-round-duct-readback':variant==='create-rectangular'?'c35-open-duct-readback':'c37-connected-duct-readback';
   const f=JSON.parse(fs.readFileSync('test/fixtures/'+fixtureName+'.json','utf8'));
-  const expectedVerified=variant==='connected'||variant==='connected-c40'||variant==='create-rectangular';
+  const expectedVerified=partialArea||variant==='connected'||variant==='connected-c40'||variant==='create-rectangular';
   if(variant==='create-rectangular'){const b=f.input.body;f.input={method:'POST',path:'/revit/create-duct',body:{levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,startPoint:b.points[0],endPoint:b.points[1],dryRun:false}};}
   if(variant==='create-round'){
    const subject=f.connectors.results.find((r:any)=>r.id===1542942);f.parameters.items=f.parameters.items.filter((r:any)=>r.id===1542942);
    Object.assign(f.connectors,{results:[subject],requestedCount:1,scannedElementCount:1,matchedElementCount:1,totalScannedConnectorCount:2,physicallyConnectedConnectorCount:0,openPhysicalConnectorCount:2});
   }
   const targetId=Number(f.affected[0].split(':')[1]);
+  const targetIds=partialArea?f.affected.map((id:string)=>Number(id.split(':')[1])):[targetId];
   if(variant==='open-ends'){
    f.connectors.physicallyConnectedConnectorCount=0;f.connectors.openPhysicalConnectorCount=2;
    f.connectors.results[0].openPhysicalConnectorCount=2;
    for(const c of f.connectors.results[0].connectors){c.isConnected=false;c.isPhysicallyConnected=false;c.physicalConnectionCount=0;c.physicalConnectedTo=[];c.connectedTo=[];}
   }
   if(variant==='wrong-height')f.connectors.results[0].connectors[0].origin[2]+=1;
-  const prompt=variant==='create-rectangular'?'Create the marked rectangular supply duct, leave its ends open, and verify the result.':'Reconstruct the missing exhaust duct, connect it to the remaining compatible ductwork, and verify the result.';
+  const prompt=partialArea?'Reconstruct all ductwork and fittings across multiple rooms in Units 403 and 407 from the attached drawing.':variant==='create-rectangular'?'Create the marked rectangular supply duct, leave its ends open, and verify the result.':'Reconstruct the missing exhaust duct, connect it to the remaining compatible ductwork, and verify the result.';
   const prepared=prepareAssignmentTurn({sessionId:'verify-session',messageId:'reconstruct',userText:prompt,toolResults:[],source:'chat',createdBy:null,requestContext:{revit:{document:{projectIdentity:{fingerprint:'fixture-model'}}}}})!;
   const binding=prepared.bindingV2!;let dispatches=0;
+  if(partialArea)manageAssignmentWorkPlan({binding:{session_id:binding.session_id,assignment_id:binding.assignment_id,run_id:binding.run_id,generation:binding.generation},action:'declare',declaration:{items:[{item_id:'unit403',description:'Unit 403 remaining branches',source_basis:'Attached plan'},{item_id:'unit407',description:'Unit 407 ductwork and ceiling devices',source_basis:'Attached plan'}],assumptions:[]}});
   const runtime={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop:()=>{},callTool:async(_tool:string,args:any,context:any)=>{
    context.onMcpAccepted();dispatches++;const lease=context.assignmentKernelV2,apply=args.path===f.input.path;
-   const payload=apply?{status:'Success',createdElementIds:[targetId],transaction:{status:'committed',committed:true}}:args.path==='/revit/get-parameters'?f.parameters:f.connectors;
+   const payload=apply?f.apply??{status:'Success',createdElementIds:[targetId],transaction:{status:'committed',committed:true}}:args.path==='/revit/get-parameters'?f.parameters:f.connectors;
    const receipt='receipt:'+lease.operation_id;
    return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
     operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,status:'succeeded',dispatch_state:'dispatched',persistent_effect:apply?'applied':'none',native_transaction_state:apply?'committed':'not_applicable',authority:'native-host',result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,receipt_id:receipt,native_correlation_id:receipt,raw_payload_hash:payloadDigestV2(payload).digest,request_identity:lease.request_identity,affected_target_identities:apply?f.affected:[],completed_at:new Date().toISOString()},
@@ -54,31 +59,32 @@ for(const variant of ['connected','connected-c40','open-ends','wrong-height','cr
   try{
    const run=(id:string,arguments_:any)=>handleCodexDynamicToolCall(runtime as any,{id,method:'item/tool/call',params:{namespace:'revit_operator',turnId:'verify-turn',tool:'revit_call_tool',arguments:arguments_}} as any) as Promise<any>;
    const applied=await run('apply',f.input);assert.equal(applied.success,true,JSON.stringify(applied));
-   const params=await run('parameters',{method:'POST',path:'/revit/get-parameters',body:{elementIds:[targetId],includeEmpty:true}});
+   const params=await run('parameters',{method:'POST',path:'/revit/get-parameters',body:{elementIds:targetIds,includeEmpty:true}});
    assert.equal(params.success,true,JSON.stringify(params));
    const partial=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
    const parameterOp=Object.values(partial.operations).find(op=>op.request_identity?.path==='/revit/get-parameters')!;
    assert.equal(parameterOp.result?.status,'succeeded');assert.equal(parameterOp.observation_ids.length,1);
    assert.equal(partial.terminal,false);assert(deriveProgressGapsV2(partial).some(g=>g.kind==='verification_required'));
    assert.equal(teammateLoopReceiptForOwner(runtime)!.verified,false,'compatibility layer cannot advertise complete verification after only parameter readback');
-   const connectors=await run('connectors',{method:'POST',path:'/revit/get-connectors',body:{elementIds:[targetId],includeAllRefs:true}});
+   const connectors=await run('connectors',{method:'POST',path:'/revit/get-connectors',body:{elementIds:targetIds,includeAllRefs:true}});
    assert.equal(connectors.success,true,JSON.stringify(connectors));assert.equal(dispatches,3);
    const final=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
    const connectorOp=Object.values(final.operations).find(op=>op.request_identity?.path==='/revit/get-connectors')!;
    assert.equal(connectorOp.result?.status,'succeeded');assert.equal(connectorOp.observation_ids.length,1);
-   assert.equal(final.outcome==='complete',expectedVerified);
+   assert.equal(final.outcome==='complete',expectedVerified&&!partialArea);
    assert.equal(teammateLoopReceiptForOwner(runtime)!.verified,expectedVerified);
    assert.equal(deriveProgressGapsV2(final).some(g=>g.kind==='verification_required'),!expectedVerified);
    assert.deepEqual(final.unresolved_unknown_operation_ids,[]);
    const req=bindPreparedAssignmentToRequest({version:'operator.backend.v1',session_id:binding.session_id,user_text:prompt,tool_results:[]} as any,prepared);
    const decision:any={version:'operator.backend.v1',assistant_message:'Provider says this is done.',actions:[],provider_turn_usage:{retained:true}};
    if(expectedVerified){
-    const terminal=settleCodexAssignmentProgressV2(binding)!;
+    const terminal=partialArea?settleAssignmentKernelExecutionFailureV2({binding,failure_id:'partial-fixture-stop',error_class:'transport',phase:'provider_turn'}).snapshot:settleCodexAssignmentProgressV2(binding)!;
     assert.equal(terminal.terminal,true);
     const message=renderTerminalResultV2(terminal);
     const finalized=__testOnlyFinalizeDecision(req,{...decision,assignment_snapshot_v2:{forged:true},terminal_result_v2:{forged:true}});
     assert.equal(finalized.assistant_message,message,'outer legacy guards must not contradict verified native work');
-    assert.equal(finalized.terminal_result_v2?.outcome,'complete');
+    assert.equal(finalized.terminal_result_v2?.outcome,partialArea?'blocked':'complete');
+    if(partialArea){assert.match(finalized.assistant_message,/Verified in Revit: 6 duct segments; 5 duct fittings/);assert.match(finalized.assistant_message,/Still unfinished: Unit 403 remaining branches; Unit 407 ductwork and ceiling devices/);}
     assert.deepEqual(finalized.assignment_snapshot_v2,terminal);
     assert.deepEqual(finalized.provider_turn_usage,decision.provider_turn_usage);
     assert.deepEqual(finalized.actions,[]);

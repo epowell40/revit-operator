@@ -989,6 +989,23 @@ export class AssignmentJournalV2 {
     }
   }
 
+  /** Isolated continuation of already validated history; never accepts raw state. */
+  fork(): AssignmentJournalV2 {
+    const fork = new AssignmentJournalV2();
+    // Retained events are private and append never modifies them. Public access
+    // always clones; the mutable reducer state and bookkeeping must not alias.
+    for (const event of this.#events) {
+      fork.#events.push(event);
+      fork.#byId.set(event.event_id, event);
+    }
+    fork.#state = {
+      ...this.#state,
+      ...(this.#state.snapshot ? { snapshot: structuredClone(this.#state.snapshot) } : {}),
+      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+    };
+    return fork;
+  }
+
   append(event: AssignmentEventV2): AssignmentSnapshotV2 {
     const existing = this.#byId.get(event.event_id);
     if (existing) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {createContentVerifiedJournalV2} from '../src/assignments/content_verified_journal_v2.js';
 import { normalizeAssignmentInputsV2 } from "../src/assignments/assignment_kernel_v2_input_adapter.js";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
@@ -104,6 +105,56 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
   journal.append(event(journal, { event_type: "assignment_created", spec: assignmentSpec }));
   return journal;
 }
+
+test('content verified journal cache preserves cold replay, payloads, duplicates and rejected append isolation',()=>{
+ const cache=createContentVerifiedJournalV2({maxEntries:2,maxBytes:4*1024*1024});
+ const events=[...createJournal().events()];
+ for(let i=2;i<=80;i++)events.push({...events[0]!,event_id:`cache-${i}`,assignment_version:i,event_type:'work_unit_state_changed',work_unit_id:'work-1',state:i%2?'active':'pending',reason:'Retained native history '+ 'x'.repeat(4096)} as AssignmentEventV2);
+ assert.deepEqual(cache.open(events).snapshot(),reduceAssignmentEventsV2(events));
+ const clone=globalThis.structuredClone;let copies=0;
+ try{globalThis.structuredClone=((v:unknown)=>{copies++;return clone(v);}) as typeof structuredClone;cache.open(events).snapshot();}
+ finally{globalThis.structuredClone=clone;}
+ assert(copies<10,'warm lookup must not replay all 80 retained transitions');
+ const next={...events.at(-1)!,event_id:'next',assignment_version:81,state:'active'} as AssignmentEventV2;
+ const fork=cache.open(events);const after=fork.append(next);
+ assert.deepEqual(after,reduceAssignmentEventsV2([...events,next]));
+ assert.deepEqual(cache.open(events).snapshot(),reduceAssignmentEventsV2(events),'a failed disk write can only read prior persisted events');
+ after.spec.source_user_request='caller corruption';
+ assert.deepEqual(cache.open([...events,next]).snapshot(),reduceAssignmentEventsV2([...events,next]));
+ assert.throws(()=>cache.open(events).append({...next,assignment_version:99}),/version/);
+ assert.deepEqual(cache.open(events).snapshot(),reduceAssignmentEventsV2(events));
+ const changed=structuredClone(events);(changed[0] as any).spec.source_user_request='Different request.';
+ assert.equal(cache.open(changed).snapshot().spec.source_user_request,'Different request.');
+ assert.throws(()=>cache.open([...events].reverse()));
+ assert.throws(()=>cache.open([...events,{...next,assignment_version:99}]));
+ assert.throws(()=>cache.open([...events,events.at(-1)!]),'duplicate persisted history retains strict reducer rejection');
+ const duplicateDelivery=cache.open(events);
+ assert.deepEqual(duplicateDelivery.append(events.at(-1)!),reduceAssignmentEventsV2(events));
+ assert.throws(()=>cache.open([...events,events.at(-1)!]),'a warm duplicate-delivery cache must not authorize corrupt history');
+ assert.throws(()=>cache.open([...events,{...events.at(-1)!,actor:'conflict'}]));
+ cache.reset();assert.deepEqual(cache.stats(),{entries:0,bytes:0});
+ assert.deepEqual(cache.open([...events,next]).snapshot(),reduceAssignmentEventsV2([...events,next]));
+ const tiny=createContentVerifiedJournalV2({maxBytes:1});tiny.open(events);assert.equal(tiny.stats().entries,0);
+ assert(cache.stats().entries<=2&&cache.stats().bytes<=4*1024*1024);
+});
+
+test('journal forks isolate clarification and supersession bookkeeping',()=>{
+ const parent=createJournal(spec('apply',true));
+ parent.append(event(parent,{event_type:'input_requested',variable_id:'replacement_text',clarification_id:'clarification-1',question:'Replacement?'}));
+ const before=parent.snapshot(), fork=parent.fork();
+ fork.append(event(fork,{event_type:'run_superseded',superseded_by_generation:2}));
+ assert.throws(()=>fork.append(event(fork,{event_type:'input_supplied',variable_id:'replacement_text',clarification_id:'clarification-1',value:'late'})),(e:unknown)=>e instanceof AssignmentKernelErrorV2&&e.code==='assignment_run_superseded');
+ assert.deepEqual(parent.snapshot(),before);
+ parent.append(event(parent,{event_type:'input_supplied',variable_id:'replacement_text',clarification_id:'clarification-1',value:'Original'}));
+ const nextBinding={...binding,run_id:'run-2',generation:2};
+ fork.append(event(fork,{event_type:'run_started'},nextBinding));
+ fork.append(event(fork,{event_type:'input_supplied',variable_id:'replacement_text',clarification_id:'clarification-1',value:'Fork'},nextBinding));
+ assert.equal(parent.snapshot().input_values.replacement_text,'Original');
+ assert.equal(fork.snapshot().input_values.replacement_text,'Fork');
+ const exposed=fork.events() as AssignmentEventV2[];exposed[0]!.actor='mutated';
+ assert.notEqual(fork.events()[0]!.actor,'mutated');
+ assert.deepEqual(fork.snapshot(),reduceAssignmentEventsV2(fork.events()));
+});
 
 test("accepted journal append validates one new transition without replaying its history", () => {
   const events = [...createJournal().events()];

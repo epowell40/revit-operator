@@ -2,6 +2,29 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {polylineReadbackMatchesV2 as polylineReadbackDraft} from '../src/verification/polyline_readback_v2.js';
+
+test('retained C44 six-duct branch verifies L4 by independent native level name and ID',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c44-level-name-polyline-readback.json','utf8'));
+ const matches=(f:any)=>polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors);
+ assert.equal(matches(fixture),true);
+ const both=structuredClone(fixture);both.input.body.levelId=1362791;assert.equal(matches(both),true);
+ const changes:Record<string,(f:any)=>void>={
+  missingLevel:f=>delete f.input.body.levelName,
+  blankLevel:f=>f.input.body.levelName=' ',
+  wrongName:f=>f.input.body.levelName='L3',
+  wrongExplicitId:f=>f.input.body.levelId=123,
+  missingDetails:f=>delete f.parameters.items[0].parameterDetails,
+  conflictingDetails:f=>f.parameters.items[0].parameterDetails.push({...f.parameters.items[0].parameterDetails.find((p:any)=>p.name==='Reference Level')}),
+  wrongStorage:f=>f.parameters.items[0].parameterDetails.find((p:any)=>p.name==='Reference Level').storageType='String',
+  wrongDetailName:f=>f.parameters.items[0].parameterDetails.find((p:any)=>p.name==='Reference Level').valueString='L3',
+  wrongDetailId:f=>f.parameters.items[0].parameterDetails.find((p:any)=>p.name==='Reference Level').value='0',
+  inconsistentAcrossDucts:f=>{const p=f.parameters.items[1];p.parameters['Reference Level']='99';p.parameterDetails.find((p:any)=>p.name==='Reference Level').value='99';},
+  disconnected:f=>f.connectors.results[0].connectors[0].physicalConnectedTo=[],
+  differentSize:f=>f.input.body.diameter='8 in',
+  cannotClaimWholeConnectedSystem:f=>f.input.body.requireExistingEndpointConnections=true,
+ };
+ for(const [name,change]of Object.entries(changes)){const f=structuredClone(fixture);change(f);assert.equal(matches(f),false,name);}
+});
 test('source-derived branch geometry with synthetic intent and native apply identities; not live qualification',()=>{
 const base='test/fixtures/';
 const {proof}=JSON.parse(fs.readFileSync(base+'c44-polyline-source-geometry.json','utf8'));

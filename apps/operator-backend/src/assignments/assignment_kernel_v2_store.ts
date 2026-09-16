@@ -1,13 +1,12 @@
+import { createContentVerifiedJournalV2 } from './content_verified_journal_v2.js';
 import { createContentVerifiedProjection } from "../goals/content_verified_projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
-  AssignmentJournalV2,
   AssignmentKernelErrorV2,
   canonicalJsonV2,
-  reduceAssignmentEventsV2,
   type AssignmentEventV2,
   type AssignmentSnapshotV2,
   type AssignmentSpecV2
@@ -174,6 +173,18 @@ function eventDigest(event: AssignmentEventV2): string {
   return createHash("sha256").update(canonicalJsonV2(event), "utf8").digest("hex");
 }
 
+const journalProjection = createContentVerifiedJournalV2();
+
+// mutateGoalRecord supplies a fresh private parse under the durable file lock.
+// Copy mutable arrays only; the reducer validates and clones retained events.
+function journalForMutation(value:unknown):AssignmentKernelJournalRecordV2 {
+  const source=value as Partial<AssignmentKernelJournalRecordV2>|null;
+  if(!source||source.schema!==ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA)return emptyJournal();
+  return {schema:ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA,
+    events:Array.isArray(source.events)?[...source.events]:[],
+    quarantined_events:Array.isArray(source.quarantined_events)?[...source.quarantined_events]:[]};
+}
+
 const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentSnapshotV2 | null>((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = (value as { assignment_kernel_v2?: unknown }).assignment_kernel_v2;
@@ -182,7 +193,7 @@ const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentS
   if (record.schema !== ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA || !Array.isArray(record.events)) return null;
   // The fresh parsed record is private to this projection. The pure reducer
   // validates and copies each event; do not clone the complete history twice.
-  return record.events.length > 0 ? reduceAssignmentEventsV2(record.events) : null;
+  return record.events.length > 0 ? journalProjection.open(record.events).snapshot() : null;
 });
 
 export function getAssignmentKernelSnapshotV2(goalId: string): AssignmentSnapshotV2 | null {
@@ -195,13 +206,13 @@ export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentE
   let quarantinedReasonCode: string | null = null;
   let acceptedSnapshot: AssignmentSnapshotV2 | null = null;
   const goal = mutateGoalRecord(goalId, current => {
-    const record = normalizeAssignmentKernelJournalV2(current.assignment_kernel_v2);
+    const record = journalForMutation(current.assignment_kernel_v2);
     const existing = [...record.events, ...record.quarantined_events.map(item => item.event)].find(candidate => candidate.event_id === event.event_id);
     if (existing) {
       accepted = record.events.some(candidate => candidate.event_id === event.event_id) && eventDigest(existing) === eventDigest(event);
       const conflictReasonCode = "assignment_event_id_conflict";
       quarantinedReasonCode = accepted ? null : conflictReasonCode;
-      acceptedSnapshot = record.events.length > 0 ? new AssignmentJournalV2(record.events).snapshot() : null;
+      acceptedSnapshot = record.events.length > 0 ? journalProjection.open(record.events).snapshot() : null;
       if (accepted) return current;
       record.quarantined_events.push({
         event: structuredClone(event),
@@ -212,7 +223,7 @@ export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentE
       return { ...current, assignment_kernel_v2: record };
     }
     try {
-      const journal = new AssignmentJournalV2(record.events);
+      const journal = journalProjection.open(record.events);
       acceptedSnapshot = journal.append(event);
       record.events.push(structuredClone(event));
       accepted = true;
@@ -226,7 +237,7 @@ export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentE
         reason: error instanceof Error ? error.message : String(error),
         quarantined_at: new Date().toISOString()
       });
-      acceptedSnapshot = record.events.length > 0 ? new AssignmentJournalV2(record.events).snapshot() : null;
+      acceptedSnapshot = record.events.length > 0 ? journalProjection.open(record.events).snapshot() : null;
       return { ...current, assignment_kernel_v2: record };
     }
   });
@@ -264,8 +275,8 @@ export function appendCurrentAssignmentKernelEventV2(input: Readonly<{
   let quarantinedReasonCode: string | null = null;
   let acceptedSnapshot: AssignmentSnapshotV2 | null = null;
   const goal = mutateGoalRecord(input.goal_id, current => {
-    const record = normalizeAssignmentKernelJournalV2(current.assignment_kernel_v2);
-    const journal = new AssignmentJournalV2(record.events);
+    const record = journalForMutation(current.assignment_kernel_v2);
+    const journal = journalProjection.open(record.events);
     const snapshot = record.events.length > 0 ? journal.snapshot() : null;
     if (!snapshot) throw new Error("assignment_kernel_v2_not_created");
     const existing = [...record.events, ...record.quarantined_events.map(item => item.event)]

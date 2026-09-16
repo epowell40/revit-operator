@@ -261,7 +261,9 @@ function writeJson(filePath: string, value: unknown): void {
   let handle: number | null = null;
   try {
     handle = fs.openSync(tempPath, "wx");
-    fs.writeFileSync(handle, JSON.stringify(value, null, 2) + "\n", "utf8");
+    // Machine-owned journals can contain large native observations. Whitespace
+    // must not multiply their disk/write cost; atomic durability stays identical.
+    fs.writeFileSync(handle, JSON.stringify(value) + "\n", "utf8");
     fs.fsyncSync(handle);
     fs.closeSync(handle);
     handle = null;

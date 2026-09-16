@@ -23,9 +23,9 @@ namespace RevitBridge.Common
         public void MarkStarted() => Interlocked.Exchange(ref _started, 1);
         public string Describe() => $"id={Id} source={Source} state={(Volatile.Read(ref _started) == 0 ? "pending" : "started")} elapsed_ms={_elapsed.ElapsedMilliseconds}";
 
-        public static void Write(Action<string>? sink, string phase, OperatorRevitQueueDiagnostic? request, OperatorRevitQueueDiagnostic? owner = null)
+        public static void Write(Action<string>? sink, string phase, OperatorRevitQueueDiagnostic? request, OperatorRevitQueueDiagnostic? owner = null, string? idle = null)
         {
-            try { sink?.Invoke($"Revit queue {phase}: {request?.Describe() ?? "request=unknown"}; owner=({owner?.Describe() ?? "none"})"); }
+            try { sink?.Invoke($"Revit queue {phase}: {request?.Describe() ?? "request=unknown"}; owner=({owner?.Describe() ?? "none"})" + (idle == null ? "" : "; " + idle)); }
             catch { /* Logging must not change the execution result or slot ownership. */ }
         }
     }

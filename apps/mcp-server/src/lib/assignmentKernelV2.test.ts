@@ -1788,3 +1788,17 @@ test("visibility settlement distinguishes pretransaction rejection, commit, and 
     assert.deepEqual(result.affected_target_identities, effect === "applied" ? ["element_id:1363433"] : []);
   }
 });
+
+
+test('C44 exact inventory preflight carries useful nested constraints through MCP settlement',async()=>{
+ const {preflightKnownGenericToolBody,mcpPreDispatchFailureResult}=await import('./genericToolPreflight.js');
+ const f=JSON.parse(readFileSync('src/lib/fixtures/c44-inventory-limit.json','utf8'));
+ const failure=preflightKnownGenericToolBody(f.contract,f.request.body)!;
+ const decorated:any=await runWithAssignmentKernelV2(meta('read','work',f.request),async()=>
+  decorateAssignmentKernelMcpResultV2(mcpPreDispatchFailureResult(failure),'revit_call_tool'));
+ const result=decorated.structuredContent.operation_result_v2;
+ assert.equal(result.status,'failed_before_dispatch');assert.equal(result.persistent_effect,'none');
+ assert.equal(result.observation_required,false);
+ assert(result.input_schema_gap.issues.some((i:any)=>i.field_path==='body.limit'&&i.expected_constraint.maximum===2000));
+ assert.equal(decorated.structuredContent.observation,undefined);
+});

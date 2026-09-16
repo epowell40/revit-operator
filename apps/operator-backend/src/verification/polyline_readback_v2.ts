@@ -11,7 +11,9 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
  if(request.path!=='/revit/mep-route-workflow'||b.kind!=='duct'||b.apply!==true||b.verify===false
   ||b.routingMode!=='polyline'||typeof b.connectSegments!=='boolean'||typeof b.connectToExisting!=='boolean'
   ||typeof b.requireExistingEndpointConnections!=='boolean'||b.requireExistingEndpointConnections&&!b.connectToExisting
-  ||b.sizePolicy!=='explicit_required'||b.elevationPolicy!=='explicit_required'||!id(b.levelId)
+  ||b.sizePolicy!=='explicit_required'||b.elevationPolicy!=='explicit_required'
+  ||(b.levelId===undefined?typeof b.levelName!=='string'||!b.levelName.trim():!id(b.levelId))
+  ||(b.levelName!==undefined&&(typeof b.levelName!=='string'||!b.levelName.trim()))
   ||(b.ductTypeId===undefined?typeof b.ductType!=='string'||!b.ductType.trim():!id(b.ductTypeId))
   ||Object.keys(b).some(k=>!allowed.has(k))||!Array.isArray(b.points)||b.points.length<2||b.points.length>65
   ||!['round','rectangular'].includes(b.ductShape))return false;
@@ -39,13 +41,18 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
  if(c.totalScannedConnectorCount!==2*owners.length
   ||c.openPhysicalConnectorCount!==c.results.reduce((s:number,r:Row)=>s+r.openPhysicalConnectorCount,0)
   ||c.physicallyConnectedConnectorCount!==2*owners.length-c.openPhysicalConnectorCount)return false;
+ let resolvedLevelId:number|undefined=b.levelId;
  for(let i=0;i<segmentIds.length;i++){
   const pr=p.items.find((r:Row)=>r.id===segmentIds[i]),cr=c.results.find((r:Row)=>r.id===segmentIds[i]),values=row(pr.parameters),profile=profiles[i]!;
-  if(pr.error||!id(cr.typeId)||b.ductTypeId!==undefined&&cr.typeId!==b.ductTypeId||b.ductType!==undefined&&cr.typeName!==b.ductType
-   ||!near(values['Reference Level'],b.levelId)||values['System Classification']!==b.systemType
-   ||(profile.diameter_ft!==null?!near(values.Diameter,profile.diameter_ft):!near(values.Width,profile.width_ft!)||!near(values.Height,profile.height_ft!)))return false;
+  // A name is resolved only by independent native ElementId parameter detail,
+  // consistently across every duct. The apply response is not level evidence.
   if(b.levelName!==undefined){const levels=Array.isArray(pr.parameterDetails)?pr.parameterDetails.filter((x:Row)=>x.name==='Reference Level'):[];
-   if(levels.length!==1||levels[0].storageType!=='ElementId'||!near(levels[0].value,b.levelId)||levels[0].valueString!==b.levelName)return false;}
+   if(levels.length!==1||levels[0].storageType!=='ElementId'||!id(Number(levels[0].value))||levels[0].valueString!==b.levelName)return false;
+   resolvedLevelId??=Number(levels[0].value);
+   if(!near(levels[0].value,resolvedLevelId))return false;}
+  if(pr.error||!id(cr.typeId)||b.ductTypeId!==undefined&&cr.typeId!==b.ductTypeId||b.ductType!==undefined&&cr.typeName!==b.ductType
+   ||resolvedLevelId===undefined||!near(values['Reference Level'],resolvedLevelId)||values['System Classification']!==b.systemType
+   ||(profile.diameter_ft!==null?!near(values.Diameter,profile.diameter_ft):!near(values.Width,profile.width_ft!)||!near(values.Height,profile.height_ft!)))return false;
  }
  if(p.items.some((x:Row)=>x.error))return false;
  return polylinePhysicalProof({points:points as number[][],segmentIds,fittingIds,system,rows:c.results,
