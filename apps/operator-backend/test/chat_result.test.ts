@@ -42,6 +42,7 @@ async function startBackend(t: { after: (fn: () => Promise<void>) => void }, ove
       ...process.env,
       OPERATOR_BACKEND_PORT: String(port),
       OPERATOR_TOKEN: token,
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0",
       OPERATOR_BRAIN: "rule",
       OPERATOR_MEMORY_AUTO_TURN_NOTES: "0",
       OPERATOR_WORKSPACE_ROOT: workspace,
