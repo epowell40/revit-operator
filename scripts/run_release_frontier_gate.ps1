@@ -79,7 +79,7 @@ function Invoke-Composition([string]$Root, [string]$Label) {
       & npm run build
       if ($LASTEXITCODE -ne 0) { return }
       $compiled = @($manifest.backend_tests | ForEach-Object { Join-Path "dist/test" ([string]$_).Replace(".ts", ".js") })
-      & node --test --test-concurrency=1 @compiled
+      & node scripts/run-tests.mjs @compiled
     } finally { Pop-Location }
   }
 

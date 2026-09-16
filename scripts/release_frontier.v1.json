@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "test_runner_isolation.test.ts",
     "revit_batch_service.test.ts",
     "assignment_status_projection.test.ts",
     "assistant_intake_http.test.ts",
@@ -211,6 +212,13 @@
     "OperatorWorkbookExportPathTests"
   ],
   "failure_families": [
+    {
+      "id": "workstation-provider-settings-leak-into-release-test-processes",
+      "coverage": [
+        "backend:test_runner_isolation.test.ts",
+        "backend:chat_stream_attachment_parity.test.ts"
+      ]
+    },
     {
       "id": "local-checkpoint-ribbon-selects-stale-installed-desktop-launcher",
       "coverage": [
