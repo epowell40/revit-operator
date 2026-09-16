@@ -1,6 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeGeneralRevitFixturePreconditionCoverage } from "../src/benchmark/general_revit_fixture_preconditions.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { backendRoot } from "../src/benchmark/files.js";
+import { loadGeneralRevitCapabilityCorpus } from "../src/benchmark/general_revit_capability_acceptance.js";
+import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
+import { sha256File } from "../src/benchmark/protocol_v2_hash.js";
+import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../src/benchmark/general_revit_fixture_preconditions.js";
+
+test("realistic Electrical cases start in the live-qualified power plan instead of the HVAC-only L4 name", () => {
+  const corpus = loadGeneralRevitCapabilityCorpus(path.join(backendRoot(), "benchmark/general-agent/revit-capability-acceptance.v2.json"));
+  const fixtures = loadGeneralRevitSampleFixtures(corpus.cases);
+  const electrical = corpus.cases.filter(entry => generalRevitFixtureForCase(fixtures, entry.case_id) === "snowdon_electrical");
+  assert.equal(electrical.length, 9);
+  for (const entry of electrical) {
+    assert.deepEqual(entry.fixture_precondition?.active_view, { name: "L4 - Power", view_type: "FloorPlan" }, entry.case_id);
+    assert.equal(entry.fixture_precondition?.clear_selection, true, entry.case_id);
+  }
+});
+
+test("per-case fixture verification detects an explicitly saved mutation and a missing frozen digest", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-fixture-bytes-"));
+  const fixture = path.join(root, "sample.rvt");
+  fs.writeFileSync(fixture, "pristine fixture test bytes");
+  const digest = sha256File(fixture);
+  assert.doesNotThrow(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", digest));
+  assert.doesNotThrow(() => assertGeneralRevitFixtureBytes("unused", fixture, digest));
+  assert.throws(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", ""), /Fixture bytes changed/);
+  fs.writeFileSync(fixture, "an earlier task explicitly saved an edit");
+  assert.throws(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", digest), /Fixture bytes changed/);
+});
 
 test("fixture precondition coverage requires a successful exact receipt for every selected precondition", () => {
   const coverage = summarizeGeneralRevitFixturePreconditionCoverage([

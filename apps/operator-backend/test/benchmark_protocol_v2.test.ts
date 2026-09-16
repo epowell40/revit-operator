@@ -696,6 +696,24 @@ test("canonical attempt effect accessor is backward compatible but rejects confl
   assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "unknown" }), null);
 });
 
+function addModeledInstructionAcknowledgement(trace: JsonRecord, draft: BenchmarkRunEnvelopeDraftV2): void {
+  trace.context_supplied = { ...trace.context_supplied as JsonRecord, session_id: "modeled-session" };
+  trace.model_call_receipts = [{ response_id: "response-1", turn_id: "modeled-turn",
+    session_id: "modeled-session", message_id: "modeled-message", thread_id: "modeled-thread" }];
+  trace.host_instruction_turns_complete = true;
+  trace.host_instruction_turns = [{ session_id: "modeled-session", message_id: "modeled-message",
+    thread_id: "modeled-thread", turn_id: "modeled-turn", host_instruction_binding: {
+      schema: "revit-operator.host-supplied-instructions/v1", source: "host_supplied_acknowledged",
+      prompt_sha256: draft.instruction_bundle_hashes.prompt_sha256,
+      system_instruction_sha256: draft.instruction_bundle_hashes.system_instruction_sha256,
+      benchmark_runtime: { schema: "revit-operator.benchmark-instruction-runtime/v1", configured: true,
+        backend_instance_id: "12345678-1234-1234-1234-123456789abc", process_id: 42,
+        envelope_sha256: sha256Value(draft), run_id: draft.identity.run_id,
+        prompt_sha256: draft.instruction_bundle_hashes.prompt_sha256,
+        system_instruction_sha256: draft.instruction_bundle_hashes.system_instruction_sha256 }
+    } }];
+}
+
 test("Protocol V2 accepts an exact-bound valid failure packet as measurable but non-promotable truth", () => {
   const testCase = benchmarkCase();
   const attempt = canonicalAttempt({
@@ -703,6 +721,7 @@ test("Protocol V2 accepts an exact-bound valid failure packet as measurable but 
     evidence_refs: ["evidence:unknown-effect"]
   });
   const trace = traceFor(testCase, { attempts: [attempt] });
+  addModeledInstructionAcknowledgement(trace, envelopeDraft(testCase));
   const projection = assignmentProjection([attempt], "canceled");
   const toolResults = trace.tool_results as JsonRecord;
   toolResults.durable_assignment_projection = projection;
@@ -748,6 +767,7 @@ test("Protocol V2 preserves typed failure artifacts and a timeout with recovered
       model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
       task_traces: [traceFor(testCase)]
     };
+    addModeledInstructionAcknowledgement(legacy.task_traces[0], draft);
     mutate(legacy, draft);
     const draftPath = path.join(tmp, "draft.json");
     const legacyPath = path.join(tmp, "legacy.json");
@@ -1017,6 +1037,8 @@ test("rescore writes a new immutable artifact, preserves source/original judgmen
     })
   });
   assert.equal(artifact.verdict_changes.length, 1);
+  assert.equal(artifact.source_qualification?.runtime_score_is_provisional, true);
+  assert.equal(artifact.source_qualification?.release_readiness, "not_assessed");
   validateBenchmarkProtocolV2Contract("rescore", artifact);
   assert.deepEqual(artifact.cases[0]!.original_evaluator_verdict, caseResult.original_evaluator_verdict);
   writeBenchmarkRescoreV2(path.join(tmp, "rescore.json"), artifact);
@@ -1044,6 +1066,8 @@ test("exact rerun comparison permits release revisions to change but rejects cas
   const secondPath = path.join(tmp, "second.json");
   writeBenchmarkRawReportV2(secondPath, buildBenchmarkRawReportV2(secondEnvelope, [secondCase], secondFinish));
   const comparison = compareBenchmarkExactRerunsV2(firstPath, secondPath);
+  assert.equal(comparison.qualification.baseline.delivery_and_collateral_accepted, false);
+  assert.equal(comparison.qualification.candidate.runtime_score_is_provisional, true);
   assert.deepEqual(comparison.envelope_changes.sort(), ["installed_release_identity", "private_source_revision", "public_source_revision"].sort());
   const drifted = structuredClone(secondDraft);
   drifted.corpus.case_hashes[testCase.case_id] = "e".repeat(64);
@@ -1109,4 +1133,155 @@ test("external hidden holdout stays external and exposes only a redacted descrip
 test("case-driven repair cohorts require three neighbors, a negative, and an unrelated regression", () => {
   validateBenchmarkRepairCohortV2({ repair_id: "repair-1", original_case_id: "original", neighboring_case_ids: ["n1", "n2", "n3"], negative_case_id: "negative", unrelated_regression_case_id: "unrelated" });
   assert.throws(() => validateBenchmarkRepairCohortV2({ repair_id: "repair-1", original_case_id: "original", neighboring_case_ids: ["n1", "n2"], negative_case_id: "negative", unrelated_regression_case_id: "unrelated" }), /three/);
+});
+import { buildGeneralRevitAcceptanceReviewPacket } from "../src/benchmark/general_revit_acceptance_review.js";
+import { attachBenchmarkIndependentReviewV2, benchmarkQualificationV2 } from "../src/benchmark/protocol_v2_qualification.js";
+import { readBenchmarkRawReportV2, benchmarkProtocolV2Markdown } from "../src/benchmark/protocol_v2_report.js";
+
+test("raw writer/consumer preserve pending and unverified collateral despite runtime success", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "raw-review-"));
+  const testCase = benchmarkCase({ acceptance_review: { delivery_criteria: ["Target changed"], collateral_criteria: ["No unexplained collateral"], intentional_missing_information: [] } });
+  const trace = traceFor(testCase);
+  const envelope = finalizeBenchmarkRunEnvelopeV2(envelopeDraft(testCase), [{ route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium", call_count: 1 }], FINISH);
+  const result = buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase, trace, rawTraceRef: "trace#1", judgedAt: FINISH });
+  const original = buildGeneralRevitAcceptanceReviewPacket("run-v2", [testCase], [trace])!;
+  const source = buildBenchmarkRawReportV2(envelope, [result], FINISH, { original, reviewed: original });
+  const target = path.join(tmp, "pending.json");
+  writeBenchmarkRawReportV2(target, source);
+  const before = fs.readFileSync(target, "utf8");
+  const read = readBenchmarkRawReportV2(target);
+  assert.equal(read.qualification?.independent_review_status, "pending_independent_review");
+  assert.equal(read.qualification?.delivery_and_collateral_accepted, false);
+  assert.match(benchmarkProtocolV2Markdown(read), /Runtime score provisional: \*\*true\*\*/);
+  assert.doesNotMatch(benchmarkProtocolV2Markdown(read), /Release blocked/);
+  const reviewed = structuredClone(original), row = reviewed.cases[0]!;
+  row.outcome = "unverified"; row.explanation = "Collateral unexplained"; row.evidence_refs = ["ui.png"];
+  row.delivery[0] = { ...row.delivery[0]!, status: "pass", explanation: "Target readback", evidence_refs: ["target.json"] };
+  row.collateral[0]!.status = "unverifiable";
+  const unresolved = attachBenchmarkIndependentReviewV2(source, { original, reviewed });
+  assert.equal(unresolved.qualification?.independent_review_status, "independently_reviewed");
+  assert.equal(unresolved.qualification?.delivery_and_collateral_accepted, false);
+  writeBenchmarkRawReportV2(path.join(tmp, "unverified.json"), unresolved);
+  assert.equal(readBenchmarkRawReportV2(path.join(tmp, "unverified.json")).qualification?.delivery_and_collateral_accepted, false);
+  row.outcome = "delivered";
+  assert.throws(() => attachBenchmarkIndependentReviewV2(source, { original, reviewed }), /incomplete or failed criteria/);
+  row.collateral[0] = { ...row.collateral[0]!, status: "pass", explanation: "All changes reconciled", evidence_refs: ["changes.json"] };
+  const accepted = attachBenchmarkIndependentReviewV2(source, { original, reviewed });
+  assert.equal(accepted.qualification?.delivery_and_collateral_accepted, true);
+  assert.equal(accepted.qualification?.release_readiness, "not_assessed");
+  assert.deepEqual(accepted.cases, source.cases);
+  assert.equal(fs.readFileSync(target, "utf8"), before);
+  const changed = structuredClone(reviewed); changed.cases[0]!.raw_trace_sha256 = "f".repeat(64);
+  assert.throws(() => attachBenchmarkIndependentReviewV2(source, { original, reviewed: changed }), /identity/);
+  const { qualification: _q, independent_review: _r, report_sha256: _h, ...legacy } = source;
+  const historical = { ...legacy, report_sha256: sha256Value(legacy) };
+  fs.writeFileSync(path.join(tmp, "legacy.json"), JSON.stringify(historical));
+  assert.equal(benchmarkQualificationV2(readBenchmarkRawReportV2(path.join(tmp, "legacy.json"))).independent_review_status, "not_recorded");
+  const forged = { ...source, qualification: { ...source.qualification!, delivery_and_collateral_accepted: true } };
+  const { report_sha256: _old, ...unsigned } = forged; forged.report_sha256 = sha256Value(unsigned);
+  assert.throws(() => writeBenchmarkRawReportV2(path.join(tmp, "forged.json"), forged), /qualification disagrees/);
+});
+
+test("applied partial work with failed trusted verification cannot become first-pass verified", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase);
+  const subject = { operation_id: "write-1", requested_effect: "apply", purpose: "work", fulfillment_role: "primary_requested_effect",
+    persistent_effect: "applied", dispatch_state: "dispatched", target: { target_id: "id:7" },
+    verification_operation_ids: [] as string[], result: { status: "succeeded", authority: "native-host", receipt_id: "commit-1" } };
+  const failed = { operation_id: "verify-1", purpose: "verification", requested_effect: "read", persistent_effect: "none",
+    verification_of_operation_id: "write-1", result: { status: "failed_after_dispatch", error_code: "assignment_kernel_v2_trusted_verification_postcondition_not_satisfied" } };
+  const snapshot = { schema: "revit-operator.assignment-snapshot/v2", current_binding: { assignment_id: "a1" },
+    operations: { "write-1": subject, "verify-1": failed } as JsonRecord, outcome: "blocked", terminal: true, quiescent: true,
+    in_flight_operation_ids: [], unresolved_unknown_operation_ids: [], progress_epochs: [],
+    progress_blocker: { code: "reasoning_turn_budget_exhausted", gap_ids: ["verification:write-1"] } };
+  const results = trace.tool_results as JsonRecord;
+  delete results.raw_sidecar_response;
+  const storedEvaluation = (trace.verification_results as JsonRecord).evaluation as JsonRecord;
+  Object.assign(storedEvaluation, { tier: "verified", completed: true, verified: true, verification_basis: "canonical_target_readback" });
+  const projection = results.durable_assignment_projection as JsonRecord;
+  const assignments = projection.assignments as JsonRecord[];
+  assignments[0]!.assignment_snapshot_v2 = snapshot;
+  const build = () => buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase, trace, rawTraceRef: "trace#blocked", judgedAt: FINISH });
+  const blocked = build();
+  assert.equal(blocked.execution_truth.effect_state, "applied");
+  assert.equal(blocked.assignment_outcome, "blocked");
+  assert.equal(blocked.delivery_verdict, "verification_evidence_failure");
+  assert.equal(blocked.stages.find(stage => stage.stage === "postcondition_read_back")?.status, "fail");
+  assert.ok([blocked.primary_failure_cause, ...blocked.contributing_failure_causes].includes("verification_failure"));
+  assert.equal(summarizeBenchmarkLanesV2([blocked]).find(lane => lane.lane === "committed_apply")?.verified_committed_completion, 0);
+  const later = { operation_id: "verify-2", purpose: "verification", verification_of_operation_id: "write-1", result: { status: "succeeded" } };
+  snapshot.operations["verify-2"] = later;
+  assert.equal(build().delivery_verdict, "verification_evidence_failure", "unacknowledged generic read cannot repair a trusted failure");
+  subject.verification_operation_ids.push("verify-2");
+  assert.notEqual(build().delivery_verdict, "verification_evidence_failure", "acknowledged successful readback can resolve prior failure");
+  delete snapshot.operations["verify-1"];
+  delete snapshot.operations["verify-2"];
+  subject.verification_operation_ids.length = 0;
+  assert.equal(build().execution_truth.effect_state, "applied");
+  assert.notEqual(build().delivery_verdict, "verification_evidence_failure", "blocked for an unrelated reason must not erase valid partial work");
+});
+import { hasUnresolvedTrustedVerificationFailureV2 } from "../src/benchmark/trusted_verification_state.js";
+
+test("top evaluation shares unresolved-verifier state and later snapshots supersede failed history", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase);
+  const raw = (trace.tool_results as JsonRecord).raw_sidecar_response as JsonRecord;
+  const initial = evaluateGeneralRevitCapabilityAttempt(testCase, raw);
+  const subject = { operation_id: "apply", purpose: "work", persistent_effect: "applied", verification_operation_ids: [] as string[] };
+  const failure = { operation_id: "fail", purpose: "verification", verification_of_operation_id: "apply",
+    result: { status: "failed_after_dispatch", error_code: "assignment_kernel_v2_trusted_verification_postcondition_not_satisfied" } };
+  const before = { schema: "revit-operator.assignment-snapshot/v2", assignment_version: 1,
+    current_binding: { assignment_id: "a" }, operations: { apply: subject, fail: failure } };
+  const projection = raw.assignment_projection as JsonRecord;
+  const assignments = projection.assignments as JsonRecord[];
+  assignments[0]!.assignment_snapshot_v2 = before;
+  const failed = evaluateGeneralRevitCapabilityAttempt(testCase, raw);
+  assert.equal(failed.verified, false);
+  assert.equal(failed.completed, initial.completed, "retain independently represented completion/effect");
+  assert.equal(failed.verification_basis, "none");
+  assert.match(failed.summary, /canonical target-bound verification failed/);
+  const after = structuredClone(before) as JsonRecord;
+  after.assignment_version = 2;
+  const afterOperations = after.operations as JsonRecord;
+  (afterOperations.apply as JsonRecord).verification_operation_ids = ["recovered"];
+  afterOperations.recovered = { operation_id: "recovered", purpose: "verification", verification_of_operation_id: "apply", result: { status: "succeeded" } };
+  const toolResults = { durable_assignment_projection: { assignments: [{ assignment_snapshot_v2: before }, { assignment_snapshot_v2: after }] } };
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), false);
+  toolResults.durable_assignment_projection.assignments.reverse();
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), false, "arrival order cannot resurrect an older failure");
+  after.assignment_version = 1;
+  assert.equal(hasUnresolvedTrustedVerificationFailureV2(toolResults), true, "equal-version disagreement remains conservative");
+});
+
+test("no-progress discovery stop is planning failure, not an invented authorization denial", () => {
+  const testCase = benchmarkCase();
+  const trace = traceFor(testCase, { attempts: [], actionRows: [], assistant: "Blocked before changing the model." });
+  delete (trace.tool_results as JsonRecord).raw_sidecar_response;
+  const snapshot = { schema: "revit-operator.assignment-snapshot/v2", assignment_version: 1,
+    current_binding: { assignment_id: "discovery" }, operations: {},
+    terminal: true, quiescent: true, outcome: "blocked", progress_blocker: { code: "no_progress_budget_exhausted" } };
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: [{ assignment_snapshot_v2: snapshot }] };
+  const build = () => buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase,
+    trace, rawTraceRef: "trace.json", judgedAt: FINISH });
+  const stopped = build();
+  const causes = [stopped.primary_failure_cause, ...stopped.contributing_failure_causes];
+  assert.ok(causes.includes("planning_tool_selection_failure"));
+  assert.ok(!causes.includes("authorization_control_failure"));
+  assert.match(stopped.stages.find(stage => stage.stage === "plan_admissible")!.reason, /no_progress_budget_exhausted/);
+  const later = { ...snapshot, assignment_version: 2, outcome: "complete", progress_blocker: null };
+  const history = [{ assignment_snapshot_v2: snapshot }, { assignment_snapshot_v2: later }];
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: history };
+  for (const ordered of [history, [...history].reverse()]) {
+    (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: ordered };
+    assert.doesNotMatch(build().stages.find(stage => stage.stage === "plan_admissible")!.reason, /no_progress_budget_exhausted/);
+  }
+  (trace.tool_results as JsonRecord).durable_assignment_projection = { assignments: [{ assignment_snapshot_v2: snapshot }] };
+  const evaluation = (trace.verification_results as JsonRecord).evaluation as GeneralRevitEvaluation;
+  evaluation.completed = true;
+  evaluation.expected_path_observed = true;
+  assert.equal(build().stages.find(stage => stage.stage === "plan_admissible")!.status, "pass", "delivered work must not acquire a planning failure from an unrelated budget stop");
+  const deniedTrace = traceFor(testCase, { attempts: [canonicalAttempt({ admission: { state: "rejected" } })] });
+  const denied = buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase,
+    trace: deniedTrace, rawTraceRef: "trace.json", judgedAt: FINISH });
+  assert.ok([denied.primary_failure_cause, ...denied.contributing_failure_causes].includes("authorization_control_failure"));
 });

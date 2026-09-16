@@ -40,14 +40,14 @@ namespace RevitBridge.Logic.Handlers
             // Param values
             public double? min_diameter_in { get; set; }
             public double? min_sf { get; set; }
-            public string param_name { get; set; }
+            public string? param_name { get; set; }
             public double? min_val_ft { get; set; }
             public double? min_dist_in { get; set; }
             public double? max_dist_in { get; set; }
             public double? min_dim_ft { get; set; } // New property
             public double? clearance_depth_ft { get; set; }
             public double? clearance_width_ratio { get; set; }
-            public string direction { get; set; } // "foot", "head", "sides"
+            public string? direction { get; set; } // "foot", "head", "sides" for clearance_box
         }
 
         public class ComplianceReport

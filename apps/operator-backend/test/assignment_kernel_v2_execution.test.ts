@@ -3,6 +3,151 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { recoverRetainedAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
+import { completionOutboxKeyV2, readCompletionOutboxV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import type { NativeArtifactReceiptV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
+
+test("native supporting views discovery after registry survives journal reload as progress without completing an apply", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  let state = snapshot;
+  for (const route of ["/revit/tool-registry", "/revit/views"]) {
+    const before = state;
+    const lease = openAssignmentKernelOperationV2({ snapshot: state, controller_request_id: route, provider_turn_id: route,
+      capability_id: "revit_call_tool", classified_effect: "read", arguments: { method: "GET", path: route, body: null } });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const receipt = envelope(lease.operation_id, lease.binding, route.endsWith("views") ? { views: [{ id: 9948, name: "L2" }] } : { tools: [] });
+    receipt.structuredContent.observation.semantic_facts = [
+      { fact_id: "control.result_available", fact_class: "control", value: true },
+      { fact_id: "control.domain_succeeded", fact_class: "control", value: true }
+    ];
+    settleAssignmentKernelOperationV2(lease, receipt);
+    __testOnlyResetGoalListCache();
+    state = getAssignmentKernelSnapshotV2(goal.id)!;
+    const epoch = buildProgressEpochV2({ before, after: state, stated_gap_ids: deriveProgressGapsV2(before).map(gap => gap.gap_id), recorded_at: "2026-08-26T16:01:00.000Z" });
+    assert.equal(epoch.genuine_progress, true, route);
+    if (route.endsWith("views")) assert.deepEqual(epoch.new_fact_identities, []);
+    assert.ok(Object.values(state.observations).every(obs => obs.evidence_class === "control" && obs.eligible_criterion_ids?.length === 0));
+    state = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.notEqual(state.outcome, "complete");
+  }
+  assert.equal(Object.values(state.operations).filter(op => op.requested_effect === "apply").length, 0);
+}));
+
+function nativePdfReceipt(phase: "apply" | "preview" = "apply"): NativeArtifactReceiptV1 {
+  return { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase,
+    status: phase === "apply" ? "complete" : "not_started", expected_output_paths: ["C:/fixture/M000.pdf"], expected_export_calls: 1,
+    export_calls: phase === "apply" ? [true] : [],
+    outputs: phase === "apply" ? [{ path: "C:/fixture/M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] : [] };
+}
+
+test("native PDF file effect survives restart and requires exact independent file readback", () => {
+  for (const route of ["/revit/export-pdf", "/revit/print"] as const)
+  for (const variant of ["exact", "wrong_path", "wrong_hash", "wrong_size", "missing", "unreadable", "incomplete", "echo", "duplicate"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply"), receipt = nativePdfReceipt();
+    Object.assign(receipt, { path: route, ...(route === "/revit/print" ? { print_settings_restored: true } : {}) });
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-export", provider_turn_id: "export-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply",
+      arguments: { method: "POST", path: route, body: { viewIds: [1420963], dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { ok: true, status: "Success", artifact_receipt: receipt }, "applied");
+    Object.assign(commit.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+      result_schema_id: `operator-native/POST:${route}/v2`, affected_target_identities: ["artifact_path:C:/fixture/M000.pdf"] });
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    const persisted = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(persisted.operations[apply.operation_id]!.persistent_effect, "applied");
+    assert.equal(persisted.operations[apply.operation_id]!.result!.native_transaction_state, "not_applicable");
+    assert.notEqual(persisted.outcome, "complete");
+    let ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert(Object.values(ready.criteria).every(c => c.status === "pass"));
+    for (const [tool, purpose, args] of [
+      ["revit_search_tools", "discovery", { query: "verify exported PDF file", max: 5, includeSchemas: true }],
+      ["operator_retrieve_evidence", "evidence_read", { evidenceId: "retained-export", fields: ["payload.artifact_receipt"] }]
+    ] as const) {
+      const helper = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: tool, provider_turn_id: "inspect-turn",
+        capability_id: tool, classified_effect: purpose, arguments: args });
+      const operation = getAssignmentKernelSnapshotV2(goal.id)!.operations[helper.operation_id]!;
+      assert.deepEqual(operation.resolves_gap_ids, [`verification:${apply.operation_id}`]);
+      assert.deepEqual(operation.eligible_criterion_ids, []);
+      assert.equal(operation.verification_of_operation_id, undefined);
+      markAssignmentKernelOperationDispatchStartedV2(helper);
+      settleAssignmentKernelOperationV2(helper, envelope(helper.operation_id, helper.binding, { ok: true, files: receipt.outputs }));
+      ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+      assert.equal(ready.outcome, "active", "lookup or rereading an export receipt cannot verify its postcondition");
+      assert.equal(ready.operations[apply.operation_id]!.verification_operation_ids.length, 0);
+      assert.throws(() => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: tool + "-repeat",
+        provider_turn_id: "inspect-turn", capability_id: tool, classified_effect: purpose, arguments: args }), /equivalent/);
+    }
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "pdf-inspect", provider_turn_id: "inspect-turn",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["artifact_path:C:/fixture/M000.pdf"],
+      arguments: { method: "POST", path: "/revit/inspect-exported-files", body: { paths: ["C:/fixture/M000.pdf"] } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const file = { path: variant === "wrong_path" ? "C:/fixture/other.pdf" : "C:/fixture/M000.pdf",
+      size_bytes: variant === "wrong_size" ? 9 : 8251486, sha256: (variant === "wrong_hash" ? "b" : "a").repeat(64),
+      exists: variant !== "missing", readable: variant !== "unreadable" };
+    const payload: any = { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: variant !== "incomplete",
+      requestedPaths: ["C:/fixture/M000.pdf"], files: variant === "duplicate" ? [file, file] : [file] };
+    const verificationPayload = variant === "echo" ? { request: payload } : payload;
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, verificationPayload));
+    assert.equal(settled.observation!.facts.some(f => f.fact_id === "verification.postcondition_satisfied" && f.value === true), variant === "exact");
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+    assert.equal(Object.values(final.operations).filter(o => o.requested_effect === "apply").length, 1);
+    __testOnlyResetGoalListCache(); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), final);
+  });
+});
+
+test("artifact settlement rejects a missing or contradictory native payload receipt before journaling", () => {
+  for (const variant of ["missing", "different_digest", "different_path"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply"), receipt = nativePdfReceipt();
+    const operation = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-mismatch", provider_turn_id: "export-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply",
+      arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(operation);
+    const rawReceipt = JSON.parse(JSON.stringify(receipt));
+    if (variant === "different_digest") rawReceipt.outputs[0]!.sha256 = "b".repeat(64);
+    if (variant === "different_path") rawReceipt.expected_output_paths[0] = "C:/fixture/other.pdf";
+    const result = envelope(operation.operation_id, operation.binding,
+      variant === "missing" ? { ok: true } : { ok: true, artifact_receipt: rawReceipt }, "applied");
+    Object.assign(result.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+      result_schema_id: "operator-native/POST:/revit/export-pdf/v2" });
+    assert.throws(() => settleAssignmentKernelOperationV2(operation, result), /artifact_receipt_payload_mismatch/);
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.operations[operation.operation_id]!.result, undefined);
+    appendCurrentAssignmentKernelEventV2({ goal_id: goal.id, binding: operation.binding,
+      event_id: "native-dispatch-for-artifact-replay", actor: "mcp-client", occurred_at: "2026-08-26T16:00:04.000Z",
+      body: { event_type: "native_dispatch_recorded", operation_id: operation.operation_id }
+    });
+    assert.throws(() => appendCurrentAssignmentKernelEventV2({ goal_id: goal.id, binding: operation.binding,
+      event_id: "mismatched-artifact-direct-replay", actor: "mcp-client", occurred_at: "2026-08-26T16:00:05.000Z",
+      body: { event_type: "operation_result_recorded", result: result.structuredContent.operation_result_v2,
+        observation_commit: { schema: "revit-operator.observation-commit-input/v2", result_id: result.structuredContent.operation_result_v2.result_id,
+          raw_payload: result.structuredContent.observation.raw_payload, semantic_facts: [] } }
+    }), /artifact_receipt_payload_mismatch/);
+  });
+});
+
+test("native artifact preview is admitted without a fabricated Revit rollback", () => workspace(() => {
+  const { snapshot } = setup("preview"), receipt = nativePdfReceipt("preview");
+  const operation = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-preview", provider_turn_id: "preview-turn",
+    capability_id: "revit_call_tool", classified_effect: "preview",
+    arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: true } } });
+  markAssignmentKernelOperationDispatchStartedV2(operation);
+  const result = envelope(operation.operation_id, operation.binding, { ok: true, dryRun: true, artifact_receipt: receipt });
+  Object.assign(result.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+    result_schema_id: "operator-native/POST:/revit/export-pdf/v2" });
+  result.structuredContent.observation.semantic_facts = [
+    { fact_id: "task.result_available", fact_class: "domain", value: true },
+    { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+    { fact_id: "artifact.planned_output_count", fact_class: "domain", value: 1 }
+  ];
+  const settled = settleAssignmentKernelOperationV2(operation, result);
+  assert.equal(settled.snapshot.operations[operation.operation_id]!.persistent_effect, "none");
+  assert.equal(settled.snapshot.operations[operation.operation_id]!.result!.native_transaction_state, "not_applicable");
+  assert.equal(advanceAssignmentKernelProgressV2({ binding: operation.binding }).snapshot.outcome, "complete");
+}));
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
@@ -25,9 +170,14 @@ import {
 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
 import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { assembleBoundedEvidenceContext } from "../src/evidence/model_context_budget.js";
+import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dynamic_result_adapter.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal, transitionGoal } from "../src/goals/service.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "../src/assignments/model_call_budget.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
+import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
+import { renderVerifiedWorkPacketMarkdown } from "../src/work_packets/renderer.js";
+import { settleAssignmentKernelExecutionFailureV2 } from "../src/assignments/assignment_kernel_v2_execution_failure.js";
 import {
   assignmentKernelV2ModelReceiptObserver,
   createAssignmentKernelV2ModelReceiptRecorder,
@@ -44,6 +194,7 @@ import {
   recordAssignmentProgressEpochV2
 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { openDuctPostconditionSatisfiedV2 } from "../src/verification/open_duct_postcondition_v2.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -124,6 +275,73 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
   };
 }
 
+for (const route of ["/revit/mep-route-workflow", "/revit/create-duct"]) test(route + " open duct needs fresh parameter and connector readback before canonical completion", () => workspace(() => {
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c35-open-duct-readback.json","utf8"));
+  if(route==="/revit/create-duct"){const b=f.input.body; f.input={method:"POST",path:route,body:{startPoint:b.points[0],endPoint:b.points[1],levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,dryRun:false}};}
+  const {goal,snapshot}=setup("apply");
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:"c35-route",provider_turn_id:"route-turn",
+    capability_id:"revit_call_tool",classified_effect:"apply",arguments:f.input,opened_at:"2026-09-15T20:00:00.000Z"});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const applied=envelope(apply.operation_id,apply.binding,{status:"AppliedVisualVerificationReady",createdElementIds:[1542919]},"applied");
+  Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${route}/v2`,affected_target_identities:f.affected,completed_at:"2026-09-15T20:00:01.000Z"});
+  settleAssignmentKernelOperationV2(apply,applied);
+  prepareCodexAssignmentProgressV2(apply.binding);
+  const read=(name:string,path:string,payload:unknown,time:string) => {
+    const lease=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,controller_request_id:name,
+      provider_turn_id:"verify-turn",capability_id:"revit_call_tool",classified_effect:"read",
+      target_tokens:["id:1542919"],
+      arguments:{method:"POST",path,body:{elementIds:[1542919],includeAllRefs:true}},opened_at:time});
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const result=envelope(lease.operation_id,lease.binding,payload);
+    Object.assign(result.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${path}/v2`,completed_at:time});
+    return settleAssignmentKernelOperationV2(lease,result).snapshot;
+  };
+  const parameters=read("parameters","/revit/get-parameters",f.parameters,"2026-09-15T20:00:02.000Z");
+  assert.equal(parameters.terminal,false);
+  assert(deriveProgressGapsV2(parameters).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  const guidance=prepareCodexAssignmentProgressV2(parameters.current_binding).prompt;
+  assert.match(guidance,/get-connectors/);
+  const verified=read("connectors","/revit/get-connectors",f.connectors,"2026-09-15T20:00:03.000Z");
+  assert(!deriveProgressGapsV2(verified).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  assert(Object.values(verified.observations).some(o=>o.facts.some(fact=>fact.fact_id==="verification.postcondition_satisfied"&&fact.value===true)));
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id),verified);
+  const subject=verified.operations[apply.operation_id]!;
+  const finalRead=Object.values(verified.operations).find(op=>op.request_identity?.path==="/revit/get-connectors")!.result!;
+  assert.equal(openDuctPostconditionSatisfiedV2(verified,subject,finalRead,f.connectors),true);
+  for(const [name,change] of [
+    ["foreign read",(s:any,a:any,r:any)=>r.binding={...r.binding,assignment_id:"other"}],
+    ["unknown edit",(s:any,a:any)=>a.persistent_effect="unknown"],
+    ["model read",(s:any,a:any,r:any)=>r.authority="dynamic-runtime"],
+    ["wrong payload hash",(s:any,a:any,r:any)=>r.raw_payload_hash="0".repeat(64)],
+    ["read before edit",(s:any,a:any,r:any)=>r.completed_at="2020-01-01T00:00:00Z"],
+    ["corrupt retained hash",(s:any)=>{const op=Object.values(s.operations).find((op:any)=>op.request_identity?.path==="/revit/get-parameters") as any; s.observations[op.observation_ids[0]].raw_payload_hash="0".repeat(64);}],
+    ["intervening edit",(s:any,a:any)=>s.operations.other={...a,operation_id:"other"}]
+  ] as Array<[string,(s:any,a:any,r:any)=>void]>) {
+    const s=structuredClone(verified), a=s.operations[apply.operation_id]!, r=structuredClone(finalRead);
+    change(s,a,r);assert.equal(openDuctPostconditionSatisfiedV2(s,a,r,f.connectors),false,name);
+  }
+}));
+
+test("plan-only preview settles without invented rollback and permits the authorized apply", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  const args = { method: "POST", path: "/revit/create-view", body: { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName: "L2", dryRun: true } };
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "plan-only", provider_turn_id: "turn-plan",
+    capability_id: "revit_call_tool", classified_effect: "preview", arguments: args });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const result = envelope(lease.operation_id, lease.binding, { status: "Dry Run", previewExecuted: false, plan: { name: args.body.name } });
+  Object.assign(result.structuredContent.operation_result_v2, { status: "failed_after_dispatch", error_code: "native_preview_execution_unproven",
+    result_schema_id: "operator-native/POST:/revit/create-view/v2" });
+  result.structuredContent.observation.semantic_facts = [];
+  settleAssignmentKernelOperationV2(lease, result);
+  __testOnlyResetGoalListCache();
+  const retained = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(retained.operations[lease.operation_id]!.result!.native_transaction_state, "not_applicable");
+  assert.equal(retained.operations[lease.operation_id]!.persistent_effect, "none");
+  assert.notEqual(retained.outcome, "complete");
+  assert.doesNotThrow(() => openAssignmentKernelOperationV2({ snapshot: retained, controller_request_id: "real-edit", provider_turn_id: "turn-edit",
+    capability_id: "revit_call_tool", classified_effect: "apply", arguments: { ...args, body: { ...args.body, dryRun: false } } }));
+}));
+
 test("V2 operation identity survives admission, MCP acceptance, native result, evidence, and restart", () => workspace(() => {
   const { goal, snapshot } = setup();
   const lease = openAssignmentKernelOperationV2({
@@ -191,7 +409,64 @@ test("duplicate native delivery is idempotent and does not create a second opera
   assert.deepEqual(second.snapshot, first.snapshot);
   assert.equal(Object.keys(second.snapshot.operations).length, 1);
   assert.equal(Object.keys(second.snapshot.observations).length, 1);
+  assert.deepEqual(second.evidence_refs, first.evidence_refs);
+  assert.deepEqual(second.evidence_projections, first.evidence_projections);
 }));
+
+test("settled native delivery after reload reaches the bounded model adapter without replaying work", () => {
+  for (const large of [false, true]) workspace(() => {
+    const { snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duplicate-budget", provider_turn_id: "turn-budget",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const payload = large ? { items: Array.from({length: 1000}, (_, id) => ({id, name: `Room ${id}`, description: "x".repeat(120)})) }
+      : { sheetNumber: "M206", export: { path: "artifacts/captures/titleblock.png" } };
+    const raw = envelope(lease.operation_id, lease.binding, payload);
+    raw.content[0]!.text = JSON.stringify(payload);
+    const first = settleAssignmentKernelOperationV2(lease, raw);
+    __testOnlyResetGoalListCache();
+    const second = settleAssignmentKernelOperationV2(lease, raw, {storeEvidence() { throw Error("Settled delivery must never store or dispatch again"); }});
+    assert.deepEqual(second.snapshot, first.snapshot);
+    assert.deepEqual(second.evidence_refs, first.evidence_refs);
+    const bounded = assembleBoundedEvidenceContext({ projections: [...second.evidence_projections], ...lease.binding });
+    const response = adaptMcpToolCallResultToDynamicResponse(raw, {tool: "inventory.read", projections: bounded.projections, omitted: bounded.omitted});
+    const text = (response.contentItems[0] as {text: string}).text;
+    const presented = JSON.parse(text);
+    assert.equal(presented.schema, "revit-operator.model-evidence-envelope.v1");
+    assert.equal(presented.evidence_projections[0].content_hash, first.evidence_refs[0]!.content_hash);
+    if (large) {
+      assert.ok(Buffer.byteLength(text) < 10000);
+      assert.equal(presented.evidence_projections[0].inline_payload, undefined);
+    } else assert.deepEqual(presented.evidence_projections[0].inline_payload, payload);
+  });
+});
+
+test("settled native delivery rejects missing, corrupt and wrong-scope evidence without changing native truth", () => {
+  for (const variant of ["missing", "hash", "replaced_payload", "session", "attempt", "generation", "source", "trust"]) workspace(() => {
+    const { goal, snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: `bad-${variant}`, provider_turn_id: "turn-bad",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const raw = envelope(lease.operation_id, lease.binding, {total: 2});
+    const first = settleAssignmentKernelOperationV2(lease, raw);
+    const ref = first.evidence_refs[0]!;
+    const refFile = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "evidence", "refs", `${ref.evidence_id}.json`);
+    if (variant === "missing") fs.unlinkSync(refFile);
+    else if (variant === "hash") fs.appendFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, ref.artifact_location), "corruption");
+    else if (variant === "replaced_payload") {
+      const replacement = JSON.stringify({total: 99});
+      fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, ref.artifact_location), replacement);
+      fs.writeFileSync(refFile, JSON.stringify({...ref, byte_count: Buffer.byteLength(replacement),
+        content_hash: `sha256:${createHash("sha256").update(replacement).digest("hex")}`}));
+    }
+    else fs.writeFileSync(refFile, JSON.stringify({...ref, ...(variant === "session" ? {session_id: "foreign"}
+      : variant === "attempt" ? {attempt_id: "foreign"} : variant === "source" ? {source: "foreign"}
+        : variant === "trust" ? {trust_level: "untrusted_caller"} : {generation: ref.generation! + 1})}));
+    __testOnlyResetGoalListCache();
+    assert.throws(() => settleAssignmentKernelOperationV2(lease, raw), /Evidence.*(?:not found|hash|scope|generation|provenance)/i);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), first.snapshot);
+  });
+});
 
 test("Candidate 50 non-native capability result commits durable control evidence without advancing the task criterion", () => workspace(() => {
   const { goal, snapshot } = setup();
@@ -459,6 +734,25 @@ test("Candidate 3 repaired sequence resolves only the schema gap before one corr
   assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.criteria[afterDocs.spec.criteria[0]!.criterion_id]?.status, "pass");
 }));
 
+test("large settled inventory reloads and rehydrates exact retained evidence without a duplicate commit payload or journal write", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "large-retained", provider_turn_id: "turn-large",
+    capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const payload = { total: 509, rows: "retained inventory with original values".repeat(20_000) };
+  const first = settleAssignmentKernelOperationV2(lease, envelope(lease.operation_id, lease.binding, payload));
+  const journalBefore = getGoal(goal.id)!.assignment_kernel_v2;
+  __testOnlyResetGoalListCache();
+  const reloaded = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(reloaded.operations[lease.operation_id]!.observation_commit, undefined);
+  const again = commitAssignmentKernelObservationV2(lease, { storeEvidence() { throw new Error("must_not_store_again"); } });
+  assert.deepEqual(again.observation, first.observation);
+  assert.deepEqual(again.evidence_refs, first.evidence_refs);
+  assert.deepEqual(again.evidence_projections, first.evidence_projections);
+  assert.deepEqual(getGoal(goal.id)!.assignment_kernel_v2, journalBefore);
+  assert.equal(again.result.raw_payload_hash, hash(payload));
+}));
+
 test("Observation persistence retries only the durable commit and never repeats native work", async () => {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-observation-retry-"));
@@ -495,6 +789,8 @@ test("Observation persistence retries only the durable commit and never repeats 
     assert.equal(persistenceAttempts, 1);
     assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
     assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.equal(recovered.operations[lease.operation_id]!.observation_commit, undefined);
+    assert.equal(commitAssignmentKernelObservationV2(lease).evidence_refs.length, 1);
     assert.equal(Object.keys(recovered.operations).length, 1);
   } finally {
     __testOnlyResetGoalListCache();
@@ -837,6 +1133,50 @@ test("captured V2 operation binding settles after the legacy Goal envelope is pa
   assert.equal(settled.snapshot.current_binding.assignment_id, goal.id);
 }));
 
+test("typed parameter child evidence survives its abstract parent and requires exact native readback", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const changes = [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK", expectedOldValue: "" }];
+  const parent = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "typed-comments", provider_turn_id: "typed-turn",
+    capability_id: "revit_set_parameters", classified_effect: "apply", arguments: { apply: true, changes },
+    target_tokens: ["elementid:1380354", "id:1380354"] });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const child = openAssignmentKernelChildOperationV2({ binding: parent.binding, parent_operation_id: parent.operation_id,
+    child_ordinal: 0, operation_role: "child", capability_id: "native:POST:/revit/set-parameter", classified_effect: "apply",
+    method: "POST", path: "/revit/set-parameter", arguments: { method: "POST", path: "/revit/set-parameter", body: { apply: true, changes } },
+    fulfillment_role: "delegated_task_execution", delegation_authority_id: parent.delegation_authority_id,
+    eligible_criterion_ids: parent.eligible_criterion_ids });
+  markAssignmentKernelOperationDispatchStartedV2(child);
+  const childResult = envelope(child.operation_id, child.binding, { changedElementIds: [1380354], changedCount: 1 }, "applied");
+  childResult.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/set-parameter/v2";
+  const applied = settleAssignmentKernelOperationV2(child, childResult);
+  assert.equal(applied.observation!.evidence_class, "task_result");
+  const parentResult = envelope(parent.operation_id, parent.binding, null);
+  const transportResult = { ...parentResult.structuredContent.operation_result_v2,
+    status: "completed_without_native_dispatch", dispatch_state: "not_dispatched", authority: "operator-mcp-transport",
+    observation_required: false, raw_payload_hash: undefined, receipt_id: undefined, native_correlation_id: undefined };
+  settleAssignmentKernelOperationV2(parent, { content: [], structuredContent: {
+    schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: transportResult
+  } });
+  const pending = advanceAssignmentKernelProgressV2({ binding: parent.binding }).snapshot;
+  assert.equal(pending.criteria[pending.spec.criteria[0]!.criterion_id]!.status, "pass");
+  assert.equal(pending.terminal, false, "a task-result observation cannot waive post-apply readback");
+  assert.equal(pending.operations[parent.operation_id]!.observation_ids.length, 0);
+  assert.equal(Object.values(pending.operations).filter(op => op.persistent_effect === "applied").length, 1);
+  const verify = openAssignmentKernelOperationV2({ snapshot: pending, controller_request_id: "typed-readback", provider_turn_id: "typed-turn",
+    capability_id: "revit_get_parameters", classified_effect: "read", arguments: { elementIds: [1380354], names: ["Comments"] },
+    target_tokens: ["elementid:1380354", "id:1380354"] });
+  const readback = { items: [{ id: 1380354, parameterDetails: [{ name: "Comments", value: "UI CHECK", valueString: "UI CHECK" }] }] };
+  markAssignmentKernelOperationDispatchStartedV2(verify);
+  settleAssignmentKernelOperationV2(verify, envelope(verify.operation_id, verify.binding, readback));
+  const complete = advanceAssignmentKernelProgressV2({ binding: parent.binding }).snapshot;
+  assert.equal(complete.outcome, "complete");
+  assert.equal(complete.operations[verify.operation_id]!.verification_of_operation_id, child.operation_id);
+  assert.deepEqual(complete.operations[child.operation_id]!.verification_operation_ids, [verify.operation_id]);
+  const replayed = getAssignmentKernelSnapshotV2(parent.binding.assignment_id)!;
+  assert.equal(replayed.outcome, "complete");
+  assert.equal(Object.values(replayed.operations).filter(op => op.persistent_effect === "applied").length, 1);
+}));
+
 test("a verification parent's native child preserves the exact applied-operation subject", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({
@@ -889,6 +1229,54 @@ test("a verification parent's native child preserves the exact applied-operation
   assert.equal(childOperation.verification_of_operation_id, applyLease.operation_id);
   assert.deepEqual(childOperation.target, parentOperation.target);
 }));
+
+test("exact documentation and example children stay supporting discovery after a committed parameter edit", () => {
+  for (const path of ["/revit/tool-doc", "/revit/tool-examples"]) workspace(() => {
+    const { snapshot } = setup("apply");
+    const applyLease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "comments-apply", provider_turn_id: "comments-turn",
+      capability_id: "revit_set_parameters", classified_effect: "apply", target_tokens: ["elementid:1380354", "id:1380354"],
+      arguments: { changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK" }] } });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const applied = settleAssignmentKernelOperationV2(applyLease,
+      envelope(applyLease.operation_id, applyLease.binding, { elementId: 1380354, updated: true }, "applied")).snapshot;
+    const progressed = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+    const invalid = openAssignmentKernelOperationV2({ snapshot: progressed, controller_request_id: "comments-invalid-read",
+      provider_turn_id: "comments-invalid-turn", capability_id: "revit_call_tool", classified_effect: "read",
+      target_tokens: ["elementid:1380354", "id:1380354"],
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [1380354], parameterNames: ["Comments"] } } });
+    settleAssignmentKernelOperationV2(invalid, { content: [], structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: {
+        schema: OPERATION_RESULT_V2_SCHEMA, result_id: `result-${invalid.operation_id}`, operation_id: invalid.operation_id,
+        binding: invalid.binding, status: "failed_before_dispatch", dispatch_state: "not_dispatched", persistent_effect: "none",
+        native_transaction_state: "not_applicable", authority: "operator-mcp-transport", result_schema_id: "operation-transport-failure/v2",
+        observation_required: false, completed_at: "2026-09-05T20:48:20.000Z", error_code: "mcp_request_validation_failed",
+        request_identity: invalid.request_identity, input_schema_gap: {
+          schema: "revit-operator.operation-input-schema-gap/v2", gap_id: `input-schema:${invalid.operation_id}`,
+          operation_id: invalid.operation_id, capability_id: invalid.capability_id,
+          input_schema_id: "operator-native/POST:/revit/get-parameters/input/v1", input_schema_digest: "a".repeat(64),
+          method: "POST", path: "/revit/get-parameters", request_signature: invalid.request_identity.request_signature,
+          dispatch: false, effect: "none", issues: [{ field_path: "body.elementId", expected_type: "number", actual_type: "undefined",
+            safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit",
+            expected_constraint: { kind: "json_type", type: "number" } }]
+        }
+      }
+    } });
+    const docParent = openAssignmentKernelOperationV2({ snapshot: progressed, controller_request_id: "comments-doc", provider_turn_id: "comments-doc-turn",
+      capability_id: path.endsWith("tool-doc") ? "revit_tool_doc" : "revit_tool_examples", classified_effect: "discovery",
+      arguments: { method: "POST", path: "/revit/get-parameters" } });
+    const docChild = openAssignmentKernelChildOperationV2({ binding: docParent.binding, parent_operation_id: docParent.operation_id,
+      child_ordinal: 0, operation_role: "child", classified_effect: "read", method: "POST", path,
+      capability_id: `native:POST:${path}`, arguments: { method: "POST", path, body: { method: "POST", path: "/revit/get-parameters" } },
+      fulfillment_role: "supporting_control", eligible_criterion_ids: [] });
+    const state = getAssignmentKernelSnapshotV2(snapshot.current_binding.assignment_id)!;
+    const child = state.operations[docChild.operation_id]!;
+    assert.equal(child.purpose, "discovery");
+    assert.equal(child.verification_of_operation_id, undefined);
+    assert.deepEqual(child.eligible_criterion_ids, []);
+    assert.equal(state.operations[applyLease.operation_id]!.verification_operation_ids.length, 0,
+      "documentation must never masquerade as a successful postcondition readback");
+  });
+});
 
 test("read after committed apply is canonically a verification operation", () => workspace(() => {
   const { snapshot } = setup("apply");
@@ -965,6 +1353,69 @@ test("read after committed apply is canonically a verification operation", () =>
     && fact.fact_class === "verification" && fact.value === true));
   assert.equal(verified.snapshot.outcome, "complete");
   assert.equal(verified.snapshot.work_unit_states["work-verification"], "complete");
+  const terminal = advanceAssignmentKernelProgressV2({ binding: verified.snapshot.current_binding }).snapshot;
+  assert.equal(terminal.terminal, true);
+  const goal = getGoal(snapshot.spec.binding.assignment_id)!;
+  const packet = generateVerifiedWorkPacketFromKernelV2(goal, terminal, null);
+  assert.equal(packet.trust_presentation.overall, "independently_verified");
+  assert.equal(packet.actions.find(action => action.attempt_id === applyLease.operation_id)?.verification.state, "passed");
+  assert.equal(packet.actions.find(action => action.attempt_id === verificationLease.operation_id)?.verification.state, "passed");
+
+  // A read succeeded and retained bytes in these neighboring cases, but it did
+  // not establish proof for this applied operation.
+  for (const missingProof of ["no_postcondition_fact", "wrong_applied_operation", "missing_forward_link", "unsettled_read"] as const) {
+    const altered = structuredClone(terminal);
+    const read = altered.operations[verificationLease.operation_id]!;
+    if (missingProof === "no_postcondition_fact") {
+      for (const id of read.observation_ids) altered.observations[id]!.facts = altered.observations[id]!.facts
+        .filter(fact => fact.fact_id !== "verification.postcondition_satisfied");
+    } else if (missingProof === "wrong_applied_operation") read.verification_of_operation_id = "different-apply";
+    else if (missingProof === "missing_forward_link") altered.operations[applyLease.operation_id]!.verification_operation_ids = [];
+    else read.settlement_state = "awaiting_result";
+    const incomplete = generateVerifiedWorkPacketFromKernelV2(goal, altered, null);
+    assert.equal(incomplete.trust_presentation.overall, "uncertain_or_missing", missingProof);
+    assert.notEqual(incomplete.actions.find(action => action.attempt_id === applyLease.operation_id)?.verification.state, "passed", missingProof);
+    assert.notEqual(incomplete.actions.find(action => action.attempt_id === verificationLease.operation_id)?.verification.state, "passed", missingProof);
+    assert.ok(incomplete.issues.some(issue => issue.affected_attempt_ids.includes(applyLease.operation_id)), missingProof);
+  }
+}));
+
+test("blocked after applied edit and failed readback keeps packet trust uncertain despite a passing criterion", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  const apply = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "packet-apply", provider_turn_id: "packet-apply-turn",
+    capability_id: "element.update", classified_effect: "apply", target_tokens: ["id:1478627"], arguments: { value: "new" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  settleAssignmentKernelOperationV2(apply, envelope(apply.operation_id, apply.binding, { updated: true }, "applied"));
+  const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+  assert.equal(ready.criteria[ready.spec.criteria[0]!.criterion_id]?.status, "pass");
+  const read = openAssignmentKernelOperationV2({
+    snapshot: ready, controller_request_id: "packet-readback", provider_turn_id: "packet-readback-turn",
+    capability_id: "element.read", classified_effect: "read", target_tokens: ["id:1478627"], arguments: { target_id: "1478627" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  failAssignmentKernelOperationV2(read, new Error("native_host_busy_before_readback"), "dispatching");
+  const blocked = settleAssignmentKernelExecutionFailureV2({
+    binding: apply.binding, failure_id: "packet-readback-interrupted", error_class: "transport", phase: "provider_turn"
+  }).snapshot;
+  assert.equal(blocked.terminal, true);
+  assert.equal(blocked.outcome, "blocked");
+  const packet = generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, blocked, null);
+  assert.equal(packet.status, "blocked_truthfully");
+  assert.equal(packet.acceptance_criteria[0]!.status, "pass", "retain the canonical fact evaluation without promoting task completion");
+  assert.equal(packet.trust_presentation.overall, "uncertain_or_missing");
+  const appliedRow = packet.actions.find(action => action.attempt_id === apply.operation_id)!;
+  assert.equal(appliedRow.effect.state, "applied");
+  assert.equal(appliedRow.verification.state, "inconclusive");
+  assert.equal(packet.actions.find(action => action.attempt_id === read.operation_id)?.verification.state, "inconclusive");
+  assert.ok(packet.issues.some(issue => issue.kind === "verification_uncertainty" && issue.affected_attempt_ids.includes(apply.operation_id)));
+  const markdown = renderVerifiedWorkPacketMarkdown(packet);
+  assert.match(markdown, /\*\*Blocked Truthfully\*\*/);
+  assert.match(markdown, /Acceptance evidence: \[uncertain \/ missing\]/);
+  assert.match(markdown, /Other changes not assessed\. No collateral checks were recorded\./);
+  assert.doesNotMatch(markdown, /\*\*Requested result verified\*\*/);
+  assert.match(markdown, /This change was applied, but no successful linked readback proves its postcondition/);
 }));
 
 test("authoritative affected identity from a targetless create binds its verification read", () => workspace(() => {
@@ -1017,6 +1468,132 @@ test("authoritative affected identity from a targetless create binds its verific
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
     .operations[verificationLease.operation_id]!.verification_of_operation_id, applyLease.operation_id);
 }));
+
+test("duplicated view creation receipts bind the new view even when the request names the source plan", () => {
+  for (const [carriesCreatedIdentity, observedId] of [[false, 1542917], [true, 9999], [true, 1542917]] as const) workspace(() => {
+    const { snapshot } = setup("apply");
+    const copy = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duplicate-L4", provider_turn_id: "copy-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433", "viewid:1363433"],
+      arguments: { method: "POST", path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } } });
+    markAssignmentKernelOperationDispatchStartedV2(copy);
+    const native = envelope(copy.operation_id, copy.binding, { success: true, viewId: 1542917, sourceViewId: 1363433,
+      name: "M-COORDINATION COPY", withDetailing: true }, "applied");
+    native.structuredContent.operation_result_v2.affected_target_identities = carriesCreatedIdentity ? ["element_id:1542917", "element_id:1542918"] : [];
+    settleAssignmentKernelOperationV2(copy, native);
+    const ready = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
+    const openRead = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`, `elementid:${id}`],
+      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [id] } } });
+    assert.throws(() => openRead(9999), /verification_target_unbound/);
+    if (!carriesCreatedIdentity) {
+      // Exact retained UI failure: commit is known, but new-view reads cannot bind.
+      assert.throws(() => openRead(1542917), /verification_target_unbound/);
+      return;
+    }
+    const read = openRead(1542917);
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      [{ id: observedId, found: true, name: "M-COORDINATION COPY", className: "ViewPlan", fullClassName: "Autodesk.Revit.DB.ViewPlan",
+        category: "Views", boundingBox: null, location: null, viewIdUsed: null }])).snapshot;
+    assert.equal(verified.operations[read.operation_id]!.verification_of_operation_id, copy.operation_id);
+    assert.equal(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
+      .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), observedId === 1542917);
+    assert.equal(Object.values(verified.operations).filter(op => op.requested_effect === "apply").length, 1);
+  });
+});
+
+test("sheet and view creation bind verification to native-created identities without replaying creation", () => {
+  for (const route of ["/revit/duplicate-sheet", "/revit/create-sheet", "/revit/create-view", "/revit/create-drafting-view"]) workspace(() => {
+    const isSheet = route.endsWith("sheet");
+    const { snapshot } = setup("apply");
+    const create = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "sheet-view-create", provider_turn_id: "creation-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1420963"],
+      arguments: { method: "POST", path: route, body: route === "/revit/duplicate-sheet"
+        ? { sourceSheetId: 1420963, option: "views_and_detailing", newNumber: "TEMP-M000", newName: "Cover Sheet - Working Copy" }
+        : route === "/revit/create-sheet" ? { name: "Cover Sheet - Working Copy", number: "TEMP-M000" }
+          : route === "/revit/create-drafting-view" ? { name: "Working Draft", allowExisting: false }
+            : { action: "create_floor_plan", name: "Working Draft", levelName: "L2", discipline: "Mechanical" } } });
+    markAssignmentKernelOperationDispatchStartedV2(create);
+    const native = envelope(create.operation_id, create.binding, { ok: true, applied: true, verified: true,
+      ...(isSheet ? { sheet: { id: 1542977, number: "TEMP-M000", name: "COVER SHEET - WORKING COPY" } }
+        : { viewId: 1542977, name: "Working Draft", created: true }) }, "applied");
+    native.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542977", "element_id:1542978"];
+    settleAssignmentKernelOperationV2(create, native);
+    const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
+    const readNew = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-created-${id}`, provider_turn_id: "verify-created",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`],
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: isSheet ? ["Sheet Number", "Sheet Name"] : ["View Name"] } } });
+    assert.throws(() => readNew(9999), /verification_target_unbound/);
+    const read = readNew(1542977);
+    const stored = getAssignmentKernelSnapshotV2(create.binding.assignment_id)!;
+    assert.equal(stored.operations[read.operation_id]!.verification_of_operation_id, create.operation_id);
+    assert.equal(Object.values(stored.operations).filter(op => op.requested_effect === "apply").length, 1);
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      { items: [{ id: 1542977, parameters: isSheet
+        ? { "Sheet Number": "TEMP-M000", "Sheet Name": "COVER SHEET - WORKING COPY" }
+        : { "View Name": "Working Draft" } }] })).snapshot;
+    assert.ok(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
+      .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), route);
+    assert.equal(Object.values(verified.operations).filter(op => op.requested_effect === "apply").length, 1);
+  });
+});
+
+test("exact batch view rename survives restart and settles only from the renamed target readback", () => {
+  for (const variant of ["exact", "wrong_id", "old_name", "echo"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const name = "TEST LEVEL 2 HVAC COORDINATION";
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "rename-view", provider_turn_id: "rename",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:9948"],
+      arguments: { method: "POST", path: "/revit/create-view", body: { action: "rename_batch", viewIds: [9948],
+        findText: "L2", replaceText: name, exact: true, max: 1, dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { changed: [{ id: 9948, oldName: "L2", newName: name }] }, "applied");
+    commit.structuredContent.operation_result_v2.affected_target_identities = ["id:9948"];
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.operations[apply.operation_id]!.persistent_effect, "applied");
+    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "read-renamed-view", provider_turn_id: "verify",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:9948"],
+      arguments: { method: "POST", path: "/revit/views", body: { action: "list", viewIds: [9948], includeTemplates: false, offset: 0, limit: 1 } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const views = [{ id: variant === "wrong_id" ? 9949 : 9948, name: variant === "old_name" ? "L2" : name }];
+    settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      variant === "echo" ? { request: { views } } : { views }));
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.equal(Object.values(final.operations).filter(op => op.requested_effect === "apply").length, 1);
+    assert.equal(final.operations[apply.operation_id]!.persistent_effect, "applied");
+  });
+});
+
+test("drafting scale verification preserves the committed edit and requires complete target-bound summary", () => {
+  const replay = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
+  for (const variant of ["retained", "repaired", "wrong_scale", "wrong_id"]) workspace(() => {
+    const { snapshot } = setup("apply");
+    const create = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "drafting-create", provider_turn_id: "create",
+      capability_id: "revit_call_tool", classified_effect: "apply", arguments: replay.apply });
+    markAssignmentKernelOperationDispatchStartedV2(create);
+    const receipt = envelope(create.operation_id, create.binding,
+      { created: true, viewId: 1542917, name: "OPERATOR HANDOFF CHECK", scale: 100, viewType: "DraftingView" }, "applied");
+    receipt.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542917"];
+    settleAssignmentKernelOperationV2(create, receipt);
+    const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "drafting-summary", provider_turn_id: "read",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1542917"],
+      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1542917] } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const payload = structuredClone(variant === "retained" ? replay.retained_read : replay.repaired_read);
+    if (variant === "wrong_scale") payload.result[0].viewScale = 50;
+    if (variant === "wrong_id") payload.result[0].id = 9999;
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, payload)).snapshot;
+    assert.equal(settled.operations[create.operation_id]!.result?.persistent_effect, "applied");
+    assert.equal(Object.values(settled.operations).filter(op => op.requested_effect === "apply").length, 1);
+    assert.equal(Object.values(settled.observations).filter(observation => observation.operation_id === read.operation_id)
+      .some(observation => observation.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), variant === "repaired");
+  });
+});
 
 test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {
   const { goal, snapshot } = setup();
@@ -1690,7 +2267,7 @@ test("Candidate 46 provider receipt cannot be overtaken by terminal settlement",
       success: true,
       response_status: "completed",
       error_code: null,
-      tokens: { input_tokens: 33_175, cached_input_tokens: 0, output_tokens: 92, reasoning_output_tokens: 10, total_tokens: 33_267 },
+      tokens: { input_tokens: 33_175, cached_input_tokens: 20_000, cache_write_input_tokens: 5_000, output_tokens: 92, reasoning_output_tokens: 10, total_tokens: 33_267 },
       turn_id: "candidate46-turn"
     };
     // Simulate a delayed raw-response notification: the end-of-turn ledger is
@@ -1699,6 +2276,11 @@ test("Candidate 46 provider receipt cannot be overtaken by terminal settlement",
     const retained = getAssignmentKernelSnapshotV2(goal.id)!;
     assert.equal(retained.provider_call_ids.length, 5);
     assert.ok(retained.provider_calls[currentReceipt.call_id]);
+    assert.equal(retained.provider_calls[currentReceipt.call_id]!.usage!.cached_input_tokens, 20_000);
+    assert.equal(retained.provider_calls[currentReceipt.call_id]!.usage!.cache_write_input_tokens, 5_000);
+    recorder.reconcile([currentReceipt]);
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.provider_call_ids.length, 5);
+    assert.throws(() => recorder.reconcile([{ ...currentReceipt, tokens: { ...currentReceipt.tokens, cache_write_input_tokens: 5_001 } }]), /provider_receipt_conflict/);
     assert.equal(retained.terminal, false);
     assert.throws(() => openAssignmentKernelOperationV2({
       snapshot: retained,
@@ -1849,3 +2431,192 @@ test("provider receipt without a tool result is durable but waits for the quiesc
   assert.equal(continued.decision.decision, "admit_reasoning_turn");
   assert.equal(continued.snapshot.progress_epochs[0]!.genuine_progress, false);
 }));
+
+test("producer process loss after durable apply completion recovers without native replay, even after deadline", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-completion-crash-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { snapshot } = setup("apply");
+    const lease = openAssignmentKernelOperationV2({ snapshot,
+      controller_request_id: "crash-apply", provider_turn_id: "crash-turn",
+      capability_id: "element.update", classified_effect: "apply", target_tokens: ["id:1478627"],
+      arguments: { value: "new" }, opened_at: "2026-08-26T16:00:00.000Z" });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const key = completionOutboxKeyV2(root);
+    const completion = envelope(lease.operation_id, lease.binding, { updated: true }, "applied");
+    const producer = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { retainCompletionOutboxV2 } from '@revitoperator/assignment-kernel-v2-contracts/completion-outbox';
+      const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+      fs.appendFileSync(path.join(input.root, 'native-mutations.log'), 'committed once\\n');
+      retainCompletionOutboxV2(input.root, input.key, input.lease, input.completion);
+      process.kill(process.pid, 'SIGKILL');
+    `], { cwd: process.cwd(), input: JSON.stringify({ root, key, lease, completion }), encoding: "utf8", timeout: 15_000 });
+    assert.ok(producer.signal || producer.status !== 0, "producer must die before delivering a result");
+    assert.equal(fs.readFileSync(path.join(root, "native-mutations.log"), "utf8"), "committed once\n");
+    __testOnlyResetGoalListCache();
+    const before = getAssignmentKernelSnapshotV2(lease.assignment_id)!;
+    assert.equal(before.operations[lease.operation_id]!.result, undefined);
+    let dispatches = 0;
+    const runtime = { recoverCompletion: (value: typeof lease) => readCompletionOutboxV2(root, key, value),
+      callTool: async () => { dispatches++; throw new Error("must not dispatch during recovery"); } };
+    const recovered = await recoverAssignmentKernelOperationsV2({ snapshot: before, runtime,
+      transport: "direct", now: new Date("2026-08-27T16:00:00Z") });
+    assert.equal(recovered.operations[lease.operation_id]!.persistent_effect, "applied");
+    assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
+    assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.equal(recovered.operations[lease.operation_id]!.observation_commit, undefined);
+    assert.ok(commitAssignmentKernelObservationV2(lease).evidence_refs.length === 1);
+    assert.deepEqual(await recoverAssignmentKernelOperationsV2({ snapshot: recovered, runtime }), recovered);
+    assert.deepEqual(settleAssignmentKernelOperationV2(lease, completion).snapshot, recovered,
+      "a late original delivery must be idempotent after completion recovery");
+    assert.equal(dispatches, 0);
+    const ready = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.equal(ready.outcome, "active", "recovered apply still requires fresh verification");
+    const read = openAssignmentKernelOperationV2({ snapshot: ready,
+      controller_request_id: "crash-readback", provider_turn_id: "readback-turn",
+      capability_id: "element.read", classified_effect: "read", target_tokens: ["id:1478627"], arguments: { target_id: "1478627" } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, { elementId: 1478627, value: "new" }));
+    const terminal = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.equal(terminal.outcome, "complete");
+    assert.equal(terminal.terminal, true);
+    assert.equal(Object.values(terminal.operations).filter(operation => operation.requested_effect === "apply").length, 1);
+    assert.equal(fs.readFileSync(path.join(root, "native-mutations.log"), "utf8"), "committed once\n");
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retained child completion recovers before its parent; absent child evidence leaves both pending", () => workspace(() => {
+  const { snapshot } = setup();
+  const parent = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "recovery-parent", provider_turn_id: "turn",
+    capability_id: "revit_call_tool", classified_effect: "read", arguments: { method: "POST", path: "/revit/quantify", body: {} } });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const child = openAssignmentKernelChildOperationV2({ binding: parent.binding, parent_operation_id: parent.operation_id,
+    child_ordinal: 0, operation_role: "prerequisite", capability_id: "native:GET:/revit/tool-registry",
+    classified_effect: "read", method: "GET", path: "/revit/tool-registry",
+    arguments: { method: "GET", path: "/revit/tool-registry", body: null } });
+  markAssignmentKernelOperationDispatchStartedV2(child);
+  const root = process.env.OPERATOR_WORKSPACE_ROOT!;
+  const key = completionOutboxKeyV2(root);
+  retainCompletionOutboxV2(root, key, parent, envelope(parent.operation_id, parent.binding, { total: 2 }));
+  const waiting = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(waiting.recovered_operation_ids, []);
+  assert.equal(waiting.unresolved_operation_ids.length, 2);
+  retainCompletionOutboxV2(root, key, child, envelope(child.operation_id, child.binding, { tools: [] }));
+  const recovered = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(recovered.recovered_operation_ids, [child.operation_id, parent.operation_id]);
+  assert.deepEqual(recovered.unresolved_operation_ids, []);
+  assert.equal(recovered.snapshot.quiescent, true);
+  const repeated = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(repeated.recovered_operation_ids, []);
+  assert.deepEqual(repeated.snapshot, recovered.snapshot);
+}));
+
+test("invalid retained completion never authorizes recovery or a fallback mutation", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-completion-invalid-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { snapshot } = setup("apply");
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "invalid-completion", provider_turn_id: "turn",
+      capability_id: "element.update", classified_effect: "apply", arguments: { value: "new" } });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const key = completionOutboxKeyV2(root);
+    const completion = envelope(lease.operation_id, lease.binding, { updated: true }, "applied");
+    retainCompletionOutboxV2(root, key, lease, completion);
+    assert.equal(readCompletionOutboxV2(root, key, { ...lease, binding: { ...lease.binding, generation: 2 } }), null);
+    assert.equal(readCompletionOutboxV2(root, key, { ...lease, request_identity: { ...lease.request_identity, request_signature: "different" } }), null);
+    const outbox = path.join(root, "runtime", "assignment-completions-v2");
+    const file = path.join(outbox, fs.readdirSync(outbox).find(name => name.endsWith(".json"))!);
+    const original = fs.readFileSync(file, "utf8");
+    const tampered = JSON.parse(original);
+    tampered.payload.envelope.structuredContent.observation.raw_payload.updated = false;
+    fs.writeFileSync(file, JSON.stringify(tampered));
+    let dispatches = 0;
+    await assert.rejects(recoverAssignmentKernelOperationsV2({ snapshot: getAssignmentKernelSnapshotV2(lease.assignment_id)!, transport: "courier",
+      runtime: { recoverCompletion: value => readCompletionOutboxV2(root, key, value),
+        callTool: async () => { dispatches++; return completion; } } }), /signature_invalid/);
+    assert.equal(dispatches, 0);
+    assert.equal(getAssignmentKernelSnapshotV2(lease.assignment_id)!.operations[lease.operation_id]!.result, undefined);
+    fs.writeFileSync(file, original);
+    retainCompletionOutboxV2(root, key, lease, completion);
+    const conflict = structuredClone(completion);
+    conflict.structuredContent.operation_result_v2.completed_at = "2026-08-26T16:00:06.000Z";
+    assert.throws(() => retainCompletionOutboxV2(root, key, lease, conflict), /result_conflict/);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("visibility rejection persists confirmed rollback without completing work; unknown still blocks replay", () => {
+  for (const effect of ["none", "unknown"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const argumentsForVisibility = { method: "POST", path: "/revit/visibility",
+      body: { action: "hide_category", viewId: 1363433, categoryName: "Rooms", categoryNames: ["Rooms", "Room Tags"] } };
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "visibility-rejected", provider_turn_id: "visibility-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", arguments: argumentsForVisibility });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const payload = { status: "Failed", success: false, error: "Category 'Rooms' cannot be hidden in view 'L4'.",
+      transaction: { status: effect === "none" ? "rolled_back" : "pending", committed: effect === "none" ? false : null,
+        modified_element_ids: [], affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] } };
+    const native = envelope(lease.operation_id, lease.binding, payload);
+    Object.assign(native.structuredContent.operation_result_v2, { status: "failed_after_dispatch", persistent_effect: effect,
+      native_transaction_state: effect === "none" ? "rolled_back" : "unknown", affected_target_identities: [], error_code: "native_domain_failure" });
+    native.structuredContent.observation.semantic_facts = [];
+    const settled = settleAssignmentKernelOperationV2(lease, native).snapshot;
+    assert.equal(settled.operations[lease.operation_id]!.persistent_effect, effect);
+    assert.deepEqual(settled.unresolved_unknown_operation_ids, effect === "unknown" ? [lease.operation_id] : []);
+    assert.notEqual(settled.outcome, "complete");
+    __testOnlyResetGoalListCache();
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), settled, "transaction truth survives restart");
+    if (effect === "unknown") assert.throws(() => openAssignmentKernelOperationV2({ snapshot: settled,
+      controller_request_id: "visibility-retry", provider_turn_id: "retry-turn", capability_id: "revit_call_tool",
+      classified_effect: "apply", arguments: argumentsForVisibility }), /unknown|operation/i);
+  });
+});
+test("visibility scale commit survives restart and completes only from exact independent native readback", () => {
+  for (const variant of ["exact", "wrong_view", "wrong_scale", "echo", "failed"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const args = { method: "POST", path: "/revit/visibility", body: { action: "set_scale", viewId: 1363433, scale: 96 } };
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "visibility-scale", provider_turn_id: "apply-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433"], arguments: args });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { status: "Success", action: "set_scale", dryRun: false,
+      view: { id: 1363433, scale: 96 }, transaction: { status: "committed", committed: true, modified_element_ids: [1363433], affected_element_ids: [1363433] } }, "applied");
+    commit.structuredContent.operation_result_v2.affected_target_identities = ["id:1363433"];
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    const restarted = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(restarted.operations[apply.operation_id]!.persistent_effect, "applied");
+    assert.notEqual(restarted.outcome, "complete");
+    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "visibility-read", provider_turn_id: "read-turn",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1363433"],
+      arguments: { method: "POST", path: "/revit/visibility", body: { action: "get", viewId: 1363433 } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const expected = { id: 1363433, scale: 96 };
+    const payload = { status: variant === "failed" ? "Failed" : "Ok", action: "get", dryRun: false,
+      view: variant === "echo" ? undefined : { ...expected, id: variant === "wrong_view" ? 99 : expected.id,
+        scale: variant === "wrong_scale" ? 48 : 96, scopeBox: { id: 1363433 } }, request: { view: expected } };
+    const retained = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/visibility-scale-native-readback.json"), "utf8"));
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, variant === "exact" ? retained.read : payload));
+    assert.equal(settled.observation!.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"), variant === "exact");
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+    assert.equal(Object.values(final.operations).filter(op => op.requested_effect === "apply").length, 1);
+    __testOnlyResetGoalListCache();
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), final);
+  });
+});

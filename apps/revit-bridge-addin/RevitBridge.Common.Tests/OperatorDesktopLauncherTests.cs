@@ -585,6 +585,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void EmbeddedLaunchForwardsNoBrowserThroughHiddenScriptHostsOnly()
+        {
+            var ps = OperatorDesktopLauncher.BuildLauncherStartInfo(@"C:\Operator Desktop\launch.ps1", noBrowser: true);
+            Assert.EndsWith("\"C:\\Operator Desktop\\launch.ps1\" -NoBrowser", ps.Arguments);
+            Assert.False(ps.UseShellExecute); Assert.True(ps.CreateNoWindow);
+            var cmd = OperatorDesktopLauncher.BuildLauncherStartInfo(@"C:\Operator Desktop\launch.cmd", noBrowser: true);
+            Assert.Equal("/D /S /C \"\"C:\\Operator Desktop\\launch.cmd\" -NoBrowser\"", cmd.Arguments);
+            Assert.False(cmd.UseShellExecute); Assert.True(cmd.CreateNoWindow);
+            Assert.Throws<NotSupportedException>(() => OperatorDesktopLauncher.BuildLauncherStartInfo(@"C:\Operator Desktop\launch.lnk", noBrowser: true));
+        }
+
+        [Fact]
         public void BuildLauncherStartInfo_RejectsUnsupportedExtensions()
         {
             var ex = Assert.Throws<NotSupportedException>(() =>

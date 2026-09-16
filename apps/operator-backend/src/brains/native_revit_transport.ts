@@ -1,3 +1,4 @@
+import { requireSupportedNativeTransport } from "../capabilities/supported_tool_inventory.js";
 import {
   createCipheriv,
   createDecipheriv,
@@ -447,6 +448,7 @@ export async function sendNativeBridgeRequest(
   body: unknown,
   options: NativeBridgeTransportOptions
 ): Promise<NativeBridgeHttpResult> {
+  requireSupportedNativeTransport(method, pathname);
   const env = options.env ?? process.env;
   if (isExactDevelopmentLaboratory(env)) {
     const headers: Record<string, string> = { "X-Operator-Token": options.token };

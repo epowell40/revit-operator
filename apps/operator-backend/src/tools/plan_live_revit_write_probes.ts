@@ -111,7 +111,6 @@ const MEDIUM_MODEL_WRITES = new Set([
   "POST /revit/create-filled-region",
   "POST /revit/create-revision-cloud",
   "POST /revit/create-text",
-  "POST /revit/create-zone-visuals",
   "POST /revit/datums",
   "POST /revit/draw-detail-curves",
   "POST /revit/fire-alarm-visualizer",

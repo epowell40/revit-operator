@@ -69,6 +69,20 @@ test("bridge-only status question pings bridge without opening Revit", async () 
   assert.doesNotMatch(JSON.stringify(res.actions), /open-model|2026|launch/i);
 });
 
+test("standalone bridge health remains immediate in both chat modes while engineering and mixed requests stay out", async () => {
+  const prompt = "can you see whether the bridge is responsive now?";
+  const unexpectedProvider = async (): Promise<ChatResponse> => { throw new Error("immediate_status_must_not_call_provider"); };
+  const response = await decide(mkReq(prompt), { codexBrain: unexpectedProvider });
+  const deltas: string[] = [];
+  const streamed = await decideStreaming(mkReq(prompt), { onDelta: text => deltas.push(text) }, { codexStreamingBrain: unexpectedProvider });
+  assert.deepEqual(response.actions.map(action => [action.method, action.path]), [["GET", "/revit/ping"]]);
+  assert.deepEqual(streamed.actions, response.actions);
+  assert.equal(deltas.join(""), streamed.assistant_message);
+  for (const text of ["What is a thermal bridge?", "Is this bridge structurally sound?", "Is the Revit bridge online and then delete the selected duct?", "Check bridge girder deflection."]) {
+    assert.equal(__testOnlyIsBridgeStatusQuestion(text), false, text);
+  }
+});
+
 test("equipment systems and best-view query is not misclassified as bridge status", () => {
   const prompt = "Where is HRU403? Return its exact element identity, family and type, level, room or space, connected systems, and best Revit view. Read only; do not modify the model.";
   assert.equal(__testOnlyIsBridgeStatusQuestion(prompt), false);
@@ -550,6 +564,19 @@ test("finalizeDecision replaces blank no-op responses with a fallback explanatio
   assert.equal(res.actions.length, 0);
   assert.match(res.assistant_message, /internal fallback response/i);
   assert.match(res.assistant_message, /attachment turn/i);
+});
+
+test("finalizeDecision preserves incomplete task handoffs for modeled redlines", () => {
+  const req=mkReq("Apply the attached 12x10 supply-duct redline in Unit 405 on sheet M104.");
+  for(const message of [
+    "The requested work did not complete: provider call budget exhausted.",
+    "The task has not finished. Any completed changes and remaining verification are saved with the task.",
+    "The requested work did not complete: provider call budget exhausted. Changes were applied before the task stopped. Check the saved results before retrying."
+  ]){
+    const result=__testOnlyFinalizeDecision(req,{version:OPERATOR_BACKEND_CONTRACT_VERSION,assistant_message:message,actions:[]});
+    assert.equal(result.assistant_message,message);
+    assert.deepEqual(result.actions,[]);
+  }
 });
 
 test("finalizeDecision blocks text-only completion for modeled duct redlines", () => {

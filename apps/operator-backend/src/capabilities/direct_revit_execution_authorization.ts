@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isSupportedNativeTransport, isSupportedMcpAlias } from "./supported_tool_inventory.js";
 import {
   canonicalJson,
   computeRequestHash,
@@ -324,6 +325,9 @@ export function authorizeDirectRevitExecution(
   }
 
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
+  if (!isSupportedNativeTransport(method, toolPath) || !isSupportedMcpAlias(alias)) {
+    throw new DirectRevitExecutionAuthorizationError("PRODUCT_TOOL_NOT_SUPPORTED", "The requested route or alias is outside the fixed supported product inventory.", 403, false);
+  }
   try {
     const hostedGeneralAgent = isHostedGeneralAgentReady(env) && !requestFamilyAdmission;
     // Revit is launched by Autodesk, not by the backend process, so its native

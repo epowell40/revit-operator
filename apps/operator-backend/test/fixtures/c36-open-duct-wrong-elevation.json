@@ -1,0 +1,293 @@
+{
+  "provenance": "Retained failed native readback from disposable Autodesk HVAC sample. The pixel request z was ignored; this fixture must never qualify as a verified redline.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/create-duct",
+    "requireKnownPath": true,
+    "body": {
+      "frameId": "be9869fb43fe406fb664aa683d490c88",
+      "startPoint": {
+        "xPx": 1208,
+        "yPx": 1002,
+        "z": 44.16666666667046
+      },
+      "endPoint": {
+        "xPx": 1374,
+        "yPx": 1002,
+        "z": 44.16666666667046
+      },
+      "levelId": 1362791,
+      "systemType": "Supply Air",
+      "ductShape": "rectangular",
+      "ductSize": "12x10",
+      "dryRun": false
+    }
+  },
+  "affected": [
+    "element_id:1542917"
+  ],
+  "parameters": {
+    "items": [
+      {
+        "id": 1542917,
+        "uniqueId": "4b3c6693-b21b-4105-881e-870caa753684-00178b05",
+        "name": "Mitered Elbows / Taps",
+        "category": "Ducts",
+        "categoryId": -2008000,
+        "parameters": {
+          "Width": "1",
+          "Height": "0.833333333333333",
+          "Length": "14.7463973747194",
+          "System Classification": "Supply Air",
+          "System Type": "712041",
+          "Reference Level": "1362791",
+          "Middle Elevation": "0"
+        },
+        "parameterDetails": [
+          {
+            "name": "Width",
+            "value": "1",
+            "valueString": "12\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114101
+          },
+          {
+            "name": "Height",
+            "value": "0.833333333333333",
+            "valueString": "10\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114102
+          },
+          {
+            "name": "Length",
+            "value": "14.7463973747194",
+            "valueString": "14' - 8 31/32\"",
+            "storageType": "Double",
+            "isReadOnly": true,
+            "parameterId": -1004005
+          },
+          {
+            "name": "System Classification",
+            "value": "Supply Air",
+            "valueString": "Supply Air",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140325
+          },
+          {
+            "name": "System Type",
+            "value": "712041",
+            "valueString": "Supply Air",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1140333
+          },
+          {
+            "name": "Reference Level",
+            "value": "1362791",
+            "valueString": "L4",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1114000
+          },
+          {
+            "name": "Middle Elevation",
+            "value": "0",
+            "valueString": "0' - 0\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114132
+          },
+          {
+            "name": "Middle Elevation",
+            "value": "0",
+            "valueString": "0' - 0\"",
+            "storageType": "Double",
+            "isReadOnly": false,
+            "parameterId": -1114132
+          }
+        ]
+      }
+    ]
+  },
+  "connectors": {
+    "status": "Ok",
+    "requestedCount": 1,
+    "scannedElementCount": 1,
+    "failedElementCount": 0,
+    "matchedElementCount": 1,
+    "totalScannedConnectorCount": 2,
+    "physicallyConnectedConnectorCount": 0,
+    "openPhysicalConnectorCount": 2,
+    "connectorScanTruncatedElementCount": 0,
+    "filter": "allConnectors",
+    "results": [
+      {
+        "id": 1542917,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Mitered Elbows / Taps",
+        "typeId": 139185,
+        "typeName": "Mitered Elbows / Taps",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Supply Air 52",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 2,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -1.2436273287487296,
+              -17.52553116284868,
+              32.16666666666667
+            ],
+            "domain": "DomainHvac",
+            "shape": "Rectangular",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "SupplyAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "rect",
+              "widthFt": 1,
+              "heightFt": 0.8333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -1.2436273287487296,
+                -17.52553116284868,
+                32.16666666666667
+              ],
+              "basisX": [
+                0,
+                -1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1542918,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          },
+          {
+            "index": 1,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -15.99002470346808,
+              -17.52553116284868,
+              32.16666666666667
+            ],
+            "domain": "DomainHvac",
+            "shape": "Rectangular",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "SupplyAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "rect",
+              "widthFt": 1,
+              "heightFt": 0.8333333333333333
+            },
+            "coordinateSystem": {
+              "origin": [
+                -15.99002470346808,
+                -17.52553116284868,
+                32.16666666666667
+              ],
+              "basisX": [
+                0,
+                1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                -1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1542918,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          }
+        ],
+        "flexGeometry": null
+      }
+    ],
+    "warnings": [],
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "70a752207def226c0db4f16dfd2d7d12",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/get-connectors",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-09-15T21:56:35.291097+00:00"
+    }
+  }
+}

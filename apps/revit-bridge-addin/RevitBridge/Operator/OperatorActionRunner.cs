@@ -110,6 +110,7 @@ namespace RevitBridge.Operator
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/export-pdf", new ExportPdfHandler() },
+                { "/revit/inspect-exported-files", new InspectExportedFilesHandler() },
                 { "/revit/print", new PrintHandler() },
                 { "/revit/export-images", new ExportImagesBatchHandler() },
                 { "/revit/export-dwg", new ExportDwgHandler() },
@@ -234,8 +235,6 @@ namespace RevitBridge.Operator
 
                 // Zones/spaces
                 { "/revit/ensure-spaces", new EnsureSpacesHandler() },
-                { "/revit/create-zones", new CreateZonesHandler() },
-                { "/revit/create-zone-visuals", new CreateZoneVisualsHandler() },
                 { "/revit/query-zone-data", new QueryZoneDataHandler() },
 
                 // Selection / types
@@ -263,6 +262,7 @@ namespace RevitBridge.Operator
 
             var method = (action.Method ?? "").Trim().ToUpperInvariant();
             var path = (action.Path ?? "").Trim();
+            OperatorSupportedToolInventory.RequireSupportedTool(method, path);
             var jsonBody = "";
             if (action.Body != null)
             {
@@ -446,11 +446,11 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }, localDeadline.Token, correlationId).ConfigureAwait(false);
+                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
             {
-                throw deadline.CreateTimeoutException(correlationId);
+                throw deadline.ClassifyCancellation(ex, correlationId);
             }
             finally
             {
@@ -667,7 +667,7 @@ namespace RevitBridge.Operator
 
         internal async Task ProbeRevitHostAsync(CancellationToken cancellationToken)
         {
-            await _eventService.Run(_ => true, cancellationToken).ConfigureAwait(false);
+            await _eventService.Run(_ => true, cancellationToken, null, "courier:host-probe").ConfigureAwait(false);
         }
 
         private static bool IsDirectControlPlanePath(string path)

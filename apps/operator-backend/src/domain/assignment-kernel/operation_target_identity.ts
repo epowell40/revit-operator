@@ -19,6 +19,7 @@ export function operationTargetIdentityAliasesV2(value: unknown): readonly strin
   if (separator > 0) {
     const kind = identity.slice(0, separator).replace(/[^a-z0-9]/g, "");
     const identifier = identity.slice(separator + 1);
+    if (kind === "artifactpath") aliases.add(`artifact_path:${identifier.replaceAll("\\", "/")}`);
     if ((kind === "id" || kind.endsWith("id")) && /^\d+$/.test(identifier)) {
       aliases.add(`id:${identifier}`);
     }

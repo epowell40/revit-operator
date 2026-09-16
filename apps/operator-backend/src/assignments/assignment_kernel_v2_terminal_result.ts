@@ -3,6 +3,8 @@ import type {
   AssignmentSnapshotV2,
   SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
+import { renderResultDeliveryV2 } from "../domain/assignment-kernel/result_delivery.js";
+import { nativeResultPresentationV2 } from "./assignment_kernel_v2_native_presentation.js";
 
 export const TERMINAL_RESULT_V2_SCHEMA = "revit-operator.terminal-result/v2" as const;
 
@@ -103,18 +105,27 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
                 && fact.fact_class === "verification"
                 && fact.value === true)))
           .flatMap(operation => operation.observation_ids)
-      : []))]
+      : [])
+    .concat(snapshot.result_delivery?.items.map(item => item.observation_id) ?? []))]
     .filter(observationId => Boolean(snapshot.observations[observationId]))
     .sort();
   const facts = domainFacts(snapshot, supportingObservationIds);
-  const successfulSummary = inventorySummary(facts)
+  const successfulSummary = (snapshot.result_delivery ? renderResultDeliveryV2(snapshot.result_delivery) : null)
+    ?? inventorySummary(facts)
     ?? textNoteSummary(facts, snapshot.spec.requested_effect)
+    ?? nativeResultPresentationV2(snapshot, supportingObservationIds)
     ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";
-  const resultSummary = successfulSummary
-    ?? (complete
-      ? "The requested work completed from authoritative Revit evidence."
-      : `The requested work did not complete: ${snapshot.terminal_reason ?? snapshot.outcome}.`);
+  const effects = Object.values(snapshot.operations).map(operation => operation.result?.persistent_effect);
+  const incompleteEffectSummary = effects.includes("unknown")
+    ? " An edit outcome is still unknown. Check the existing result before any retry."
+    : effects.includes("applied")
+      ? " Changes were applied before the task stopped. Check the saved results before retrying."
+      : "";
+  const resultSummary = complete
+    ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
+    : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
+      + (successfulSummary ? `\n\nRetained partial results:\n${successfulSummary}` : "");
   return {
     schema: TERMINAL_RESULT_V2_SCHEMA,
     assignment_id: snapshot.current_binding.assignment_id,

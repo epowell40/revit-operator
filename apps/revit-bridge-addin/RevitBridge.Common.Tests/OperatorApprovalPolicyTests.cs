@@ -9,6 +9,13 @@ namespace RevitBridge.Common.Tests
     public class OperatorApprovalPolicyTests
     {
         [Fact]
+        public void ExportedFileInspectionIsReadOnlyAndLowRisk()
+        {
+            const string body = "{\"paths\":[\"C:/fixture/M000.pdf\"]}";
+            Assert.Equal(OperatorActionEffect.Read, OperatorApprovalPolicy.GetEffect("POST", "/revit/inspect-exported-files", body));
+            AssertLow("POST", "/revit/inspect-exported-files", body);
+        }
+        [Fact]
         public void DirectHttpExactApplyFalsePreviewIsLowWithoutApprovalOrGrant()
         {
             AssertLow(" POST ", " /REVIT/DELETE ", "{\"ids\":[101,202],\"apply\":false}");

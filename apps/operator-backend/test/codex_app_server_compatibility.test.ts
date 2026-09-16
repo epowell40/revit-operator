@@ -1,5 +1,97 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
+import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+
+test("actual dynamic response includes envelope overhead and never restores raw data when every projection is omitted", { concurrency: false }, () => {
+  const prior=process.env.OPERATOR_WORKSPACE_ROOT;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"dynamic-response-budget-"));
+  process.env.OPERATOR_WORKSPACE_ROOT=root;
+  try {
+    for(const detailLength of [1400,1700,1850,1900]) for(const requestBytes of [512,4000]) {
+      const projections=Array.from({length:12},(_,n)=>({schema:"revit-operator.evidence-projection.v1",evidence_id:`ev1_${n}`,
+        byte_count:100_000,key_facts:{detail:"é".repeat(detailLength/2)}} as any));
+      const budget={item_bytes:2048,request_bytes:requestBytes};
+      const bounded=assembleBoundedEvidenceContext({projections,session_id:"budget-test",budget});
+      const result=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:"UNBOUNDED_RAW_".repeat(10_000)}]},
+        {tool:"revit_list_schedules",projections:bounded.projections,omitted:bounded.omitted});
+      assert.equal(result.contentItems.length,1);
+      const item=result.contentItems[0]!;assert.equal(item.type,"inputText");
+      if(item.type!=="inputText")throw Error("Expected evidence envelope");
+      assert.ok(!item.text.includes("UNBOUNDED_RAW_"));
+      assert.equal(Buffer.byteLength(item.text,"utf8"),bounded.bytes);
+      assert.ok(bounded.bytes<=requestBytes);
+      const usage=assertBoundedModelEvidencePayload([{type:"function_call_output",output:item.text}],budget);
+      assert.equal(usage.projected_bytes,bounded.bytes);
+      assert.equal(JSON.parse(item.text).omitted,12-bounded.projections.length);
+    }
+  } finally {
+    if(prior===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=prior;
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test("code-mode evidence selections remain one JSON value with separate host observation metadata", () => {
+  const index = { schema: "revit-operator.model-observation-index/v2", observations: [{ observation_id: "host-observation" }] };
+  for (const selection of [{ "payload.elementIds": Array.from({ length: 1053 }, (_, n) => 1000 + n) }, [7, 8], { text: 'Quoted source\n{"schema":"fake"}' }]) {
+    const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection, complete: false }, model_observation_index: { fake: true } };
+    const response = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(payload) }] }, { tool: "operator_retrieve_evidence" });
+    attachDynamicObservationContext(response, "operator_retrieve_evidence", JSON.stringify(index));
+    const raw = response.contentItems.map(item => item.type === "inputText" ? item.text : "").join("\n");
+    const consumed = JSON.parse(raw);
+    assert.deepEqual(consumed.result, payload.result);
+    assert.deepEqual(consumed.model_observation_index, index);
+    assert.equal(response.contentItems.length, 1);
+  }
+  for (const value of ["[tool_request_invalid] count must be <= 256", '{"ok":false,"error":"selection denied"}']) {
+    const response = adaptMcpToolCallResultToDynamicResponse({ isError: true, content: [{ type: "text", text: value }] });
+    attachDynamicObservationContext(response, "operator_retrieve_evidence", JSON.stringify(index));
+    assert.equal(response.success, false);
+    assert.deepEqual(response.contentItems[0], { type: "inputText", text: value });
+  }
+  const controlPayload = {ok:true,status:{outcome:"complete"}};
+  const noProjection = adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify(controlPayload)}]},
+    {tool:"operator_evaluate_assignment_criteria",projections:[],omitted:0});
+  assert.deepEqual(noProjection.contentItems,[{type:"inputText",text:JSON.stringify(controlPayload)}]);
+  const image = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "image", mimeType: "image/png", data: "AA==" }] });
+  attachDynamicObservationContext(image, "operator_retrieve_evidence", JSON.stringify(index));
+  assert.deepEqual(image.contentItems[0], { type: "inputImage", imageUrl: "data:image/png;base64,AA==" });
+});
+import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
+
+test("provider commentary is a progress update and never concatenates into final answer deltas", () => {
+  const deltas: string[] = [], progress: string[] = [];
+  const observer = createCodexTurnNotificationObserver({sessionId:"phase-test",threadId:"thread",turnId:"turn",
+    modelTelemetry:{observe(){}},assignmentObserver:{observe(){}},freshEvidenceRequirement:{required:false,kind:"none"} as any,
+    webEvidenceRequirement:{required:false} as any,mcpRuntime:null,onDelta:text=>deltas.push(text),onProgress:text=>progress.push(text)});
+  const emit = (method:string,params:any) => observer.observe({method,threadId:"thread",params:{turnId:"turn",...params}} as any);
+  emit("item/started",{item:{type:"agentMessage",id:"progress",phase:"commentary"}});
+  emit("item/agentMessage/delta",{itemId:"progress",delta:"Reviewing the remaining pages."});
+  emit("item/completed",{item:{type:"agentMessage",id:"progress",phase:"commentary",text:"Reviewing the remaining pages."}});
+  assert.deepEqual(deltas,[]);assert.deepEqual(progress,["Reviewing the remaining pages."]);
+  emit("item/started",{item:{type:"agentMessage",id:"answer",phase:"final_answer"}});
+  emit("item/agentMessage/delta",{itemId:"answer",delta:"## Findings\n"});
+  emit("item/agentMessage/delta",{turnId:"other",itemId:"answer",delta:"Wrong turn"});
+  emit("item/agentMessage/delta",{itemId:"answer",delta:"- Red marks on page 3."});
+  emit("item/completed",{item:{type:"agentMessage",id:"answer",phase:"final_answer",text:"## Findings\n- Red marks on page 3."}});
+  assert.equal(deltas.join(""),"## Findings\n- Red marks on page 3.");
+  assert.equal(observer.snapshot().assistantText,deltas.join(""));
+  assert.equal(observer.snapshot().assistantDeltas,deltas.join(""));
+});
+
+test("unknown-phase messages wait for authoritative completion and deferred final output stays buffered", () => {
+  for(const deferAssistantOutput of [false,true]) {
+    const deltas:string[]=[];
+    const observer=createCodexTurnNotificationObserver({sessionId:"phase-fallback",threadId:"thread",turnId:"turn",deferAssistantOutput,
+      modelTelemetry:{observe(){}},assignmentObserver:{observe(){}},freshEvidenceRequirement:{required:false} as any,webEvidenceRequirement:{required:false} as any,mcpRuntime:null,onDelta:t=>deltas.push(t)});
+    observer.observe({method:"item/agentMessage/delta",threadId:"thread",params:{turnId:"turn",itemId:"old",delta:"Old partial"}} as any);
+    assert.deepEqual(deltas,[]);
+    observer.observe({method:"item/completed",threadId:"thread",params:{turnId:"turn",item:{type:"agentMessage",id:"old",text:"Complete answer"}}} as any);
+    assert.deepEqual(deltas,deferAssistantOutput?[]:["Complete answer"]);
+    assert.equal(observer.snapshot().assistantText,"Complete answer");
+  }
+});
+import { recordRevitToolOutcome, formatRevitToolContractMemoryForPrompt } from "../src/codex/revit_tool_contract_memory.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +100,13 @@ import test from "node:test";
 import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+
+test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /`revit_activate_view` \(returned ID\), then `revit_get_context` \(verify\)/);
+  assert.match(instructions, /Context is control evidence; resultItems require task_result Observations/);
+  assert.match(instructions, /For visual review use `revit_capture_sheet_region`; present the name\/number, not internal IDs or raw paths/);
+});
 import {
   extractCitedHttpUrls,
   fetchCitedAuthoritativeWebEvidence,
@@ -17,6 +116,49 @@ import {
 } from "../src/brains/authoritative_web_evidence.js";
 import { CodexMcpToolRuntime, EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
+
+test("dynamic tool enum rejection and successful correction produce reusable redacted guidance", { concurrency: false }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-enum-memory-"));
+  const previous = process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+  process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = path.join(root, "memory.json");
+  try {
+    for (const success of [false, true]) {
+      const item = adaptDynamicToolCompletedItem({ type: "dynamicToolCall", tool: "revit_call_tool", success,
+        arguments: { method: "POST", path: "/revit/create-view", body: { action: "create_floor_plan",
+          name: "Confidential project sheet", planType: success ? "engineering" : "private-invalid-value" } },
+        contentItems: [{ type: "inputText", text: success ? '{"transaction":{"status":"committed"}}'
+          : '{"code":"mcp_request_validation_failed","validation_issues":[{"field_path":"body.planType","expected_type":"enum","expected_constraint":{"allowed_values":["floor","ceiling","engineering","structural"]}}]}' }] });
+      assert.ok(item);
+      recordRevitToolOutcome({ sessionId: "enum-session", threadId: "enum-thread", tool: item.tool,
+        arguments: item.arguments, success: item.success, error: item.error });
+    }
+    const guidance = formatRevitToolContractMemoryForPrompt();
+    assert.match(guidance, /"planType":"engineering"/);
+    assert.doesNotMatch(guidance, /Confidential project|private-invalid-value/);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+    else process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("canonical assignment defers provider success deltas until the authoritative final handoff", () => {
+  for (const deferAssistantOutput of [false, true]) {
+    const deltas: string[] = [];
+    const observer = createCodexTurnNotificationObserver({ sessionId: "deferred-output", threadId: "thread", turnId: "turn",
+      modelTelemetry: { observe: () => {} }, assignmentObserver: { observe: () => {} }, mcpRuntime: null,
+      freshEvidenceRequirement: { required: false } as any, webEvidenceRequirement: { required: false } as any,
+      deferAssistantOutput, onDelta: text => deltas.push(text) });
+    observer.observe({ threadId: "thread", method: "item/started", params: {
+      turnId: "turn", item: { type: "agentMessage", id: "answer", phase: "final_answer" }
+    } } as any);
+    observer.observe({ threadId: "thread", method: "item/agentMessage/delta", params: {
+      turnId: "turn", itemId: "answer", delta: "Created M-COORDINATION COPY."
+    } } as any);
+    assert.equal(observer.snapshot().assistantDeltas, "Created M-COORDINATION COPY.");
+    assert.deepEqual(deltas, deferAssistantOutput ? [] : ["Created M-COORDINATION COPY."]);
+  }
+});
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
   assert.equal(parseCodexCliVersion("codex-cli 0.149.0\n"), "0.149.0");
@@ -214,6 +356,25 @@ test("app-server dynamic Revit parameter reads are compacted before returning to
   assert.equal((response.contentItems[0] as { text: string }).text.includes("Panel 499"), false);
 });
 
+test("parameter read rejection keeps its correction contract even beside evidence projections", () => {
+  for (const error of [
+    { error: "invalid_tool_input", issues: [{ path: "body.elementId", expected: "number", actual: "missing" }] },
+    { code: "tool_input_schema_invalid", required: ["elementId"], rejected: ["elementIds", "parameterNames"] }
+  ]) {
+    const response = adaptMcpToolCallResultToDynamicResponse({ isError: true,
+      content: [{ type: "text", text: JSON.stringify(error) }] }, {
+      tool: "revit_call_tool", arguments: { path: "/revit/get-parameters", body: { elementIds: [1380354], parameterNames: ["Comments"] } },
+      projections: [{ evidence_id: "ev1_error_projection" } as any]
+    });
+    assert.equal(response.success, false);
+    assert.ok(response.contentItems.some(item => item.type === "inputText" && item.text === JSON.stringify(error)));
+    assert.equal(JSON.stringify(response).includes("parameter-evidence-summary"), false);
+    const structured = adaptMcpToolCallResultToDynamicResponse({ isError: true, structuredContent: error },
+      { tool: "revit_call_tool", arguments: { path: "/revit/get-parameters" } });
+    assert.deepEqual(JSON.parse((structured.contentItems[0] as { text: string }).text), error);
+  }
+});
+
 test("app-server preserves bounded explicit sheet parameter evidence in one compact response", () => {
   const elementIds = Array.from({ length: 17 }, (_, index) => 1400000 + index);
   const names = ["Sheet Number", "Sheet Group", "Discipline", "Drawn By", "Checked By"];
@@ -289,13 +450,13 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
-test("Codex PDF instructions keep preflight output under the Operator workspace", () => {
+test("Codex PDF instructions keep default output under the Operator workspace without blind export retries", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /PDF preflight or dry-run/);
-  assert.match(instructions, /omit `outputFolder`[\s\S]*`artifacts\/prints`/);
+  assert.match(instructions, /perform the authorized export or driver print with dryRun=false/);
+  assert.match(instructions, /user's destination or the default workspace-relative artifacts\/prints folder/);
   assert.match(instructions, /never invent an OS temp\/test-run directory/);
-  assert.match(instructions, /rejects `outputFolder`[\s\S]*retry once with `artifacts\/prints`/);
-  assert.match(instructions, /dry-run or file-verification receipt/);
+  assert.match(instructions, /Do not re-export to verify or retry a failed print\/export with unknown effects/);
+  assert.match(instructions, /inspect and reconcile the existing attempt first/);
 });
 
 test("Codex instructions diagnose cross-floor visibility beyond view depth", () => {
@@ -318,6 +479,50 @@ test("Codex instructions use bounded bulk sheet parameter readback and target-aw
 
 test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
   assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_open_model"), true);
+});
+
+test("common sheet navigation exposes the complete typed sequence before discovery", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  for (const tool of ["revit_list_sheets", "revit_activate_view", "revit_get_context", "revit_capture_sheet_region"]) {
+    assert.equal(EAGER_OPERATOR_MCP_TOOLS.has(tool), true, tool);
+    assert.ok(instructions.includes(`\`${tool}\``), tool);
+  }
+  assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_delete_elements"), false);
+  assert.match(instructions, /Do not search or record a separate strategy/);
+  assert.match(instructions, /then `revit_get_context` \(verify\)/);
+  assert.match(instructions, /For visual review use `revit_capture_sheet_region`/);
+});
+
+test("MCP namespace presents navigation schemas eagerly and leaves unrelated tools deferred", async () => {
+  const names = ["revit_list_sheets", "revit_activate_view", "revit_get_context", "revit_capture_sheet_region", "revit_delete_elements"];
+  const tools = names.map(name => ({name, description: `Native contract for ${name}`,
+    inputSchema: {type: "object", properties: {target: {type: "string"}}, additionalProperties: false}}));
+  let listings = 0;
+  const runtime = new CodexMcpToolRuntime({backendCwd: process.cwd(), workspaceRoot: process.cwd(), codexHome: process.cwd(), spawnEnv: {}});
+  (runtime as any).client = {listTools: async () => {listings += 1; return {tools};}, close: async () => {}};
+  try {
+    const namespace = await runtime.getDynamicToolNamespace();
+    for (const source of tools) {
+      const delivered = namespace.tools.find((tool: any) => tool.name === source.name);
+      assert.deepEqual(delivered.inputSchema, source.inputSchema);
+      assert.equal(delivered.description, source.description);
+      assert.equal(delivered.deferLoading, source.name === "revit_delete_elements");
+    }
+    assert.equal(await runtime.getDynamicToolNamespace(), namespace);
+    assert.equal(listings, 1);
+  } finally {runtime.stop();}
+});
+
+test("Codex file delivery instructions match artifact authority and allow supporting verification recovery", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Read-only retained-evidence retrieval, tool search, or documentation may support that verification/);
+  assert.match(instructions, /those helpers cannot verify the edit themselves/);
+  assert.match(instructions, /separate POST \/revit\/inspect-exported-files/);
+  assert.match(instructions, /print_settings_restored=true/);
+  assert.match(instructions, /byte sizes and SHA256 hashes/);
+  assert.match(instructions, /Do not re-export to verify or retry a failed print\/export with unknown effects/);
+  assert.doesNotMatch(instructions, /verify the returned `verification\.exists`/);
+  assert.doesNotMatch(instructions, /Do not search for tools, request tool docs/);
 });
 
 test("Codex instructions reuse known primitives before capability discovery", () => {

@@ -43,6 +43,14 @@ export function markdownReport(report: JsonRecord): string {
   const lines = [
     "# General Revit benchmark result",
     "",
+    ...(asRecord(report.campaign_completion).complete === false ? [
+      "**Incomplete campaign: the figures below describe recorded cases only. This is not a campaign grade or a valid model comparison.**",
+      `Stop: ${String(asRecord(asRecord(report.campaign_completion).stop).reason || "Selected cases are missing")}`,
+      `Unrecorded cases: ${JSON.stringify(asRecord(report.campaign_completion).unrecorded_case_ids || [])}`, ""
+    ] : []),
+    ...(report.runtime_score_is_provisional === true ? [
+      "**Provisional runtime results: independent review of delivery and collateral effects is still required. These percentages are not the final task-delivery grade.**", ""
+    ] : []),
     `- Run: \`${String(report.run_id || "")}\``,
     `- Label: ${String(report.label || "unlabeled")}`,
     `- Generated: ${String(report.generated_at || "")}`,
@@ -79,6 +87,9 @@ export function markdownReport(report: JsonRecord): string {
   lines.push(
     "",
     `Configuration drift detected: ${observedProviderCalls.configuration_drift_detected === true ? "yes" : "no"}. Telemetry coverage: ${numberValue(telemetryCoverage.cases_with_model_receipts)}/${numberValue(telemetryCoverage.expected_case_count)} cases; fixture preconditions prepared: ${numberValue(fixturePreconditionCoverage.prepared_case_count)}/${numberValue(fixturePreconditionCoverage.expected_case_count)}; valid for model comparison: ${report.telemetry_valid_for_model_comparison === true ? "yes" : "no"}.`,
+    ...(typeof telemetryCoverage.cases_without_model_invocation === "number" ? [
+      `Canonical records show no model invocation for ${telemetryCoverage.cases_without_model_invocation} paused cases. These are separate from ${numberValue(telemetryCoverage.cases_missing_model_receipts)} cases with missing provider telemetry; no observed model or token usage is invented for them.`
+    ] : []),
     "",
     "The unified setting configures both execution paths. The receipt routes below show which path actually made provider calls; a model-bound Revit task normally bypasses the outer desktop inference loop and runs through the Codex agent route.",
     "",

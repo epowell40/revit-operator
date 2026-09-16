@@ -6,6 +6,8 @@
  */
 
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
+import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
+import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
 import {
   isExcludedEvidenceContainerV2,
   normalizedEvidenceKeyV2
@@ -38,6 +40,7 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  native_artifact_receipt?: unknown;
   capability_id?: unknown;
   path?: unknown;
   tool?: unknown;
@@ -97,6 +100,67 @@ function scheduleFieldToken(value: unknown): string | null {
 function operationContractPath(value: unknown, contract: PostconditionOperationContractV2): string {
   const input = objectValue(value);
   return `${contract.path ?? input.path ?? contract.tool ?? input.tool ?? ""}`.trim().toLowerCase();
+}
+
+function sheetCreationOperation(path: string): boolean {
+  return path === "/revit/duplicate-sheet" || path === "/revit/create-sheet";
+}
+
+function viewCreationOperation(path: string): boolean {
+  return path === "/revit/create-view" || path === "/revit/create-drafting-view";
+}
+
+function exactViewRenameValues(value: unknown): readonly string[] {
+  const row = objectValue(value);
+  // A substring replacement or selector-only request needs trusted before-name
+  // evidence. Never treat replaceText alone as the entire resulting view name.
+  if (row.exact !== true || typeof row.findText !== "string" || !row.findText.length
+    || !Array.isArray(row.viewIds) || !row.viewIds.length
+    || row.viewIds.some(id => !/^[1-9][0-9]*$/.test(String(id)))
+    || (row.replaceText !== undefined && row.replaceText !== null && typeof row.replaceText !== "string")
+    || [row.prefix, row.suffix].some(v => v !== undefined && v !== null && typeof v !== "string")) return [];
+  const candidate = `${String(row.prefix ?? "").trim()}${row.replaceText ?? ""}${String(row.suffix ?? "").trim()}`.trim();
+  const name = (candidate || "View").slice(0, 120).trim();
+  return [...new Set(row.viewIds.map(id => targetPropertyValueToken(String(id), "name", name)))].sort();
+}
+
+function observedTargetViewNames(value: unknown): readonly string[] {
+  const values = new Set<string>();
+  const visit = (node: unknown, depth = 0): void => {
+    if (depth > 8 || node === null || node === undefined) return;
+    const parsed = structuredValue(node);
+    if (parsed !== node) { visit(parsed, depth + 1); return; }
+    if (Array.isArray(node)) { for (const child of node) visit(child, depth + 1); return; }
+    const row = objectValue(node);
+    // Identity must be on the observation itself; a parent's requested viewIds
+    // must not bind a nameless/unidentified row or another view's parameter.
+    const ids = [...new Set([row.id, row.elementId, row.element_id, row.viewId, row.view_id]
+      .filter(id => id !== undefined && id !== null).map(String))];
+    if (ids.length === 1 && /^[1-9][0-9]*$/.test(ids[0]!)) {
+      for (const [key, name] of Object.entries(row)) {
+        if (["name", "viewname", "currentname"].includes(normalizedEvidenceKeyV2(key)) && typeof name === "string")
+          values.add(targetPropertyValueToken(ids[0]!, "name", name));
+      }
+      for (const [key, parameter] of Object.entries(objectValue(row.parameters))) {
+        if (normalizedEvidenceKeyV2(key) === "viewname") {
+          for (const name of scalarParameterRepresentations(parameter))
+            if (typeof name === "string") values.add(targetPropertyValueToken(ids[0]!, "name", name));
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(row)) {
+      if (!isExcludedEvidenceContainerV2(key) && key !== "parameters") visit(child, depth + 1);
+    }
+  };
+  visit(value);
+  return [...values];
+}
+
+// Match the ASCII portion of native RevitTextCasePolicy.NormalizeSheetName.
+// Keep other characters exact: JavaScript's Unicode expansion (e.g. sharp s)
+// is not equivalent to .NET ToUpperInvariant on every supported Revit runtime.
+function normalizedSheetName(value: string): string {
+  return value.trim().replace(/[a-z]/g, character => character.toUpperCase());
 }
 
 function scheduleFilterToken(value: unknown): string | null {
@@ -284,6 +348,9 @@ export function expectedPostconditionValuesV2(
   const useRevitTextSemantics = textNoteOperation(value, contract);
   const operationPath = operationContractPath(value, contract);
   const semanticInput = semanticApplyInput(value);
+  if (operationPath === "/revit/create-view" && objectValue(semanticInput).action === "rename_batch")
+    return exactViewRenameValues(semanticInput);
+  if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
   const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
     if (depth > 6 || values.size >= 32) return;
     if (Array.isArray(node)) {
@@ -311,9 +378,13 @@ export function expectedPostconditionValuesV2(
     const normalizedChildKey = normalizedEvidenceKeyV2(key);
     const normalizedParent = normalizedEvidenceKeyV2(parent);
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
+    const sheetIdentity = sheetCreationOperation(operationPath)
+      && depth === 1 && ["name", "newname", "number", "newnumber"].includes(normalizedChildKey);
+    const viewIdentity = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "name";
+    const viewScale = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "scale";
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedChildKey);
     const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedChildKey);
-    if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue))) {
+    if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue || sheetIdentity || viewIdentity || viewScale))) {
       const expectedField = operationPath === "/revit/renumber-sheets" && normalizedChildKey === "newname"
         ? "sheetName"
         : operationPath === "/revit/renumber-sheets" && normalizedChildKey === "newnumber"
@@ -321,7 +392,9 @@ export function expectedPostconditionValuesV2(
           : key;
       values.add(useRevitTextSemantics && typeof node === "string" && REVIT_TEXT_ASSIGNMENT_KEYS.has(normalizedChildKey)
         ? revitTextToken(node)
-        : propertyValueToken(expectedField, node));
+        : propertyValueToken(expectedField, sheetIdentity && typeof node === "string"
+          ? /name$/.test(normalizedChildKey) ? normalizedSheetName(node) : node.trim()
+          : viewIdentity && typeof node === "string" ? node.trim().slice(0, 120).trim() : node));
     }
     if (operationPath === "/revit/configure-schedule" && normalizedParent === "appearance") {
       values.add(schedulePropertyValueToken(key, node));
@@ -369,8 +442,11 @@ export function expectedPostconditionValuesV2(
   return [...values].sort();
 }
 
-export function observedPostconditionValuesV2(value: unknown): ReadonlySet<string> {
+export function observedPostconditionValuesV2(value: unknown, contract: PostconditionOperationContractV2 = {}): ReadonlySet<string> {
   const values = new Set<string>();
+  if (operationContractPath({}, contract) === "/revit/create-view")
+    for (const token of observedTargetViewNames(value)) values.add(token);
+  for (const token of visibilityObservedValuesV2(value)) values.add(token);
   for (const token of observedScheduleContractTokens(value)) values.add(token);
   const controlLeaves = new Set([
     "action", "complete", "dryrun", "error", "failure", "message", "ok", "status", "success", "verified"
@@ -423,6 +499,20 @@ export function observedPostconditionValuesV2(value: unknown): ReadonlySet<strin
     }
   };
   visit(value);
+  if (sheetCreationOperation(operationContractPath({}, contract))) {
+    // Only sheet creation may bind native Sheet Name/Number parameters to its
+    // requested name/number. Never collapse arbitrary parameter names globally.
+    for (const token of [...values]) {
+      if (token.startsWith("property:sheetname:")) values.add(token.replace("property:sheetname:", "property:name:"));
+      if (token.startsWith("property:sheetnumber:")) values.add(token.replace("property:sheetnumber:", "property:number:"));
+    }
+  }
+  if (viewCreationOperation(operationContractPath({}, contract))) {
+    for (const token of [...values]) {
+      if (token.startsWith("property:viewname:")) values.add(token.replace("property:viewname:", "property:name:"));
+      if (token.startsWith("property:viewscale:")) values.add(token.replace("property:viewscale:", "property:scale:"));
+    }
+  }
   return values;
 }
 
@@ -431,9 +521,11 @@ export function postconditionSatisfiedByPayloadV2(
   verificationPayload: unknown,
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
+  if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(String(contract.path ?? objectValue(applyInput).path)))
+    return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);
   if (expected.length > 0) {
-    const observed = observedPostconditionValuesV2(verificationPayload);
+    const observed = observedPostconditionValuesV2(verificationPayload, { ...contract, path: operationContractPath(applyInput, contract) });
     return expected.every(value => observed.has(value));
   }
   // An untyped success/complete/exists flag cannot prove an arbitrary mutation.

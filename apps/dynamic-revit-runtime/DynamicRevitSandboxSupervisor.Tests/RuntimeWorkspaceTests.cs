@@ -92,6 +92,16 @@ public sealed class Generated : IDynamicCoreRevitProgramV1 {
         Assert.Equal(element.CoreStateHash, graph.Nodes.Single().Attributes["expected_target_state_hash"]);
         Assert.Equal(DynamicCoreOperationStateV1.ParameterStateHash(actionParameter), graph.Nodes.Single().Attributes["expected_parameter_state_hash"]);
         Assert.Equal(rule.RecordId, graph.ContextRuleRecordId); Assert.Equal(rule.RecordHash, graph.ContextRuleRecordHash); Assert.Equal(rule.BindingHash, graph.ContextRuleBindingHash);
+        var failedSource = source.Replace("return c.Complete();", "throw new System.InvalidOperationException(\"Core calculation incomplete.\");");
+        var failed = WorkerExecutor.Execute(new WorkerInput { Source = failedSource, Input = input, ResultReferenceDocumentRevision = 123,
+            VerifiedContextRule = rule, ContextObservationPages = new[] { page } });
+        Assert.False(failed.Ok);
+        Assert.Null(failed.CoreProgramResult);
+        Assert.Null(failed.Graph);
+        Assert.False(failed.DeterministicReplayVerified);
+        var partials = failed.Diagnostics.Where(value => value.Code == "PROGRAM_PARTIAL_OUTPUT").ToArray();
+        Assert.Equal(2, partials.Length);
+        Assert.All(partials, value => Assert.Contains(rule.RecordId, value.Message));
     }
     [Fact]
     public void HostTextNoteSelectorProjectionIsAcceptedBySupervisorObservationContext()

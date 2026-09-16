@@ -1,4 +1,8 @@
+import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
+import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
+import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
 import { kernelAssertV2 } from "./errors.js";
@@ -45,6 +49,7 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
   const previous = snapshot.provider_calls[event.call_id];
   kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider call requires a stable identity.");
   if (!previous) {
+    kernelAssertV2(snapshot.execution_control?.state !== "paused", "assignment_execution_paused", "Paused work cannot admit another provider request.");
     kernelAssertV2(event.state === "admitted", "provider_call_not_admitted", "The first provider-call state must be admitted.");
     kernelAssertV2(Boolean(event.provider?.trim()) && Boolean(event.model?.trim()), "provider_call_route_missing", "Provider admission requires the selected provider and model.");
     kernelAssertV2((event.gap_ids?.length ?? 0) > 0 && (event.criterion_ids?.length ?? 0) > 0, "provider_call_progress_binding_missing", "Provider admission requires unresolved gap and criterion bindings.");
@@ -151,6 +156,8 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 }
 
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
+  kernelAssertV2(snapshot.execution_control?.state !== "paused" || Boolean(operation.parent_operation_id),
+    "assignment_execution_paused", "Paused work cannot admit another root operation; admitted children may settle.");
   kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, operation.binding), "operation_binding_mismatch", "Operation binding is not current.");
   kernelAssertV2(!snapshot.operations[operation.operation_id], "operation_duplicate", "Operation identity already exists.");
   kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0 || operation.purpose === "reconciliation",
@@ -213,7 +220,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
   for (const dependencyId of workUnit.dependency_ids) kernelAssertV2(["complete", "retained"].includes(snapshot.work_unit_states[dependencyId] ?? ""), "operation_dependency_incomplete", "Operation dependencies must be complete or retained.");
-  for (const variableId of workUnit.input_variable_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "operation_input_missing", "Operation requires a known stable input variable.");
+  for (const variableId of workUnitInputVariableIdsV2(snapshot, workUnit.work_unit_id)) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "operation_input_missing", "Operation requires a known stable input variable.");
   if (role === "root") {
     kernelAssertV2(!operation.parent_operation_id && !operation.root_operation_id,
       "operation_root_relation_invalid", "A root operation cannot cite a parent or another root operation.");
@@ -318,11 +325,21 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
   if (operation.requested_effect === "read") {
     kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state !== "committed", "operation_read_effect_invalid", "Read result cannot claim a persistent effect.");
   }
+  if (result.native_transaction_state === "not_started") {
+    kernelAssertV2(result.authority === "native-host" && result.dispatch_state === "dispatched"
+      && result.persistent_effect === "none" && !(result.affected_target_identities?.length),
+    "operation_native_preflight_invalid", "A native preflight result must prove no model effect or affected targets.");
+  }
+  const nativeArtifactEffect = nativeArtifactResultEffectV2(result);
+  if (result.native_artifact_receipt !== undefined) {
+    kernelAssertV2(nativeArtifactEffect !== null && result.native_artifact_receipt.phase === operation.requested_effect,
+      "operation_artifact_authority_invalid", "Artifact effects require a native, exact-route, current-invocation file receipt.");
+  }
   if (result.persistent_effect === "applied") {
-    kernelAssertV2(operation.requested_effect === "apply" && result.native_transaction_state === "committed", "operation_apply_authority_invalid", "Applied effect requires a committed apply result.");
+    kernelAssertV2(operation.requested_effect === "apply" && (result.native_transaction_state === "committed" || nativeArtifactEffect === "applied"), "operation_apply_authority_invalid", "Applied effect requires a committed transaction or authoritative native artifact export.");
   }
   if (operation.requested_effect === "preview" && result.status === "succeeded") {
-    kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state === "rolled_back", "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback.");
+    kernelAssertV2(result.persistent_effect === "none" && (result.native_transaction_state === "rolled_back" || nativeArtifactEffect === "none"), "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback or a native export plan that did not write files.");
   }
   if (result.input_schema_gap) {
     const gap = result.input_schema_gap;
@@ -393,7 +410,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
       && result.status === "failed_after_dispatch"
       && result.dispatch_state === "dispatched"
       && result.persistent_effect === "none"
-      && result.native_transaction_state === "rolled_back"
+      && (result.native_transaction_state === "rolled_back" || nativeArtifactEffect === "none")
       && result.observation_required === true,
     "operation_result_semantic_gap_effect_invalid", "A result-semantic gap is valid only for a safely rolled-back task preview with durable native evidence.");
     kernelAssertV2(gap.schema === OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA
@@ -490,7 +507,7 @@ function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation:
   }
   if (evaluation.basis === "desired_state_equivalence") {
     kernelAssertV2(snapshot.spec.requested_effect === "apply", "criterion_noop_not_apply", "Desired-state equivalence is only meaningful for an apply Assignment.");
-    const requiredVariables = new Set(snapshot.spec.work_units.flatMap((unit) => unit.input_variable_ids));
+    const requiredVariables = new Set(snapshot.spec.work_units.flatMap((unit) => workUnitInputVariableIdsV2(snapshot, unit.work_unit_id)));
     for (const variableId of requiredVariables) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "criterion_noop_desired_state_missing", "Desired-state equivalence requires every admitted desired-state input.");
   }
 }
@@ -563,6 +580,17 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
     requireCurrentBinding(snapshot, event);
     snapshot = { ...snapshot, assignment_version: event.assignment_version };
     switch (event.event_type) {
+      case "execution_control_requested":
+        kernelAssertV2(event.actor === "authenticated-user", "assignment_control_authority_invalid", "Execution controls require an authenticated user.");
+        kernelAssertV2(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(event.command_id), "assignment_control_identity_invalid", "Execution controls require a bounded command identity.");
+        kernelAssertV2(event.expected_command_id === (snapshot.execution_control?.command_id ?? null), "assignment_control_stale", "Execution control changed since this command was prepared.");
+        kernelAssertV2(event.action === "pause" || event.action === "resume", "assignment_control_action_invalid", "Unknown execution control.");
+        if (event.action === "resume") {
+          kernelAssertV2(snapshot.quiescent, "assignment_resume_not_quiescent", "Admitted work must settle before resuming.");
+          kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0, "assignment_resume_reconciliation_required", "Unknown effects must be reconciled before resuming ordinary work.");
+        }
+        snapshot = { ...snapshot, execution_control: { state: event.action === "pause" ? "paused" : "running", command_id: event.command_id, changed_at: event.occurred_at } };
+        break;
       case "run_superseded":
         kernelAssertV2(event.superseded_by_generation > event.binding.generation, "assignment_generation_not_advanced", "Supersession must advance generation.");
         kernelAssertV2(snapshot.quiescent, "assignment_run_not_quiescent", "A run cannot be superseded while operations are unresolved.");
@@ -573,7 +601,11 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = { ...snapshot, work_unit_states: { ...snapshot.work_unit_states, [event.work_unit_id]: event.state } };
         break;
       case "input_requested": {
-        const input = snapshot.spec.input_variables.find((candidate) => candidate.variable_id === event.variable_id);
+        if (event.declaration) {
+          kernelAssertV2(event.declaration.variable?.variable_id === event.variable_id, "input_declaration_binding_invalid", "Question and declared variable must agree.");
+          snapshot = appendDiscoveredInputV2(snapshot, event.declaration);
+        }
+        const input = assignmentInputVariablesV2(snapshot).find((candidate) => candidate.variable_id === event.variable_id);
         kernelAssertV2(input, "input_variable_unknown", "Input variable is not in AssignmentSpecV2.");
         kernelAssertV2(!state.clarificationByVariable.has(event.variable_id), "input_clarification_already_pending", "Input variable already has an unresolved clarification.");
         state.clarificationByVariable.set(event.variable_id, event.clarification_id);
@@ -588,6 +620,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         break;
       }
       case "input_supplied":
+        kernelAssertV2(event.result_freshness === undefined || event.result_freshness === "invalidate_dependent_results_v1", "input_result_freshness_invalid", "Input result freshness must use the host contract.");
         kernelAssertV2(state.clarificationByVariable.get(event.variable_id) === event.clarification_id, "clarification_binding_invalid", "Input does not resolve the current clarification.");
         state.clarificationByVariable.delete(event.variable_id);
         snapshot = {
@@ -599,6 +632,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
             [event.clarification_id]: { ...snapshot.clarifications[event.clarification_id]!, resolved_at: event.occurred_at }
           }
         };
+        // Explicit event version preserves historical replay while all newly
+        // authenticated answers invalidate dependent pre-answer results.
+        if (event.result_freshness === "invalidate_dependent_results_v1") snapshot = invalidateDependentInputResultsV2(snapshot, event.variable_id);
         break;
       case "provider_call_recorded":
         kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider-call telemetry requires a stable call identity.");
@@ -746,6 +782,13 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const operation = snapshot.operations[event.result.operation_id];
         kernelAssertV2(operation && operation.settlement_state !== "settled" && !operation.result, "operation_result_unmatched", "Result requires one unsettled admitted operation without a prior result.");
         validateResult(snapshot, operation, event.result);
+        if (event.result.native_artifact_receipt !== undefined) {
+          const raw = event.observation_commit?.raw_payload;
+          const receipt = raw && typeof raw === "object" && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>).artifact_receipt : undefined;
+          kernelAssertV2(canonicalJsonV2(receipt ?? null) === canonicalJsonV2(event.result.native_artifact_receipt),
+            "artifact_receipt_payload_mismatch", "Artifact settlement must match the exact retained native payload receipt.");
+        }
         const settlementState = event.result.observation_required ? "retaining_observation" : "settled";
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation,
@@ -784,6 +827,10 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           settlement_state: "settled" as const,
           settled_at: event.occurred_at,
           observation_retention_error: undefined,
+          // The exact payload remains in the immutable result event and the
+          // authoritative evidence store. Only pending retention needs another
+          // in-memory copy; settled duplicate delivery rehydrates the evidence.
+          observation_commit: undefined,
           observation_ids: [...operation.observation_ids, event.observation.observation_id]
         };
         const operations = { ...snapshot.operations, [operation.operation_id]: settledOperation };
@@ -867,6 +914,12 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         });
         break;
       }
+      case "result_delivered":
+        kernelAssertV2(event.actor === "operator-result-delivery", "assignment_result_delivery_authority_invalid", "Only the trusted evidence presentation boundary can retain a result.");
+        validateResultDeliveryV2(snapshot, event.delivery);
+        kernelAssertV2(!snapshot.result_delivery, "assignment_result_delivery_duplicate", "Result delivery is immutable.");
+        snapshot = { ...snapshot, result_delivery: structuredClone(event.delivery) };
+        break;
       case "review_requested":
         for (const workUnitId of event.work_unit_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.work_unit_states, workUnitId), "review_work_unit_unknown", "Review cites an unknown work unit.");
         snapshot = { ...snapshot, pending_review_ids: [...new Set([...snapshot.pending_review_ids, event.review_id])].sort() };
@@ -907,23 +960,44 @@ export function reduceAssignmentEventsV2(events: readonly AssignmentEventV2[]): 
 
 export class AssignmentJournalV2 {
   readonly #events: AssignmentEventV2[] = [];
+  readonly #byId = new Map<string, AssignmentEventV2>();
+  #state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map() };
 
   constructor(events: readonly AssignmentEventV2[] = []) {
-    for (const event of events) this.append(event);
+    for (const event of events) {
+      const existing = this.#byId.get(event.event_id);
+      if (existing) {
+        kernelAssertV2(canonicalJsonV2(existing) === canonicalJsonV2(event), "assignment_event_id_conflict", "Event identity was reused with different content.");
+        continue;
+      }
+      const retained = structuredClone(event);
+      applyEvent(this.#state, retained);
+      this.#byId.set(retained.event_id, retained);
+      this.#events.push(retained);
+    }
   }
 
   append(event: AssignmentEventV2): AssignmentSnapshotV2 {
-    const existing = this.#events.find((candidate) => candidate.event_id === event.event_id);
+    const existing = this.#byId.get(event.event_id);
     if (existing) {
       kernelAssertV2(canonicalJsonV2(existing) === canonicalJsonV2(event), "assignment_event_id_conflict", "Event identity was reused with different content.");
       return this.snapshot();
     }
-    const proposed = [...this.#events, structuredClone(event)];
-    const snapshot = reduceAssignmentEventsV2(proposed);
-    this.#events.push(structuredClone(event));
-    return snapshot;
+    // A rejected event must not mutate accepted state, including clarification
+    // and supersession bookkeeping. Commit the candidate state only on success.
+    const next: ReducerStateV2 = {
+      ...this.#state,
+      ...(this.#state.snapshot ? { snapshot: structuredClone(this.#state.snapshot) } : {}),
+      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+    };
+    const retained = structuredClone(event);
+    applyEvent(next, retained);
+    this.#state = next;
+    this.#byId.set(retained.event_id, retained);
+    this.#events.push(retained);
+    return this.snapshot();
   }
 
   events(): readonly AssignmentEventV2[] { return structuredClone(this.#events); }
-  snapshot(): AssignmentSnapshotV2 { return reduceAssignmentEventsV2(this.#events); }
+  snapshot(): AssignmentSnapshotV2 { return structuredClone(current(this.#state)); }
 }

@@ -89,19 +89,8 @@ namespace RevitBridge.Logic.Handlers
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
                 var imageSha256 = ComputeFileSha256(path);
-                RasterAffineFrame frame;
-                try
-                {
-                    frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
-                    if (frame.CropAspect <= 1e-9 || frame.FrameAspect <= 1e-9)
-                        throw new InvalidOperationException("The view outline produced a degenerate exported-raster frame.");
-                    warnings.Add("export-visible-elements mapped the fit-to-page raster from View.Outline and view basis directions.");
-                }
-                catch (Exception ex)
-                {
-                    frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
-                    warnings.Add($"View.Outline raster mapping was unavailable; fell back to CropBox mapping ({ex.Message}).");
-                }
+                var frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
+                warnings.Add("export-visible-elements mapped the fit-to-page raster from View.Outline and view basis directions. Plan-view depth is a display plane; use independent element elevations for placement height.");
 
                 if (frame.AspectCorrectionApplied)
                 {

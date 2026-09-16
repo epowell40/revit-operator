@@ -7,6 +7,8 @@ import {
 import { readEvidenceRef } from "../evidence/evidence_store.js";
 import type { EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import type { GoalRecord } from "../goals/service.js";
+import { packetOperationVerificationV2, packetOverallTrustV2 } from "./assignment_kernel_v2_verification.js";
+import { assignmentUserPauseV2 } from "./assignment_kernel_v2_pause.js";
 import {
   VERIFIED_WORK_PACKET_SCHEMA,
   VERIFIED_WORK_PACKET_VERSION,
@@ -81,11 +83,6 @@ function actions(snapshot: AssignmentSnapshotV2): VerifiedWorkAction[] {
     const affectedTargetIds = affectedOperationTargetIdentitiesV2(operation);
     const authority = operation.result?.authority === "native-host" ? "native_host"
       : operation.result?.authority === "dynamic-runtime" ? "worker" : "control_plane";
-    const verification = operation.purpose === "verification"
-      && operation.result?.status === "succeeded"
-      && operation.observation_ids.length > 0
-      && Boolean(operation.verification_of_operation_id)
-      ? "passed" : operation.purpose === "verification" ? "inconclusive" : "not_requested";
     return {
       attempt_id: operation.operation_id,
       run_id: operation.binding.run_id,
@@ -107,7 +104,7 @@ function actions(snapshot: AssignmentSnapshotV2): VerifiedWorkAction[] {
         authority,
         authority_id: operation.result?.receipt_id ?? null
       },
-      verification: { state: verification, reason: null },
+      verification: packetOperationVerificationV2(snapshot, operation),
       receipt_references: operation.result?.receipt_id ? [{
         evidence_id: operation.result.receipt_id, content_hash: null, byte_count: null, media_type: null,
         artifact_location: null, trust: authority === "native_host" ? "native_execution_evidence" : "uncertain_or_missing",
@@ -165,8 +162,12 @@ function status(snapshot: AssignmentSnapshotV2): VerifiedWorkPacketStatus {
   return "failed";
 }
 
-function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCriterion[]): VerifiedWorkIssue[] {
+function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCriterion[], actionRows: VerifiedWorkAction[]): VerifiedWorkIssue[] {
   const output: VerifiedWorkIssue[] = [];
+  for (const action of actionRows.filter(action => action.effect.state === "applied" && action.verification.state !== "passed")) {
+    output.push({ kind: "verification_uncertainty", summary: action.verification.reason!,
+      affected_attempt_ids: [action.attempt_id], evidence_references: action.evidence_references, user_action_required: null });
+  }
   const executionFailureId = snapshot.execution_failure_ids.at(-1);
   const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
   if (executionFailure) output.push({
@@ -176,9 +177,15 @@ function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCrit
     evidence_references: [],
     user_action_required: null
   });
-  if (snapshot.pending_input_variable_ids.length > 0) output.push({
-    kind: "user_action_required", summary: `Required input: ${snapshot.pending_input_variable_ids.join(", ")}.`,
-    affected_attempt_ids: [], evidence_references: [], user_action_required: "Supply the requested value to resume this Assignment."
+  for (const id of snapshot.pending_input_variable_ids) {
+    const question = Object.values(snapshot.clarifications).find(clarification => clarification.variable_id === id && !clarification.resolved_at)?.question
+      ?? "Additional information is needed to continue this assignment.";
+    output.push({ kind: "user_action_required", summary: question,
+      affected_attempt_ids: [], evidence_references: [], user_action_required: question });
+  }
+  if (snapshot.pending_review_ids.length > 0) output.push({
+    kind: "user_action_required", summary: "This assignment is waiting for your review.",
+    affected_attempt_ids: [], evidence_references: [], user_action_required: "Review the proposed work before continuing."
   });
   if (snapshot.unresolved_unknown_operation_ids.length > 0) output.push({
     kind: "verification_uncertainty", summary: "One or more operations require target-bound reconciliation before replay or completion.",
@@ -226,7 +233,7 @@ function sumProviderUsage(snapshot: AssignmentSnapshotV2, metric: ProviderUsageM
 }
 
 export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapshot: AssignmentSnapshotV2, parentPacketId: string | null): VerifiedWorkPacketV1 {
-  if (!snapshot.terminal) throw new Error("Verified Work Packet requires a settled V2 Assignment.");
+  if (!snapshot.terminal && !assignmentUserPauseV2(snapshot)) throw new Error("Verified Work Packet requires a settled V2 Assignment or a quiescent recorded user pause.");
   assertProviderLedgerCoherent(snapshot);
   const actionRows = actions(snapshot);
   const criterionRows = criteria(snapshot);
@@ -272,7 +279,7 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
       role: "raw_evidence", path: ref.artifact_location, content_hash: ref.content_hash,
       byte_count: ref.byte_count, media_type: ref.media_type, evidence_reference: ref, navigation_target: null
     })),
-    issues: issues(snapshot, criterionRows),
+    issues: issues(snapshot, criterionRows, actionRows),
     rollback: {
       available: actionRows.some(action => action.requested_effect !== "read"),
       authority_or_transaction_identity: actionRows.find(action => action.effect.state === "applied")?.effect.authority_id ?? null,
@@ -287,8 +294,7 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
       telemetry_complete: Object.values(providerUsage).every(value => value !== null), human_intervention: null
     },
     trust_presentation: {
-      overall: snapshot.terminal && criterionRows.length > 0 && criterionRows.every(row => row.status === "pass")
-        ? "independently_verified" : "uncertain_or_missing",
+      overall: packetOverallTrustV2(snapshot),
       agent_reported: "Reported by an agent; never authoritative execution truth.",
       native_execution_evidence: "Bound to one OperationV2 and an authoritative retained ObservationV2.",
       independently_verified: "Accepted by the criterion model using exact Operation and Observation fact identities.",

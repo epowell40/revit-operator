@@ -302,9 +302,9 @@ namespace RevitBridge.Operator
                         jobId,
                         correlationId).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
+                catch (OperationCanceledException ex) when (!_cts.IsCancellationRequested)
                 {
-                    throw deadline.CreateTimeoutException(correlationId);
+                    throw deadline.ClassifyCancellation(ex, correlationId);
                 }
                 executionCompleted = true;
                 var transportResult = OperatorCourierResultCompactor.Prepare(result);

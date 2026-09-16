@@ -858,4 +858,23 @@ test("shared-token local V2 checkpoint publishes the exact externally started As
   assert.equal(exactV2Response.status, 200);
   assert.equal((await exactV2Response.json() as { assignment_kernel_v2: { snapshot: { current_binding: { principal_id: string } } } })
     .assignment_kernel_v2.snapshot.current_binding.principal_id, "local:shared-token");
+
+  for (const [prompt, supplied, expected] of [
+    ["Turn off the rooms on this plan. Leave MEP spaces alone.", "read", "apply"],
+    ["Show me what would be removed if we deleted this branch. Leave it in place.", "apply", "preview"],
+    ["Report this equipment's size. Leave the model unchanged.", "apply", "read"]
+  ]) {
+    const fresh = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
+    const freshId = (await fresh.json() as { session_id: string }).session_id;
+    const response = await fetch(`${base}/api/agent-goal`, { method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ session_id: freshId, objective: prompt,
+        success_criteria: ["Return the requested result with evidence."], start_assignment_run: true,
+        work_budget: { mode: "sidecar_computer", source: "operator_desktop", source_user_request: prompt, requested_effect: supplied } }) });
+    const started = await response.json() as any;
+    assert.equal(response.status, 200, JSON.stringify(started));
+    assert.equal(started.goal.work_budget.requested_effect, expected);
+    const publication = await fetch(`${base}/api/assignments/v2/${encodeURIComponent(started.assignment_run.assignment_id)}`, { headers: tokenHeaders });
+    assert.equal((await publication.json() as any).assignment_kernel_v2.snapshot.spec.requested_effect, expected,
+      "the HTTP reply and the persisted kernel must agree on the corrected effect");
+  }
 });

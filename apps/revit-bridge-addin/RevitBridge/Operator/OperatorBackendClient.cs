@@ -99,10 +99,9 @@ namespace RevitBridge.Operator
             CancellationToken cancellationToken,
             HttpCompletionOption completionOption = HttpCompletionOption.ResponseContentRead)
         {
-            var first = requestFactory();
+            using var first = requestFactory();
             await ApplyAuthHeadersAsync(first, forceRefresh: false, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(first, completionOption, cancellationToken).ConfigureAwait(false);
-            first.Dispose();
 
             if (response.StatusCode != HttpStatusCode.Unauthorized ||
                 !OperatorAuthRetryPolicy.ShouldRetryOnUnauthorized(OperatorClientAuthMode.None, attemptNumber: 1))
@@ -110,10 +109,9 @@ namespace RevitBridge.Operator
 
             response.Dispose();
 
-            var retry = requestFactory();
+            using var retry = requestFactory();
             await ApplyAuthHeadersAsync(retry, forceRefresh: true, cancellationToken).ConfigureAwait(false);
             var retryResponse = await _http.SendAsync(retry, completionOption, cancellationToken).ConfigureAwait(false);
-            retry.Dispose();
             return retryResponse;
         }
 
@@ -643,13 +641,13 @@ namespace RevitBridge.Operator
             var roundTrip = Stopwatch.StartNew();
             try
             {
-                using var resp = await SendWithAuthAsync(
+                using var resp = await OperatorNativeAuthorizationTransport.SendAsync(() => SendWithAuthAsync(
                     () => new HttpRequestMessage(HttpMethod.Post, "api/revit-direct/authorize-execution")
                     {
                         Content = new StringContent(body, Encoding.UTF8, "application/json")
                     },
                     deadline.Token,
-                    HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                    HttpCompletionOption.ResponseHeadersRead), deadline.Token).ConfigureAwait(false);
                 var responseByteLimit = resp.IsSuccessStatusCode
                     ? OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes
                     : OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes;

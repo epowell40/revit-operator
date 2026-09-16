@@ -3,6 +3,7 @@ import path from "node:path";
 import { benchmarkDataRoot, sourceControlledRoots } from "./files.js";
 import {
   loadGeneralRevitCapabilityCorpus,
+  generalRevitCapabilityManifestPath,
   summarizeGeneralRevitCorpusCoverage,
   type GeneralRevitCapabilityCorpus
 } from "./general_revit_capability_acceptance.js";
@@ -30,16 +31,18 @@ export type GeneralRevitProtocolInputsV2 = {
   externalHoldout: { manifest: ExternalHoldoutManifestV2; descriptor: ExternalHoldoutDescriptorV2 } | null;
   externalHoldoutPath: string;
   forbiddenSourceRoots: string[];
+  corpusManifestPath?: string;
 };
 
-export function loadGeneralRevitProtocolInputsV2(externalHoldoutPath: string): GeneralRevitProtocolInputsV2 {
-  const publicCorpus = loadGeneralRevitCapabilityCorpus();
+export function loadGeneralRevitProtocolInputsV2(externalHoldoutPath: string, corpusManifestPath?: string): GeneralRevitProtocolInputsV2 {
+  if (externalHoldoutPath && corpusManifestPath) throw new Error("Choose a public corpus manifest or an external holdout, not both.");
+  const publicCorpus = loadGeneralRevitCapabilityCorpus(corpusManifestPath);
   const forbiddenSourceRoots = sourceControlledRoots();
   const externalHoldout = externalHoldoutPath
     ? loadExternalHiddenHoldoutV2({ manifestPath: externalHoldoutPath, forbiddenSourceRoots })
     : null;
   if (!externalHoldout) {
-    return { corpus: publicCorpus, fixtureConfig: loadGeneralRevitSampleFixtures(publicCorpus.cases), externalHoldout, externalHoldoutPath, forbiddenSourceRoots };
+    return { corpus: publicCorpus, fixtureConfig: loadGeneralRevitSampleFixtures(publicCorpus.cases), externalHoldout, externalHoldoutPath, forbiddenSourceRoots, corpusManifestPath: generalRevitCapabilityManifestPath(corpusManifestPath) };
   }
   const corpus: GeneralRevitCapabilityCorpus = {
     ...publicCorpus,
@@ -103,7 +106,7 @@ export function generalRevitProtocolCorpusCoverageV2(inputs: GeneralRevitProtoco
 }
 
 export function generalRevitProtocolManifestPathV2(inputs: GeneralRevitProtocolInputsV2): string {
-  return inputs.externalHoldoutPath || path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json");
+  return inputs.externalHoldoutPath || generalRevitCapabilityManifestPath(inputs.corpusManifestPath);
 }
 
 export function resolveGeneralRevitProtocolRunV2(args: {

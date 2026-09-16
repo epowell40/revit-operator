@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "oneOf": [
+    { "required": ["sourceSheetId"] },
+    { "required": ["sourceSheetNumber"] },
+    { "required": ["sourceQuery"] }
+  ],
+  "properties": {
+    "sourceSheetId": { "type": "integer", "minimum": 1 },
+    "sourceSheetNumber": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "sourceQuery": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "option": { "type": "string", "enum": ["empty", "detailing", "views_only", "views_and_detailing", "views_as_dependent"] },
+    "newNumber": { "type": "string", "maxLength": 64 },
+    "newName": { "type": "string", "maxLength": 200 },
+    "dryRun": { "type": "boolean" },
+    "verify": { "type": "boolean" }
+  }
+}

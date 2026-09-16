@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <TargetFrameworks Condition="'$(RevitYear)'=='2027'">net10.0-windows</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -21,11 +22,17 @@
     <ProjectReference Include="..\RevitBridge.Logic\RevitBridge.Logic.csproj" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="..\RevitBridge\Operator\OperatorApprovalPolicy.cs" Link="Operator\OperatorApprovalPolicy.cs" />
     <Compile Include="..\RevitBridge\Operator\OperatorBackendContracts.cs" Link="Operator\OperatorBackendContracts.cs" />
     <Compile Include="..\RevitBridge\Operator\OperatorDesktopLauncher.cs" Link="Operator\OperatorDesktopLauncher.cs" />
     <Compile Include="..\RevitBridge\Operator\OperatorToolManifest.cs" Link="Operator\OperatorToolManifest.cs" />
+    <Compile Include="..\RevitBridge\Operator\OperatorActionAllowlist.cs" Link="Operator\OperatorActionAllowlist.cs" />
   </ItemGroup>
 
 </Project>

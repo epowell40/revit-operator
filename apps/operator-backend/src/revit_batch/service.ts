@@ -922,6 +922,31 @@ export function retryFailedRevitBatchItems(jobId: string, access?: RevitBatchAcc
   return toPublicJob(saved);
 }
 
+/** Read-only availability hint. Claim and dispatch still require the full live binding. */
+export function hasAvailableRevitBatchWork(input: {
+  session_id: string; owner?: RevitBatchOwner | null; executor_kind?: string;
+}): boolean {
+  const sessionId = clip(input.session_id, 200);
+  if (!sessionId) throw new Error("Batch availability requires session_id.");
+  const owner = normalizeOwner(input.owner);
+  const executorKind = clip(input.executor_kind, 120) || "revit_delegate";
+  const now = Date.now();
+  return listJobRecords(200).some(job => {
+    // The hint exposes no job data. Bound jobs are visible only to the same
+    // owner and session; legacy unbound jobs remain local/shared-token only.
+    if (job.owner && !ownersMatch(job.owner, owner)) return false;
+    if (owner && !job.owner) return false;
+    if (job.session_id ? job.session_id !== sessionId : !!owner) return false;
+    if (job.executor_kind && job.executor_kind !== executorKind) return false;
+    if (TERMINAL_JOB_STATUSES.has(job.status)) return false;
+    if (CLAIMABLE_JOB_STATUSES.has(job.status) && job.items.some(item => item.status === "pending")) return true;
+    // Expired claims require the existing fenced reconciliation path, including
+    // paused/cancelling jobs. An unexpired in-flight item needs no new native read.
+    return job.items.some(item => item.status === "running"
+      && !(Date.parse(`${item.claim?.lease_expires_at || ""}`) > now));
+  });
+}
+
 export function claimNextRevitBatchItem(input: ClaimNextRevitBatchItemInput): JsonMap {
   const executorId = clip(input.executor_id, 160);
   const executorKind = clip(input.executor_kind, 120) || "revit_delegate";

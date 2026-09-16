@@ -1,0 +1,143 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
+import { classifyAgentTurn } from "../src/teammate_loop_runtime.js";
+import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
+
+const packageRoot = ["../packages/operator-assistant-ui", "../../packages/operator-assistant-ui"]
+  .map(p => path.resolve(p)).find(p => fs.existsSync(path.join(p, "context_reply.mjs")))!;
+const ui = await import(pathToFileURL(path.join(packageRoot, "context_reply.mjs")).href);
+const request = (user_text = "can you see the open model?", extra = {}) => ({
+  version: "operator.backend.v1", session_id: "existing-task", message_id: "question", user_text, ...extra
+});
+const fresh = (title = "Snowdon HVAC") => ({ ok: true, data: { document: { title, activeView: { name: "Level 2" }, selection: [1, 2] } } });
+
+test("model visibility questions are read turns while mixed edits and redlines retain write intent", () => {
+  for (const text of ["can you see the open model?", "Could you access my Revit model?", "Can you read this project?"]) {
+    assert.equal(classifyAgentTurn(text), "inspection", text);
+    assert.equal(classifyAutoGoalRequest(text).requestedEffect, "read", text);
+  }
+  for (const text of ["Can you see the open model and rename sheet M102?", "Open the Snowdon model", "12x10 SUPPLY DUCT at the marked branch"]) {
+    assert.equal(classifyAutoGoalRequest(text).requestedEffect, "apply", text);
+  }
+});
+
+test("direct answers are a narrow fresh-context read, never a task or attachment shortcut", async () => {
+  let reads = 0;
+  let authorizations = 0;
+  const deps = { verifySession: async () => { authorizations++; }, readContext: async () => { reads++; return fresh(); } };
+  const answer = await ui.tryContextReply(request(undefined, { context: { revit: { document: { title: "SPOOFED" } } } }), deps);
+  assert.match(answer, /Yes.*Snowdon HVAC.*Level 2/);
+  assert.equal(reads, 1); assert.equal(authorizations, 1);
+  for (const body of [
+    request("can you see the open model and change its name?"), request("how many ducts are in the model?"),
+    request(undefined, { attachments: [{ id: "redline" }] }), request(undefined, { pending_attachments: [{ name: "redline.pdf" }] }),
+    request(undefined, { user_attachments: [{ id: "uploaded-redline" }] }),
+    request(undefined, { tool_results: [{ ok: true }] }), request(undefined, { assignment_id: "task-1" }),
+    request("can you see the open model? Then delete the ducts.")
+  ]) assert.equal(await ui.tryContextReply(body, deps), null);
+  assert.equal(reads, 1); assert.equal(authorizations, 1);
+  assert.match(await ui.tryContextReply(request("what view is active?"), deps), /active view.*Level 2/);
+  assert.match(await ui.tryContextReply(request("what is selected?"), deps), /2 elements are selected/);
+});
+
+test("busy, missing and changed models produce truthful bounded answers without stale fallback", async () => {
+  assert.match(ui.renderContextReply("model", { ok: true, data: { document: null } }), /no model is open/);
+  assert.match(ui.renderContextReply("model", { ok: false, data: fresh().data }), /couldn’t confirm/);
+  assert.match(ui.renderContextReply("model", fresh("Changed model")), /Changed model/);
+  let signal: AbortSignal | undefined;
+  const start = Date.now();
+  const answer = await ui.tryContextReply(request(), { verifySession: async () => {}, timeoutMs: 30,
+    readContext: async (value: AbortSignal) => { signal = value; return new Promise(() => {}); } });
+  assert.match(answer, /couldn’t confirm/);
+  assert.ok(Date.now() - start < 500);
+  assert.equal(signal?.aborted, true);
+});
+
+test("denied or expired session authorization cannot dispatch a model read", async () => {
+  let reads = 0;
+  await assert.rejects(ui.tryContextReply(request(), { verifySession: async () => { throw Error("denied"); },
+    readContext: async () => { reads++; return fresh(); } }), /denied/);
+  let release: () => void = () => {};
+  const pending = ui.tryContextReply(request(), { verifySession: () => new Promise<void>(resolve => { release = resolve; }),
+    timeoutMs: 15, readContext: async () => { reads++; return fresh(); } });
+  assert.match(await pending, /couldn’t confirm/);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(reads, 0);
+});
+
+test("native UI snapshots preserve no-model and transition states without claiming task evidence", () => {
+  assert.equal(ui.contextSnapshotDiagnostic({ ok: true, data: { status: "ok" } }), null);
+  const snapshot = { schema: "revit-operator.ui-context/v1", state: "available", authority: "ui_identity_only", revision: 2, context: fresh().data };
+  assert.match(ui.renderContextReply("model", ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: snapshot } })), /Snowdon HVAC/);
+  for (const change of [{ state: "unavailable" }, { authority: "model_verified" }, { revision: 0 }, { context: {} }]) {
+    assert.equal(ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: { ...snapshot, ...change } } }).ok, false);
+  }
+  assert.match(ui.renderContextReply("model", ui.contextSnapshotDiagnostic({ ok: true, data: { ui_context: { ...snapshot, context: { document: null } } } })), /no model is open/);
+});
+
+
+test("connection paraphrases stay fast while mixed work and central-model questions use the agent", async () => {
+  for (const prompt of ["Is Revit connected?", "Is Revit running?", "Are you still connected to Revit?", "Are we connected?", "Do you have access to Revit?"]) {
+    assert.equal(ui.contextQuestionKind(request(prompt)), "connection", prompt);
+    const answer = await ui.tryContextReply(request(prompt), { verifySession: async () => {}, readContext: async () => ({ ok: false }) });
+    assert.match(answer, /couldn’t confirm/);
+    assert.doesNotMatch(answer, /task has not finished/);
+  }
+  for (const prompt of ["Is Revit connected? Then delete the ducts.", "Is the model connected to central?", "Are these ducts connected?", "Are you connected to Revit and can you rename the view?"])
+    assert.equal(ui.contextQuestionKind(request(prompt)), null, prompt);
+});
+
+test("compound identity replay answers every bounded question with one authorized observation", async () => {
+  let reads = 0;
+  let authorizations = 0;
+  const deps = { verifySession: async () => { authorizations++; }, readContext: async () => { reads++; return fresh(); } };
+  for (const prompt of [
+    "Can you see the open model? What view is active?",
+    "What view is active, and can you see the open model?",
+    "Please can you see the open model and what is the current view?",
+    "What is the open model? What view is active? What is selected?"
+  ]) {
+    const before = reads;
+    const answer = await ui.tryContextReply(request(prompt), deps);
+    assert.match(answer, /Snowdon HVAC.*Level 2/, prompt);
+    if (prompt.includes("selected")) assert.match(answer, /2 elements are selected/);
+    assert.equal(reads, before + 1); assert.equal(authorizations, reads);
+  }
+  for (const prompt of [
+    "Can you see the open model? What view is active? Then rename it.",
+    "Can you see the open model and delete all ducts?",
+    "What view is active? What is the diameter of the selected duct?",
+    "What view is active? Is the model connected to central?",
+    "Can you see the model? Follow the redline.",
+    "What view is active? What view is active? What view is active? What view is active?"
+  ]) assert.equal(await ui.tryContextReply(request(prompt), deps), null, prompt);
+  for (const extra of [{ assignment_generation: 0 }, { assignment_run_id: "run" }, { attachments: [{ id: "redline" }] }])
+    assert.equal(await ui.tryContextReply(request("Can you see the open model? What view is active?", extra), deps), null);
+  assert.equal(reads, 4);
+  assert.match(ui.renderContextReply("connection", { ok: true, data: { document: { title: "Pilot" } } }), /didn’t report an active view/);
+});
+
+test("shared model and view access question uses one fresh identity read without swallowing work", async () => {
+  let reads = 0, authorizations = 0;
+  const deps = { verifySession: async () => { authorizations++; }, readContext: async () => { reads++; return fresh(); } };
+  const positive = ["Can you see the open model and current view?", "Could you access my Revit project and the active view?",
+    "Please can you read our model and its current view?", "Can you see the current view and the open model?"];
+  for (const prompt of positive) {
+    assert.equal(ui.contextQuestionKind(request(prompt)), "connection", prompt);
+    assert.match(await ui.tryContextReply(request(prompt), deps), /Yes.*Snowdon HVAC.*Level 2/);
+  }
+  for (const prompt of ["Can you see the open model and current view and rename it?",
+    "Can you see the open model and current view? Delete the ducts.",
+    "Can you see the open model and current view geometry?", "Can you see the open model and current view of the duct connections?",
+    "Can you see the model and selected elements?", "Can you see the open model and every view?",
+    "Can you see the open model and current view, then export it?"])
+    assert.equal(await ui.tryContextReply(request(prompt), deps), null, prompt);
+  for (const extra of [{ attachments: [{ id: "pdf" }] }, { user_attachments: [{}] }, { pending_attachments: [{}] },
+    { assignment_id: "task" }, { assignment_run_id: "run" }, { assignment_generation: 0 }, { tool_results: [{}] }])
+    assert.equal(await ui.tryContextReply(request(positive[0], extra), deps), null);
+  assert.equal(reads, positive.length); assert.equal(authorizations, reads);
+});

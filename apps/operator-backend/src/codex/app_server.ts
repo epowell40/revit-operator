@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { CodexInstructionBindingError, assertConfiguredBenchmarkInstructions, assertHostInstructionBinding, hostInstructionBinding, type HostInstructionBinding, type SuppliedInstructions } from "./instruction_binding.js";
 import { evaluateCodexCliVersion, resolveCodexExecutable, type CodexVersionCompatibility } from "./app_server_compatibility.js";
 import type { InitializeParams } from "./generated/app_server_0_149_0/InitializeParams.js";
 import type { InitializeResponse } from "./generated/app_server_0_149_0/InitializeResponse.js";
@@ -160,6 +161,8 @@ export class CodexAppServer {
   private initializeResponse: unknown = null;
   private stderrTail = "";
   private loadedThreadIds = new Set<string>();
+  private instructionBindings = new Map<string, HostInstructionBinding>();
+  private turnInstructionBindings = new Map<string, HostInstructionBinding>();
 
   constructor(
     private readonly opts: {
@@ -189,6 +192,9 @@ export class CodexAppServer {
     this.proc = null;
     try { this.rl?.close(); } catch {}
     this.loadedThreadIds.clear();
+    this.instructionBindings.clear();
+    if (this.turnInstructionBindings.size > 0) console.error("Codex transport closed with unpersisted instruction receipts; benchmark coverage is incomplete.");
+    this.turnInstructionBindings.clear();
     this.rl = null;
     try { proc?.kill(); } catch {}
   }
@@ -237,6 +243,9 @@ export class CodexAppServer {
       }
       this.proc = null;
       this.loadedThreadIds.clear();
+      this.instructionBindings.clear();
+      if (this.turnInstructionBindings.size > 0) console.error("Codex transport closed with unpersisted instruction receipts; benchmark coverage is incomplete.");
+      this.turnInstructionBindings.clear();
       try {
         this.rl?.close();
       } catch {
@@ -388,13 +397,50 @@ export class CodexAppServer {
   async startThread(params: ThreadStartParams): Promise<ThreadStartResponse> {
     const response = await this.requestTyped<ThreadStartParams, ThreadStartResponse>("thread/start", params);
     this.loadedThreadIds.add(response.thread.id);
+    this.instructionBindings.set(response.thread.id, hostInstructionBinding(params));
     return response;
   }
 
   async resumeThread(params: ThreadResumeParams): Promise<ThreadResumeResponse> {
+    // A known mismatch is never repaired implicitly. An unbound active rejoin
+    // may, however, obtain a fresh idle acknowledgement on a later request.
+    if (this.getThreadInstructionBinding(params.threadId)) this.assertThreadInstructions(params.threadId, params);
     const response = await this.requestTyped<ThreadResumeParams, ThreadResumeResponse>("thread/resume", params);
     this.loadedThreadIds.add(response.thread.id);
+    // Rejoining an active thread does not establish that instruction overrides
+    // took effect. Monitoring may continue, but a new bound turn must wait.
+    if (response.thread.status?.type === "idle") {
+      this.instructionBindings.set(response.thread.id, hostInstructionBinding(params));
+    }
     return response;
+  }
+
+  getThreadInstructionBinding(threadId: string): HostInstructionBinding | undefined {
+    return this.hasLoadedThread(threadId) ? this.instructionBindings.get(threadId) : undefined;
+  }
+
+  assertThreadInstructions(threadId: string, profile: SuppliedInstructions): void {
+    assertHostInstructionBinding(this.getThreadInstructionBinding(threadId), hostInstructionBinding(profile));
+  }
+
+  startBoundTurn(params: TurnStartParams, profile: SuppliedInstructions): Promise<TurnStartResponse> {
+    if (this.turnInstructionBindings.size >= 1024) throw new CodexInstructionBindingError("Unpersisted instruction receipts reached their bounded limit; no further provider turn was started.");
+    const benchmarkRuntime = assertConfiguredBenchmarkInstructions(profile);
+    this.assertThreadInstructions(params.threadId, profile);
+    const binding = Object.freeze({ ...hostInstructionBinding(profile),
+      ...(benchmarkRuntime ? { benchmark_runtime: benchmarkRuntime } : {}) });
+    return this.startTurn(params).then(response => {
+      this.turnInstructionBindings.set(JSON.stringify([params.threadId, response.turn.id]), binding);
+      return response;
+    });
+  }
+
+  getTurnInstructionBinding(threadId: string, turnId: string): HostInstructionBinding | undefined {
+    return this.turnInstructionBindings.get(JSON.stringify([threadId, turnId]));
+  }
+
+  acknowledgePersistedTurnInstructionBinding(threadId: string, turnId: string): void {
+    this.turnInstructionBindings.delete(JSON.stringify([threadId, turnId]));
   }
 
   startTurn(params: TurnStartParams): Promise<TurnStartResponse> {

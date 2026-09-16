@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+
+test("the user's plain model-visibility question is inspection, not an edit", () => {
+  assert.equal(classifyAgentTurn("can you see the open model?"), "inspection");
+  assert.equal(classifyAgentTurn("can you see the open model and rename sheet M102?"), "mutation");
+});
 import {
   AGENT_RESPONSE_STYLE_LINES,
   classifyAgentTurn,
@@ -18,11 +23,22 @@ function readRepoFile(relativePath: string): string {
 
 test("agent response policy requires natural acknowledgement instead of routine visible plans", () => {
   const policy = AGENT_RESPONSE_STYLE_LINES.join("\n");
+  assert.match(policy, /equations as readable plain text with explicit units/);
+  assert.match(policy, /does not typeset LaTeX/);
+  assert.match(policy, /deterministic filtering of the retained JSON/);
+  assert.match(policy, /actual empty field values together with each record identifier/);
+  assert.match(policy, /reported count equals the full identifier list/);
+  assert.match(policy, /at most eight evidence indices/);
+  assert.match(policy, /already computed from retained native rows/);
+  assert.match(policy, /pagination.next_start/);
+  assert.match(policy, /missing_fields as unavailable fields rather than actual blanks/);
 
   assert.match(policy, /short natural acknowledgement/i);
   assert.match(policy, /Ask one focused clarifying question/i);
   assert.match(policy, /conversational Revit\/BIM expert, not a tool dispatcher/i);
   assert.match(policy, /Ground model-specific answers with the live model/i);
+  assert.match(policy, /prior results as earlier observations/);
+  assert.match(policy, /do not reread Revit just to reformat them/);
   assert.match(policy, /active view and current selection as starting context, not as a limit/i);
   assert.match(policy, /schema or argument-validation error/i);
   assert.match(policy, /do not spray adjacent routes/i);
@@ -66,6 +82,10 @@ test("backend prompts do not force Plan-prefixed action turns", () => {
 
 test("per-turn teammate contract classifies representative conversation, navigation, inspection, and mutation requests", () => {
   assert.equal(classifyAgentTurn("Can you explain what a shock arrestor does?"), "conversation");
+  const modelContext = { revit: { source: { live: true }, document: { title: "Disposable", projectIdentity: { fingerprint: "model" } } } };
+  assert.equal(classifyAgentTurn("What is static pressure in an HVAC duct? Keep it to two sentences.", modelContext), "conversation");
+  assert.equal(classifyAgentTurn("What is the diameter of the selected duct?", modelContext), "inspection");
+  assert.equal(classifyAgentTurn("What size is this? Keep it brief.", modelContext), "inspection");
   assert.equal(classifyAgentTurn("Show me the air handling unit schedule."), "navigation");
   assert.equal(
     classifyAgentTurn("Where are the shock arrestors? Provide the room number for each device location."),
@@ -111,7 +131,9 @@ test("per-turn teammate contract requires live grounding, focused clarification,
   assert.match(mutation, /"context_state":"live"/);
   assert.match(mutation, /discover one exact contract/i);
   assert.match(mutation, /"max_apply_attempts":32/);
-  assert.match(mutation, /atomic Revit primitives may apply directly/i);
+  assert.match(mutation, /perform the authorized work directly in a bounded edit/i);
+  assert.match(mutation, /complete and verify that real item, then stop for review/i);
+  assert.match(mutation, /preview is needed only when explicitly requested or required by the primitive/i);
   assert.match(mutation, /verify by readback\/capture/i);
   assert.match(preview, /"turn_kind":"inspection"/);
   assert.match(preview, /"context_state":"missing"/);

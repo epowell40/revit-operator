@@ -1,4 +1,6 @@
 import type http from "node:http";
+import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
+import { recoverRetainedAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
@@ -61,6 +63,38 @@ export async function handleAssignmentHttpRoute(
 ): Promise<boolean> {
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
   if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/recover-completions") {
+    try {
+      const body = await readJson(req, 16_000) as JsonMap | null;
+      const binding = v2Binding(body);
+      if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const recovered = recoverRetainedAssignmentCompletionsV2(binding);
+      writeJson(res, 200, { ok: true, assignment_snapshot_v2: recovered.snapshot,
+        recovered_operation_ids: recovered.recovered_operation_ids,
+        unresolved_operation_ids: recovered.unresolved_operation_ids });
+    } catch (error) {
+      writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/execution-control") {
+    try {
+      const body = await readJson(req, 16_000) as JsonMap | null;
+      const binding = v2Binding(body);
+      if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const snapshot = controlAssignmentExecutionV2({
+        binding, command_id: body?.command_id as string,
+        expected_command_id: body?.expected_command_id as string | null,
+        action: body?.action as "pause" | "resume"
+      });
+      writeJson(res, 200, { ok: true, assignment_snapshot_v2: snapshot });
+    } catch (error) {
+      writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/assignments/v2") {
     const sessionId = (url.searchParams.get("session_id") ?? "").trim().slice(0, 180);
     if (!sessionId) {
@@ -200,7 +234,9 @@ export async function handleAssignmentHttpRoute(
           ...(row.basis === "desired_state_equivalence" ? { basis: "desired_state_equivalence" as const } : {})
         };
       }) : [];
-      const snapshot = evaluateAssignmentObservationCriteriaV2({ binding, claims });
+      const snapshot = evaluateAssignmentObservationCriteriaV2({ binding, claims,
+        ...(body?.result_items !== undefined ? { result_items: body.result_items as any } : {}),
+        ...(body?.assessment !== undefined ? { assessment: body.assessment as any } : {}) });
       writeJson(res, snapshot.terminal ? 200 : 202, { ok: true, assignment_snapshot_v2: snapshot });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -217,6 +253,7 @@ export async function handleAssignmentHttpRoute(
         binding,
         clarification_id: String(body?.clarification_id ?? "").trim(),
         variable_ids: Array.isArray(body?.variable_ids) ? body.variable_ids.map(String) : [],
+        ...(Array.isArray(body?.new_variable_ids) ? { new_variable_ids: body.new_variable_ids.map(String) } : {}),
         question: String(body?.question ?? "").trim()
       });
       writeJson(res, 202, { ok: true, assignment_snapshot_v2: snapshot });
@@ -268,7 +305,15 @@ export async function handleAssignmentHttpRoute(
           variable_ids: variableIds,
           question: String(body?.question ?? "").trim()
         });
-        writeJson(res, 202, { ok: true, clarification_id: clarificationId, assignment_snapshot_v2: snapshot });
+        const pending = variableIds.filter(id => snapshot.pending_input_variable_ids.includes(id));
+        writeJson(res, pending.length ? 202 : 200, {
+          ok: true, clarification_id: pending.length ? clarificationId : null,
+          assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation,
+          already_resolved: pending.length === 0, pending_input_variable_ids: pending,
+          authenticated_input_values: Object.fromEntries(variableIds
+            .filter(id => Object.prototype.hasOwnProperty.call(snapshot.input_values, id))
+            .map(id => [id, snapshot.input_values[id]]))
+        });
         return true;
       }
       const requested = requestAssignmentClarification(body!, "operator_request_clarification");

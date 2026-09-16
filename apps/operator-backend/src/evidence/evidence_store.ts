@@ -24,7 +24,8 @@ import { extractMcpStructuredPayload } from "./structured_payload.js";
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,240}$/;
 const STRONG_SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  /sk-[A-Za-z0-9_-]{20,}/,
+  // Match a credential token, not the suffix of legitimate task-<uuid> IDs.
+  /\bsk-[A-Za-z0-9_-]{20,}/,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{24,}={0,2}\b/i,
   /\b(?:api[_-]?key|client[_-]?secret|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9._~+\/-]{24,}/i
 ] as const;
@@ -343,15 +344,23 @@ function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {
   return bytes;
 }
 
-function selectPath(root: unknown, dottedPath: string): unknown {
+function selectPath(root: unknown, dottedPath: string, missing: unknown = null): unknown {
   if (!dottedPath || dottedPath === "$" || dottedPath.includes("..") || /[\\/\u0000]/.test(dottedPath)) throw new Error("Invalid typed field path.");
   const segments = dottedPath.replace(/^\$\.?/, "").split(".");
-  if (segments.some(segment => !segment || segment === "__proto__" || segment === "constructor" || segment === "prototype")) {
-    throw new Error("Invalid typed field path.");
-  }
+  const tokens = segments.map(segment => {
+    const match = /^([^\[\]]*)((?:\[(?:0|[1-9]\d*)\])*)$/.exec(segment);
+    if (!segment || ["__proto__", "constructor", "prototype"].includes(segment.split("[")[0]!))
+      throw new Error("Invalid typed field path.");
+    // An exact retained key may contain literal brackets. Only parse bracket
+    // syntax if exact own-property lookup below does not already resolve it.
+    if (!match) return null;
+    const indices = [...match[2]!.matchAll(/\[(\d+)\]/g)].map(item => Number(item[1]));
+    if (indices.some(item => !Number.isSafeInteger(item))) return null;
+    return { key: match[1]!, indices };
+  });
   let value: unknown = root;
   for (let index = 0; index < segments.length;) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    if (!value || typeof value !== "object") return missing;
     const row = value as Record<string, unknown>;
     let matchedKey: string | null = null;
     let nextIndex = index;
@@ -367,9 +376,25 @@ function selectPath(root: unknown, dottedPath: string): unknown {
       nextIndex = end;
       break;
     }
-    if (!matchedKey) return null;
-    value = row[matchedKey];
-    index = nextIndex;
+    if (matchedKey !== null) {
+      value = row[matchedKey];
+      index = nextIndex;
+      continue;
+    }
+    // Bracket indices are emitted by the evidence projection itself. Traverse
+    // only literal own properties and array slots; never evaluate a selector.
+    const token = tokens[index];
+    if (!token) throw new Error("Invalid typed field path.");
+    if (token.key) {
+      if (!Object.hasOwn(row, token.key)) return missing;
+      value = row[token.key];
+    }
+    if (!token.indices.length) return missing;
+    for (const slot of token.indices) {
+      if (!Array.isArray(value) || !Object.hasOwn(value, slot)) return missing;
+      value = value[slot];
+    }
+    index += 1;
   }
   return value;
 }
@@ -402,6 +427,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   const bytes = readSettledEvidenceBytes(ref);
   let selection: unknown;
   let complete = false;
+  let pagination: EvidenceRetrievalResult["pagination"];
+  let missingFields: string[] | undefined;
+  let selectionOrigins: Record<string, "payload" | "deterministic_projection"> | undefined;
   const parsed = parseRaw(bytes, ref.media_type);
   const selectable = retrievalRoot(parsed);
   if (selector.kind === "image") {
@@ -419,10 +447,37 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array.");
     const start = selector.item_range.start;
     const count = selector.item_range.count;
-    selection = array.slice(start, start + count);
-    complete = start === 0 && count >= array.length;
+    const page: unknown[] = [];
+    let usedBytes = 2; // JSON array brackets, plus commas between rows.
+    for (const item of array.slice(start, start + count)) {
+      const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + (page.length ? 1 : 0);
+      if (usedBytes + itemBytes > maxBytes) {
+        if (page.length === 0) throw new Error(`One evidence row exceeds ${maxBytes}-byte limit. Request focused fields or a larger authorized max_bytes.`);
+        break;
+      }
+      page.push(item); usedBytes += itemBytes;
+    }
+    selection = page;
+    const hasMore = start + page.length < array.length;
+    pagination = { path: selector.item_range.path, start, requested_count: count, returned_count: page.length,
+      total_items: array.length, has_more: hasMore, next_start: hasMore ? start + page.length : null,
+      byte_limited: page.length < Math.min(count, Math.max(0, array.length - start)) };
+    complete = start === 0 && page.length >= array.length;
   } else if (selector.kind === "fields") {
-    selection = Object.fromEntries(selector.fields.map(field => [field, selectPath(selectable, field)]));
+    const derived = extractDeterministicEvidenceFacts(parsed);
+    const projection = { key_counts: derived.counts, key_facts: derived.facts };
+    missingFields = []; selectionOrigins = {};
+    const missing = Symbol("missing evidence field");
+    selection = Object.fromEntries(selector.fields.map(field => {
+      const isProjection = field.startsWith("projection.");
+      const alias = field.startsWith("inventory.") && (Object.hasOwn(derived.counts, field) || Object.hasOwn(derived.facts, field));
+      const value = isProjection ? selectPath({ projection }, field, missing)
+        : alias ? (Object.hasOwn(derived.counts, field) ? derived.counts[field] : derived.facts[field])
+          : selectPath(selectable, field, missing);
+      selectionOrigins![field] = isProjection || alias ? "deterministic_projection" : "payload";
+      if (value === missing) missingFields!.push(field);
+      return [field, value === missing ? null : value];
+    }));
   } else {
     const selectableRecord = selectable && typeof selectable === "object" && !Array.isArray(selectable)
       ? selectable as Record<string, unknown>
@@ -447,7 +502,8 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     budget_events: 0,
     estimated_model_tokens_avoided: null
   });
-  return { schema: EVIDENCE_RETRIEVAL_SCHEMA, evidence_ref: ref, selection, returned_bytes: selectedBytes, complete };
+  return { schema: EVIDENCE_RETRIEVAL_SCHEMA, evidence_ref: ref, selection, returned_bytes: selectedBytes, complete,
+    ...(pagination ? { pagination } : {}), ...(missingFields ? { missing_fields: missingFields, selection_origins: selectionOrigins } : {}) };
 }
 
 export function readAuthoritativeEvidence(ref: EvidenceRefV1, scope: EvidenceRetrievalRequest["scope"]): Buffer {

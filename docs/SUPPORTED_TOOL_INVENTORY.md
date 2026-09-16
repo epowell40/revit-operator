@@ -1,0 +1,11 @@
+# Supported tool inventory
+
+`contracts/supported-tool-inventory.v1.json` is the fixed product scope. It contains 101 native model routes, 93 MCP aliases, 18 exact internal Dynamic Runtime routes, and one standalone SafeRead route. These are different layers, not an additive tool count. Inclusion permits the existing authorization checks to run; it does not grant execution or establish live Revit qualification.
+
+Run `node scripts/generate_supported_tool_inventory.mjs` after reviewing a scope change. Run it with `--check` to verify the generated MCP, backend, and C# projections and their shared SHA-256 authority hash. Runtime mode, laboratory settings, hosted callers, caller allowlists, and generic calls cannot expand the inventory. Adding a handler or registering an MCP alias alone does not expose it.
+
+Discovery and tool documentation filter against this scope. Backend authorization, native transport, courier admission, native HTTP admission, action execution, and LogicService dispatch independently reject excluded routes. Exact internal routes remain subject to their existing authentication and executor checks. `/revit/certified/sheets/count` belongs only to its standalone SafeRead executor and is excluded from the native host transport. Terminal courier receipts retain their existing recovery meaning; an excluded running job is not relabeled as a known no-effect failure.
+
+The native source catalog retains 115 excluded implementations for possible later qualification. They are unavailable through their old product routes. The two prototype zoning endpoints, `/revit/create-zones` and `/revit/create-zone-visuals`, were removed from implementation and dispatch. Four misleading MCP workflows were also retired: `revit_place_vavs`, `revit_run_thermal_zoning`, `revit_run_load_calc`, and `revit_run_code_check`. Their names cannot be restored through generic execution or mode settings.
+
+Boundary tests exercise all excluded source routes, actual MCP list/call/documentation behavior, backend transport and caller-allowlist rejection, generated parity, and native manifest/admission consistency. Existing certification, fulfillment, timeout, and crash-recovery tests remain required. Deterministic boundary tests do not replace post-deploy Revit UI validation or establish compatibility for a new Revit version.

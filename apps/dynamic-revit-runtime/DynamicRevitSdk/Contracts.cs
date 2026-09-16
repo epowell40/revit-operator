@@ -93,6 +93,8 @@ public sealed class DynamicRevitContext
     public DynamicTaskInput Input { get; }
     public DynamicOperationGraphBuilder Plan { get; }
     public IReadOnlyList<DynamicElementDto> Elements => Input.Elements;
+    internal DynamicProgramDiagnosticSnapshot CaptureDiagnostics() => new(_logs, _report);
+
     public void Log(string message)
     {
         if (string.IsNullOrWhiteSpace(message) || _logs.Count >= 64) return;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
@@ -95,6 +96,7 @@ namespace RevitBridge.Operator
                     "/revit/export-image",
                     "/revit/capture-screenshare",
                     "/revit/export-pdf",
+                    "/revit/inspect-exported-files",
                     "/revit/print",
                     "/revit/export-images",
                     "/revit/export-dwg",
@@ -229,8 +231,6 @@ namespace RevitBridge.Operator
 
                     // Zones/spaces
                     "/revit/ensure-spaces",
-                    "/revit/create-zones",
-                    "/revit/create-zone-visuals",
                     "/revit/query-zone-data",
 
                     // Selection utils
@@ -252,6 +252,7 @@ namespace RevitBridge.Operator
         };
 
         public static bool IsAllowed(string method, string path) =>
+            OperatorSupportedToolInventory.IsSupportedTool(method ?? "", path ?? "") &&
             Allowed.TryGetValue(method ?? "", out var paths) && paths.Contains(path ?? "");
 
         public static IEnumerable<AllowlistEntry> EnumerateAllowed()
@@ -259,7 +260,8 @@ namespace RevitBridge.Operator
             foreach (var kv in Allowed)
             {
                 var method = kv.Key;
-                foreach (var p in kv.Value) yield return new AllowlistEntry(method, p);
+                foreach (var p in kv.Value)
+                    if (OperatorSupportedToolInventory.IsSupportedTool(method, p)) yield return new AllowlistEntry(method, p);
             }
         }
     }

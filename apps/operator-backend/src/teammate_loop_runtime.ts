@@ -1,14 +1,22 @@
+import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
+import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
+import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
+import { canonicalNativeNoChangeForTeammate } from "./teammate_canonical_settlement.js";
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
-import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
+import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifact_export_intent.js";
+import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
+import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
-import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
+import { hasRevitTurnContext } from "./revit_context_policy.js";
+import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
 import {
   explicitTargetAbsenceV2,
   explicitVerificationV2,
@@ -30,6 +38,7 @@ export type TeammateTurnContract = {
   stage: TeammateLoopStage;
   no_write: boolean;
   write_authorized: boolean;
+  file_export_paths?: readonly string[];
   preview_required: boolean;
   max_apply_attempts: 32;
   verification_required: boolean;
@@ -53,7 +62,7 @@ type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
-type TeammateLoopState = {
+export type TeammateLoopState = {
   key: string;
   contract: TeammateTurnContract;
   expires_at_ms: number;
@@ -78,6 +87,7 @@ type TeammateLoopState = {
   verification_observed_values: Set<string>;
   verification_has_substantive_readback: boolean;
   apply_call: PendingCall | null;
+  apply_artifact_receipt?: unknown;
   verified: boolean;
   verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
   verification_action_id: string | null;
@@ -88,6 +98,7 @@ type TeammateLoopState = {
   blocked_reason: string | null;
   active_host_version_year: string;
   authoritative_user_text: string;
+  authenticated_replacement_text?: string;
 };
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
@@ -128,13 +139,6 @@ function boundedString(value: unknown, max: number): string {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function normalizedUserText(req: Pick<ChatRequest, "user_text" | "context">): string {
-  const context = objectValue(req.context);
-  const ui = objectValue(context.ui);
-  const authoritative = boundedString(ui.authoritative_user_text, 20_000);
-  return (authoritative || `${req.user_text || ""}`).replace(/\s+/g, " ").trim();
 }
 
 function isConceptualQuestion(text: string): boolean {
@@ -204,16 +208,17 @@ export function isAffirmativeDocumentLifecycleMutation(userText: string | null |
   return !!text && containsDocumentLifecycleMutation(text) && !deniesDocumentLifecycleMutation(text);
 }
 
-export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
+export function classifyAgentTurn(userText: string | null | undefined, context?: unknown): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
+  if (isStandaloneAssistantRequest(text)) return "conversation";
   const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
   // A scoped persistence constraint such as "make the edit, but do not save"
   // must not downgrade the model edit to an inspection. Lifecycle denial is
   // turn-defining only when the turn actually asks to change document
   // lifecycle state (for example, "do not save the Revit model").
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
-  const previewOnly = hasEffectiveNoWriteFraming(text);
+  const previewOnly = hasEffectiveNoWriteFraming(text) || hasNoncommittingChangePreviewRequest(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
@@ -223,21 +228,25 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   if (previewOnly || documentLifecycleDenied) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
   if (isConceptualQuestion(text)
+      && !(hasRevitTurnContext(context) && /\b(?:this|that|these|those|it)\b/.test(text.split(/[.!?]/, 1)[0]!))
       && (!explicitMutation || explicitlyConceptualFraming)
       && !/\b(?:then|and|also|otherwise)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
   if (explicitMutation) return "mutation";
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
   if (/\b(?:only\s+show|show\s+only)\b/.test(text) && hasRevitWorkSubject(text)) return "mutation";
+  if (/\bshow\b[^.!?;\n]{0,140}\bin\s+(?:red|blue|green|gray|grey|black|white|halftone)\b/.test(text)) return "mutation";
   const navigationText = withoutAdjectivalOpenDocumentState(text);
   if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(navigationText)) return "navigation";
-  if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|current|active|selected)\b/.test(text)) return "inspection";
+  if (/^(?:please\s+)?(?:can|could|do) you (?:see|access|read)\b/.test(text) && hasRevitWorkSubject(text)) return "inspection";
+  if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|report|compare|audit|summarize|describe|csv|inventory|current|active|selected)\b/.test(text)) return "inspection";
   // Delegated Revit work is commonly written as a terse redline or noun phrase
   // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a
   // concrete Revit subject and is neither a question nor explicitly read-only,
   // default to doing the work instead of requiring a magic mutation verb.
+  if (hasRevitWorkSubject(text) && /^(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|had|should)\b/.test(text)) return "inspection";
   if (hasRevitWorkSubject(text)) return "mutation";
-  return "conversation";
+  return hasRevitTurnContext(context) ? "inspection" : "conversation";
 }
 
 function hasNoWriteAuthority(text: string): boolean {
@@ -265,7 +274,9 @@ function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): b
 }
 
 function explicitlyRequestsExecutablePreview(text: string, kind: AgentTurnKind): boolean {
+  text = previewIntentText(text);
   if (kind === "conversation") return false;
+  if (hasNoncommittingChangePreviewRequest(text)) return true;
   if (/\b(?:preflight|dry[ -]?run|simulation|simulate(?:d)?)\b/i.test(text)) return true;
   return /\bpreview\b/i.test(text) && containsMutationVerb(text.toLowerCase());
 }
@@ -309,14 +320,16 @@ function contextIdentity(contextValue: unknown, kind: AgentTurnKind): { state: T
   return { state: "missing", signature: null };
 }
 
-export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "context">): TeammateTurnContract {
+export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTurnContract {
   const text = normalizedUserText(req);
-  const turnKind = classifyAgentTurn(text);
+  const workbookExport = requestedWorkbookExport(text);
+  const turnKind = workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
   const authorized = writeAuthorized(text, turnKind, noWrite);
-  const opaqueMutationInputs = missingOpaqueMutationInputs(text); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
+  const savedInputs = canonicalTeammateInputs(req);
+  const opaqueMutationInputs = missingOpaqueMutationInputs(text).filter(key => !(typeof savedInputs[key] === "string" && (savedInputs[key] as string).trim())); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
   const requiredUserInputs = turnKind === "mutation" || previewRequired ? opaqueMutationInputs : [];
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
@@ -334,6 +347,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     stage,
     no_write: noWrite,
     write_authorized: authorized,
+    ...(workbookExport ? { file_export_paths: ["/revit/export-elements-xlsx"] } : {}),
     preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
@@ -344,53 +358,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
 }
 
 export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "context">): string {
-  const contract = buildTeammateTurnContract(req);
-  if (!contract.intent_summary) return "";
-  const compact = {
-    schema: contract.schema,
-    turn_kind: contract.turn_kind,
-    ambiguity: contract.ambiguity,
-    context_state: contract.context_state,
-    stage: contract.stage,
-    no_write: contract.no_write,
-    write_authorized: contract.write_authorized,
-    preview_required: contract.preview_required,
-    max_apply_attempts: contract.max_apply_attempts,
-    verification_required: contract.verification_required,
-    ...(contract.required_user_inputs.length > 0 ? { required_user_inputs: contract.required_user_inputs } : {}),
-    user_text_sha256: contract.user_text_sha256,
-    document_signature: contract.document_signature
-  };
-  const rules = contract.turn_kind === "conversation"
-    ? "Answer naturally; do not call Revit for a conceptual answer."
-    : contract.required_user_inputs.length > 0
-      ? `Use read-only Revit calls to ground the exact target and current state, then call operator_request_clarification with missingFields=${JSON.stringify(contract.required_user_inputs)} and one concise question. Do not preview or apply an opaque value that is not bound to authenticated user input.`
-    : contract.ambiguity === "material"
-      ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
-      : contract.preview_required && contract.no_write
-        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then independently read back any rollback-preview target before reporting success and stop before apply. A prose plan, table, proposed receipt, capture, cropped image, render, or temporary visual is not an executed mutation preview without a successful noncommitting Revit primitive receipt. If discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
-        : contract.preview_required
-          ? "Use live context; resolve the exact target and execute a real bounded preview or dry-run before applying; bind the apply to that preview and verify by readback/capture before success. A prose plan, table, or proposed receipt is not an executed preview."
-      : contract.turn_kind === "mutation"
-        ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
-        : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
-  const requestedOperation = requestedPreviewOperation(contract.intent_summary);
-  const semanticPreviewRule = requestedOperation === "create"
-    ? " A requested new, duplicated, dependent, or enlarged view is not previewed by resolving only its source, crop, rooms, or geometry. Complete one noncommitting create/duplicate-view primitive with the requested configuration (for example transaction-plan duplicateView/createDependentView plus crop, scale, template, or visibility actions) before reporting the preview."
-    : requestedOperation === "delete"
-      ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. Preserve the material comparison facts used to rank the candidate. Distinguish the exact elements and physical connections that would be affected if the preview were committed, including the predicted remaining connected-system state, from the later rollback-restoration state. After rollback, re-read the previewed member and any requested connection/system state; explicitly report whether the target still exists and whether its connections were restored. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
-      : "";
-  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
-}
-
-function requestedPreviewOperation(text: string): string | null {
-  const explicitViewCreation = /\b(?:create|add|duplicate)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
-    || /\b(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
-    || /\bmake\s+(?:an?\s+|the\s+)?(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text);
-  if (explicitViewCreation) return "create";
-  const explicitDeletionPreview = /\b(?:preview|preflight|dry[ -]?run|rollback)\b[^.!?\n]{0,120}\b(?:delet(?:e|ion)|remov(?:e|al)|disconnect(?:ion)?)\b/i.test(text)
-    || /\b(?:delet(?:e|ion)|remov(?:e|al)|disconnect(?:ion)?)\b[^.!?\n]{0,120}\b(?:preview|preflight|dry[ -]?run|rollback|impact)\b/i.test(text);
-  return explicitDeletionPreview ? "delete" : null;
+  return formatTeammateTurnContractValue(buildTeammateTurnContract(req));
 }
 
 function stableValue(value: unknown): unknown {
@@ -546,6 +514,9 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "revit_transaction_plan") return call("preview", "revit_transaction");
   if (tool === "revit_transaction_apply") return call("apply", "revit_transaction");
   const flags = previewFlags(args);
+  if (tool === "operator_run_dynamic_revit_program") {
+    return call(args.mode === "read" ? "read" : args.mode === "preview" ? "preview" : args.mode === "apply" ? "apply" : "unknown");
+  }
   if (tool === "run_dynamic_revit_program") {
     return call(flags.preview ? "preview" : flags.apply ? "apply" : "unknown", "revit_dynamic_program");
   }
@@ -623,6 +594,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     existing.expires_at_ms = now + MAX_STATE_AGE_MS;
     return existing;
   }
+  const replacementInput = canonicalTeammateInputs(req).replacement_text;
   const state: TeammateLoopState = {
     key,
     contract,
@@ -657,20 +629,11 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
     active_host_version_year: activeHostVersionYear(req.context),
-    authoritative_user_text: incomingText
+    authoritative_user_text: incomingText,
+    ...(typeof replacementInput === "string" ? { authenticated_replacement_text: replacementInput } : {})
   };
   statesByTurn.set(key, state);
   return state;
-}
-
-function clearVerification(state: TeammateLoopState): void {
-  state.verified = false;
-  state.verification_mode = "none";
-  state.verification_action_id = null;
-  state.verification_evidence_sha256 = null;
-  state.verification_observed_target_tokens.clear();
-  state.verification_observed_values.clear();
-  state.verification_has_substantive_readback = false;
 }
 
 function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
@@ -680,7 +643,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
-  const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text); if (mutationIntentReason) return mutationIntentReason;
+  const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
@@ -697,9 +660,11 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     return "open_model_sample_year_mismatch";
   }
   if (call.effect === "apply") {
+    const fileExportAuthorized = authorizedArtifactExportPath(state.authoritative_user_text, call.path);
+    if (call.path === "/revit/export-elements-xlsx" && !fileExportAuthorized) return "explicit_workbook_export_authority_required";
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
-    if (contract.no_write) return "user_no_write_limit";
-    if (!contract.write_authorized) return "explicit_write_authority_required";
+    if (contract.no_write && !fileExportAuthorized) return "user_no_write_limit";
+    if (!contract.write_authorized && !fileExportAuthorized) return "explicit_write_authority_required";
     if (state.apply_attempts >= contract.max_apply_attempts) return "apply_attempt_budget_exhausted";
     if (state.stage_apply_attempts >= 1) {
       if (!state.apply_succeeded || !state.verified) return "prior_apply_verification_required";
@@ -750,6 +715,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
     clearVerification(state);
+    state.apply_artifact_receipt = undefined;
     state.apply_attempts += 1;
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
@@ -777,7 +743,7 @@ function resultSucceeded(result: ToolResult): boolean {
 
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
   if (requireExplicit && !explicitVerificationV2(evidence)) return false;
-  const observed = observedPostconditionValuesV2(evidence);
+  const observed = observedPostconditionValuesV2(evidence, { path: state.apply_call?.path });
   if (state.apply_expected_values.size > 0) return [...state.apply_expected_values].every(value => observed.has(value));
   return explicitVerificationV2(evidence) || (!requireExplicit && substantiveReadbackV2(evidence));
 }
@@ -844,34 +810,6 @@ function explicitDocumentOpenCompletion(call: PendingCall, evidence: unknown): b
   return matched;
 }
 
-function markVerified(
-  state: TeammateLoopState,
-  mode: Exclude<TeammateLoopState["verification_mode"], "none">,
-  actionId: string,
-  evidence: unknown
-): void {
-  state.verified = true;
-  state.verification_mode = mode;
-  state.verification_action_id = actionId;
-  state.verification_evidence_sha256 = `sha256:${payloadDigestV2(verificationObservationPayloadV2(evidence)).digest}`;
-  if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
-  state.contract.stage = "report";
-}
-
-function clearKnownNoEffectApply(state: TeammateLoopState): void {
-  state.stage_apply_attempts = Math.max(0, state.stage_apply_attempts - 1);
-  state.apply_action_id = null;
-  state.apply_succeeded = false;
-  state.apply_signature = "";
-  state.apply_target_tokens.clear();
-  state.apply_target_tokens_inferred = false;
-  state.apply_expected_values.clear();
-  state.apply_call = null;
-  clearVerification(state);
-  state.blocked_reason = null;
-  state.contract.stage = state.successful_preview_signatures.size > 0 ? "preview" : "apply";
-}
-
 function recordResult(state: TeammateLoopState, actionId: string, succeeded: boolean, evidence?: unknown): void {
   const pending = state.pending.get(actionId);
   if (!pending) return;
@@ -890,6 +828,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
+    retainApplyArtifactReceipt(state, succeeded, evidence, pending.path);
     if (!succeeded) {
       if (evidenceIsKnownNoEffectFailure(evidence, {
         firstDocumentOpen: isContextFreeDocumentBootstrapCall(pending),
@@ -917,6 +856,11 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
   const verificationAdmission = verificationCapabilityAdmissionForPathsV2(state.apply_call?.path ?? "", pending.path);
+  if (state.apply_succeeded && succeeded && pending.effect === "read"
+      && verificationAdmission.admissible && state.apply_artifact_receipt
+      && nativeArtifactPostconditionV2(state.apply_artifact_receipt, verificationPayload)) {
+    markVerified(state, "target_bound_readback", actionId, verificationPayload);
+  }
   const verificationResultTargets = operationTargetSelectorV2({
     operation: { path: pending.path },
     value: verificationPayload,
@@ -936,7 +880,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of observedPostconditionValuesV2(verificationPayload)) state.verification_observed_values.add(value);
+    for (const value of observedPostconditionValuesV2(verificationPayload, { path: state.apply_call?.path })) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
     if (accumulatedReadbackMatches(state, verificationPayload)) {
       markVerified(state, "target_bound_readback", actionId, verificationPayload);
@@ -1025,6 +969,7 @@ export function reconcileTeammateReceiptWithAssistant(
 export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   const state = stateFor(req);
   ingestToolResults(state, req.tool_results);
+  if (!(decision.actions?.length)) reconcileCanonicalFinalVerification(state, req);
   const requiredPreviewOperation = requestedPreviewOperation(state.contract.intent_summary);
   const dynamicReceipt = decision.dynamic_program_execution_receipt;
   if (dynamicReceipt) {
@@ -1145,6 +1090,8 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
   return separator >= 0 ? state.key.slice(0, separator) : null;
 }
 
+export function teammateLoopIsConversationForOwner(owner: object, turnId: unknown): boolean { return ownerState(owner, turnId)?.contract.turn_kind === "conversation"; }
+
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown }): TeammateMcpGate {
   const state = ownerState(owner, params.turnId);
   if (!state) return { allowed: false, message: "[teammate_loop_missing] No active host teammate-loop contract exists for this Revit call." };
@@ -1196,6 +1143,26 @@ function recoveredLiveContextIdentity(result: unknown): { state: TeammateContext
     } catch {}
   }
   return null;
+}
+
+/** Reconcile the compatibility guard only after the V2 authority has settled this exact call. */
+export function reconcileTeammateCanonicalSettlementV2(gate: TeammateMcpGate, operation: OperationV2 | undefined): boolean {
+  const state = gate.state;
+  const call = gate.call;
+  // Raw MCP success is provisional: a status-only Blocked response can look
+  // successful to the compatibility parser. The exact settled native receipt
+  // below is authoritative for whether this attempt left a persistent effect.
+  if (!gate.allowed || !state || !call || call.effect !== "apply") return false;
+  const separator = call.path.indexOf("|");
+  if (separator < 0 || state.apply_action_id !== call.path.slice(0, separator)
+    || state.apply_signature !== call.signature) return false;
+  const sessionId = state.key.slice(0, state.key.lastIndexOf("::"));
+  if (!canonicalNativeNoChangeForTeammate(operation, sessionId, call.path.slice(separator + 1))) return false;
+  const canonicalInput = operation!.input;
+  const canonicalBody = Object.prototype.hasOwnProperty.call(canonicalInput, "body") ? canonicalInput.body : canonicalInput;
+  if (actionSignature(call.path.slice(separator + 1), structuredActionBody(canonicalBody)) !== call.signature) return false;
+  clearKnownNoEffectApply(state); // Keep cumulative attempt/budget accounting; do not mark work verified.
+  return true;
 }
 
 export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, result: unknown): TeammateVerificationAssertionV2 | null {

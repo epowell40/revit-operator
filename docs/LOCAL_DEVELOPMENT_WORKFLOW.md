@@ -63,3 +63,39 @@ the identity of the current checkout.
 Hosted authentication, private deployment, EC2, production packaging, and
 commercial integration are owned by `revit-operator-private`. Do not add those
 details or secrets to this repository.
+
+## Durable task regression coverage
+
+Normal chat admission must be exercised with V2 enabled, without constructing
+benchmark-specific Goals. Automatic admission creates one outcome criterion;
+explicit multi-criterion Goals require distinct semantic fact contracts.
+
+Session discovery derives V2 identity and outcome from durable Goal journals.
+Independent index files are compatibility artifacts and may be absent or stale
+after a crash. Recovery tests must start a fresh process and include a task
+outside the general history page.
+
+The progress budget's `max_wall_clock_ms` measures cumulative active execution
+time, using the union of durable provider and operation intervals. Completed
+work retains its cost across restart; idle time does not consume allowance.
+Unsettled admitted work continues to count, and provider, token, operation, and
+no-progress limits remain cumulative. This does not grant automatic unlimited
+budget renewal or authorize replay of an operation with unknown effects.
+
+## Revit ribbon and the local desktop launcher
+
+When running a local Desktop checkout alongside an installed package, register
+the matching `launch_operator_desktop.ps1` with
+`scripts/register_local_desktop_launcher.ps1 -LauncherPath <absolute-path>`.
+This sets the existing per-user `OPERATOR_DESKTOP_LAUNCHER_PATH` override that
+Revit checks before the installed release shim. Registration validates the
+file before replacing the setting and does not launch or stop any process.
+The integration checkpoint script registers its successfully started default
+port 3907 launcher automatically. Custom-port sessions do not replace that
+default ribbon target.
+
+Use a new Revit process for deterministic first-click qualification: an
+already-open Revit session can use its cached path once before refreshing it.
+When deliberately returning to an installed package, clear the user override
+and restart Revit so normal installed-launcher discovery resumes. Do not relax
+Sidecar ownership checks to resolve a local-versus-installed path mismatch.

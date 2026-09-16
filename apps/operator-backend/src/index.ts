@@ -1,10 +1,16 @@
+import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
+import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
+import { getRevitToolContractMemoryAttestation } from "./codex/revit_tool_contract_memory.js";
+import { benchmarkInstructionRuntime } from "./codex/benchmark_instruction_runtime.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
+import { conversationDisplay, recordUiContextConversation } from "./conversation_history.js";
+import { getConversationHistory } from "./memory/sqlite_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
 import { appendAuditLine } from "./audit_log.js";
 import { getOrCreateOperatorToken } from "./operator_token.js";
@@ -19,6 +25,8 @@ import {
   upsertStepPlanned
 } from "./memory/sqlite_store.js";
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
+import { assistantContextPolicy } from "./goals/assistant_context_policy.js";
+import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
 import { cancelCodexBrainTurn, getCodexAppServerCompatibility, warmCodexAppServer } from "./brains/codex_brain.js";
@@ -35,7 +43,7 @@ import {
 } from "./improvement/job_worker.js";
 import { startUploadQueueWorker } from "./improvement/upload_queue_worker.js";
 import { readCloudUploadConfig, writeCloudUploadConfig, type CloudUploadMode } from "./config/cloud_upload.js";
-import { findLatestUploadIndexRecord, getLatestImageUploadWithContext, uploadIndexRelativePathExists } from "./attachments/upload_index.js";
+import { getLatestImageUploadWithContext } from "./attachments/upload_index.js";
 import { getAttachmentUploadRequestLimitBytes, storeAttachmentUpload } from "./attachments/upload_store.js";
 import { parseAttachmentUploadInput } from "./attachments/upload_request.js";
 import { ingestDocument, knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, getKnowledgeBaseDocumentStatus, searchKnowledgeBase } from "./knowledge_base/service.js";
@@ -92,6 +100,7 @@ import {
   approveRevitBatchJob,
   cancelRevitBatchJob,
   claimNextRevitBatchItem,
+  hasAvailableRevitBatchWork,
   completeRevitBatchItem,
   createRevitBatchJob,
   failRevitBatchItem,
@@ -164,7 +173,7 @@ import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.j
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
-import { startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
+import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -681,7 +690,9 @@ function requiresOperatorToken(pathname: string): boolean {
   return (
     pathname === "/chat" ||
     pathname === "/chat/result" ||
+    pathname === "/codex/instruction-bindings" ||
     pathname === "/chat/stream" ||
+    pathname === "/chat/context-policy" ||
     pathname === "/event" ||
     pathname === "/feedback" ||
     pathname === "/config/cloud-upload" ||
@@ -704,6 +715,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/teach/skills/register" ||
     pathname === "/api/teach/skills/usage" ||
     pathname === "/api/revit-batch/templates" ||
+    pathname === "/api/revit-batch/availability" ||
     pathname === "/api/revit-batch/plan-delegated" ||
     pathname === "/api/revit-batch/jobs" ||
     pathname === "/api/revit-batch/claim-next" ||
@@ -718,6 +730,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/kb/documents/") ||
     pathname === "/api/kb/search" ||
     pathname === "/session/new" ||
+    pathname === "/session/history" ||
+    pathname === "/session/ui-context" ||
     pathname === "/loop/stop" ||
     pathname === "/tools/ocr" ||
     pathname === "/tools/redline/analyze" ||
@@ -1115,6 +1129,26 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, 200, { session_id });
     }
 
+    if (req.method === "GET" && url.pathname === "/session/history") {
+      res.setHeader("cache-control", "no-store");
+      const sessionId = url.searchParams.get("session_id") || "";
+      if (!sessionId || sessionId.length > 200) return writeJson(res, 400, { error: "A valid conversation is required." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      try { return writeJson(res, 200, { session_id: sessionId, messages: getConversationHistory(sessionId) }); }
+      catch { return writeJson(res, 503, { error: "Conversation history is unavailable." }); }
+    }
+
+    if (req.method === "POST" && url.pathname === "/session/ui-context") {
+      let body: Record<string, any>;
+      try { body = objectRecord(await readJson(req, 16_384)); }
+      catch { return writeJson(res, 400, { error: "Invalid conversation request." }); }
+      const sessionId = typeof body?.session_id === "string" ? body.session_id : "";
+      if (!sessionId || sessionId.length > 200) return writeJson(res, 400, { error: "A valid conversation is required." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      try { return writeJson(res, 200, { assistant_message: await recordUiContextConversation(body) }); }
+      catch (error) { return writeJson(res, 400, { error: error instanceof Error ? error.message : "Conversation could not be saved." }); }
+    }
+
     if (req.method === "GET" && url.pathname === "/environment/profile") {
       const profile = ensureEnvironmentProfile({ refreshIfStale: true });
       return writeJson(res, 200, {
@@ -1195,7 +1229,7 @@ const server = http.createServer(async (req, res) => {
         if (replaceBlockedSidecar) clearAgentGoal(sessionId, "Superseded by a fresh Operator Desktop assignment.");
         const owner = sessionOwnerForPrincipal(auth.principal);
         const goal = setAgentGoal(sessionId, {
-          ...(body as any),
+          ...normalizeExternalAssignmentRequest(body as Record<string, unknown>),
           ...(owner ? { created_by: owner.owner_user_id } : {})
         });
         const requestedRunId = trimText((body as any)?.assignment_run_id ?? (body as any)?.assignmentRunId, 200);
@@ -1605,6 +1639,30 @@ const server = http.createServer(async (req, res) => {
         planner_fallback_used: usedFallback,
         ...(usedFallback ? { assistant_message: decision.assistant_message || "", repaired_assistant_message: repairedAssistantMessage || "" } : {})
       });
+    }
+
+    if (req.method === "POST" && url.pathname === "/chat/context-policy") {
+      const body = await readJson(req, 5_000_000) as Partial<ChatRequest> | null;
+      if (!body || body.version !== OPERATOR_BACKEND_CONTRACT_VERSION
+        || typeof body.session_id !== "string" || !body.session_id.trim()
+        || typeof body.message_id !== "string" || !body.message_id.trim()
+        || typeof body.user_text !== "string"
+        || (body.tool_results !== undefined && !Array.isArray(body.tool_results))) {
+        return writeJson(res, 400, { error: "Invalid chat context policy request." });
+      }
+      if (!sessionAccessAllowed(res, body.session_id, auth.principal)) return;
+      return writeJson(res, 200, assistantContextPolicy(body));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/revit-batch/availability") {
+      const sessionId = url.searchParams.get("session_id") || "";
+      if (!sessionId.trim() || sessionId.length > 200) return writeJson(res, 400, { error: "Batch availability requires session_id." });
+      if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      const owner = sessionOwnerForPrincipal(auth.principal);
+      return writeJson(res, 200, { schema: "revit-operator.batch-availability.v1", ok: true,
+        available: hasAvailableRevitBatchWork({ session_id: sessionId,
+          owner: owner ? { user_id: owner.owner_user_id, tenant_id: owner.owner_license_id } : null,
+          executor_kind: url.searchParams.get("executor_kind") || undefined }) });
     }
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/jobs") {
@@ -2089,7 +2147,7 @@ const server = http.createServer(async (req, res) => {
       const canonicalRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) }),
-        user_text: userTextWithAttachments,
+        user_text: userText,
         tool_results: toolResults,
         user_attachments: userAttachments
       };
@@ -2101,7 +2159,7 @@ const server = http.createServer(async (req, res) => {
 
       const owner = sessionOwnerForPrincipal(auth.principal);
       const assignmentBinding = prepareAssignmentTurn({
-        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText,
         toolResults, source: "stream", createdBy: owner?.owner_user_id ?? null,
         requestContext: canonicalRequest.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
@@ -2131,7 +2189,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundCanonicalRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isIndependentAssistantTurn(boundCanonicalRequest) || isDirectBrainRouteRequest(boundCanonicalRequest)
         ? null
         : maybeHandleMacroSkill(boundCanonicalRequest);
 
@@ -2172,9 +2230,9 @@ const server = http.createServer(async (req, res) => {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_stream_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2249,7 +2307,7 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2289,6 +2347,7 @@ const server = http.createServer(async (req, res) => {
           boundCanonicalRequest,
           {
             abortSignal: streamAbort.signal,
+            onProgress: text => send("assistant.progress", { text }),
             onDelta: delta => {
               const d = (delta ?? "").toString();
               if (!d) return;
@@ -2308,7 +2367,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const text = (decision.assistant_message || doneText || streamed || "").toString();
-        appendMessage(parsed.session_id, { role: "assistant", text });
+        appendMessage(parsed.session_id, { role: "assistant", text }, { display: conversationDisplay(parsed.message_id, text) });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {
@@ -2432,6 +2491,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/codex/instruction-bindings") {
+      return respondWithInstructionBindings(url, res, sessionId => sessionAccessAllowed(res, sessionId, auth.principal));
+    }
+
     if (req.method === "GET" && url.pathname === "/chat/result") {
       const session_id = (url.searchParams.get("session_id") ?? "").trim();
       const message_id = (url.searchParams.get("message_id") ?? "").trim();
@@ -2486,7 +2549,7 @@ const server = http.createServer(async (req, res) => {
 
       const owner = sessionOwnerForPrincipal(auth.principal);
       const assignmentBinding = prepareAssignmentTurn({
-        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText,
         toolResults, source: "chat", createdBy: owner?.owner_user_id ?? null,
         requestContext: parsed.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
@@ -2519,22 +2582,22 @@ const server = http.createServer(async (req, res) => {
       const devUnlocked = devAgentUnlocked(req);
       const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
-        user_text: userTextWithAttachments,
+        user_text: userText,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
       };
       const boundBrainRequest = bindPreparedAssignmentToRequest(brainRequest, assignmentBinding);
-      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundBrainRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isIndependentAssistantTurn(boundBrainRequest) || isDirectBrainRouteRequest(boundBrainRequest)
         ? null
         : maybeHandleMacroSkill(boundBrainRequest);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_chat_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2603,7 +2666,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2636,7 +2699,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const decision = await decide(boundBrainRequest);
         if (assignmentBinding?.kernelVersion !== 2) journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
-        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message });
+        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message }, { display: conversationDisplay(parsed.message_id, decision.assistant_message) });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {
@@ -3962,6 +4025,8 @@ const server = http.createServer(async (req, res) => {
         revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
         sidecar_agent_profile: getSidecarAgentProfileState(),
         assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(assignmentKernelV2Enabled()),
+        tool_contract_memory: getRevitToolContractMemoryAttestation(),
+        benchmark_instruction_runtime: benchmarkInstructionRuntime(),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,
@@ -3986,69 +4051,6 @@ const server = http.createServer(async (req, res) => {
 function persistServerPlannedStep(sessionId: string, messageId: string, userText: string | null, actions: unknown[]): void {
   registerServerPlannedActions(sessionId, actions);
   upsertStepPlanned(sessionId, messageId, userText, actions);
-}
-
-function normalizeUserAttachments(input: unknown): NonNullable<ChatRequest["user_attachments"]> {
-  if (!Array.isArray(input)) return [];
-  const out: any[] = [];
-  for (const item of input) {
-    if (!item || typeof item !== "object") continue;
-    const a = item as any;
-    const id = typeof a.id === "string" ? a.id.trim() : "";
-    if (!id) continue;
-    const rawRelativePath = typeof a.relative_path === "string" ? a.relative_path.trim() : "";
-    const sha256 = typeof a.sha256 === "string" ? a.sha256.trim() : "";
-    const indexed =
-      rawRelativePath && uploadIndexRelativePathExists(rawRelativePath)
-        ? null
-        : findLatestUploadIndexRecord({
-            id,
-            sha256,
-            relative_path: rawRelativePath
-          });
-    out.push({
-      id,
-      relative_path: indexed?.relative_path ?? (rawRelativePath || undefined),
-      filename: typeof a.filename === "string" && a.filename.trim() ? a.filename.trim() : indexed?.filename,
-      bytes: typeof a.bytes === "number" ? a.bytes : indexed?.bytes,
-      sha256: sha256 || indexed?.sha256,
-      mime: typeof a.mime === "string" && a.mime.trim() ? a.mime.trim() : indexed?.mime,
-      created_at: typeof a.created_at === "string" && a.created_at.trim() ? a.created_at.trim() : indexed?.created_at,
-      external_path: typeof a.external_path === "string" ? a.external_path.trim() : undefined
-    });
-  }
-  return out;
-}
-
-function formatAttachmentsForUserText(attachments: NonNullable<ChatRequest["user_attachments"]>): string {
-  const list = Array.isArray(attachments) ? attachments : [];
-  if (list.length === 0) return "";
-  const lines: string[] = [];
-  lines.push("Attachments:");
-  let i = 0;
-  for (const a of list) {
-    i++;
-    const id = a?.id ? String(a.id) : "";
-    const p = (a as any)?.relative_path ? String((a as any).relative_path) : "";
-    const ext = (a as any)?.external_path ? String((a as any).external_path) : "";
-    const name = (a as any)?.filename ? String((a as any).filename) : (p || ext);
-    const sha = (a as any)?.sha256 ? String((a as any).sha256).slice(0, 12) : "";
-    const bytes = typeof (a as any)?.bytes === "number" ? Math.round((a as any).bytes) : null;
-    const loc = p ? `path=${p}` : ext ? `external=${ext}` : "";
-    const meta = [id ? `id=${id}` : null, loc || null, sha ? `sha256=${sha}…` : null, bytes !== null ? `bytes=${bytes}` : null]
-      .filter(Boolean)
-      .join(", ");
-    lines.push(`- [${i}] ${name}${meta ? ` (${meta})` : ""}`);
-  }
-  return lines.join("\n");
-}
-
-function appendAttachmentsToUserText(userText: string, attachments: NonNullable<ChatRequest["user_attachments"]>): string {
-  const t = (userText ?? "").trim();
-  const block = formatAttachmentsForUserText(attachments);
-  if (!block) return t;
-  if (!t) return block;
-  return `${t}\n\n${block}`;
 }
 
 let uploadQueueWorker: { stop: () => void } | null = null;

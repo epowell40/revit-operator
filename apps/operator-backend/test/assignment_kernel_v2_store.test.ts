@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,11 +15,12 @@ import {
 import {
   appendAssignmentKernelEventV2,
   createAssignmentKernelV2,
-  getAssignmentKernelSnapshotV2
+  getAssignmentKernelSnapshotV2,
+  listAssignmentKernelIndexV2
 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { assignmentSpecFromGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
-import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
+import { __testOnlyResetGoalListCache, createGoal, getGoal, mutateGoalRecord } from "../src/goals/service.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { runWithRequestContext } from "../src/request_context.js";
 
@@ -341,6 +343,68 @@ test("trusted AssignmentSpec creation gives opaque mutations one stable input va
   }
 }));
 
+test("long persisted audit appends after restart with bounded replay work and still quarantines stale events", () => workspace(() => {
+  const { goal, binding } = fixture();
+  mutateGoalRecord(goal.id, current => {
+    const record = current.assignment_kernel_v2 as any;
+    for (let i = 2; i <= 180; i++) record.events.push(event(goal.id, binding, i, {
+      event_type: "work_unit_state_changed", work_unit_id: "work-result", state: i % 2 ? "active" : "pending", reason: "Audit progress"
+    }));
+    return current;
+  });
+  __testOnlyResetGoalListCache();
+  const clone = globalThis.structuredClone; let clones = 0;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => { clones++; return clone(value, options); }) as typeof structuredClone;
+    const result = appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, 181, {
+      event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "active", reason: "Next audit section"
+    }));
+    assert.equal(result.accepted, true); assert.equal(result.snapshot.assignment_version, 181);
+  } finally { globalThis.structuredClone = clone; }
+  assert.ok(clones < 180 * 20, `one durable append must not replay every prefix (${clones} clones)`);
+  const before = getAssignmentKernelSnapshotV2(goal.id);
+  const rejected = appendAssignmentKernelEventV2(goal.id, { ...event(goal.id, binding, 182, {
+    event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "pending", reason: "Stale caller"
+  }), binding: { ...binding, generation: 2 } });
+  assert.equal(rejected.accepted, false); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
+  __testOnlyResetGoalListCache(); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
+}));
+
+test("V2 session discovery survives a fresh process with a missing or stale independent index", () => workspace(() => {
+  const { goal, binding } = fixture();
+  const root = process.env.OPERATOR_WORKSPACE_ROOT!;
+  const indexRoot = path.join(root, "artifacts", "assignment-kernel-v2", "index");
+  const indexPath = path.join(indexRoot, fs.readdirSync(indexRoot)[0]!);
+  const stale = fs.readFileSync(indexPath, "utf8");
+  appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, 2, {
+    event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "active", reason: "Started."
+  }));
+  const expected = listAssignmentKernelIndexV2(binding.session_id);
+  assert.equal(expected[0]!.assignment_version, 2);
+  const moduleUrl = new URL("../src/assignments/assignment_kernel_v2_store.js", import.meta.url).href;
+  for (const brokenIndex of [null, stale, "{broken", JSON.stringify({ ...JSON.parse(stale), session_id: "another-session" })]) {
+    if (brokenIndex === null) fs.unlinkSync(indexPath);
+    else fs.writeFileSync(indexPath, brokenIndex);
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { listAssignmentKernelIndexV2, getAssignmentKernelSnapshotV2 } from ${JSON.stringify(moduleUrl)};
+      console.log(JSON.stringify({ index: listAssignmentKernelIndexV2(${JSON.stringify(binding.session_id)}),
+        version: getAssignmentKernelSnapshotV2(${JSON.stringify(goal.id)}).assignment_version }));
+    `], { env: process.env, encoding: "utf8", timeout: 20_000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    assert.deepEqual(JSON.parse(child.stdout), { index: expected, version: 2 });
+  }
+}));
+
+test("V2 session discovery filters before the history limit and excludes unrelated Goals", () => workspace(() => {
+  const { goal, binding } = fixture();
+  for (let i = 0; i < 205; i += 1) createGoal({
+    title: `Unrelated ${i}`, objective: "Unrelated task", acceptance_criteria: ["Done"],
+    status: "active", related_session_id: "another-session", created_by: "another-principal"
+  });
+  assert.deepEqual(listAssignmentKernelIndexV2(binding.session_id, 1).map(entry => entry.assignment_id), [goal.id]);
+  assert.deepEqual(listAssignmentKernelIndexV2("another-session"), []);
+}));
+
 test("trusted AssignmentSpec creation gives opaque executable previews the same authenticated input gap", () => workspace(() => {
   const preview = createGoal({
     title: "Preview selected note replacement",
@@ -395,4 +459,43 @@ test("multiple V2 criteria require an explicit semantic-fact contract instead of
   assert.deepEqual(spec.criteria.map(criterion => criterion.semantic_fact_requirements), [
     ["task.result_available"], ["result.payload_hash"]
   ]);
+}));
+
+test("content-verified snapshot reads avoid replay while changed bytes and invalid history remain authoritative", () => workspace(() => {
+  const { goal, binding } = fixture();
+  const outcome = getAssignmentKernelSnapshotV2(goal.id)!.outcome;
+  for (let version = 2; version <= 38; version++) {
+    appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, version, { event_type: "outcome_derived", outcome, reason: "Retained history for snapshot replay." }));
+  }
+  const before = getAssignmentKernelSnapshotV2(goal.id)!;
+  const clone = globalThis.structuredClone;
+  let clones = 0;
+  globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => {
+    clones++;
+    return clone(value, options);
+  }) as typeof structuredClone;
+  let warm;
+  try { warm = getAssignmentKernelSnapshotV2(goal.id)!; }
+  finally { globalThis.structuredClone = clone; }
+  assert.deepEqual(warm, before);
+  assert.ok(clones <= 4, `Warm snapshot replayed retained history (${clones} clones).`);
+  warm.spec.source_user_request = "Caller mutation";
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), before);
+
+  const file = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "artifacts", "goals", goal.id, "goal.json");
+  const bytes = fs.readFileSync(file, "utf8");
+  const stamp = fs.statSync(file);
+  const persisted = JSON.parse(bytes);
+  persisted.assignment_kernel_v2.events[0].spec.source_user_request = "Return the different inventory.";
+  const changed = JSON.stringify(persisted, null, 2) + "\n";
+  assert.equal(Buffer.byteLength(changed), Buffer.byteLength(bytes));
+  fs.writeFileSync(file, changed);
+  fs.utimesSync(file, stamp.atime, stamp.mtime);
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.spec.source_user_request, "Return the different inventory.");
+
+  persisted.assignment_kernel_v2.events.at(-1).assignment_version = 99;
+  fs.writeFileSync(file, JSON.stringify(persisted, null, 2) + "\n");
+  fs.utimesSync(file, stamp.atime, stamp.mtime);
+  assert.throws(() => getAssignmentKernelSnapshotV2(goal.id), /version/i,
+    "Semantic rejection cannot fall back to the valid previous file or prior cached snapshot.");
 }));

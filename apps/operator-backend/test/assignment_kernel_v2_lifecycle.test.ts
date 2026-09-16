@@ -19,7 +19,7 @@ import {
   supplyAssignmentInputV2
 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
-import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../src/domain/assignment-kernel/index.js";
+import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2, buildProgressEpochV2 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
@@ -34,6 +34,7 @@ import {
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
 import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
+import { buildAssignmentResultDeliveryV2 } from "../src/assignments/assignment_kernel_v2_result_delivery.js";
 import { assertCompleteProtocolV2Receipts } from "../src/benchmark/protocol_v2_runner.js";
 import {
   DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,
@@ -181,6 +182,100 @@ function settleRead(goalId: string) {
   return { lease, settled };
 }
 
+test("generic contextual read stays active until its native values are delivered, and replays the exact answer", () => workspace(() => {
+  const goal = createGoal({
+    title: "Selected pipe read", objective: "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.",
+    acceptance_criteria: ["The requested Revit outcome is completed and verified with evidence from this assignment."],
+    status: "active", related_session_id: "session-result-delivery", created_by: "principal-result-delivery",
+    work_budget: { mode: "auto_goal", requested_effect: "read", document_fingerprint: "document-result-delivery" }
+  });
+  const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-result-delivery" });
+  const initial = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(initial.spec.result_delivery_required, true);
+  const lease = openAssignmentKernelOperationV2({ snapshot: initial, controller_request_id: "pipe-read",
+    provider_turn_id: "pipe-turn", capability_id: "revit_call_tool", classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354 } } });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const payload = { id: 1380354, name: "PVC - DWV", category: "Pipes", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
+  const envelope = resultEnvelope(lease.operation_id, binding, lease.request_identity, { ...payload, parameters: {} });
+  envelope.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/get-parameters/v2";
+  const settled = settleAssignmentKernelOperationV2(lease, envelope);
+  const observationId = settled.observation!.observation_id;
+  const claims = [{ criterion_id: initial.spec.criteria[0]!.criterion_id, observation_ids: [observationId] }];
+  const progress = advanceAssignmentKernelProgressV2({ binding });
+  assert.equal(progress.snapshot.criteria[claims[0]!.criterion_id]!.status, "pass");
+  assert.equal(progress.snapshot.terminal, false, "a successful native read must not interrupt the provider before it answers");
+  assert.equal(progress.snapshot.outcome, "active");
+  assert.equal(progress.decision.decision, "admit_reasoning_turn");
+  assert.match(prepareCodexAssignmentProgressV2(binding).prompt, /resultItems/);
+  const modelContext = prepareCodexAssignmentProgressV2(binding).prompt;
+  assert.ok(modelContext.includes(observationId), "resumed reasoning must receive usable canonical Observation IDs");
+  assert.ok(modelContext.includes(settled.observation!.raw_payload_ref.replace(/^evidence:/, "")),
+    "the canonical Observation must map to its focused retrieval evidence ID");
+  const selection = [{ label: "Selected pipe", observation_id: observationId, path: ["name"] }];
+  for (const variant of ["control", "foreign", "hash"] as const) {
+    const changed = structuredClone(progress.snapshot);
+    if (variant === "control") changed.observations[observationId]!.evidence_class = "control";
+    if (variant === "foreign") changed.current_binding.session_id = "foreign-session";
+    if (variant === "hash") changed.observations[observationId]!.raw_payload_hash = "0".repeat(64);
+    assert.throws(() => buildAssignmentResultDeliveryV2(changed, selection), /ineligible|scope|session|hash/i, variant);
+  }
+  const followUp = openAssignmentKernelOperationV2({ snapshot: progress.snapshot, controller_request_id: "pipe-followup",
+    provider_turn_id: "pipe-turn", capability_id: "revit_call_tool", classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354, includeEmpty: false } } });
+  markAssignmentKernelOperationDispatchStartedV2(followUp);
+  const followUpResult = resultEnvelope(followUp.operation_id, binding, followUp.request_identity, payload);
+  followUpResult.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/get-parameters/v2";
+  const followed = settleAssignmentKernelOperationV2(followUp, followUpResult);
+  const followUpObservationId = followed.observation!.observation_id;
+  assert.equal(followed.snapshot.operations[followUp.operation_id]!.fulfillment_role, "delegated_task_execution");
+  assert.equal(followed.observation!.evidence_class, "task_result", "later parameter values must remain deliverable after the generic criterion passes");
+  const epoch = buildProgressEpochV2({ before: progress.snapshot, after: followed.snapshot,
+    stated_gap_ids: ["result:delivery"], admitted_operation_ids: [followUp.operation_id], recorded_at: new Date().toISOString() });
+  assert.ok(epoch.progress_reasons.includes("authoritative_observation_added"), "a distinct native read adds answer data even when task.result_available is unchanged");
+  for (const variant of ["control", "repeat", "failed", "foreign"] as const) {
+    const changed = structuredClone(followed.snapshot);
+    const observation = changed.observations[followUpObservationId]!;
+    const operation = changed.operations[followUp.operation_id]!;
+    if (variant === "control") observation.evidence_class = "control";
+    if (variant === "repeat") {
+      operation.input = structuredClone(progress.snapshot.operations[lease.operation_id]!.input);
+      operation.request_identity = structuredClone(progress.snapshot.operations[lease.operation_id]!.request_identity);
+    }
+    if (variant === "failed") operation.result!.status = "failed_after_dispatch";
+    if (variant === "foreign") observation.binding = { ...observation.binding, session_id: "foreign" };
+    const negative = buildProgressEpochV2({ before: progress.snapshot, after: changed,
+      stated_gap_ids: ["result:delivery"], admitted_operation_ids: [followUp.operation_id], recorded_at: new Date().toISOString() });
+    assert.ok(!negative.progress_reasons.includes("authoritative_observation_added"), variant);
+  }
+  assert.equal(advanceAssignmentKernelProgressV2({ binding }).snapshot.terminal, false,
+    "additional native reads remain admissible while the answer is being assembled");
+  assert.throws(() => evaluateAssignmentObservationCriteriaV2({ binding, claims,
+    result_items: [{ label: "Size", observation_id: observationId, path: ["parameters", "Missing"] }] }), /path_missing/);
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.result_delivery, undefined);
+  assert.throws(() => evaluateAssignmentObservationCriteriaV2({ binding, claims,
+    result_items: [{ label: "Size", observation_id: observationId, path: ["__proto__"] }] }), /path_missing_or_invalid/);
+  assert.throws(() => evaluateAssignmentObservationCriteriaV2({ binding: { ...binding, generation: 2 }, claims,
+    result_items: [{ label: "Size", observation_id: observationId, path: ["parameters", "Size"] }] }), /binding_stale/);
+  const resultItems = [
+    { label: "Selected pipe", observation_id: observationId, path: ["name"] },
+    { label: "Size", observation_id: followUpObservationId, path: ["parameters", "Size"] },
+    { label: "System", observation_id: followUpObservationId, path: ["parameters", "System Name"] }
+  ];
+  const terminal = evaluateAssignmentObservationCriteriaV2({ binding, claims, result_items: resultItems });
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+  assert.equal(renderTerminalResultV2(terminal), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
+  __testOnlyResetGoalListCache();
+  const replayed = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.deepEqual(replayed.result_delivery, terminal.result_delivery);
+  assert.equal(renderTerminalResultV2(replayed), renderTerminalResultV2(terminal));
+  assert.equal(evaluateAssignmentObservationCriteriaV2({ binding, claims, result_items: resultItems }).assignment_version, terminal.assignment_version,
+    "a dropped delivery response can be retried without changing the terminal record");
+  assert.throws(() => evaluateAssignmentObservationCriteriaV2({ binding, claims,
+    result_items: [{ ...resultItems[0]!, label: "Changed result" }] }), /delivery_conflict/);
+}));
+
 test("stable criterion plus authoritative Observation terminally settles V2 and projects packet/return exactly once", () => workspace(() => {
   const { goal, binding } = setup();
   const { settled } = settleRead(goal.id);
@@ -200,6 +295,18 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   const returns = listWorkReturns(goal.id);
   assert.equal(packets.length, 1);
   assert.equal(returns.length, 1);
+  assert.equal(packets[0]!.status, "verified_complete");
+  assert.equal(packets[0]!.trust_presentation.overall, "independently_verified");
+  for (const outcome of ["blocked", "failed", "complete_with_issues", "awaiting_user_input"] as const) {
+    const interrupted = { ...terminal, outcome };
+    const incompletePacket = generateVerifiedWorkPacketFromKernelV2(persistedGoal, interrupted, null);
+    assert.equal(incompletePacket.acceptance_criteria[0]!.status, "pass");
+    assert.equal(incompletePacket.trust_presentation.overall, "uncertain_or_missing", outcome);
+  }
+  const notApplicable = structuredClone(terminal);
+  notApplicable.criteria[criterionId]!.status = "not_applicable";
+  assert.equal(generateVerifiedWorkPacketFromKernelV2(persistedGoal, notApplicable, null).trust_presentation.overall,
+    "independently_verified", "a canonical not-applicable criterion does not contradict completion");
   assert.equal(
     packets[0]!.packet_id,
     generateVerifiedWorkPacketFromKernelV2(persistedGoal, terminal, null).packet_id,
@@ -213,6 +320,24 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   assert.throws(() => evaluateAssignmentObservationCriteriaV2({
     binding, claims: [{ criterion_id: criterionId, observation_ids: [observationId] }]
   }), /terminal_immutable/);
+}));
+
+test("incomplete terminal handoffs disclose applied effects without claiming verified completion", () => workspace(() => {
+  const {goal}=setup("apply");
+  const base=settleRead(goal.id).settled.snapshot;
+  for(const effect of ["none","applied","unknown"] as const){
+    const stopped=structuredClone(base);
+    stopped.terminal=true;stopped.outcome="blocked";stopped.terminal_reason="provider_call_budget_exhausted";
+    const operation=Object.values(stopped.operations)[0]!;
+    operation.persistent_effect=effect;operation.result!.persistent_effect=effect;
+    const before=JSON.stringify(stopped);
+    const message=renderTerminalResultV2(stopped);
+    assert.match(message,/did not complete/);
+    assert.equal(message.includes("Changes were applied before the task stopped"),effect==="applied");
+    assert.equal(message.includes("An edit outcome is still unknown"),effect==="unknown");
+    assert.doesNotMatch(message,/requested work completed|Postcondition verified/);
+    assert.equal(JSON.stringify(stopped),before,"Presentation must not change saved effects or lifecycle");
+  }
 }));
 
 test("provider failure cannot replace task success derived while terminal handoff was deferred", () => workspace(() => {
@@ -561,7 +686,8 @@ test("progress controller durably materializes missing authenticated input witho
 
   const prepared = prepareCodexAssignmentProgressV2(binding);
   assert.equal(prepared.snapshot.assignment_version, first.snapshot.assignment_version);
-  assert.match(prepared.message, /waiting for the required authenticated user input/i);
+  assert.equal(prepared.message, clarification.question,
+    "the recovered task must show the actual question, not internal waiting-state prose");
 
   const resumed = supplyAssignmentInputV2({
     binding,

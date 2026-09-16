@@ -2,13 +2,19 @@
 
   <PropertyGroup>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <TargetFrameworks Condition="'$(RevitYear)'=='2027'">net10.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <UseWPF Condition="'$(TargetFramework)'=='net10.0-windows'">true</UseWPF>
+    <UseWindowsForms Condition="'$(TargetFramework)'=='net10.0-windows'">true</UseWindowsForms>
     <RevitApiPathNet48 Condition="'$(RevitApiPathNet48)'==''">C:\Program Files\Autodesk\Revit 2024</RevitApiPathNet48>
     <RevitApiPathNet8 Condition="'$(RevitApiPathNet8)'==''">C:\Program Files\Autodesk\Revit 2025</RevitApiPathNet8>
+    <RevitApiPathNet10 Condition="'$(RevitApiPathNet10)'==''">C:\Program Files\Autodesk\Revit 2027</RevitApiPathNet10>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="RevitAPI">
       <HintPath>$(RevitApiPathNet48)\RevitAPI.dll</HintPath>
       <Private>False</Private>
@@ -30,12 +36,26 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  <ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows'">
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitApiPathNet10)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitApiPathNet10)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" Condition="'$(TargetFramework)'!='net10.0-windows'" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" Condition="'$(TargetFramework)'!='net10.0-windows'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Contracts\duplicate-sheet.request.v1.json" LogicalName="RevitBridge.Common.duplicate-sheet.request.v1.json" />
+    <EmbeddedResource Include="Contracts\conditional-requests.v1.json" LogicalName="RevitBridge.Common.conditional-requests.v1.json" />
+    <EmbeddedResource Include="Contracts\conditional-request-fragments.v1.json" LogicalName="RevitBridge.Common.conditional-request-fragments.v1.json" />
     <EmbeddedResource Include="..\..\operator-backend\config\tool_exposure_policy.v1.json"
                       LogicalName="RevitBridge.Common.tool_exposure_policy.v1.json" />
   </ItemGroup>

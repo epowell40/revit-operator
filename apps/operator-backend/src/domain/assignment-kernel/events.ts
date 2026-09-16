@@ -1,3 +1,4 @@
+import type { DiscoveredAssignmentInputV2 } from "./input_registry.js";
 import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_spec.js";
 import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
 import type { CriterionEvaluationV2, AssignmentOutcomeV2 } from "./criteria.js";
@@ -6,6 +7,7 @@ import type { ObservationCommitInputV2, OperationResultV2, OperationV2 } from ".
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallStateV2, ProviderCallV2, ProviderUsageV2 } from "./progress/provider_call.js";
 import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
+import type { AssignmentResultDeliveryV2 } from "./result_delivery.js";
 
 export const ASSIGNMENT_EVENT_V2_SCHEMA = "revit-operator.assignment-event/v2" as const;
 
@@ -22,10 +24,11 @@ export interface AssignmentEventEnvelopeV2 {
 export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "assignment_created"; spec: AssignmentSpecV2 }
   | { event_type: "run_started" }
+  | { event_type: "execution_control_requested"; command_id: string; action: "pause" | "resume"; expected_command_id: string | null }
   | { event_type: "run_superseded"; superseded_by_generation: number }
   | { event_type: "work_unit_state_changed"; work_unit_id: WorkUnitIdV2; state: AssignmentWorkUnitStateV2; reason: string }
-  | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string }
-  | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown }
+  | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string; declaration?: DiscoveredAssignmentInputV2 }
+  | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown; result_freshness?: "invalidate_dependent_results_v1" }
   | { event_type: "provider_call_recorded"; call_id: string; provider: string; model: string; reasoning_effort: string | null; success: boolean }
   | {
       event_type: "provider_call_state_recorded";
@@ -56,6 +59,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "observation_commit_failed"; operation_id: OperationIdV2; result_id: string; attempt: number; error_code: string }
   | { event_type: "observation_retention_failed"; operation_id: OperationIdV2; error_code: string }
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
+  | { event_type: "result_delivered"; delivery: AssignmentResultDeliveryV2 }
   | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string }
   | { event_type: "review_resolved"; review_id: string; decision: string }
   | { event_type: "reconciliation_recorded"; operation_id: OperationIdV2; resolved_effect: "none" | "applied"; observation_ids: readonly ObservationIdV2[] }

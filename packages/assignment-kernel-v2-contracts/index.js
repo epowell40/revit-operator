@@ -1,3 +1,4 @@
+export * from "./native-artifact.js";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA = "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA = "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD = "assignment_kernel_v2_session_index";
@@ -150,6 +151,9 @@ function validProviderUsage(value) {
   const usage = record(value);
   return Boolean(usage)
     && validOptionalNonNegativeInteger(usage.input_tokens)
+    && validOptionalNonNegativeInteger(usage.cached_input_tokens)
+    && validOptionalNonNegativeInteger(usage.cache_write_input_tokens)
+    && (usage.input_tokens == null || (usage.cached_input_tokens ?? 0) + (usage.cache_write_input_tokens ?? 0) <= usage.input_tokens)
     && validOptionalNonNegativeInteger(usage.output_tokens)
     && validOptionalNonNegativeInteger(usage.reasoning_tokens)
     && validOptionalNonNegativeInteger(usage.total_tokens)
@@ -213,6 +217,14 @@ export function parseAssignmentKernelPublicationV2(value) {
   if (!assignmentId || !Number.isSafeInteger(assignmentVersion) || assignmentVersion < 1) publicationInvalid("identity");
   if (!snapshot || snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA
       || snapshot.assignment_version !== assignmentVersion) publicationInvalid("snapshot");
+  if (snapshot.execution_control !== undefined) {
+    const control = record(snapshot.execution_control);
+    if (!control || !["paused", "running"].includes(control.state)
+        || typeof control.command_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(control.command_id)
+        || typeof control.changed_at !== "string" || !Number.isFinite(Date.parse(control.changed_at))) {
+      publicationInvalid("execution_control");
+    }
+  }
   const runId = requiredString(binding?.run_id);
   const generation = binding?.generation;
   if (binding?.assignment_id !== assignmentId || !runId
@@ -431,9 +443,26 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
     value: status,
     dimensions: { capability_id: definition.capability_id }
   }];
-  if (evidenceResult && evidenceId) {
+  if (evidenceResult?.schema === "revit-operator.evidence-retrieval.v1" && evidenceId
+      && payload.ok !== false && evidenceResult.ok !== false) {
     const selection = record(evidenceResult.selection);
-    for (const selectionPath of Object.keys(selection ?? {}).sort().slice(0, 64)) {
+    const missingFields = new Set(Array.isArray(evidenceResult.missing_fields) ? evidenceResult.missing_fields : []);
+    const paths = Object.keys(selection ?? {}).filter(path => !missingFields.has(path)).sort().slice(0, 64);
+    const page = record(evidenceResult.pagination);
+    const rows = evidenceResult.selection;
+    // A page contributes only its actual retained array positions. Repeated or
+    // overlapping pages cannot manufacture progress by changing page sizes,
+    // purpose, timestamps or payload contents. These remain control-only facts.
+    if (Array.isArray(rows) && rows.length > 0 && rows.length <= 256 && page
+        && typeof page.path === "string" && page.path.length > 0 && page.path.length <= 480
+        && !/[\u0000-\u001f]/.test(page.path)
+        && Number.isSafeInteger(page.start) && page.start >= 0
+        && Number.isSafeInteger(page.requested_count) && page.requested_count >= rows.length && page.requested_count <= 256
+        && page.returned_count === rows.length
+        && Number.isSafeInteger(page.total_items) && page.total_items >= page.start + rows.length) {
+      for (let index = 0; index < rows.length; index += 1) paths.push(`${page.path}[${page.start + index}]`);
+    }
+    for (const selectionPath of paths) {
       const boundedPath = boundedControlText(selectionPath, 512);
       if (!boundedPath) continue;
       const dimensions = {

@@ -10,7 +10,11 @@ const MUTATION_VERB_SOURCE = [
 const MUTATION_VERB = new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b");
 
 export function hasExplicitMutationVerb(userText: string | null | undefined): boolean {
-  const text = `${userText || ""}`.toLowerCase();
+  const text = `${userText || ""}`.toLowerCase()
+    // These bounded noun phrases describe an observed property. Preserve
+    // imperative "scale it/the view/to ..." and any separate mutation verb.
+    .replace(/\b(?:its|their|the|current|existing|view|drawing)\s+(?:name\s+and\s+)?scale\b(?!\s+(?:it|them|this|that|these|those|the|to|by)\b)/g, " ")
+    .replace(/\b(?:name|number|type)\s+and\s+scale\b(?!\s+(?:it|them|this|that|these|those|the|to|by)\b)/g, " ");
   return MUTATION_VERB.test(text)
     || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
 }

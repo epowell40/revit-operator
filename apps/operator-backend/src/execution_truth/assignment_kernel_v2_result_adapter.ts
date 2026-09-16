@@ -71,7 +71,7 @@ function validateOperationResultShape(value: unknown): asserts value is Operatio
   adapterAssert(["succeeded", "failed_before_dispatch", "completed_without_native_dispatch", "failed_after_dispatch", "timed_out", "canceled"].includes(String(value.status)), "operation_result_status_invalid", "Operation result status is invalid.");
   adapterAssert(["not_dispatched", "dispatching", "dispatched"].includes(String(value.dispatch_state)), "operation_result_dispatch_invalid", "Operation result dispatch state is invalid.");
   adapterAssert(["none", "unknown", "applied"].includes(String(value.persistent_effect)), "operation_result_effect_invalid", "Operation result effect is invalid.");
-  adapterAssert(["not_applicable", "committed", "rolled_back", "unknown"].includes(String(value.native_transaction_state)), "operation_result_transaction_invalid", "Operation result transaction state is invalid.");
+  adapterAssert(["not_applicable", "not_started", "committed", "rolled_back", "unknown"].includes(String(value.native_transaction_state)), "operation_result_transaction_invalid", "Operation result transaction state is invalid.");
   if (value.affected_target_identities !== undefined) {
     adapterAssert(Array.isArray(value.affected_target_identities)
       && value.affected_target_identities.length <= 256

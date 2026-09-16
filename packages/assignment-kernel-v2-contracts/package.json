@@ -4,14 +4,28 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./completion-outbox": {
+      "types": "./completion-outbox.d.ts",
+      "import": "./completion-outbox.js"
+    },
     ".": {
       "types": "./index.d.ts",
       "import": "./index.js"
+    },
+    "./provider-turn-usage": {
+      "types": "./provider-turn-usage.d.ts",
+      "import": "./provider-turn-usage.js"
     }
   },
   "files": [
+    "native-artifact.js",
+    "native-artifact.d.ts",
+    "completion-outbox.js",
+    "completion-outbox.d.ts",
     "index.js",
     "index.d.ts",
-    "evidence-retrieval-selector-golden-vectors.json"
+    "evidence-retrieval-selector-golden-vectors.json",
+    "provider-turn-usage.js",
+    "provider-turn-usage.d.ts"
   ]
 }

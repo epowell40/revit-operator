@@ -6,6 +6,36 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorActionDeadlinePolicyTests
     {
+        [Fact]
+        public void QueueCancellationBeforeStartSurvivesNestedHttpAndCourierDeadlineBoundaries()
+        {
+            var deadline = OperatorActionDeadlinePolicy.Resolve("POST", "/revit/get-parameters", "low");
+            var before = new RevitEventCanceledBeforeDispatchException("queued-read-1");
+            var first = deadline.ClassifyCancellation(before, "queued-read-1");
+            Assert.Same(before, first);
+            Assert.Same(before, deadline.ClassifyCancellation((OperationCanceledException)first, "queued-read-1"));
+            var receipt = OperatorCourierFailureClassifier.Classify(first);
+            Assert.Equal("revit_action_deadline_elapsed_before_dispatch", receipt.Code);
+            Assert.Equal("pre_dispatch", receipt.Phase);
+            Assert.False(receipt.OutcomeUnknown);
+            Assert.False(receipt.OpensCircuit);
+            Assert.True(receipt.Retryable);
+            Assert.Equal("queued-read-1", receipt.CorrelationId);
+        }
+
+        [Theory]
+        [InlineData("Cancelled after callback start")]
+        [InlineData("The Revit action deadline elapsed before the ExternalEvent callback started; no mutation was dispatched.")]
+        public void GenericCancellationAndMatchingProseRemainUnknown(string message)
+        {
+            var deadline = OperatorActionDeadlinePolicy.Resolve("POST", "/revit/set-parameter", "high");
+            var receipt = OperatorCourierFailureClassifier.Classify(deadline.ClassifyCancellation(new OperationCanceledException(message), "mutation-1"));
+            Assert.Equal("revit_action_deadline_elapsed_outcome_unknown", receipt.Code);
+            Assert.True(receipt.OutcomeUnknown);
+            Assert.True(receipt.OpensCircuit);
+            Assert.False(receipt.Retryable);
+        }
+
         [Theory]
         [InlineData("POST", "/revit/tool-search", "low", "control_plane", 10000)]
         [InlineData("POST", "/revit/sheets", "low", "bounded_read", 60000)]

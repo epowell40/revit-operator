@@ -15,11 +15,17 @@ namespace RevitBridge.Handlers
         public class Params
         {
             public string? levelName { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double startX { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double startY { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double startZ { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double endX { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double endY { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double endZ { get; set; }
             public string systemType { get; set; } = "Hydronic Supply";
             public string pipeType { get; set; } = "Default"; 

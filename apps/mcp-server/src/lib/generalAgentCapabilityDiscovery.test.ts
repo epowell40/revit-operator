@@ -7,8 +7,52 @@ import {
   discoverHostedGeneralAgentCapabilities
 } from "./generalAgentCapabilityDiscovery.js";
 import { loadToolExposurePolicy } from "./toolExposurePolicy.js";
+import fs from "node:fs";
+import { TOOL_SEARCH_RANKING_VERSION_V3 } from "./toolSearchRanking.js";
+import { SUPPORTED_NATIVE_ROUTES } from "./supportedToolInventory.js";
 
 const env = { REVIT_OPERATOR_MODE: "local" } as NodeJS.ProcessEnv;
+
+function nativeCatalog() {
+  const location = new URL("../../../revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs", import.meta.url);
+  const source = fs.readFileSync(location, "utf8");
+  const text = '"((?:[^"\\\\]|\\\\.)*)"';
+  const pattern = new RegExp(`new OperatorToolInfo\\(${text},\\s*${text},\\s*${text},\\s*${text},\\s*OperatorActionRisk\\.(\\w+),\\s*${text},\\s*${text}\\)`, "g");
+  const tools = [...source.matchAll(pattern)].map(match => {
+    const decode = (n: number) => JSON.parse(`"${match[n]}"`) as string;
+    return { group: decode(1), method: decode(2), path: decode(3), title: decode(4), risk: match[5]!.toLowerCase(), description: decode(6), example: decode(7) };
+  });
+  assert.ok(tools.length > 200, `Expected the actual catalog, found ${tools.length} tools`);
+  const supported = tools.filter(tool => SUPPORTED_NATIVE_ROUTES.includes(`${tool.method} ${tool.path}`));
+  assert.equal(supported.length, SUPPORTED_NATIVE_ROUTES.length);
+  return { tools: supported };
+}
+
+test("C25 room workbook request discovers the existing Excel export across the real native catalog", async () => {
+  const registry = nativeCatalog();
+  const result = await discoverHostedGeneralAgentCapabilities({ need: "Read the complete Revit room and space inventory with HVAC load-calculation parameters, validate counts/units/missing values, and export a room-by-room Excel workbook artifact without changing the model." }, async () => registry);
+  assert.equal(result.ranking_version, TOOL_SEARCH_RANKING_VERSION_V3);
+  assert.ok(result.capabilities.some(tool => tool.path === "/revit/export-elements-xlsx"), JSON.stringify(result.capabilities.map(tool => [tool.path, tool.score])));
+  const excel = result.capabilities.find(tool => tool.path === "/revit/export-elements-xlsx")!;
+  assert.equal(excel.risk, "low"); assert.equal(excel.executionTool, "revit_call_tool");
+  assert.match(excel.description, /elementIds/);
+});
+
+test("general discovery shares native ranking, ignores repeated prose and preserves neighboring export intents", async () => {
+  const registry = nativeCatalog();
+  for (const [need, expected] of [
+    ["export element parameters to an Excel spreadsheet workbook", "/revit/export-elements-xlsx"],
+    ["export schedule csv", "/revit/export-schedule-csv"],
+    ["capture sheet region", "/revit/capture-sheet-region"]
+  ]) {
+    const result = await discoverHostedGeneralAgentCapabilities({ need: need!, maxResults: 1 }, async () => registry);
+    assert.equal(result.capabilities[0]?.path, expected, need);
+  }
+  const tools = [{ method: "POST", path: "/revit/export-elements-xlsx", title: "Export Excel Workbook", risk: "low", description: "Export element parameters." },
+    { method: "POST", path: "/revit/open-model", title: "Open Model", risk: "high", description: "Excel workbook export ".repeat(200), optional_fields: Array(200).fill("Excel workbook export") }];
+  const result = await discoverHostedGeneralAgentCapabilities({ need: "export Excel workbook" }, async () => ({ tools }));
+  assert.equal(result.capabilities[0]?.path, "/revit/export-elements-xlsx");
+});
 
 test("general-agent discovery adds exactly one concise non-authorizing dynamic substrate", () => {
   const result = discoverGeneralAgentCapabilities({ need: "complex geometry layout" }, env);

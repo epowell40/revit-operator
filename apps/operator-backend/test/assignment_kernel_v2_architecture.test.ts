@@ -171,7 +171,10 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "reducer.ts") {
+        assert.match(source, /import \{ nativeArtifactResultEffectV2 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+      }
       if (path.basename(file) === "operation.ts") {
         assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
       }
@@ -237,9 +240,14 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
   const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
   const barrierAdmissionAt = brain.indexOf("assignmentTerminalBarrier = beginAssignmentKernelTerminalBarrierV2");
   const notificationBindAt = brain.indexOf("bindTurnNotificationSource(activeClient);", barrierAdmissionAt);
-  const providerStartAt = brain.indexOf("return await activeClient.startTurn({", barrierAdmissionAt);
+  const providerStartAt = brain.indexOf("return await activeClient.startBoundTurn({", barrierAdmissionAt);
   assert.ok(barrierAdmissionAt >= 0 && notificationBindAt > barrierAdmissionAt && providerStartAt > notificationBindAt,
     "terminality must be barred and provider notifications captured before provider execution starts");
+  const fallbackNotificationAt = brain.indexOf("bindTurnNotificationSource(c);", providerStartAt);
+  const fallbackStartAt = brain.indexOf("start = await c.startBoundTurn({", fallbackNotificationAt);
+  assert.ok(fallbackNotificationAt > providerStartAt && fallbackStartAt > fallbackNotificationAt,
+    "missing-thread recovery must retain the barrier and bind notifications before its instruction-bound provider start");
+  assert.doesNotMatch(brain, /(?:activeClient|c)\.startTurn\(/, "neither provider start may bypass instruction binding");
   const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
   const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
   assert.ok(reconcileAt >= 0 && normalReleaseAt > reconcileAt,

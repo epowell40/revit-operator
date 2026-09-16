@@ -1,3 +1,4 @@
+import { createContentVerifiedProjection } from "../goals/content_verified_projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,11 +7,12 @@ import {
   AssignmentJournalV2,
   AssignmentKernelErrorV2,
   canonicalJsonV2,
+  reduceAssignmentEventsV2,
   type AssignmentEventV2,
   type AssignmentSnapshotV2,
   type AssignmentSpecV2
 } from "../domain/assignment-kernel/index.js";
-import { getGoal, mutateGoalRecord, type GoalRecord, type GoalStatus } from "../goals/service.js";
+import { getGoal, getGoalStoragePath, listGoalsForSession, mutateGoalRecord, type GoalRecord, type GoalStatus } from "../goals/service.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
 export const ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA = "revit-operator.assignment-kernel-journal/v2" as const;
@@ -92,19 +94,13 @@ export function listAssignmentKernelIndexV2(sessionId: string, limit = 50): Assi
   const boundedSessionId = sessionId.trim().slice(0, 180);
   const boundedLimit = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
   const entries: AssignmentKernelIndexEntryV2[] = [];
-  for (const name of fs.readdirSync(assignmentKernelIndexRoot()).filter(value => /^[a-f0-9]{64}\.json$/.test(value))) {
-    try {
-      const candidate = JSON.parse(fs.readFileSync(path.join(assignmentKernelIndexRoot(), name), "utf8")) as Partial<AssignmentKernelIndexEntryV2>;
-      if (candidate.schema !== ASSIGNMENT_KERNEL_INDEX_ENTRY_V2_SCHEMA
-        || candidate.session_id !== boundedSessionId
-        || typeof candidate.assignment_id !== "string"
-        || !Number.isSafeInteger(candidate.assignment_version)
-        || !candidate.binding
-        || typeof candidate.terminal !== "boolean") continue;
-      entries.push(candidate as AssignmentKernelIndexEntryV2);
-    } catch {
-      // A malformed independent index entry cannot replace exact-ID V2 truth.
-    }
+  // The independent index can be missing, stale, or torn after the canonical
+  // Goal commit. Discover from durable Goals, including those outside the
+  // general history page, and derive identity/outcome from validated journals.
+  // The small index files remain compatibility artifacts, never authorities.
+  for (const goal of listGoalsForSession(boundedSessionId)) {
+    const snapshot = getAssignmentKernelSnapshotV2(goal.id);
+    if (snapshot?.current_binding.session_id === boundedSessionId) entries.push(indexEntry(snapshot));
   }
   return entries
     .sort((left, right) => right.assignment_version - left.assignment_version
@@ -158,6 +154,10 @@ function synchronizeGoalLifecycle(goal: GoalRecord, snapshot: AssignmentSnapshot
         : "Useful work is retained while bounded review is pending."
     };
   }
+  if (snapshot.execution_control?.state === "paused") {
+    return { ...goal, status: "paused", current_phase: "paused", current_step: "Resume saved work when ready.",
+      finished_at: null, blocker: null, error: null, progress_summary: "Work and evidence are saved. Execution is paused." };
+  }
   return {
     ...goal,
     status: "active",
@@ -174,11 +174,20 @@ function eventDigest(event: AssignmentEventV2): string {
   return createHash("sha256").update(canonicalJsonV2(event), "utf8").digest("hex");
 }
 
+const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentSnapshotV2 | null>((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as { assignment_kernel_v2?: unknown }).assignment_kernel_v2;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Partial<AssignmentKernelJournalRecordV2>;
+  if (record.schema !== ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA || !Array.isArray(record.events)) return null;
+  // The fresh parsed record is private to this projection. The pure reducer
+  // validates and copies each event; do not clone the complete history twice.
+  return record.events.length > 0 ? reduceAssignmentEventsV2(record.events) : null;
+});
+
 export function getAssignmentKernelSnapshotV2(goalId: string): AssignmentSnapshotV2 | null {
-  const goal = getGoal(goalId);
-  if (!goal) return null;
-  const record = normalizeAssignmentKernelJournalV2(goal.assignment_kernel_v2);
-  return record.events.length > 0 ? new AssignmentJournalV2(record.events).snapshot() : null;
+  const filePath = getGoalStoragePath(goalId);
+  return filePath ? assignmentSnapshotProjection.read(filePath) : null;
 }
 
 export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentEventV2): AssignmentKernelAppendResultV2 {

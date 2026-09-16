@@ -1,13 +1,19 @@
 import { sameAssignmentBindingV2 } from "./identity.js";
+import { operationUsesCurrentInputsV2 } from "./input_result_freshness.js";
 import type { AssignmentCriterionSpecV2, RequestedEffectV2 } from "./assignment_spec.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
 import type { OperationPurposeV2, OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
-import { isAssignmentKernelControlCapabilityV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { isAssignmentKernelControlCapabilityV2, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export const CRITERION_EVIDENCE_POLICY_V2_SCHEMA = "revit-operator.criterion-evidence-policy/v2" as const;
 export const SEMANTIC_EVIDENCE_CONTRACT_V2 = "revit-operator.semantic-evidence-contract/v2" as const;
+
+/** Reuse the kernel's receipt validator for semantic and presentation eligibility. */
+export function operationHasAppliedNativeArtifactV2(operation: OperationV2): boolean {
+  return nativeArtifactResultEffectV2(operation.result) === "applied";
+}
 
 export type OperationFulfillmentRoleV2 =
   | "supporting_control"
@@ -139,6 +145,7 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
   if (!sameAssignmentBindingV2(input.snapshot.current_binding, input.observation.binding)) return denied("observation_binding_not_current");
   const operation = input.snapshot.operations[input.observation.operation_id] ?? null;
   if (!operation) return denied("observation_operation_missing");
+  if (!operationUsesCurrentInputsV2(input.snapshot, operation)) return denied("operation_predates_authenticated_input", operation);
   if (operation.settlement_state !== "settled" || operation.result?.status !== "succeeded") return denied("operation_not_successfully_settled", operation);
   if (!operation.fulfillment_role || !operation.eligible_criterion_ids) return denied("operation_fulfillment_contract_missing", operation);
   if (!operation.eligible_criterion_ids.includes(input.criterion.criterion_id)) return denied("operation_not_eligible_for_criterion", operation);
@@ -159,12 +166,12 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
     }
     if (!desiredStateRead && input.snapshot.spec.requested_effect === "apply"
         && (operation.persistent_effect !== "applied"
-          || operation.result.native_transaction_state !== "committed")) {
+          || (operation.result.native_transaction_state !== "committed" && nativeArtifactResultEffectV2(operation.result) !== "applied"))) {
       return denied("apply_task_effect_not_committed", operation);
     }
     if (!desiredStateRead && input.snapshot.spec.requested_effect === "preview"
         && (operation.persistent_effect !== "none"
-          || operation.result.native_transaction_state !== "rolled_back")) {
+          || (operation.result.native_transaction_state !== "rolled_back" && nativeArtifactResultEffectV2(operation.result) !== "none"))) {
       return denied("preview_task_effect_not_rolled_back", operation);
     }
   }

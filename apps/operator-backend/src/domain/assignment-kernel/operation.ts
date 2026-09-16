@@ -1,4 +1,5 @@
 import type { RequestedEffectV2 } from "./assignment_spec.js";
+import type { NativeArtifactReceiptV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import type {
   AssignmentBindingV2,
   CriterionIdV2,
@@ -90,7 +91,7 @@ export interface ObservationCommitInputV2 {
   verification_relevance?: readonly string[];
 }
 
-export type NativeTransactionStateV2 = "not_applicable" | "committed" | "rolled_back" | "unknown";
+export type NativeTransactionStateV2 = "not_applicable" | "not_started" | "committed" | "rolled_back" | "unknown";
 export type OperationResultStatusV2 = "succeeded" | "completed_without_native_dispatch"
   | "failed_before_dispatch" | "failed_after_dispatch" | "timed_out" | "canceled";
 
@@ -103,6 +104,7 @@ export interface OperationResultV2 {
   dispatch_state: OperationDispatchStateV2;
   persistent_effect: PersistentEffectV2;
   native_transaction_state: NativeTransactionStateV2;
+  native_artifact_receipt?: NativeArtifactReceiptV1;
   authority: string;
   result_schema_id: string;
   observation_required: boolean;

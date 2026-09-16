@@ -23,16 +23,25 @@ namespace RevitBridge.Logic.Handlers
             public string mode { get; set; } = "vector"; // vector | fromTo
 
             // vector
+            [System.ComponentModel.DefaultValue(0d)]
             public double vectorX { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double vectorY { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double vectorZ { get; set; }
 
             // fromTo
+            [System.ComponentModel.DefaultValue(0d)]
             public double fromX { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double fromY { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double fromZ { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double toX { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double toY { get; set; }
+            [System.ComponentModel.DefaultValue(0d)]
             public double toZ { get; set; }
 
             public bool dryRun { get; set; } = true;

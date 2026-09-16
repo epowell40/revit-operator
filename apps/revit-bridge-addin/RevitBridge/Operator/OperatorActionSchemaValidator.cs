@@ -4268,10 +4268,10 @@ namespace RevitBridge.Operator
                 }
                 if (obj.Value.TryGetProperty("option", out var option) && option.ValueKind == JsonValueKind.String)
                 {
-                    var normalized = (option.GetString() ?? "").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
-                    if (normalized != "empty" && normalized != "detailing" && normalized != "views_only" && normalized != "views_and_detailing" && normalized != "views_as_dependent")
+                    try { OperatorDuplicateSheetContract.ResolveOptionName(option.GetString()); }
+                    catch (InvalidOperationException ex)
                     {
-                        error = "duplicate-sheet.option is invalid.";
+                        error = ex.Message;
                         return false;
                     }
                 }
@@ -5382,6 +5382,7 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (!OperatorWorkbookExportPath.TryValidateRequest(WorkspacePaths.GetWorkspaceRoot(), obj.Value, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 return true;
             }
@@ -6266,6 +6267,23 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var inspection) || !inspection.HasValue
+                    || !inspection.Value.TryGetProperty("paths", out var paths) || paths.ValueKind != JsonValueKind.Array
+                    || paths.GetArrayLength() == 0 || paths.GetArrayLength() > 2000)
+                {
+                    error = "inspect-exported-files requires 1 to 2000 exact PDF or XLSX paths.";
+                    return false;
+                }
+                foreach (var property in inspection.Value.EnumerateObject())
+                    if (property.Name != "paths") { error = "inspect-exported-files accepts only paths."; return false; }
+                foreach (var item in paths.EnumerateArray())
+                    if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()) || item.GetString()!.Length > 2000)
+                    { error = "Each export path must be a nonempty bounded string."; return false; }
                 return true;
             }
 

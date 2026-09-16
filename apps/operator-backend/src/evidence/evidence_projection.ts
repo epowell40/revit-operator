@@ -42,7 +42,7 @@ function safeRecord(value: unknown): Record<string, unknown> | null {
 
 function identityText(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const text = boundedText(value, 180);
+  const text = value.trim();
   return text || null;
 }
 
@@ -64,18 +64,28 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
     if (!IDENTITY_ARRAY_KEY.test(key) || !Array.isArray(value) || value.length === 0 || value.length > MAX_IDENTITY_ROWS) continue;
     const familyType = new Map<string, number>();
     const categories = new Map<string, number>();
+    const elementIdentities = new Set<string>();
+    let duplicateIdentity = false;
     let identityRows = 0;
     for (const valueRow of value) {
       const item = safeRecord(valueRow);
       if (!item) continue;
+      const id = item.elementId ?? item.element_id ?? item.id ?? item.uniqueId;
+      if ((typeof id === "string" && id.trim()) || (typeof id === "number" && Number.isSafeInteger(id))) {
+        const identity = String(id).trim();
+        duplicateIdentity ||= elementIdentities.has(identity);
+        elementIdentities.add(identity);
+      }
       const family = identityText(item.familyName ?? item.family_name ?? item.family);
       const type = identityText(item.typeName ?? item.type_name ?? item.type);
       const category = identityText(item.category ?? item.categoryName ?? item.category_name ?? item.builtInCategory);
       if (!family && !type && !category) continue;
       identityRows += 1;
       if (family || type) {
-        const label = family && type ? `${family} | ${type}` : family ?? type!;
-        familyType.set(label, (familyType.get(label) ?? 0) + 1);
+        // Group by the exact tuple. Truncation and delimiter collisions must
+        // never combine distinct families or types into one count.
+        const identity = JSON.stringify([family, type]);
+        familyType.set(identity, (familyType.get(identity) ?? 0) + 1);
       }
       if (category) categories.set(category, (categories.get(category) ?? 0) + 1);
     }
@@ -85,9 +95,16 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
     const explicitlyComplete = row.itemsComplete === true
       || (row.truncated === false && row.scanCapReached !== true && row.hasMore !== true);
     const total = declaredTotal ?? value.length;
-    const complete = !explicitlyIncomplete && explicitlyComplete && total === value.length && identityRows === value.length;
-    const allFamilyType = sortedCounts(familyType);
+    const complete = !duplicateIdentity && !explicitlyIncomplete && explicitlyComplete && total === value.length && identityRows === value.length;
+    const allFamilyType = sortedCounts(familyType).map(([identity, count]): [string, number] => {
+      const [family, type] = JSON.parse(identity) as [string | null, string | null];
+      return [family && type ? `${family} | ${type}` : family ?? type!, count];
+    });
+    const labels = new Map<string, number>();
+    for (const [label] of allFamilyType) labels.set(label, (labels.get(label) ?? 0) + 1);
+    const presentableFamilyType = allFamilyType.filter(([label]) => `inventory.family_type::${label}`.length <= 240 && labels.get(label) === 1);
     const allCategories = sortedCounts(categories);
+    const presentableCategories = allCategories.filter(([label]) => label.length <= 220);
     inventories.push({
       path: path === "$" ? key : `${path}.${key}`,
       rows: value.length,
@@ -95,9 +112,10 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
       total,
       complete,
       groupCount: allFamilyType.length,
-      familyType: allFamilyType.slice(0, MAX_IDENTITY_GROUPS),
-      categories: allCategories.slice(0, Math.max(0, MAX_IDENTITY_GROUPS - Math.min(MAX_IDENTITY_GROUPS, allFamilyType.length))),
+      familyType: presentableFamilyType.slice(0, MAX_IDENTITY_GROUPS),
+      categories: presentableCategories.slice(0, Math.max(0, MAX_IDENTITY_GROUPS - Math.min(MAX_IDENTITY_GROUPS, presentableFamilyType.length))),
       groupsTruncated: allFamilyType.length + allCategories.length > MAX_IDENTITY_GROUPS
+        || presentableFamilyType.length !== allFamilyType.length || presentableCategories.length !== allCategories.length
     });
   }
   return inventories;
@@ -245,7 +263,8 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
         "targetSubset (exact reviewed target identities only)",
         "image",
         "JSON payload fields: payload.<field>",
-        "JSON payload arrays: payload.<array>"
+        "JSON payload arrays: payload.<array>",
+        "inventory.* summary fields; pages: pagination.next_start; absent fields: missing_fields"
       ],
       max_bytes: 1_048_576
     },
@@ -260,6 +279,19 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     else if (candidate.diagnostics.length > 2) candidate = { ...candidate, diagnostics: candidate.diagnostics.slice(0, 2), truncated: true };
     else if (candidate.target_scope.length > 4) candidate = { ...candidate, target_scope: candidate.target_scope.slice(0, 4), truncated: true };
     else break;
+  }
+  // Avoid a second model round trip merely to expand a small native result.
+  // StoreEvidence has already screened and persisted these exact bytes. Never
+  // inline untrusted input or an ambiguous MCP envelope, and never truncate a
+  // payload into something that could be mistaken for a complete result.
+  if (ref.trust_level === "authoritative_native" || ref.trust_level === "authoritative_readback") {
+    const row = safeRecord(raw);
+    const isEnvelope = row && (Array.isArray(row.content) || Object.prototype.hasOwnProperty.call(row, "structuredContent"));
+    const payload = isEnvelope ? extractMcpStructuredPayload(raw)?.payload : row;
+    if (payload !== undefined && payload !== null) {
+      const expanded = { ...candidate, inline_payload: payload };
+      if (projectionBytes(expanded) <= maxBytes) candidate = expanded;
+    }
   }
   const projected_bytes = projectionBytes(candidate);
   if (projected_bytes > maxBytes) throw new Error(`Evidence projection cannot fit configured ${maxBytes}-byte item budget.`);

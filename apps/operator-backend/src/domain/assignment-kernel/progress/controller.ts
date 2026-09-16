@@ -1,7 +1,10 @@
+import { workUnitInputVariableIdsV2 } from "../input_registry.js";
 import { canonicalJsonV2 } from "../canonical.js";
+import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
+import { sameAssignmentBindingV2 } from "../identity.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../outcome.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
 import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
@@ -105,6 +108,15 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
+  if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "result:delivery", kind: "result_delivery_required",
+      criterion_ids: snapshot.spec.criteria.filter(criterion => criterion.required).map(criterion => criterion.criterion_id),
+      work_unit_ids: ["work-primary", "work-evidence"], required_fact_ids: [],
+      current_observation_ids: Object.values(snapshot.observations).filter(observation => observation.evidence_class === "task_result").map(observation => observation.observation_id),
+      reason: (snapshot.spec.result_assessment_required ? "The requested assessment is still owed. If export is still outstanding, complete that work first. Never repeat an export that already has an applied or uncertain effect. After independent verification, select the retained artifact path, record/issue counts and exact-file verification as resultItems; include assessment findings, limitations and the requested decisions/questions. This requirement does not establish that any file has been created or verified. " : "") + "A successful read is not the delivered answer. Address every part of the request. Call operator_evaluate_assignment_criteria with at most 32 concise native resultItems (label, observationId, path). For simple counts, lists or sample reports, omit assessment and include the requested names, values and scope directly in resultItems. For an audit, review, comparison or gap list, also supply assessment: overview, prioritized findings citing 1-based evidence_indices into resultItems, limitations and up to three questions. Put requested answer values in the findings, not only in folded evidence. Assessment is assistant interpretation, not native proof or engineering certification. Select scalars or small scalar arrays, not whole inventories. The terminal answer renders this delivery; later free text cannot replace it. Presentation cannot create semantic facts or passing criteria."
+    });
+  }
   for (const operation of Object.values(snapshot.operations)) {
     const semanticGap = operation.result?.result_semantic_gap;
     const settledPreviewWithoutTypedProof = operation.requested_effect === "preview"
@@ -151,7 +163,7 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     });
   }
   for (const variableId of snapshot.pending_input_variable_ids) {
-    const workUnits = snapshot.spec.work_units.filter((unit) => unit.input_variable_ids.includes(variableId));
+    const workUnits = snapshot.spec.work_units.filter((unit) => workUnitInputVariableIdsV2(snapshot, unit.work_unit_id).includes(variableId));
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA,
       gap_id: `input:${variableId}`,
@@ -255,7 +267,7 @@ function budgetBlocker(snapshot: AssignmentSnapshotV2, budget: AssignmentProgres
   if (operationCount >= budget.max_operations) return "operation_budget_exhausted";
   if (consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
   if (tokens >= budget.max_total_tokens) return "token_budget_exhausted";
-  if (Date.parse(now) - Date.parse(snapshot.spec.created_at) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";
+  if (assignmentActiveExecutionTimeMsV2(snapshot, now) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";
   return null;
 }
 
@@ -280,10 +292,16 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "terminal", "Assignment is already terminal."), decision: "terminal", outcome: snapshot.outcome as "complete" | "complete_with_issues" | "verified_noop" | "blocked" | "failed" };
   }
   if (snapshot.in_flight_provider_call_ids.length > 0) {
+    if (snapshot.execution_control?.state === "paused" && snapshot.in_flight_operation_ids.length === 0) {
+      return { ...decisionBase(snapshot, now, "paused", "user_requested_pause"), decision: "paused" };
+    }
     return { ...decisionBase(snapshot, now, "await_provider", "Canonical provider requests remain in flight."), decision: "await_provider", provider_call_ids: snapshot.in_flight_provider_call_ids };
   }
   if (snapshot.in_flight_operation_ids.length > 0) {
     return { ...decisionBase(snapshot, now, "await_operation", "Canonical operations remain in flight."), decision: "await_operation", operation_ids: snapshot.in_flight_operation_ids };
+  }
+  if (snapshot.execution_control?.state === "paused") {
+    return { ...decisionBase(snapshot, now, "paused", "user_requested_pause"), decision: "paused" };
   }
   if (snapshot.unresolved_unknown_operation_ids.length > 0) {
     const reconciliationAttempts = Object.values(snapshot.operations).filter((operation) => operation.purpose === "reconciliation").length;
@@ -320,7 +338,7 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "request_user_review", "A bounded user review decision is pending."), decision: "request_user_review", gap_ids: snapshot.pending_review_ids.map((id) => `review:${id}`), work_unit_ids: [] };
   }
   if (snapshot.outcome !== "active") {
-    return { ...decisionBase(snapshot, now, "terminal", "Canonical criteria and operation state derive a terminal outcome."), decision: "terminal", outcome: snapshot.outcome };
+    return { ...decisionBase(snapshot, now, "terminal", snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? "Canonical criteria and operation state derive a terminal outcome."), decision: "terminal", outcome: snapshot.outcome };
   }
   const gaps = deriveProgressGapsV2(snapshot);
   const exhausted = budgetBlocker(snapshot, budget, now);
@@ -429,12 +447,39 @@ function introducesExecutionStrategySelectionV2(input: Readonly<{
   });
 }
 
+function supportingDiscoveryReadIdentityV2(snapshot: AssignmentSnapshotV2, observationId: string, identities: Readonly<Record<string, string>> = {}): string | null {
+  const observation = snapshot.observations[observationId];
+  const operation = observation && snapshot.operations[observation.operation_id];
+  if (!observation || !operation || observation.evidence_class !== "control"
+    || observation.fulfillment_role !== "supporting_control"
+    || !["native-host", "dynamic-runtime"].includes(observation.authority)
+    || !sameAssignmentBindingV2(observation.binding, operation.binding)
+    || operation.binding.assignment_id !== snapshot.current_binding.assignment_id
+    || operation.binding.principal_id !== snapshot.current_binding.principal_id
+    || operation.binding.document_fingerprint !== snapshot.current_binding.document_fingerprint
+    || operation.requested_effect !== "read" || operation.purpose !== "discovery"
+    || operation.fulfillment_role !== "supporting_control" || operation.admission_state !== "admitted"
+    || operation.settlement_state !== "settled" || operation.dispatch_state !== "dispatched"
+    || operation.persistent_effect !== "none" || observation.capability_id !== operation.capability_id
+    || operation.result?.status !== "succeeded" || operation.result.dispatch_state !== "dispatched"
+    || operation.result.operation_id !== operation.operation_id
+    || operation.result.persistent_effect !== "none"
+    || !sameAssignmentBindingV2(operation.result.binding, operation.binding)
+    || !operation.observation_ids.includes(observationId)
+    || !observation.raw_payload_hash || operation.result.raw_payload_hash !== observation.raw_payload_hash
+    || !observation.facts.some(fact => fact.fact_id === "control.domain_succeeded" && fact.value === true)) return null;
+  // Host adapters supply semantic request identity; kernel owns evidence admission.
+  const identity = identities[operation.operation_id];
+  return typeof identity === "string" && identity.length > 0 && identity.length <= 100_000 ? identity : null;
+}
+
 export function buildProgressEpochV2(input: Readonly<{
   before: AssignmentSnapshotV2;
   after: AssignmentSnapshotV2;
   stated_gap_ids: readonly string[];
   admitted_reasoning_call_ids?: readonly string[];
   admitted_operation_ids?: readonly string[];
+  supporting_discovery_read_identities?: Readonly<{ before: Readonly<Record<string, string>>; after: Readonly<Record<string, string>> }>;
   recorded_at: string;
 }>): ProgressEpochV2 {
   const beforeFacts = new Set(Object.values(input.before.observations).flatMap((observation) => observation.facts.map(semanticFactIdentityV2)));
@@ -443,6 +488,46 @@ export function buildProgressEpochV2(input: Readonly<{
     input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
     .filter(({ identity }) => !beforeFacts.has(identity));
   const newFacts = unique(newFactRecords.map(({ identity }) => identity));
+  const previousDiscoveryReads = new Set(Object.keys(input.before.observations)
+    .map(id => supportingDiscoveryReadIdentityV2(input.before, id, input.supporting_discovery_read_identities?.before)).filter(identity => identity !== null));
+  const addsSupportingDiscovery = newObservations.some(id => {
+    let operation: OperationV2 | undefined = input.after.operations[input.after.observations[id]!.operation_id];
+    const seen = new Set<string>();
+    let resolvesCurrentGap = false;
+    // Typed read wrappers delegate native children without copying gap IDs.
+    // Follow only the admitted, same-binding discovery ancestry, never an
+    // arbitrary parent ID supplied outside the canonical operation graph.
+    while (operation && seen.size < 8 && !seen.has(operation.operation_id)) {
+      seen.add(operation.operation_id);
+      if (operation.admission_state !== "admitted" || operation.requested_effect !== "read"
+        || operation.purpose !== "discovery" || operation.fulfillment_role !== "supporting_control"
+        || !sameAssignmentBindingV2(operation.binding, input.after.current_binding)) break;
+      if (operation.resolves_gap_ids.some(gap => input.stated_gap_ids.includes(gap))) { resolvesCurrentGap = true; break; }
+      operation = operation.parent_operation_id ? input.after.operations[operation.parent_operation_id] : undefined;
+    }
+    if (!resolvesCurrentGap) return false;
+    const identity = supportingDiscoveryReadIdentityV2(input.after, id, input.supporting_discovery_read_identities?.after);
+    return identity !== null && !previousDiscoveryReads.has(identity);
+  });
+  // Generic read facts deliberately do not encode every returned parameter.
+  // A distinct authoritative read can therefore add needed answer data without
+  // changing task.result_available. Count each admitted read shape once, never
+  // new observation IDs, timestamps, payload hashes or repeated identical reads.
+  const deliveryReadIdentities = (snapshot: AssignmentSnapshotV2): Set<string> => new Set(
+    Object.values(snapshot.observations).flatMap(observation => {
+      const operation = snapshot.operations[observation.operation_id];
+      if (observation.evidence_class !== "task_result"
+          || !["native-host", "dynamic-runtime"].includes(observation.authority)
+          || operation?.requested_effect !== "read"
+          || !operation.resolves_gap_ids.includes("result:delivery")
+          || !snapshot.spec.criteria.some(criterion => observationAdmissibilityForCriterionV2({ snapshot, criterion, observation }).admissible)) return [];
+      return [canonicalJsonV2({ capability_id: operation.capability_id,
+        request_identity: operation.request_identity ?? null, input: operation.input, target: operation.target })];
+    }));
+  const previousDeliveryReads = deliveryReadIdentities(input.before);
+  const addsDeliveryRead = input.before.spec.result_delivery_required && !input.before.result_delivery
+    && input.before.spec.requested_effect === "read"
+    && [...deliveryReadIdentities(input.after)].some(identity => !previousDeliveryReads.has(identity));
   const criterionDeltas: CriterionDeltaV2[] = input.after.spec.criteria.map((criterion) => ({
     criterion_id: criterion.criterion_id,
     before_status: input.before.criteria[criterion.criterion_id]?.status ?? "unevaluated",
@@ -454,8 +539,8 @@ export function buildProgressEpochV2(input: Readonly<{
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
   if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
-  if (newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
-  if (newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
+  if (addsSupportingDiscovery || newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
+  if (addsDeliveryRead || newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");
   if (input.after.pending_review_ids.length > input.before.pending_review_ids.length) progressReasons.push("review_requested");

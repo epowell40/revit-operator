@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mutationIntentBindingDecision } from "../src/teammate_mutation_intent_binding.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 import {
   __testOnlyResetTeammateLoopState,
@@ -32,6 +33,21 @@ function request(userText: string): ChatRequest {
     }
   };
 }
+
+test("authenticated text comparison preserves whitespace and rejects every changed exact value", () => {
+  for (const exact of ["ISSUE 04\nVERIFY AGAINST CURRENT SHEET INDEX\n", "  Heading\r\nBody\t ", "Heading\n\nBody"]) {
+    for (const field of ["newText", "new_text", "replacementText", "replacement_text", "replaceWith", "replace_with"]) {
+      const decide = (value: unknown) => mutationIntentBindingDecision({ tool: "revit_call_tool", path: "/revit/replace-text-note",
+        body: JSON.stringify({ [field]: value }), authoritative_user_text: "Use the approved wording.", authenticated_replacement_text: exact });
+      assert.equal(decide(exact).authorized, true, `${field} must retain the exact authenticated text`);
+      assert.equal(decide(exact).proposed_value, exact);
+      for (const changed of [exact + " ", exact.replace(/\s+/g, " ").trim(), exact.trim(), "invented wording", null, 42, "x".repeat(20_001)]) {
+        if (changed === exact) continue;
+        assert.equal(decide(changed).authorized, false, `${field} must not normalize a different requested value into authority`);
+      }
+    }
+  }
+});
 
 function replaceCall(newText: string, extra: Record<string, unknown> = {}) {
   return {

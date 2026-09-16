@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {nativeViewImageContent,viewFrameImageContent} from "./viewFrameImage.js";
+import {normalizeSpatialObservationV1} from "./spatialObservationV1.js";
+
+const frame=()=>({frameId:"native-frame",viewId:42,path:"artifacts/captures/native-frame.jpg",widthPx:2000,heightPx:1112,
+  mapping:{mode:"2d_affine",topLeftXyz:[-10,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[-10,0,0]},
+  canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:"/revit/export-view-frame"}});
+
+test("identical exported pixels retain the same displayed-outline coordinates through frame and inventory consumers",()=>{
+  const mapping={mode:"2d_affine",modelFrameSource:"view_outline",frameBasis:"exported_raster",
+    topLeftXyz:[-123.31686468322523,71.48585540021631,32.16666666666667],
+    topRightXyz:[89.8266420511672,71.48585540021631,32.16666666666667],
+    bottomLeftXyz:[-123.31686468322523,-47.01832591228737,32.16666666666667],
+    rasterWidthPx:2600,rasterHeightPx:1446,cropBoxReference:null};
+  const native={...frame(),widthPx:2600,heightPx:1446,mapping,count:0,scanned:0,truncated:false,items:[]};
+  const delivered=[];
+  for(const route of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    const response={...native,canonical_attempt_settlement:{...native.canonical_attempt_settlement,path:route}};
+    const result=nativeViewImageContent("POST",route,response,()=>({ok:true,data:"same-native-image-bytes",mimeType:"image/jpeg"}));
+    assert.ok(result);
+    const metadata=JSON.parse((result.content[0] as {text:string}).text);
+    assert.deepEqual(metadata.mapping,mapping);
+    if(route.endsWith("visible-elements")) assert.deepEqual(normalizeSpatialObservationV1(metadata).mapping,mapping);
+    delivered.push(result.content[1]);
+  }
+  assert.deepEqual(delivered[0],delivered[1]);
+  assert.deepEqual(native.mapping,mapping);
+});
+
+test("view frame delivers the bounded native image alongside unchanged mapping and settlement",()=>{
+  const native=frame(),before=structuredClone(native);
+  const result=viewFrameImageContent(native,(imagePath,limit)=>{
+    assert.equal(imagePath,native.path);assert.equal(limit,5*1024*1024);
+    return {ok:true,data:"native-jpeg-bytes",mimeType:"image/jpeg"};
+  });
+  assert.equal(result.content.length,2);
+  const text=JSON.parse((result.content[0] as {text:string}).text);
+  assert.deepEqual(text.mapping,before.mapping);assert.deepEqual(text.canonical_attempt_settlement,before.canonical_attempt_settlement);
+  assert.deepEqual(text.image_delivery,{available:true});
+  assert.deepEqual(result.content[1],{type:"image",data:"native-jpeg-bytes",mimeType:"image/jpeg"});
+  assert.deepEqual(native,before);
+});
+
+test("unavailable or oversized image preserves native evidence and explicitly prevents a visual claim",()=>{
+  for(const reason of ["image exceeds the MCP image limit","image resolves outside the workspace or native capture root","image could not be securely opened"]){
+    const native=frame();const result=viewFrameImageContent(native,()=>({ok:false,reason}));
+    assert.equal(result.content.length,1);
+    const text=JSON.parse((result.content[0] as {text:string}).text);
+    assert.deepEqual(text.mapping,native.mapping);assert.equal(text.image_delivery.available,false);
+    assert.equal(text.image_delivery.reason,reason);assert.match(text.image_delivery.instruction,/not delivered/);
+  }
+});
+
+test("view frame never opens paths from failed, unknown or malformed native responses",()=>{
+  for(const native of [null,{path:"elsewhere.png"},{...frame(),ok:false},{...frame(),error:"capture failed"},{...frame(),status:"Blocked"},
+    {...frame(),widthPx:0},{...frame(),heightPx:NaN},{...frame(),frameId:""},
+    {...frame(),canonical_attempt_settlement:{...frame().canonical_attempt_settlement,effect_state:"unknown"}},
+    {...frame(),canonical_attempt_settlement:{...frame().canonical_attempt_settlement,path:"/revit/find-elements"}}]){
+    const result=viewFrameImageContent(native,()=>{throw Error("Invalid response must not cause file access");});
+    assert.equal(result.content.length,1);assert.equal(JSON.parse((result.content[0] as {text:string}).text).image_delivery.available,false);
+  }
+});
+
+test("both exact generic image routes retain native mapping and settlement while delivering pixels",()=>{
+  for(const path of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    const native={...frame(),items:[{elementId:42}],canonical_attempt_settlement:{...frame().canonical_attempt_settlement,path}};
+    const before=structuredClone(native);
+    const result=nativeViewImageContent("POST",path,native,(imagePath,limit)=>{
+      assert.equal(imagePath,native.path);assert.equal(limit,5*1024*1024);
+      return {ok:true,data:"native-image",mimeType:"image/jpeg"};
+    });
+    assert.ok(result);assert.equal(result.content.length,2);
+    assert.deepEqual(JSON.parse((result.content[0] as {text:string}).text),{...before,image_delivery:{available:true}});
+    assert.deepEqual(native,before);
+  }
+});
+
+test("generic image delivery never reads arbitrary routes or mismatched native outcomes",()=>{
+  const noRead=()=>{throw Error("No image file may be read for this route or result");};
+  for(const [method,path] of [["GET","/revit/export-view-frame"],["POST","/revit/get-parameters"],
+    ["POST","/revit/export-view-frame?file=other"],["POST","/revit/export-visible-elements/"],["POST","/revit/create-mep-route"]]){
+    assert.equal(nativeViewImageContent(method,path,frame(),noRead),null);
+  }
+  for(const path of ["/revit/export-view-frame","/revit/export-visible-elements"]){
+    for(const settlement of [
+      {...frame().canonical_attempt_settlement,path,effect_state:"unknown"},
+      {...frame().canonical_attempt_settlement,path,requested_effect:"apply"},
+      {...frame().canonical_attempt_settlement,path,method:"GET"},
+      {...frame().canonical_attempt_settlement,path:"/revit/get-parameters"}]){
+      const result=nativeViewImageContent("POST",path,{...frame(),canonical_attempt_settlement:settlement},noRead);
+      assert.equal(result?.content.length,1);
+      assert.equal(JSON.parse((result!.content[0] as {text:string}).text).image_delivery.available,false);
+    }
+    const failed=nativeViewImageContent("POST",path,{...frame(),status:"Blocked"},noRead);
+    assert.equal(failed?.content.length,1);
+  }
+});

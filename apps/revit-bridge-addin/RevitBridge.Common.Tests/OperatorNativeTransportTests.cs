@@ -372,7 +372,14 @@ namespace RevitBridge.Common.Tests
 
             Assert.Contains("OperatorNativeTransactionReceipt.NotStarted", handler);
             Assert.Contains("OperatorNativeTransactionReceipt.RolledBack", handler);
-            Assert.Contains("OperatorNativeTransactionReceipt.Committed", handler);
+            Assert.Contains("changeInventory.CommittedReceipt()", handler);
+            Assert.Contains("changeTracking = changeInventory.Diagnostics()", handler);
+            Assert.Contains("app.Application.DocumentChanged += Changed", handler);
+            Assert.Contains("finally { app.Application.DocumentChanged -= Changed; }", handler);
+            Assert.Contains("args.GetAddedElementIds()", handler);
+            Assert.Contains("args.GetModifiedElementIds()", handler);
+            Assert.Contains("args.GetDeletedElementIds()", handler);
+            Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(changedElementIds)", handler);
             Assert.Contains("OperatorNativeTransactionReceipt.Unknown", handler);
             Assert.Contains("transaction = transactionReceipt", handler);
         }
@@ -637,6 +644,17 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NativeRequestSchemaUsesNullablePresenceAndJsonWireOwners()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var introspection = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+            Assert.Contains("OperatorRequestPropertyPresence.IsRequired(p, defaultVal, IsDefaultValue(pt, defaultVal))", introspection, StringComparison.Ordinal);
+            Assert.Contains("OperatorJsonWireSchema.TryCreate(t, out var jsonSchema)", introspection, StringComparison.Ordinal);
+            Assert.Contains("OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema)", introspection, StringComparison.Ordinal);
+            Assert.Contains("OperatorRequestPropertyPresence.AllowsReferenceNull(p)", introspection, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void CloseActiveModelPostsProjectCloseWithoutExitingRevitAfterExplicitDiscardAuthorization()
         {
             var root = FindRevitBridgeAddinRoot();
@@ -649,6 +667,17 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("not the active-project close command", handler, StringComparison.Ordinal);
             Assert.Contains("app.CanPostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("app.PostCommand(commandId)", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorProjectCloseFocus.PrepareAndPost(", handler, StringComparison.Ordinal);
+            Assert.Contains("uiDocument.ActiveGraphicalView", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("uiDocument.ActiveView", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("uiDocument!.ActiveView", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorGraphicalViewFocus.Restore(app, uiDocument, graphicalView)", handler, StringComparison.Ordinal);
+            var focus = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorGraphicalViewFocus.cs"));
+            Assert.Contains("document.GetOpenUIViews()", focus, StringComparison.Ordinal);
+            Assert.Contains("view.ViewId == graphicalView.Id", focus, StringComparison.Ordinal);
+            Assert.Contains("processId != GetCurrentProcessId() || threadId != GetCurrentThreadId()", focus, StringComparison.Ordinal);
+            Assert.Contains("var focused = GetFocus()", focus, StringComparison.Ordinal);
+            Assert.DoesNotContain("SetForegroundWindow(", focus, StringComparison.Ordinal);
             Assert.Contains("messageContains = \"save changes\"", handler, StringComparison.Ordinal);
             Assert.Contains("button = \"no\"", handler, StringComparison.Ordinal);
             Assert.Contains("verificationRequired = true", handler, StringComparison.Ordinal);

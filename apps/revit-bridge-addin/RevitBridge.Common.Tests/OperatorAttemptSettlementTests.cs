@@ -9,6 +9,55 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorAttemptSettlementTests
     {
+        [Theory]
+        [InlineData("RolledBack", "none", "native_rollback")]
+        [InlineData("Committed", "applied", "native_transaction")]
+        [InlineData("Pending", "unknown", "native_host")]
+        [InlineData("Error", "unknown", "native_host")]
+        public void RouteWorkflowUsesObservedTransactionStatusInsteadOfRollbackProse(string nativeStatus, string effect, string authority)
+        {
+            var stage = new { status = "Blocked", error = "Selected duct type created shape 'round', but requested size/ductShape requires 'rectangular'.",
+                dryRun = true, rolledBack = true, createdElementIds = Array.Empty<long>(),
+                transaction = OperatorNativeTransactionReceipt.FromObservedStatus(nativeStatus, new[] { 42L }) };
+            var workflow = new { status = "Blocked", workflowMode = "applyRequested", dryRun = stage, applyResult = (object?)null,
+                transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(stage, null, false) };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-route-workflow");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(authority, settlement.EffectAuthority);
+        }
+
+        [Fact]
+        public void TrialRollbackCannotHideAnUnknownOrCommittedApply()
+        {
+            var preview = new { transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 42L }) };
+            foreach (var apply in new object?[] { null, new { status = "Applied" }, new { transaction = OperatorNativeTransactionReceipt.Unknown("Pending") } })
+            {
+                var workflow = new { transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(preview, apply, true) };
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-route-workflow").EffectState);
+            }
+            var committed = new { transaction = OperatorNativeTransactionReceipt.Committed(new[] { 43L }) };
+            var applied = OperatorAttemptSuccessfulSettlement.Classify(new {
+                transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(preview, committed, true)
+            }, "apply", "POST", "/revit/mep-route-workflow");
+            Assert.Equal("applied", applied.EffectState);
+            Assert.Contains("element_id:43", applied.AffectedTargetIdentities);
+            Assert.DoesNotContain("element_id:42", applied.AffectedTargetIdentities);
+            var oldFailure = new { status = "Blocked", dryRun = new { rolledBack = true }, applyResult = (object?)null };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(oldFailure, "apply", "POST", "/revit/mep-route-workflow").EffectState);
+        }
+
+        [Fact]
+        public void ExactQueuedCancellationSurvivesDeadlineMappingAsNoDispatchForMutation()
+        {
+            var deadline = OperatorActionDeadlinePolicy.Resolve("POST", "/revit/set-parameter", "high");
+            var failure = OperatorCourierFailureClassifier.Classify(deadline.ClassifyCancellation(
+                new RevitEventCanceledBeforeDispatchException("queued-mutation-1"), "queued-mutation-1"));
+            var settlement = OperatorAttemptFailureSettlement.FromFailure(failure, "apply", "POST", "/revit/set-parameter");
+            Assert.False(settlement.RequestDispatched);
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("revit_action_deadline_elapsed_before_dispatch", settlement.EffectReason);
+        }
+
         [Fact]
         public void PreDispatchFailureIsAuthoritativeNone()
         {
@@ -138,6 +187,21 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("native_rollback", settlement.EffectAuthority);
             Assert.Equal("verified_native_rollback", settlement.EffectReason);
             Assert.Contains("element_id:42", settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void ViewPlanWithoutTransactionIsNotACompletedRollbackPreview()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true, previewExecuted = false,
+                plan = new { action = "create_floor_plan", name = "M-LEVEL 2 COORDINATION" },
+                transaction = OperatorNativeTransactionReceipt.NotStarted()
+            }, "preview", "POST", "/revit/create-view");
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            Assert.Equal("native_transaction_not_started", settlement.EffectReason);
+            Assert.Empty(settlement.AffectedTargetIdentities);
         }
 
         [Fact]

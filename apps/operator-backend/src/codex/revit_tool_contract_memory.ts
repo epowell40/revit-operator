@@ -148,6 +148,9 @@ function compactContractValue(value: unknown, key = "", depth = 0): unknown {
   if (typeof value === "number") return "<number>";
   if (typeof value === "string") {
     const text = cleanString(value, 120);
+    // Preserve only published enum values; free-form names and invalid values
+    // stay redacted. Otherwise a corrected planType looks like an identical retry.
+    if (key === "planType" && ["floor", "ceiling", "engineering", "structural"].includes(value)) return value;
     if (CONTRACT_LITERAL_KEY_PATTERN.test(key) && /^[A-Za-z0-9_./:-]{1,120}$/.test(text)) return text;
     return "<string>";
   }
@@ -178,10 +181,9 @@ function compactArguments(tool: string, argumentsValue: unknown): unknown {
   return compactContractValue(args, "arguments");
 }
 
-function readStoreFile(target: string): ToolContractStore | null {
-  if (!fs.existsSync(target)) return null;
+function parseStoreContent(content: string): ToolContractStore | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(target, "utf8")) as Partial<ToolContractStore>;
+    const parsed = JSON.parse(content) as Partial<ToolContractStore>;
     if (parsed.version !== STORE_VERSION) return null;
     return {
       version: STORE_VERSION,
@@ -193,6 +195,34 @@ function readStoreFile(target: string): ToolContractStore | null {
   } catch {
     return null;
   }
+}
+
+function readStoreFile(target: string): ToolContractStore | null {
+  try { return parseStoreContent(fs.readFileSync(target, "utf8")); } catch { return null; }
+}
+
+/** Hash-only runtime evidence; never return learned arguments or correction text in health. */
+export function getRevitToolContractMemoryAttestation() {
+  const target = storePath();
+  const read = (file: string) => { try { return fs.readFileSync(file, "utf8"); } catch { return null; } };
+  const primaryText = read(target), backupText = read(`${target}.bak`);
+  const primary = primaryText === null ? null : parseStoreContent(primaryText);
+  const backup = backupText === null ? null : parseStoreContent(backupText);
+  const effective = primary ?? backup ?? defaultStore();
+  const hash = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
+  const keys = ["pending_failures", "failure_receipts", "corrections", "quarantines"] as const;
+  const rawPrimary = primary ? JSON.parse(primaryText!) : null;
+  return {
+    schema: "revit-operator.tool-contract-memory-attestation.v1",
+    store_path_sha256: hash(path.resolve(target)),
+    primary_sha256: primaryText === null ? null : hash(primaryText),
+    effective_sha256: hash(JSON.stringify(effective)),
+    effective_source: primary ? "primary" : backup ? "backup" : "default",
+    backup_present: backupText !== null,
+    initial_empty: !!rawPrimary && keys.every(key => Array.isArray(rawPrimary[key]) && rawPrimary[key].length === 0)
+      && backupText === null,
+    counts: Object.fromEntries(keys.map(key => [key, effective[key].length]))
+  };
 }
 
 function readStore(): ToolContractStore {

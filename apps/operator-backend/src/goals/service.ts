@@ -1,3 +1,4 @@
+import { readJsonWithBackup as readJson } from "./content_verified_projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -272,17 +273,6 @@ function writeJson(filePath: string, value: unknown): void {
   }
 }
 
-function readJson<T>(filePath: string): T | null {
-  for (const candidate of [filePath, `${filePath}.previous`]) {
-    try {
-      if (fs.existsSync(candidate)) return JSON.parse(fs.readFileSync(candidate, "utf8")) as T;
-    } catch {
-      // A torn/corrupt primary falls back to the last atomically replaced copy.
-    }
-  }
-  return null;
-}
-
 function withGoalLock<T>(goalId: string, fn: () => T): T {
   const lockPath = path.join(ensureDir(goalDir(goalId)), "goal.lock");
   let handle: number;
@@ -307,6 +297,12 @@ function clip(value: unknown, max = 1000): string {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
   if (!text) return "";
   return text.length <= max ? text : `${text.slice(0, max).trim()}...`;
+}
+
+function objectiveText(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length > 20_000) throw new Error("The task brief exceeds 20,000 characters. Attach the full brief and summarize the requested work in the message.");
+  return text;
 }
 
 function asStringList(value: unknown, maxItems = 80, maxLength = 1000): string[] {
@@ -780,7 +776,7 @@ export function mutateGoalRecord(goalId: string, mutator: (goal: GoalRecord) => 
 
 export function createGoal(input: GoalCreateInput): GoalRecord {
   const title = clip(input.title, 180);
-  const objective = clip(input.objective, 5000);
+  const objective = objectiveText(input.objective);
   const acceptanceCriteria = asStringList(input.acceptance_criteria ?? input.acceptanceCriteria, 80, 1200);
   if (!title) throw new Error("title is required.");
   if (!objective) throw new Error("objective is required.");
@@ -831,6 +827,12 @@ export function __testOnlyResetGoalListCache(): void {
   resetGoalListCaches();
 }
 
+/** Internal storage path; authoritative callers must validate its actual bytes. */
+export function getGoalStoragePath(goalId: string): string | null {
+  const id = clip(goalId, 160);
+  return id ? goalPath(id) : null;
+}
+
 export function getGoal(goalId: string): GoalRecord | null {
   const id = clip(goalId, 160);
   if (!id) return null;
@@ -851,6 +853,11 @@ export function listGoals(limit = 50): GoalRecord[] {
   return readAllGoals().slice(0, Math.max(1, Math.min(200, limit)));
 }
 
+/** Durable session discovery must filter before applying a presentation limit. */
+export function listGoalsForSession(sessionId: string): GoalRecord[] {
+  return readAllGoals().filter(goal => goal.related_session_id === sessionId);
+}
+
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const goal = getGoal(goalId);
   if (!goal) throw new Error("Goal not found.");
@@ -864,7 +871,7 @@ export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const next: GoalRecord = {
     ...goal,
     title: clip(input.title, 180) || goal.title,
-    objective: clip(input.objective, 5000) || goal.objective,
+    objective: objectiveText(input.objective) || goal.objective,
     acceptance_criteria: (input.acceptance_criteria ?? input.acceptanceCriteria) !== undefined
       ? asStringList(input.acceptance_criteria ?? input.acceptanceCriteria, 80, 1200)
       : goal.acceptance_criteria,
@@ -1047,9 +1054,10 @@ export function getActiveGoalForSession(sessionId?: string | null): GoalRecord |
 export function getCurrentGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
   if (!sid) return null;
-  return readAllGoals().find(goal =>
+  const candidates = readAllGoals().filter(goal =>
     goal.related_session_id === sid && ["active", "paused", "blocked"].includes(goal.status)
-  ) ?? null;
+  );
+  return candidates.find(goal => goal.status === "active") ?? candidates[0] ?? null;
 }
 
 export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalRecord {

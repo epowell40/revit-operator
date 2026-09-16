@@ -29,6 +29,14 @@ namespace RevitBridge
 
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosing += OnDocumentClosing;
+            application.ControlledApplication.DocumentOpening += OnDocumentOpening;
+            application.ControlledApplication.DocumentClosed += OnDocumentClosed;
+            application.ControlledApplication.DocumentChanged += OnDocumentChanged;
+            application.ControlledApplication.DocumentSaved += OnDocumentSaved;
+            application.ControlledApplication.DocumentSavedAs += OnDocumentSavedAs;
+            application.ViewActivated += OnViewActivated;
+            application.ViewActivating += OnViewActivating;
+            application.SelectionChanged += OnSelectionChanged;
             application.Idling += OnIdling;
 
             try
@@ -49,7 +57,7 @@ namespace RevitBridge
             var backend = new OperatorBackendClient(OperatorBackendConfig.GetBaseUri(), backendAuth);
 
             // Init Service & Server
-            _eventService = new RevitEventService();
+            _eventService = new RevitEventService(WriteStartupLog);
             _server = new RevitHttpServer(_eventService, backend);
             _server.Start();
             WriteStartupLog("HTTP server start requested.");
@@ -98,9 +106,9 @@ namespace RevitBridge
                 WriteStartupLog("Dialog computer-use registration skipped by local setting.");
             }
 
-            // The desktop sidecar is the primary UI. Register the legacy pane only
-            // when an explicit rollback mode was selected before Revit startup.
-            if (OperatorDesktopLauncher.UseLegacyPane())
+            // The modern docked host is an explicit workstation qualification mode.
+            // Both modes reuse the registered pane ID, but only legacy runs its old UI.
+            if (OperatorDesktopLauncher.UseEmbeddedPane() || OperatorDesktopLauncher.UseLegacyPane())
             {
                 try
                 {
@@ -108,11 +116,11 @@ namespace RevitBridge
                         OperatorPaneIds.PaneId,
                         OperatorPaneIds.PaneTitle,
                         new OperatorDockablePaneProvider(_eventService));
-                    WriteStartupLog("Legacy Operator dockable pane registered.");
+                    WriteStartupLog(OperatorDesktopLauncher.UseEmbeddedPane() ? "Modern Operator dockable pane registered." : "Legacy Operator dockable pane registered.");
                 }
                 catch (Exception ex)
                 {
-                    WriteStartupLog($"Legacy Operator dockable pane registration failed: {ex.GetType().FullName}: {ex.Message}");
+                    WriteStartupLog($"Operator dockable pane registration failed: {ex.GetType().FullName}: {ex.Message}");
                 }
             }
             else
@@ -143,11 +151,15 @@ namespace RevitBridge
             {
                 PushButtonData operatorBtnData = new PushButtonData(
                     "cmdRevitOperatorPane",
-                    "Operator\nDesktop",
+                    "Operator",
                     _assemblyPath,
                     "RevitBridge.Operator.ShowOperatorPaneCommand"
                 );
-                operatorBtnData.ToolTip = "Launch or focus Operator Desktop. Set OPERATOR_UI_MODE=pane to use the legacy dockable pane.";
+                operatorBtnData.ToolTip = OperatorDesktopLauncher.UseEmbeddedPane()
+                    ? "Open Operator beside your model."
+                    : "Open Operator Desktop.";
+                operatorBtnData.LargeImage = OperatorRibbonIcon.Create(32);
+                operatorBtnData.Image = OperatorRibbonIcon.Create(16);
                 panel.AddItem(operatorBtnData);
             }
             catch { }
@@ -158,8 +170,19 @@ namespace RevitBridge
         public Result OnShutdown(UIControlledApplication application)
         {
             WriteStartupLog("OnShutdown begin.");
+            OperatorEmbeddedPaneControl.Shutdown();
+            _eventService?.StopBackgroundWake();
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
+            application.ControlledApplication.DocumentOpening -= OnDocumentOpening;
+            application.ControlledApplication.DocumentClosed -= OnDocumentClosed;
+            application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+            application.ControlledApplication.DocumentSaved -= OnDocumentSaved;
+            application.ControlledApplication.DocumentSavedAs -= OnDocumentSavedAs;
+            application.ViewActivated -= OnViewActivated;
+            application.ViewActivating -= OnViewActivating;
+            application.SelectionChanged -= OnSelectionChanged;
+            RevitUiContextSnapshot.Shutdown();
             application.Idling -= OnIdling;
             try
             {
@@ -210,6 +233,7 @@ namespace RevitBridge
 
         private static void OnDocumentOpened(object sender, DocumentOpenedEventArgs args)
         {
+            RevitUiContextSnapshot.Invalidate("document_opened");
             try { OperatorNativeDocumentSessionAuthority.RegisterOpenedDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session registration failed closed: {ex.GetType().FullName}: {ex.Message}"); }
         }
@@ -224,6 +248,7 @@ namespace RevitBridge
             {
                 if (sender is UIApplication uiApplication)
                 {
+                    RevitUiContextSnapshot.Capture(uiApplication);
                     // ActiveUIDocument is the authoritative host state on the Revit API
                     // thread. A global open/close counter is unsafe here: EditFamily and
                     // other transient documents can emit asymmetric lifecycle events and
@@ -233,11 +258,11 @@ namespace RevitBridge
                         instance._revitCourierWorker?.SetHostDocumentAvailable();
                     else
                         instance._revitCourierWorker?.SetHostDocumentUnavailable();
-                    // If a background request is waiting, ask Revit to keep this idle session
-                    // alive and pump the exact same single-flight item on the API thread. This
-                    // complements the non-UI wake loop in RevitEventService without keeping an
-                    // otherwise idle Revit process in continuous-idle mode.
-                    if (instance._eventService?.HasPendingWork == true)
+                    // Keep the supported idle session open across short agent reasoning gaps.
+                    // Only an actual API callback renews the bounded lease; idle ticks do not.
+                    // No model work runs outside ExternalEvent/Idling, and normal idle resumes
+                    // after the lease expires or the service shuts down.
+                    if (instance._eventService?.HasPendingWork == true || instance._eventService?.HasActiveIdleLease == true)
                         args.SetRaiseWithoutDelay();
                     instance._eventService?.ExecutePendingOnIdling(uiApplication);
                 }
@@ -246,8 +271,37 @@ namespace RevitBridge
 
         private static void OnDocumentClosing(object sender, DocumentClosingEventArgs args)
         {
+            RevitUiContextSnapshot.Invalidate("document_closing");
             try { OperatorNativeDocumentSessionAuthority.InvalidateClosingDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session invalidation failed closed: {ex.GetType().FullName}: {ex.Message}"); }
+        }
+
+        private static void OnDocumentOpening(object sender, DocumentOpeningEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("document_opening");
+        private static void OnDocumentClosed(object sender, DocumentClosedEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("document_closed");
+        private static void OnDocumentChanged(object sender, DocumentChangedEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnDocumentSaved(object sender, DocumentSavedEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnDocumentSavedAs(object sender, DocumentSavedAsEventArgs args)
+            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        private static void OnViewActivated(object sender, ViewActivatedEventArgs args)
+        {
+            RevitUiContextSnapshot.Invalidate("view_changed");
+            try
+            {
+                var document = args.CurrentActiveView?.Document;
+                if (document != null) RevitUiContextSnapshot.Capture(new UIApplication(document.Application));
+            }
+            catch { RevitUiContextSnapshot.Invalidate("view_context_unavailable"); }
+        }
+        private static void OnViewActivating(object sender, ViewActivatingEventArgs args)
+            => RevitUiContextSnapshot.Invalidate("view_activating");
+        private static void OnSelectionChanged(object sender, SelectionChangedEventArgs args)
+        {
+            try { RevitUiContextSnapshot.Capture(new UIApplication(args.GetDocument().Application)); }
+            catch { RevitUiContextSnapshot.Invalidate("selection_context_unavailable"); }
         }
 
         private static OperatorApprovalMode GetCourierApprovalMode()

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { formatEnvironmentSummaryForPrompt, refreshEnvironmentProfile, recordPathFailure } from "../src/environment_profile.js";
 import {
   __testOnlyTrackCodexBrainTurnAbort,
   assertCertifiedMcpServerStatus,
@@ -44,6 +46,8 @@ test("certified Codex threads are isolated from MCP and Revit turn runtimes", ()
   assert.equal(normal.sandbox, "workspace-write");
   assert.equal(normal.dynamicToolMode, "revit_runtime");
   assert.equal(normal.startRevitTurnRuntime, true);
+  assert.match(normal.baseInstructions, /Do not add a preview or dry-run call merely because a tool offers one/);
+  assert.match(normal.baseInstructions, /Honor explicit read-only requests and requested review checkpoints/);
 });
 
 test("executable Codex turns bind backend auth before provider start and clean the lease", () => {
@@ -53,11 +57,14 @@ test("executable Codex turns bind backend auth before provider start and clean t
   const body = source.slice(start, end > start ? end : undefined);
   const authGuard = body.indexOf("if (threadProfile.startRevitTurnRuntime && !backendAuth)");
   const leaseOpen = body.indexOf("beginBackendAuthLease(req.session_id, backendAuth!)");
-  const providerStart = body.indexOf("return await activeClient.startTurn({");
+  const providerStart = body.indexOf("return await activeClient.startBoundTurn({");
+  const fallbackStart = body.indexOf("start = await c.startBoundTurn({");
   const leaseCleanup = body.lastIndexOf("endBackendAuthLease(backendAuthLease)");
   assert.ok(authGuard >= 0 && authGuard < providerStart, "missing auth must stop before provider call 1");
   assert.ok(leaseOpen > authGuard && leaseOpen < providerStart, "the turn-scoped auth lease must open before provider call 1");
   assert.ok(leaseCleanup > providerStart, "the credential lease must be removed during turn cleanup");
+  assert.ok(fallbackStart > providerStart && leaseCleanup > fallbackStart, "missing-thread recovery must retain the same auth lease until cleanup");
+  assert.doesNotMatch(body, /(?:activeClient|c)\.startTurn\(/, "provider starts must also enforce host instruction binding");
 });
 
 test("Codex persisted profile keys remain disjoint for adversarial session strings", () => {
@@ -201,6 +208,28 @@ test("codex base instructions explicitly steer spatial export workflows", () => 
   assert.match(instructions, /\/revit\/export-visible-elements/);
   assert.match(instructions, /\/revit\/pick-candidate-cluster/);
   assert.match(instructions, /host-aware\/exemplar-driven workflows/);
+});
+
+test("persistent Codex instructions keep a stable prefix when environment failures change", () => {
+  const previous = process.env.OPERATOR_ENV_PROFILE_PATH;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "operator-prefix-"));
+  process.env.OPERATOR_ENV_PROFILE_PATH = path.join(directory, "environment.json");
+  try {
+    const profile = refreshEnvironmentProfile();
+    const before = getCodexBaseInstructionsForTest();
+    const environmentBefore = formatEnvironmentSummaryForPrompt(profile);
+    const changed = recordPathFailure(path.join(directory, "unwritable.pdf"), "export", "Access is denied", profile);
+    assert.notEqual(formatEnvironmentSummaryForPrompt(changed), environmentBefore);
+    assert.equal(getCodexBaseInstructionsForTest(), before);
+    assert.doesNotMatch(before, /Local Operator Environment Summary|unwritable\.pdf/);
+    // The actual non-certified turn still supplies current environment state.
+    const source = fs.readFileSync(path.join(process.cwd(), "src", "brains", "codex_brain.ts"), "utf8");
+    assert.match(source, /blocks\.push\(formatEnvironmentSummaryForPrompt\(\)\)/);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_ENV_PROFILE_PATH;
+    else process.env.OPERATOR_ENV_PROFILE_PATH = previous;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("codex tool-result formatting includes compact spatial export summaries", () => {

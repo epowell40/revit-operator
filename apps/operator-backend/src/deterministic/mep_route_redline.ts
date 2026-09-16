@@ -4,6 +4,7 @@ import { analyzeRedlineFile, type RedlineAnalyzeResponse } from "../redline/redl
 import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import { mapSheetRegions, type MapSheetRegionsResponse } from "../redline/sheet_region_mapper.js";
 import { readLatestUploadIndexRecords } from "../attachments/upload_index.js";
+import { isStandaloneAssistantRequest } from "../goals/standalone_assistant_request.js";
 import { evaluateRedlineVisualVerificationGate, type RedlineVisualGateResult } from "../verification/redline_visual_verification_gate.js";
 import type {
   VerifiedMepRerouteOffsetEvidence,
@@ -2272,6 +2273,9 @@ function action(pathName: string, body: Record<string, unknown>): ActionCall {
 }
 
 export async function resolveMepRouteRedline(req: ResolveMepRouteRedlineRequest): Promise<ResolveMepRouteRedlineResponse> {
+  if (isStandaloneAssistantRequest(req.user_text ?? "")) {
+    return { ok: true, handled: false, assistant_message: "" };
+  }
   const userText = textOf(req.user_text);
   if (isStatusOnlyNoDiscovery(userText)) {
     return { ok: true, handled: false, assistant_message: "" };

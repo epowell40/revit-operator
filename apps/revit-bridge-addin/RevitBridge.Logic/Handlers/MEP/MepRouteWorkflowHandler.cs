@@ -85,6 +85,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     status = "Blocked",
                     workflowMode = p.apply ? "applyRequested" : "dryRun",
+                    transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(dryRun, null, false),
                     executionOrder = BuildExecutionOrder(applied: false, visualAttempted: false),
                     routingContext,
                     dryRun,
@@ -104,6 +105,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     status = "DryRunReady",
                     workflowMode = "dryRun",
+                    transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(dryRun, null, false),
                     executionOrder = BuildExecutionOrder(applied: false, visualAttempted: false),
                     routingContext,
                     dryRun,
@@ -129,6 +131,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     status = "Blocked",
                     workflowMode = "apply",
+                    transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(dryRun, applyResult, true),
                     executionOrder = BuildExecutionOrder(applied: true, visualAttempted: false),
                     routingContext,
                     dryRun,
@@ -172,6 +175,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 status = finalStatus,
                 workflowMode = "apply",
+                transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(dryRun, applyResult, true),
                 executionOrder = BuildExecutionOrder(applied: true, visualAttempted),
                 routingContext,
                 dryRun,

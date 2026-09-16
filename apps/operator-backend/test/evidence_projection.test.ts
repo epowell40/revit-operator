@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   readAuthoritativeEvidence,
   readEvidenceRef,
@@ -27,6 +28,75 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 }
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
+
+test("seven-space zoning replay resolves all 49 advertised array fields", { concurrency: false }, () => withWorkspace(() => {
+  const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/evidence-seven-spaces.json"), "utf8"));
+  const stored = storeEvidence({ scope, source: "regression:seven-space-zoning", trust_level: "authoritative_native",
+    raw: { ok: true, result: fixture.rooms } }, 4096);
+  const selected = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Review zoning attributes",
+    fields: fixture.fields, max_bytes: 50000 });
+  const expected = Object.fromEntries(fixture.fields.map((field: string) => {
+    const match = /^payload\.result\[(\d+)\]\.(.+)$/.exec(field)!;
+    const value = match[2]!.split(".").reduce((row: any, key: string) => row[key], fixture.rooms[Number(match[1])]);
+    assert.notEqual(value, undefined, field);
+    return [field, value];
+  }));
+  assert.equal(Object.keys(expected).length, 49);
+  assert.deepEqual(selected.missing_fields, []);
+  assert.deepEqual(selected.selection, expected);
+  assert.ok(selected.returned_bytes < 50000);
+}));
+
+test("array field selectors preserve literal keys and nulls while rejecting executable or inherited paths", { concurrency: false }, () => withWorkspace(() => {
+  const stored = storeEvidence({ scope, source: "regression:array-paths", trust_level: "authoritative_native",
+    raw: { items: [{ nested: [[null, 42]], "literal.key[0]": "literal", "literal[design]": "named brackets" }], "items[0].name": "flattened" } }, 4096);
+  const read = (fields: string[]) => retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Inspect nested fields", fields });
+  const selected = read(["payload.items[0].nested[0][0]", "payload.items[0].nested[0][1]", "payload.items[0].literal.key[0]",
+    "payload.items[0].name", "payload.items[7].name", "payload.items[0].toString"]);
+  assert.deepEqual(selected.selection, { "payload.items[0].nested[0][0]": null, "payload.items[0].nested[0][1]": 42,
+    "payload.items[0].literal.key[0]": "literal", "payload.items[0].name": "flattened", "payload.items[7].name": null,
+    "payload.items[0].toString": null });
+  assert.deepEqual(selected.missing_fields, ["payload.items[7].name", "payload.items[0].toString"]);
+  assert.deepEqual(read(["payload.items[0].literal[design]"]).selection, { "payload.items[0].literal[design]": "named brackets" });
+  for (const field of ["payload.items[-1]", "payload.items[01]", "payload.items[1.5]", "payload.items[9007199254740992]",
+    "payload.items[process.exit()]", "payload.items[0].__proto__", "payload.constructor[0]", "payload.items[0].prototype", "payload.items[0"])
+    assert.throws(() => read([field]), /Invalid typed field path/, field);
+  assert.throws(() => retrieveEvidence({ scope: { ...scope, generation: 3 }, evidence_id: stored.ref.evidence_id,
+    purpose: "Inspect nested fields", fields: ["payload.items[0].nested[0][1]"] }), /generation/);
+}));
+
+test("advertised inventory facts are retrievable and absent fields differ from actual null values", { concurrency: false }, () => withWorkspace(() => {
+  const items = Array.from({length:37},(_,i)=>({elementId:i+1,category:"Mechanical Equipment",familyName:"Example",typeName:"Unit"}));
+  const stored=storeEvidence({scope,source:"native:inventory",trust_level:"authoritative_native",raw:{count:37,itemsComplete:true,items,actualNull:null}},4096);
+  const result=retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Verify complete equipment counts",
+    fields:["inventory.total","inventory.complete","inventory.category::Mechanical Equipment","projection.key_counts.inventory.total","actualNull","unknownField"]});
+  assert.deepEqual(result.selection,{"inventory.total":37,"inventory.complete":true,"inventory.category::Mechanical Equipment":37,
+    "projection.key_counts.inventory.total":37,actualNull:null,unknownField:null});
+  assert.deepEqual(result.missing_fields,["unknownField"]);
+  assert.equal(result.selection_origins?.["inventory.total"],"deterministic_projection");
+  assert.equal(result.selection_origins?.actualNull,"payload");
+  assert.throws(()=>retrieveEvidence({scope:{...scope,session_id:"another"},evidence_id:stored.ref.evidence_id,purpose:"Verify counts",fields:["inventory.total"]}),/scope|session/i);
+}));
+
+test("byte-bounded inventory pages preserve every row with an explicit continuation", { concurrency: false }, () => withWorkspace(() => {
+  const items=Array.from({length:509},(_,i)=>({elementId:i+1,name:"Device "+i,description:"x".repeat(300)}));
+  const stored=storeEvidence({scope,source:"native:inventory",trust_level:"authoritative_native",raw:{count:items.length,itemsComplete:true,items}},4096);
+  const recovered: unknown[]=[];
+  let start=0;
+  do {
+    const page=retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Review the next equipment page",item_range:{path:"items",start,count:256},max_bytes:4096});
+    assert.ok(page.returned_bytes<=4096); assert.ok(Array.isArray(page.selection));
+    assert.equal(page.pagination?.total_items,509);
+    assert.equal(page.pagination?.returned_count,page.selection.length);
+    assert.equal(page.complete,false);
+    recovered.push(...page.selection);
+    if(!page.pagination?.has_more)break;
+    assert.ok(page.pagination.next_start!>start);
+    start=page.pagination.next_start!;
+  } while(start<items.length);
+  assert.deepEqual(recovered,items);
+  assert.throws(()=>retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:"Review one oversized row",item_range:{path:"items",start:0,count:1},max_bytes:64}),/One evidence row exceeds/);
+}));
 
 test("509-air-device inventory is projected under budget and remains byte-for-byte recoverable", { concurrency: false }, () => withWorkspace(() => {
   const inventory = {
@@ -446,6 +516,31 @@ test("verifier can recover a required fact deliberately absent from the determin
   assert.deepEqual(focused.selection, { "deep.payload.rareNeededFact": "orientation_is_reversed" });
 }));
 
+test("committed generated checkpoint task IDs survive secret screening with exact authoritative bytes", { concurrency: false }, () => withWorkspace(() => {
+  const raw = JSON.stringify({ schema: "revit-operator.dynamic-revit-program-run.v1", execution_status: "completed",
+    requested_mode: "apply", checkpoint: { task_session_id: "task-289013d60cff4ff0a782e5a1e7ac2ce6",
+      outcome: "committed_verified", checkpoint_index: 1, parent: null },
+    neighboring_metadata: ["risk-289013d60cff4ff0a782e5a1e7ac2ce6", "disk-289013d60cff4ff0a782e5a1e7ac2ce6"] });
+  const stored = storeEvidence({ scope, source: "generated_checkpoint", media_type: "application/json", trust_level: "authoritative_native", raw });
+  assert.equal(readAuthoritativeEvidence(stored.ref, scope).toString("utf8"), raw);
+  assert.equal(stored.ref.content_hash, "sha256:" + createHash("sha256").update(raw).digest("hex"));
+  const selected = retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "verify retained generated checkpoint identity",
+    fields: ["checkpoint.task_session_id", "checkpoint.outcome"] });
+  assert.equal((selected.selection as any)["checkpoint.outcome"], "committed_verified");
+}));
+
+test("real credential tokens remain rejected without persisting secret bytes", { concurrency: false }, () => withWorkspace(root => {
+  storeEvidence({ scope, source: "baseline", trust_level: "host_observed", raw: { safe: true } });
+  const objects = () => fs.readdirSync(path.join(root, "evidence", "objects", "sha256"), { recursive: true });
+  const before = objects();
+  for (const raw of [
+    `sk-${"a".repeat(32)}`, { api_key: `sk-proj-${"a".repeat(64)}` },
+    `Authorization: Bearer ${"b".repeat(32)}`, "-----BEGIN PRIVATE KEY-----",
+    `prefix sk-${"c".repeat(32)} suffix`, { checkpoint: { task_session_id: "task-safe", log: `sk-${"d".repeat(32)}` } }
+  ]) assert.throws(() => storeEvidence({ scope, source: "credential_probe", trust_level: "authoritative_native", raw }), /secret screening/);
+  assert.deepEqual(objects(), before);
+}));
+
 test("model request assembly enforces item and aggregate budgets with explicit omission", { concurrency: false }, () => withWorkspace(() => {
   const projections = Array.from({ length: 20 }, (_, index) => storeEvidence({ scope, source: `budget_item_${index}`, trust_level: "host_observed", raw: { count: index, values: Array.from({ length: 200 }, (__, value) => ({ value })) } }, 1_500).projection);
   const result = assembleBoundedEvidenceContext({ projections, session_id: scope.session_id, assignment_id: scope.assignment_id, model_call_id: "call-budget", budget: { item_bytes: 1_500, request_bytes: 4_000 } });
@@ -453,6 +548,7 @@ test("model request assembly enforces item and aggregate budgets with explicit o
   assert.ok(result.omitted > 0);
   assert.ok(result.projections.length < projections.length);
   const valid = JSON.stringify(modelEvidenceEnvelope(result.projections, result.omitted));
+  assert.equal(result.bytes, Buffer.byteLength(valid,"utf8"), "account for the serialized envelope, not only its record array");
   const usage = assertBoundedModelEvidencePayload([{ type: "function_call_output", output: valid }], { item_bytes: 1_500, request_bytes: 4_000 });
   assert.equal(usage.projection_count, result.projections.length);
   assert.equal(usage.referenced_raw_bytes, result.projections.reduce((sum, projection) => sum + projection.byte_count, 0));

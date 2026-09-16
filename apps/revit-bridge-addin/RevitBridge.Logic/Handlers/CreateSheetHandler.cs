@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -22,10 +23,9 @@ namespace RevitBridge.Logic.Handlers
             var p = JsonSerializer.Deserialize<Params>(jsonData);
             var doc = app.ActiveUIDocument.Document;
 
-            using (Transaction trans = new Transaction(doc, "Create Sheet"))
+            ElementId? outputId = null;
+            var result = NativeSingleTransaction.Execute(app, doc, "Create Sheet", created =>
             {
-                trans.Start();
-
                 ElementId tbId = RevitBridge.Common.ElementIdCompat.Create(p.titleBlockId);
                 if (p.titleBlockId == -1) // Auto-find first titleblock
                 {
@@ -42,15 +42,19 @@ namespace RevitBridge.Logic.Handlers
                 if (!string.IsNullOrEmpty(p.name)) sheet.Name = RevitTextCasePolicy.NormalizeSheetName(p.name);
                 if (!string.IsNullOrEmpty(p.number)) sheet.SheetNumber = p.number;
 
-                trans.Commit();
-
-                return Task.FromResult<object>(new 
-                { 
-                    id = RevitBridge.Common.ElementIdCompat.GetValue(sheet.Id), 
-                    name = sheet.Name, 
-                    number = sheet.SheetNumber 
-                });
-            }
+                doc.Regenerate();
+                outputId = sheet.Id;
+                created.Add(ElementIdCompat.GetValue(sheet.Id));
+                foreach (var id in new FilteredElementCollector(doc).WherePasses(new ElementOwnerViewFilter(sheet.Id)).ToElementIds())
+                    created.Add(ElementIdCompat.GetValue(id));
+                return new Dictionary<string, object?>();
+            });
+            return Task.FromResult<object>(OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var sheet = outputId == null ? null : doc.GetElement(outputId) as ViewSheet;
+                if (sheet == null) throw new InvalidOperationException("Committed sheet was not found during readback.");
+                return new Dictionary<string, object?> { ["id"] = ElementIdCompat.GetValue(sheet.Id), ["name"] = sheet.Name, ["number"] = sheet.SheetNumber };
+            }));
         }
     }
 }

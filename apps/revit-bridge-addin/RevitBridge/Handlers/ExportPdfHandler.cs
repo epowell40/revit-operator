@@ -99,11 +99,17 @@ namespace RevitBridge.Handlers
             var planned = BuildPlan(folder, combine, baseName, perTemplate, views);
             var preflight = BuildPreflight(folder, combine, baseName, perTemplate, views, selectionMeta, planned);
             var selectedSheets = BuildSelectedSheets(views);
+            var plannedPaths = combine
+                ? new[] { Path.Combine(folder, EnsurePdfExtension(StripPdfExtension(baseName))) }
+                : views.Select(v => Path.Combine(folder, EnsurePdfExtension(StripPdfExtension(SanitizeFileName(ApplyPerSheetTemplate(perTemplate, v)))))).ToArray();
+            var expectedExportCalls = combine ? 1 : views.Count;
             if (dryRun)
             {
                 return Task.FromResult<object>(new
                 {
                     status = "Dry Run",
+                    ok = true,
+                    artifact_receipt = OperatorNativeArtifactReceipt.Preview(plannedPaths, expectedExportCalls),
                     dryRun = true,
                     preflightOnly = true,
                     combine,
@@ -118,6 +124,9 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            var artifactCapture = new OperatorNativeArtifactCapture(plannedPaths, expectedExportCalls);
+            Directory.CreateDirectory(folder);
+
             if (combine)
             {
                 var fileBase = StripPdfExtension(baseName);
@@ -129,13 +138,17 @@ namespace RevitBridge.Handlers
                 };
                 var colorModeResult = TrySetPdfColorMode(options, colorMode);
 
-                doc.Export(folder, views.Select(v => v.ViewId).ToList(), options);
+                artifactCapture.RecordNativeExport(doc.Export(folder, views.Select(v => v.ViewId).ToList(), options));
                 var outPath = Path.Combine(folder, outName);
                 var verification = BuildFileVerification(outPath);
+                var artifactReceipt = artifactCapture.Complete();
+                var verified = verification.ok && artifactReceipt.Status == "complete";
 
                 return Task.FromResult<object>(new
                 {
-                    status = verification.ok ? "Success" : "ExportUnverified",
+                    status = verified ? "Success" : "ExportUnverified",
+                    ok = verified,
+                    artifact_receipt = artifactReceipt,
                     dryRun = false,
                     combine = true,
                     outputFolder = folder,
@@ -169,7 +182,7 @@ namespace RevitBridge.Handlers
                 };
                 TrySetPdfColorMode(options, colorMode);
 
-                doc.Export(folder, new List<ElementId> { v.ViewId }, options);
+                artifactCapture.RecordNativeExport(doc.Export(folder, new List<ElementId> { v.ViewId }, options));
                 outputs.Add(expectedPath);
                 if (cleanupDefaultIndividualOutputs)
                 {
@@ -179,10 +192,14 @@ namespace RevitBridge.Handlers
             }
             var verifications = outputs.Select(BuildFileVerification).ToArray();
             var verifiedCount = verifications.Count(x => x.ok);
+            var individualArtifactReceipt = artifactCapture.Complete();
+            var allVerified = verifiedCount == outputs.Count && individualArtifactReceipt.Status == "complete";
 
             return Task.FromResult<object>(new
             {
-                status = verifiedCount == outputs.Count ? "Success" : "ExportUnverified",
+                status = allVerified ? "Success" : "ExportUnverified",
+                ok = allVerified,
+                artifact_receipt = individualArtifactReceipt,
                 dryRun = false,
                 combine = false,
                 outputFolder = folder,
@@ -604,20 +621,19 @@ namespace RevitBridge.Handlers
             return s;
         }
 
-        private static string ResolvePdfOutputFolder(string? userProvidedDir)
+        internal static string ResolvePdfOutputFolder(string? userProvidedDir)
         {
             if (string.IsNullOrWhiteSpace(userProvidedDir))
-                return WorkspacePaths.ResolveDirectoryUnderWorkspace(null, "artifacts", "prints");
+                return WorkspacePaths.ResolveFileUnderWorkspace(Path.Combine("artifacts", "prints"));
 
             var candidate = userProvidedDir.Trim();
             if (!Path.IsPathRooted(candidate))
-                return WorkspacePaths.ResolveDirectoryUnderWorkspace(candidate, "artifacts", "prints");
+                return WorkspacePaths.ResolveFileUnderWorkspace(candidate);
 
             candidate = Path.GetFullPath(candidate);
             var workspace = Path.GetFullPath(WorkspacePaths.GetWorkspaceRoot());
             if (IsSameOrUnder(candidate, workspace))
             {
-                Directory.CreateDirectory(candidate);
                 return candidate;
             }
 
@@ -636,7 +652,6 @@ namespace RevitBridge.Handlers
                 throw new UnauthorizedAccessException("PDF outputFolder must be under the RevitOperator workspace, Documents, Desktop, or Downloads.");
             }
 
-            Directory.CreateDirectory(candidate);
             return candidate;
         }
 

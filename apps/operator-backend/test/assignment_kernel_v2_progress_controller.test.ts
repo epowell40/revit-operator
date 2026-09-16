@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { assignmentKernelControlEvidenceFactsV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { storeEvidence, retrieveEvidence } from "../src/evidence/evidence_store.js";
+import { __closeForTests } from "../src/memory/sqlite_store.js";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -8,7 +15,7 @@ import {
   OPERATION_V2_SCHEMA,
   AssignmentJournalV2,
   assertOperationAdvancesProgressV2,
-  buildProgressEpochV2,
+  buildProgressEpochV2 as buildKernelProgressEpochV2,
   decideAssignmentProgressV2,
   type AssignmentBindingV2,
   type AssignmentEventV2,
@@ -19,7 +26,12 @@ import {
   type OperationResultV2,
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
-import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
+import { finalCodexAssignmentMessageV2, codexAssignmentControllerStopMessage } from "../src/brains/codex_assignment_progress.js";
+import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
+import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
+import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment-kernel/semantic_admissibility.js";
+import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
+import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -500,6 +512,120 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("unknown mutation suppresses provider success even after dispatch settlement", () => {
+  const j = journal();
+  const snapshot = { ...j.snapshot(), unresolved_unknown_operation_ids: ["duplicate-view"] };
+  for (const state of [snapshot, { ...snapshot, terminal: true, outcome: "blocked" as const, terminal_reason: "reconciliation_required" }]) {
+    const message = finalCodexAssignmentMessageV2(state, "Created M-COORDINATION COPY with annotations.");
+    assert.match(message, /could not confirm|not confirmed/i);
+    assert.doesNotMatch(message, /Created M-COORDINATION COPY/);
+  }
+});
+
+test("pending apply cannot pass unverified completion prose while clarification retains its question", () => {
+  const j = journal();
+  const snapshot = { ...j.snapshot(), spec: { ...j.snapshot().spec, requested_effect: "apply" as const } };
+  assert.doesNotMatch(finalCodexAssignmentMessageV2(snapshot, "Created the view."), /Created the view/);
+  assert.equal(finalCodexAssignmentMessageV2({ ...snapshot, outcome: "awaiting_user_input" }, "Which plan?"), "Which plan?");
+});
+
+test("committed model edit receives a truthful pending handoff without granting verified completion", () => {
+  const base=journal().snapshot();
+  const snapshot={...base,spec:{...base.spec,requested_effect:"apply" as const},operations:{edit:{operation_id:"edit",binding:base.current_binding,
+    requested_effect:"apply",persistent_effect:"applied",settlement_state:"settled",result:{binding:base.current_binding,
+      status:"succeeded",authority:"native-host",native_transaction_state:"committed"}}}} as any;
+  assert.equal(finalCodexAssignmentMessageV2(snapshot,"Everything is complete."),"Applied one model edit. Final verification is incomplete; the task and remaining checks are saved.");
+  assert.equal(snapshot.terminal,false);
+  for(const change of ["unknown","none"]){const copy=structuredClone(snapshot);copy.operations.edit.persistent_effect=change;
+    assert.doesNotMatch(finalCodexAssignmentMessageV2(copy,"Everything is complete."),/Applied one/);}
+  const foreign=structuredClone(snapshot);foreign.operations.edit.result.binding={...foreign.current_binding,generation:foreign.current_binding.generation+1};
+  assert.doesNotMatch(finalCodexAssignmentMessageV2(foreign,"Everything is complete."),/Applied one/);
+  assert.match(finalCodexAssignmentMessageV2({...snapshot,unresolved_unknown_operation_ids:["other-edit"]},""),/could not confirm/);
+});
+
+test("input stop shows only unanswered questions and never hides an uncertain model effect", () => {
+  const snapshot = { ...journal().snapshot(), outcome: "awaiting_user_input" as const, clarifications: {
+    old: { clarification_id: "old", variable_id: "old", question: "Answered already?", requested_at: "2026-09-01T00:00:00Z", resolved_at: "2026-09-01T01:00:00Z" },
+    floor: { clarification_id: "floor", variable_id: "floor", question: "Which floor should I use?", requested_at: "2026-09-15T07:49:10Z" }
+  } };
+  assert.equal(codexAssignmentControllerStopMessage(snapshot, "assignment_progress_controller_stop"), "Which floor should I use?");
+  assert.match(codexAssignmentControllerStopMessage({ ...snapshot, unresolved_unknown_operation_ids: ["edit"] }, "stop"), /could not confirm/);
+  assert.doesNotMatch(codexAssignmentControllerStopMessage({ ...snapshot, clarifications: {} }, "assignment_progress_controller_stop"), /canonical|controller|assignment_progress/);
+});
+
+test("assessment guidance describes remaining obligations without claiming an uncreated artifact exists", () => {
+  const snapshot = journal().snapshot();
+  const requested = { ...snapshot, spec: { ...snapshot.spec, result_delivery_required: true, result_assessment_required: true } };
+  const guidance = deriveProgressGapsV2(requested).find(g => g.kind === "result_delivery_required")!.reason;
+  assert.doesNotMatch(guidance, /The exported file is verified/);
+  assert.match(guidance, /If export is still outstanding, complete that work first/);
+  assert.match(guidance, /Never repeat an export that already has an applied or uncertain effect/);
+  const plain = deriveProgressGapsV2({ ...requested, spec: { ...requested.spec, result_assessment_required: false } })[0]!.reason;
+  assert.doesNotMatch(plain, /export is still outstanding/);
+});
+
+test("blocked terminal result keeps failure visible when partial inventory evidence exists", () => {
+  const j = journal();
+  settleObservation(j);
+  j.append(event(j, { event_type: "criterion_evaluated", evaluation: evaluation() }));
+  const message = finalCodexAssignmentMessageV2({ ...j.snapshot(), terminal: true,
+    outcome: "blocked", terminal_reason: "reconciliation_required" }, "Everything completed.");
+  assert.match(message, /did not complete/);
+  assert.match(message, /Inventory total: 3/);
+});
+
+test("idle Assignments remain admissible days later without resetting their cumulative budgets", () => {
+  const snapshot = journal().snapshot();
+  const now = "2026-08-29T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, now), 0);
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget, now }).decision, "admit_reasoning_turn");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...budget, max_provider_calls: 0 }, now }).reason, "provider_call_budget_exhausted");
+});
+
+test("execution time survives journal replay while completed work excludes the offline wait", () => {
+  const j = journal();
+  j.append(event(j, {
+    event_type: "provider_call_state_recorded", call_id: "timed-provider", state: "admitted",
+    provider: "test", model: "test", reasoning_effort: null, gap_ids: ["criterion:criterion-inventory"],
+    criterion_ids: ["criterion-inventory"], expected_information: ["inventory.total"]
+  }, "2026-08-26T20:00:00.000Z"));
+  const now = "2026-08-29T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(new AssignmentJournalV2(j.events()).snapshot(), now), 3 * 86_400_000,
+    "process loss cannot forgive unresolved admitted work");
+  j.append(event(j, { event_type: "provider_call_state_recorded", call_id: "timed-provider", state: "completed", success: true }, "2026-08-26T20:00:30.000Z"));
+  const snapshot = new AssignmentJournalV2(j.events()).snapshot();
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, now), 30_000);
+  const delayed = structuredClone(snapshot);
+  delayed.provider_calls["timed-provider"].completed_at = now;
+  delayed.provider_calls["timed-provider"].provider_duration_ms = 30_000;
+  assert.equal(assignmentActiveExecutionTimeMsV2(delayed, now), 30_000, "known provider duration excludes delayed receipt delivery");
+  const imported = structuredClone(snapshot);
+  imported.provider_calls["timed-provider"].admitted_at = "2026-08-20T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(imported, now), 30_000, "imported receipt cannot charge history before task creation");
+  const kernelUrl = new URL("../src/domain/assignment-kernel/index.js", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import fs from 'node:fs';
+    import { reduceAssignmentEventsV2, decideAssignmentProgressV2 } from ${JSON.stringify(kernelUrl)};
+    const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+    console.log(JSON.stringify(decideAssignmentProgressV2({ snapshot: reduceAssignmentEventsV2(input.events), budget: input.budget, now: input.now })));
+  `], { input: JSON.stringify({ events: j.events(), budget, now }), encoding: "utf8", timeout: 20_000 });
+  assert.equal(child.status, 0, child.stderr || child.error?.message);
+  assert.deepEqual(JSON.parse(child.stdout), decideAssignmentProgressV2({ snapshot, budget, now }));
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget, now }).decision, "admit_reasoning_turn");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...budget, max_wall_clock_ms: 30_000 }, now }).reason, "execution_lease_exhausted");
+});
+
+test("overlapping execution intervals consume wall time once and invalid timestamps cannot waive the limit", () => {
+  const snapshot = journal().snapshot();
+  snapshot.operations = {
+    first: { ...operation("first"), opened_at: "2026-08-26T20:00:00.000Z", settled_at: "2026-08-26T20:00:20.000Z" },
+    second: { ...operation("second"), opened_at: "2026-08-26T20:00:10.000Z", settled_at: "2026-08-26T20:00:30.000Z" }
+  };
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, "2026-08-27T20:00:00.000Z"), 30_000);
+  snapshot.operations.second.opened_at = "invalid";
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, "2026-08-27T20:00:00.000Z"), Infinity);
+});
+
 test("Candidate 50 durable capability knowledge advances once and equivalent search output does not reset liveness", () => {
   const initial = journal().snapshot();
   const searchOperation: OperationV2 = {
@@ -930,4 +1056,154 @@ test("unknown effect blocks truthfully when bounded reconciliation is exhausted"
   const decision = decideAssignmentProgressV2({ snapshot, budget, now: "2026-08-26T20:00:10.000Z" });
   assert.equal(decision.decision, "blocked");
   if (decision.decision === "blocked") assert.equal(decision.reason, "reconciliation_budget_exhausted");
+});
+
+function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: string, path: string, body: unknown = null) {
+  const op: OperationV2 = { ...operation(id), capability_id: `native:GET:${path}`, purpose: "discovery",
+    fulfillment_role: "supporting_control", delegation_authority_id: undefined, advances_criterion_ids: [], eligible_criterion_ids: [],
+    input: { method: "GET", path, body }, dispatch_state: "dispatched", settlement_state: "settled",
+    observation_ids: [`obs-${id}`], result: result(id) };
+  const obs: ObservationV2 = { ...observation(id, `obs-${id}`), capability_id: op.capability_id,
+    fulfillment_role: "supporting_control", evidence_class: "control", eligible_criterion_ids: [],
+    facts: [{ fact_id: "control.result_available", fact_class: "control", value: true },
+      { fact_id: "control.domain_succeeded", fact_class: "control", value: true },
+      { fact_id: "control.native_call_count", fact_class: "control", value: 1 },
+      { fact_id: "control.payload_hash", fact_class: "control", value: `hash-${id}` }] };
+  return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
+}
+
+test("seven retained room pages progress through the real store and controller but overlapping rereads stop", { concurrency: false }, () => {
+  const prior = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-page-progress-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/evidence-seven-spaces.json"), "utf8"));
+    const stored = storeEvidence({ scope: binding, source: "regression:seven-space-pages", trust_level: "authoritative_native",
+      raw: { ok: true, result: fixture.rooms } }, 4096);
+    let snapshot = journal().snapshot();
+    for (let step = 0; step < 9; step += 1) {
+      const start = step < 7 ? step : 1;
+      const count = step < 7 ? 1 : step - 6;
+      const retrieved = retrieveEvidence({ scope: binding, evidence_id: stored.ref.evidence_id,
+        purpose: `Review room page ${step}`, item_range: { path: "payload.result", start, count }, max_bytes: 50000 });
+      const id = `page-${step}`;
+      const obs: ObservationV2 = { ...observation(id, `observation-${id}`), authority: "operator-evidence-store",
+        result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+        facts: assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence", { ok: true, result: retrieved }),
+        verification_relevance: ["control"], fulfillment_role: "supporting_control", evidence_class: "control",
+        capability_id: "operator_retrieve_evidence", eligible_criterion_ids: [] };
+      const op: OperationV2 = { ...operation(id), capability_id: "operator_retrieve_evidence", purpose: "evidence_read",
+        fulfillment_role: "supporting_control", delegation_authority_id: undefined, advances_criterion_ids: [], eligible_criterion_ids: [],
+        input: { evidenceId: stored.ref.evidence_id, itemRange: { path: "payload.result", start, count }, purpose: `page ${step}` },
+        dispatch_state: "dispatched", dispatch_authority: "mcp", settlement_state: "settled", observation_ids: [obs.observation_id],
+        result: { ...result(id), authority: obs.authority, result_schema_id: obs.result_schema_id }, settled_at: "2026-08-26T20:00:05.000Z" };
+      const after = { ...snapshot, operations: { ...snapshot.operations, [id]: op },
+        observations: { ...snapshot.observations, [obs.observation_id]: obs },
+        observation_versions: { ...snapshot.observation_versions, [obs.observation_id]: step + 2 }, in_flight_operation_ids: [], quiescent: true };
+      const epoch = buildProgressEpochV2({ before: snapshot, after, stated_gap_ids: ["criterion:criterion-inventory"],
+        admitted_operation_ids: [id], recorded_at: `2026-08-26T20:00:${String(step + 6).padStart(2, "0")}.000Z` });
+      assert.equal(epoch.genuine_progress, step < 7, `page ${step}`);
+      assert.ok(obs.facts.every(fact => fact.fact_class === "control"));
+      snapshot = { ...after, progress_epochs: [...snapshot.progress_epochs, epoch] };
+      const decision = decideAssignmentProgressV2({ snapshot, budget, now: "2026-08-26T20:00:20.000Z" });
+      assert.equal(decision.decision, step < 8 ? "admit_reasoning_turn" : "blocked");
+      if (step === 8) assert.match(JSON.stringify(decision), /no_progress_budget_exhausted/);
+    }
+    assert.equal(snapshot.terminal, false);
+    assert.deepEqual(snapshot.criteria, {});
+  } finally {
+    __closeForTests();
+    if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = prior;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("continued drawing task retains raw token costs without exhausting the default budget during SDK discovery", () => {
+  const j = journal();
+  for (let i = 0; i < 8; i++) {
+    const call_id = `large-context-${i}`;
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "admitted", provider: "openai", model: "gpt-5.6-sol",
+      reasoning_effort: "medium", gap_ids: ["criterion:criterion-inventory"], criterion_ids: ["criterion-inventory"], expected_information: ["inventory.total"] }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "dispatched" }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "usage_received",
+      usage: { input_tokens: 82_297, cached_input_tokens: 76_800, output_tokens: 155, reasoning_tokens: 50, total_tokens: 82_452, estimated_cost_usd: null } }));
+    j.append(event(j, { event_type: "provider_call_state_recorded", call_id, state: "completed", success: true }));
+  }
+  const snapshot = j.snapshot();
+  assert.equal(Object.values(snapshot.provider_calls).reduce((n, c) => n + (c.usage?.total_tokens ?? 0), 0), 659_616);
+  const decision = decideAssignmentProgressV2({ snapshot, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now: "2026-08-26T20:01:00Z" });
+  assert.notEqual(decision.decision, "blocked");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, max_total_tokens: 500_000 }, now: "2026-08-26T20:01:00Z" }).reason, "token_budget_exhausted");
+});
+
+test("b09 registry then evidence reads then native views discovery adds progress once without fulfilling the edit", () => {
+  const initial = journal().snapshot();
+  initial.spec = { ...initial.spec, requested_effect: "apply" };
+  const registry = discoveryStep(initial, "registry", "/revit/tool-registry");
+  // Both evidence retrievals in the retained b09 precede the typed list wrapper.
+  // Evidence-store results cannot lend native authority to later reads.
+  const evidence = discoveryStep(registry, "evidence", "/revit/tool-registry");
+  evidence.observations["obs-evidence"] = { ...evidence.observations["obs-evidence"]!, authority: "operator-evidence-store" };
+  const evidenceRepeat = discoveryStep(evidence, "evidence-repeat", "/revit/tool-registry");
+  evidenceRepeat.observations["obs-evidence-repeat"] = { ...evidenceRepeat.observations["obs-evidence-repeat"]!, authority: "operator-evidence-store" };
+  const after = discoveryStep(evidenceRepeat, "views", "/revit/views");
+  after.operations.wrapper = { ...operation("wrapper"), purpose: "discovery", fulfillment_role: "supporting_control", capability_id: "revit_list_views" };
+  after.operations.views = { ...after.operations.views!, resolves_gap_ids: [], parent_operation_id: "wrapper" };
+  const input = { before: evidenceRepeat, after, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:10.000Z" };
+  const epoch = buildProgressEpochV2(input);
+  assert.equal(buildKernelProgressEpochV2(input).genuine_progress, false, "kernel cannot infer tool semantics without host-derived identities");
+  assert.deepEqual(epoch.new_fact_identities, []);
+  assert.deepEqual(epoch.progress_reasons, ["controller_knowledge_added"]);
+  assert.equal(epoch.genuine_progress, true);
+  assert.equal(observationAdmissibilityForCriterionV2({ snapshot: after, criterion: after.spec.criteria[0]!, observation: after.observations["obs-views"]! }).admissible, false);
+  assert.deepEqual(after.criteria, initial.criteria);
+  assert.deepEqual(buildProgressEpochV2(JSON.parse(JSON.stringify(input))), epoch, "restart re-derives the same progress without a replayed read");
+  const repeated = discoveryStep(after, "views-repeat", "/revit/views");
+  repeated.operations["views-repeat"]!.input = { path: "/revit/views", method: "POST", requireKnownPath: false,
+    body: { limit: 200, maxBytes: 9999, timestamp: "later", requestId: "new" } };
+  assert.equal(buildProgressEpochV2({ ...input, before: after, after: repeated }).genuine_progress, false);
+  const forged = { ...input, before: after, after: repeated,
+    supporting_discovery_read_identities: { before: {}, after: { "views-repeat": "provider-invented-new-identity" } } };
+  assert.equal(buildProgressEpochV2(forged).genuine_progress, false, "host adapter replaces externally supplied identity maps");
+  const resumed = structuredClone(after);
+  resumed.current_binding = { ...resumed.current_binding, generation: 2 };
+  const reread = discoveryStep(resumed, "views-resumed", "/revit/views");
+  reread.operations["views-resumed"]!.binding = resumed.current_binding;
+  reread.operations["views-resumed"]!.result!.binding = resumed.current_binding;
+  reread.observations["obs-views-resumed"]!.binding = resumed.current_binding;
+  assert.equal(buildProgressEpochV2({ ...input, before: resumed, after: reread }).genuine_progress, false,
+    "generation changes must not forget successful historical discovery identities");
+});
+
+test("supporting discovery counts changed selectors but rejects unbound, failed, stale, or nonnative observations", () => {
+  const initial = journal().snapshot();
+  const before = discoveryStep(initial, "filtered", "/revit/views", { action: "list", levelNames: ["Level 2"], semanticGroups: ["hvac"] });
+  const after = discoveryStep(before, "broader", "/revit/views", { action: "list", semanticGroups: ["hvac"] });
+  const compare = (candidate: typeof after) => buildProgressEpochV2({ before, after: candidate,
+    stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:10.000Z" });
+  assert.equal(compare(after).genuine_progress, true);
+  for (const variant of ["failed", "not_dispatched", "missing_result", "unlinked", "nonnative", "stale", "no_gap", "domain_failed", "oversized_selector"]) {
+    const bad = structuredClone(after), op = bad.operations.broader!, obs = bad.observations["obs-broader"]!;
+    if (variant === "failed") op.result = { ...op.result!, status: "failed_after_dispatch" };
+    if (variant === "not_dispatched") op.dispatch_state = "not_dispatched";
+    if (variant === "missing_result") op.result = undefined;
+    if (variant === "unlinked") op.observation_ids = [];
+    if (variant === "nonnative") obs.authority = "operator-mcp-transport";
+    if (variant === "stale") obs.binding = { ...obs.binding, generation: 0 };
+    if (variant === "no_gap") op.resolves_gap_ids = [];
+    if (variant === "domain_failed") obs.facts = obs.facts.map(f => f.fact_id === "control.domain_succeeded" ? { ...f, value: false } : f);
+    if (variant === "oversized_selector") op.input = { path: "/revit/views", body: { viewIds: Array(257).fill(9948) } };
+    assert.equal(compare(bad).genuine_progress, false, variant);
+  }
+  const reordered = discoveryStep(after, "reordered", "/revit/views", { semanticGroups: ["hvac"], action: "list", limit: 1 });
+  assert.equal(buildProgressEpochV2({ before: after, after: reordered, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:11.000Z" }).genuine_progress, false);
+});
+
+test("uncertain workbook effect never claims that a Revit model edit happened",()=>{
+  const snapshot={...journal().snapshot(),unresolved_unknown_operation_ids:["export"]};
+  const message=finalCodexAssignmentMessageV2(snapshot,"");
+  assert.match(message,/could not confirm.*requested change/);
+  assert.match(message,/verify the result before retrying/);
+  assert.doesNotMatch(message,/model edit|completed successfully/);
 });

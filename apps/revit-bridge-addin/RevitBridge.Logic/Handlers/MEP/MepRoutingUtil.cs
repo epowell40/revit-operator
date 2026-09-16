@@ -407,7 +407,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             return all.FirstOrDefault();
         }
 
-        internal static DuctTypeResolution ResolveDuctType(Document doc, long? requestedId, string? requestedName)
+        internal static DuctTypeResolution ResolveDuctType(Document doc, long? requestedId, string? requestedName, string? requestedShape = null)
         {
             var all = new FilteredElementCollector(doc).OfClass(typeof(DuctType)).Cast<DuctType>().ToList();
             var receipt = MepDuctTypeSelectionPolicy.Resolve(
@@ -415,10 +415,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     Id = ElementIdCompat.GetValue(x.Id),
                     Name = x.Name ?? string.Empty,
-                    FamilyName = x.FamilyName ?? string.Empty
+                    FamilyName = x.FamilyName ?? string.Empty,
+                    Shape = x.Shape.ToString().ToLowerInvariant()
                 }),
                 requestedId,
-                requestedName);
+                requestedName,
+                requestedShape);
             var selected = receipt.Selected == null
                 ? null
                 : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);

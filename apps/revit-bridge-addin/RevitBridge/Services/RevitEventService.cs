@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
@@ -30,23 +31,6 @@ namespace RevitBridge.Services
         public string? CorrelationId { get; }
     }
 
-    public sealed class RevitEventCanceledBeforeDispatchException : OperationCanceledException, IOperatorRevitFailureMetadata, IOperatorCorrelationMetadata
-    {
-        public RevitEventCanceledBeforeDispatchException(string? correlationId)
-            : base("The Revit action deadline elapsed before the ExternalEvent callback started; no mutation was dispatched.")
-        {
-            CorrelationId = OperatorCorrelationId.IsValid(correlationId) ? correlationId!.Trim() : null;
-        }
-
-        public string Code => "revit_action_deadline_elapsed_before_dispatch";
-        public bool Retryable => true;
-        public string Phase => "pre_dispatch";
-        public string HostHealth => "degraded";
-        public bool OpensCircuit => false;
-        public bool OutcomeUnknown => false;
-        public string? CorrelationId { get; }
-    }
-
     public class RevitEventService : IExternalEventHandler
     {
         private sealed class QueueItem
@@ -68,11 +52,19 @@ namespace RevitBridge.Services
             public CancellationToken CancellationToken { get; }
             public string? CorrelationId { get; }
             public int ExecutionState;
+            public OperatorRevitQueueDiagnostic? Diagnostic;
         }
 
         private readonly ConcurrentQueue<QueueItem> _queue = new ConcurrentQueue<QueueItem>();
         private readonly ExternalEvent _externalEvent;
         private int _inFlight;
+        private readonly Action<string>? _diagnosticSink;
+        private OperatorRevitQueueDiagnostic? _diagnosticOwner;
+        private readonly OperatorUiWakeScheduler _uiWake;
+        private readonly OperatorActiveIdleLease _activeIdleLease = new OperatorActiveIdleLease();
+        private int _stopping;
+        private long _lastWakeDiagnosticTicks;
+        private long _lastMessageWakeDiagnosticTicks;
 
         private static readonly TimeSpan BackgroundWakeInterval = TimeSpan.FromMilliseconds(250);
         private const uint WmNull = 0x0000;
@@ -81,9 +73,30 @@ namespace RevitBridge.Services
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool PostMessage(IntPtr windowHandle, uint message, IntPtr wParam, IntPtr lParam);
 
-        public RevitEventService()
+        public RevitEventService(Action<string>? diagnosticSink = null)
         {
+            _diagnosticSink = diagnosticSink;
             _externalEvent = ExternalEvent.Create(this);
+            // Constructed during OnStartup on Revit's UI thread. Capturing the
+            // dispatcher here avoids creating a worker-thread dispatcher later.
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            _uiWake = new OperatorUiWakeScheduler(
+                callback => dispatcher.BeginInvoke(DispatcherPriority.Background, callback),
+                () => HasPendingWork,
+                () =>
+                {
+                    // Being on the UI thread alone does not permit Revit API
+                    // model access. Only re-raise the registered ExternalEvent.
+                    var request = _externalEvent.Raise();
+                    var now = DateTime.UtcNow.Ticks;
+                    if (now - Interlocked.Read(ref _lastWakeDiagnosticTicks) >= TimeSpan.TicksPerSecond * 5)
+                    {
+                        Interlocked.Exchange(ref _lastWakeDiagnosticTicks, now);
+                        OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "ui_wake_" + request, Volatile.Read(ref _diagnosticOwner));
+                    }
+                }, error => OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
+                    "ui_wake_failed_" + error.GetType().Name, Volatile.Read(ref _diagnosticOwner)),
+                wakeMessageLoop: PostHostWakeMessage);
         }
 
         public Task<T> Run<T>(Func<UIApplication, T> action)
@@ -92,8 +105,10 @@ namespace RevitBridge.Services
         public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken)
             => Run(action, cancellationToken, null);
 
-        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId)
+        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId, string? source = null)
         {
+            var diagnostic = new OperatorRevitQueueDiagnostic(correlationId,
+                source ?? action.Method.DeclaringType?.FullName + "." + action.Method.Name);
             var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (cancellationToken.IsCancellationRequested)
             {
@@ -105,6 +120,7 @@ namespace RevitBridge.Services
             // unbounded queue that can make Revit appear frozen after one slow operation.
             if (Interlocked.CompareExchange(ref _inFlight, 1, 0) != 0)
             {
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "busy", diagnostic, Volatile.Read(ref _diagnosticOwner));
                 tcs.TrySetException(new RevitEventQueueException(
                     "revit_external_event_busy",
                     "Revit already has one Operator action in flight. Retry after that action completes.",
@@ -114,7 +130,10 @@ namespace RevitBridge.Services
             }
 
             var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId);
+            item.Diagnostic = diagnostic;
+            Volatile.Write(ref _diagnosticOwner, diagnostic);
             _queue.Enqueue(item);
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "admitted", diagnostic);
             if (cancellationToken.CanBeCanceled)
             {
                 // A cancellation that wins before Execute must remove the pending item and
@@ -159,6 +178,7 @@ namespace RevitBridge.Services
         }
 
         internal bool HasPendingWork => Volatile.Read(ref _inFlight) != 0 && !_queue.IsEmpty;
+        internal bool HasActiveIdleLease => _activeIdleLease.IsActive;
 
         internal bool ExecutePendingOnIdling(UIApplication app)
         {
@@ -174,7 +194,7 @@ namespace RevitBridge.Services
 
         private async Task MaintainRaiseUntilStartedAsync(QueueItem item)
         {
-            while (!item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending)
+            while (Volatile.Read(ref _stopping) == 0 && !item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending)
             {
                 await Task.Delay(BackgroundWakeInterval).ConfigureAwait(false);
                 if (item.Completion.Task.IsCompleted || Volatile.Read(ref item.ExecutionState) != QueueItem.Pending) return;
@@ -210,7 +230,26 @@ namespace RevitBridge.Services
             }
         }
 
-        private static void SignalHostMessageLoop()
+        internal void StopBackgroundWake()
+        {
+            Interlocked.Exchange(ref _stopping, 1);
+            _uiWake.Stop();
+            _activeIdleLease.Stop();
+        }
+
+        private void SignalHostMessageLoop()
+        {
+            // The scheduler sends both independent signals. A successful WPF
+            // post alone does not prove Revit serviced the ExternalEvent.
+            try { _uiWake.Request(); }
+            catch (Exception error)
+            {
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
+                    "ui_wake_post_failed_" + error.GetType().Name, Volatile.Read(ref _diagnosticOwner));
+            }
+        }
+
+        private void PostHostWakeMessage()
         {
             // ExternalEvent.Raise can leave its signal acknowledged but unserviced when Revit
             // is minimized. WM_NULL carries no command or input; it only wakes the existing
@@ -218,9 +257,18 @@ namespace RevitBridge.Services
             // activation, focus stealing, restoring the window, or Revit API access off-thread.
             try
             {
-                var windowHandle = Process.GetCurrentProcess().MainWindowHandle;
-                if (windowHandle != IntPtr.Zero)
-                    PostMessage(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero);
+                using (var process = Process.GetCurrentProcess())
+                {
+                    var windowHandle = process.MainWindowHandle;
+                    var posted = windowHandle != IntPtr.Zero && PostMessage(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero);
+                    var now = DateTime.UtcNow.Ticks;
+                    if (now - Interlocked.Read(ref _lastMessageWakeDiagnosticTicks) >= TimeSpan.TicksPerSecond * 5)
+                    {
+                        Interlocked.Exchange(ref _lastMessageWakeDiagnosticTicks, now);
+                        OperatorRevitQueueDiagnostic.Write(_diagnosticSink,
+                            posted ? "ui_message_wake_posted" : "ui_message_wake_unavailable", Volatile.Read(ref _diagnosticOwner));
+                    }
+                }
             }
             catch
             {
@@ -230,6 +278,7 @@ namespace RevitBridge.Services
 
         private void CancelQueuedItem(QueueItem expected)
         {
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "cancellation_requested", expected.Diagnostic);
             // If Execute already started, it owns the slot until the Revit API callback
             // returns. Releasing it here would permit overlapping access to Revit's API.
             if (Interlocked.CompareExchange(
@@ -260,6 +309,7 @@ namespace RevitBridge.Services
 
         private void FailQueuedItem(QueueItem expected, Exception error)
         {
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "raise_failed", expected.Diagnostic);
             if (_queue.TryDequeue(out var item))
             {
                 if (!ReferenceEquals(item, expected))
@@ -303,6 +353,8 @@ namespace RevitBridge.Services
                 }
                 else
                 {
+                    item.Diagnostic?.MarkStarted();
+                    OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "started", item.Diagnostic);
                     result = item.Action(app);
                 }
             }
@@ -318,6 +370,9 @@ namespace RevitBridge.Services
                 // Revit actions. A Raise made before this handler returns is safely handled
                 // by ExternalEventRequest.Pending and MaintainRaiseUntilStartedAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "released", item.Diagnostic);
+                if (Volatile.Read(ref item.ExecutionState) == QueueItem.Started)
+                    _activeIdleLease.RecordActivity();
             }
 
             if (canceled)

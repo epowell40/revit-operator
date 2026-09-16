@@ -1,9 +1,11 @@
+import { hasUnresolvedTrustedVerificationFailureV2, latestTrustedKernelSnapshotsV2 } from "./trusted_verification_state.js";
 import {
   evaluateGeneralRevitCapabilityAttempt,
   type GeneralRevitCapabilityCase,
   type GeneralRevitEvaluation
 } from "./general_revit_capability_acceptance.js";
 import { sha256Value } from "./protocol_v2_hash.js";
+import { assignmentUserPauseV2 } from "../work_packets/assignment_kernel_v2_pause.js";
 import {
   BENCHMARK_CASE_RESULT_V2_SCHEMA,
   BENCHMARK_STAGE_NAMES,
@@ -255,11 +257,14 @@ function stagesFor(
   const expectedObserved = evaluation.expected_path_observed;
   const previewRequired = truth.requested_effect === "preview";
   const verificationBasis = evaluation.verification_basis;
-  const readback = truth.requested_effect === "read"
+  const trustedVerificationFailed = hasUnresolvedTrustedVerificationFailureV2(trace.tool_results);
+  const readback = !trustedVerificationFailed && (truth.requested_effect === "read"
     ? hasAuthoritativeCanonicalRead(trace)
-    : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis);
+    : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis));
   const admissionRejected = canonicalAttempts(trace).some(({ attempt }) => String(record(attempt.admission).state) === "rejected");
   const substantiveError = String(record(trace.errors_retries_recoveries).error || "").trim();
+  const discoveryBudgetExhausted = !evaluation.completed && latestTrustedKernelSnapshotsV2(trace.tool_results).some(snapshot =>
+    record(snapshot.progress_blocker).code === "no_progress_budget_exhausted");
   const semanticStatus: BenchmarkStageStatusV2 = evaluation.answer_assertion_passed === false ? "fail"
     : evaluation.answer_assertion_passed === true || evaluation.verified ? "pass" : "uncertain";
   return [
@@ -268,8 +273,10 @@ function stagesFor(
       refusal ? "Agent rejected an in-scope capability." : "Intent assessment follows the retained execution/evaluator trace."),
     stage("target_grounded", missingTarget ? "uncertain" : expectedObserved || truth.target_identities.length > 0 ? "pass" : "uncertain",
       missingTarget ? "Exact target remained ambiguous." : "Target grounding is bound to expected paths or canonical target identities."),
-    stage("plan_admissible", admissionRejected ? "fail" : expectedObserved ? "pass" : "uncertain",
-      admissionRejected ? "Canonical admission rejected the proposed action." : "Expected execution lane was selected without a retained schema rejection."),
+    stage("plan_admissible", admissionRejected || discoveryBudgetExhausted ? "fail" : expectedObserved ? "pass" : "uncertain",
+      admissionRejected ? "Canonical admission rejected the proposed action." : discoveryBudgetExhausted
+        ? "Canonical controller stopped with no_progress_budget_exhausted before completing the requested work."
+        : "Expected execution lane was selected without a retained schema rejection."),
     stage("authorization_admission_satisfied", admissionRejected ? "fail" : truth.dispatched || truth.requested_effect === "read" ? "pass" : "uncertain",
       admissionRejected ? "Authorization or admission was not satisfied." : "Dispatch/admission evidence determines this stage."),
     stage("preview_correct_where_required", previewRequired ? (evaluation.completed ? "pass" : truth.dispatched ? "fail" : "uncertain") : "not_applicable",
@@ -279,7 +286,9 @@ function stagesFor(
     stage("effect_classified", truth.effect_state === "unknown" ? "uncertain" : "pass",
       `Authoritative effect state is ${truth.effect_state} (${truth.authority}).`),
     stage("postcondition_read_back", readback ? "pass" : truth.effect_state === "applied" || evaluation.completed ? "fail" : "not_applicable",
-      readback ? `Independent evidence basis: ${verificationBasis}.` : "No qualifying independent postcondition readback was retained."),
+      readback ? `Independent evidence basis: ${verificationBasis}.` : trustedVerificationFailed
+        ? "Canonical target-bound verification failed and has no acknowledged successful recovery."
+        : "No qualifying independent postcondition readback was retained."),
     stage("task_semantics_satisfied", semanticStatus,
       evaluation.answer_assertion_passed === false ? "Fixture-grounded semantic assertions failed." : "Semantic status follows authoritative assertions and verification."),
     presentationStatus(trace, truth, evaluation)
@@ -299,7 +308,7 @@ function failureCauses(
   if (failed.has("intent_understood")) out.push("intent_misunderstanding");
   if (failed.has("target_grounded")) out.push("target_grounding_failure");
   if (failed.has("plan_admissible")) out.push("planning_tool_selection_failure");
-  if (failed.has("authorization_admission_satisfied")) out.push("authorization_control_failure");
+  if (stages.some(entry => entry.stage === "authorization_admission_satisfied" && entry.status === "fail")) out.push("authorization_control_failure");
   if (/schema/i.test(JSON.stringify(record(trace.errors_retries_recoveries)))) out.push("schema_admission_failure");
   if (failed.has("action_dispatched")) out.push("dispatch_transaction_failure");
   if (truth.effect_state === "unknown") out.push("unknown_effect_reconciliation_failure");
@@ -340,6 +349,7 @@ function deliveryVerdict(
       && stages.find((entry) => entry.stage === "preview_correct_where_required")?.status === "pass") {
     return "verified_preview_completion";
   }
+  if (truth.effect_state === "applied" && hasUnresolvedTrustedVerificationFailureV2(trace.tool_results)) return "verification_evidence_failure";
   if (truth.effect_state === "applied" && evaluation.verified) {
     const recovered = canonicalAttempts(trace).some(({ attempt }) => Boolean(attempt.retry_of_attempt_id || attempt.reconciliation_of_attempt_id));
     return recovered ? "recovered_verified" : "first_pass_verified";
@@ -357,7 +367,7 @@ function runtimeVerdict(trace: JsonRecord): string {
   const kernels = kernelSnapshots(trace);
   if (kernels.length > 0) {
     const latest = kernels.at(-1)!;
-    return latest.terminal === true ? String(latest.outcome || "unknown") : "active";
+    return latest.terminal === true || assignmentUserPauseV2(latest) ? String(latest.outcome || "unknown") : "active";
   }
   const assignments = records(record(record(trace.tool_results).durable_assignment_projection).assignments);
   const terminals = assignments.map((entry) => String(record(entry.control_plane).terminal_state || entry.phase || "")).filter(Boolean);

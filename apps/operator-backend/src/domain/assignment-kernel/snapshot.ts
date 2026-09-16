@@ -1,3 +1,4 @@
+import type { DiscoveredAssignmentInputV2 } from "./input_registry.js";
 import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
@@ -6,6 +7,7 @@ import type { OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallV2 } from "./progress/provider_call.js";
 import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
+import type { AssignmentResultDeliveryV2 } from "./result_delivery.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export { ASSIGNMENT_SNAPSHOT_V2_SCHEMA };
@@ -15,7 +17,10 @@ export interface AssignmentSnapshotV2 {
   assignment_version: number;
   spec: AssignmentSpecV2;
   current_binding: AssignmentBindingV2;
+  execution_control?: Readonly<{ state: "paused" | "running"; command_id: string; changed_at: string }>;
+  discovered_inputs?: Readonly<Record<InputVariableIdV2, DiscoveredAssignmentInputV2>>;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
+  input_invalidated_operation_ids?: readonly OperationIdV2[];
   pending_input_variable_ids: readonly InputVariableIdV2[];
   clarifications: Readonly<Record<string, Readonly<{
     clarification_id: string;
@@ -43,6 +48,7 @@ export interface AssignmentSnapshotV2 {
   criterion_evaluation_versions: Readonly<Record<CriterionIdV2, number>>;
   outcome: AssignmentOutcomeV2;
   terminal: boolean;
+  result_delivery?: AssignmentResultDeliveryV2;
   terminal_reason?: string;
   in_flight_operation_ids: readonly OperationIdV2[];
   unresolved_unknown_operation_ids: readonly OperationIdV2[];

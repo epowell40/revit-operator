@@ -94,21 +94,23 @@ namespace RevitBridge.Logic.Handlers
             var origin = view.Origin;
             var right = view.RightDirection;
             var up = view.UpDirection;
-            var scale = Math.Max(1, view.Scale);
-
-            var topLeft = origin
-                + right.Multiply(outline.Min.U * scale)
-                + up.Multiply(outline.Max.V * scale);
-            var topRight = origin
-                + right.Multiply(outline.Max.U * scale)
-                + up.Multiply(outline.Max.V * scale);
-            var bottomLeft = origin
-                + right.Multiply(outline.Min.U * scale)
-                + up.Multiply(outline.Min.V * scale);
-
-            var frame = BuildRasterAffineFrame(topLeft, topRight, bottomLeft, widthPx, heightPx);
-            frame.SourceFrameKind = "view_outline";
-            return frame;
+            // Fit-to-page includes displayed annotation extents. CropBox can
+            // have a different center even when the exported pixels are equal.
+            // All view-image exporters must use this one displayed-plane basis.
+            var geometry = ExportedRasterFrameGeometry.FromViewOutline(
+                new[] { origin.X, origin.Y, origin.Z }, new[] { right.X, right.Y, right.Z }, new[] { up.X, up.Y, up.Z },
+                outline.Min.U, outline.Min.V, outline.Max.U, outline.Max.V, view.Scale, widthPx, heightPx);
+            XYZ Point(double[] point) => new XYZ(point[0], point[1], point[2]);
+            return new RasterAffineFrame
+            {
+                CropTopLeft = Point(geometry.SourceTopLeft), CropTopRight = Point(geometry.SourceTopRight),
+                CropBottomLeft = Point(geometry.SourceBottomLeft), TopLeft = Point(geometry.TopLeft),
+                TopRight = Point(geometry.TopRight), BottomLeft = Point(geometry.BottomLeft),
+                WidthPx = widthPx, HeightPx = heightPx, CropAspect = geometry.SourceAspect,
+                FrameAspect = geometry.RasterAspect, RasterAspect = geometry.RasterAspect, AspectMismatch = 0,
+                AspectCorrectionApplied = geometry.AspectCorrectionApplied,
+                AspectCorrectionAxis = geometry.AspectCorrectionApplied ? "x" : "", SourceFrameKind = "view_outline"
+            };
         }
 
         public static (string path, int widthPx, int heightPx, string diagnostic) CropRasterToModelFrame(

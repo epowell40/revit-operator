@@ -10,6 +10,93 @@ import { getWorkspaceRoot } from "./workspace.js";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
 
+test("bounded bootstrap contention retains a useful read retry receipt without authorizing a mutation replay", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-bootstrap-busy-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (extra: Record<string, unknown> = {}) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ schema: "dynamic-revit-phase2-live-evidence/v0", ok: false,
+        bootstrapAttempts: 8, workerStarted: false, workerOutput: null, registrationReceipt: "", snapshotReceipt: "",
+        previewReceipt: "", admission: null, v1Admission: null, applyReceipt: null, applyAuthorizationReceipt: null,
+        hostAuthenticationReceipts: [],
+        failure: "Revit remained busy before generated-code startup. No worker was launched and no preview or apply was dispatched.", ...extra }));
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+    const input = { source: "public class ReadProbe {}", mode: "read" as const };
+    const failed = await runDynamicRevitProgram(input, env, execute());
+    assert.equal(failed.execution_status, "failed");
+    assert.equal(failed.diagnostics[0]?.code, "REVIT_STARTUP_BUSY");
+    assert.equal(failed.iteration.retryable, true);
+    assert.equal(failed.canonical_attempt_settlement, undefined);
+    assert.equal(failed.checkpoint, null);
+    assert.deepEqual(failed.report, {});
+    const apply = await runDynamicRevitProgram({ ...input, mode: "apply" }, env, execute());
+    assert.equal(apply.iteration.retryable, false, "keep the conservative apply replay fence");
+    for (const ambiguous of [{ workerStarted: true }, { workerOutput: {} }, { bootstrapAttempts: 9 },
+      { registrationReceipt: "registration" }, { applyReceipt: "possible dispatch" }, { hostAuthenticationReceipts: ["host"] }]) {
+      const result = await runDynamicRevitProgram(input, env, execute(ambiguous));
+      assert.equal(result.diagnostics[0]?.code, "SUPERVISOR_FAILURE");
+      assert.equal(result.canonical_attempt_settlement, undefined);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("snapshot bounds reject oversized audits before installation or dispatch and admit the upper boundary", async () => {
+  for (const snapshot_limit of [0, 1001, 3000, 5000, 1.5]) {
+    await assert.rejects(() => runDynamicRevitProgram({ source: "public class Audit {}", mode: "read", snapshot_limit }, {},
+      async () => { throw new Error("must not dispatch"); }), /numeric bound/);
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-snapshot-bound-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const result = await runDynamicRevitProgram({ source: "public class Audit {}", mode: "read", category: "OST_DuctCurves", snapshot_limit: 1000 }, env, async (_file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      assert.equal(config.limit, 1000); assert.equal(config.readOnly, true);
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, workerOutput: { ok: true, sourceHash: sha256(source), executionStatus: "completed",
+        graph: { operations: [] }, report: { Inspected: "1000", Limit: "Bounded snapshot; total cohort unverified." }, logs: [], diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    assert.equal(result.execution_ok, true); assert.deepEqual(result.report, { Inspected: "1000", Limit: "Bounded snapshot; total cohort unverified." });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("read-only runner enforces an empty graph, retains host rejection diagnostics, and repairs within the same mode", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-read-runner-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor, OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (ok: boolean, operations: unknown[] = []) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      assert.equal(config.readOnly, true); assert.equal(config.apply, false);
+      assert.equal(config.category, "OST_DuctCurves"); assert.equal(config.limit, 20);
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok, previewReceipt: "",
+        failure: ok ? null : "Read-only generated code produced model operations. No preview or apply was dispatched.",
+        workerOutput: { ok: true, sourceHash: sha256(source), executionStatus: "completed", graph: { operations },
+          report: { Inspected: "20", Limit: "Bounded sample" }, logs: ["Inspected supplied DTOs"], diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: ok ? 0 : 1, stdout: "", stderr: "" };
+    };
+    const input = { source: "public class BadReport {}", mode: "read" as const, category: "OST_DuctCurves", snapshot_limit: 20 };
+    const failed = await runDynamicRevitProgram(input, env, execute(false, [{ kind: "MoveElement" }]));
+    assert.equal(failed.execution_status, "failed"); assert.match(JSON.stringify(failed.diagnostics), /Read-only generated code/);
+    const resume = { prior_run_id: failed.run_id, prior_evidence_sha256: failed.verification.evidence_sha256, mode: "repair" as const };
+    await assert.rejects(() => runDynamicRevitProgram({ ...input, source: "public class GoodReport {}", mode: "apply", resume }, env), /mode/);
+    const repaired = await runDynamicRevitProgram({ ...input, source: "public class GoodReport {}", resume }, env, execute(true));
+    assert.equal(repaired.execution_ok, true); assert.equal(repaired.iteration.attempt, 2);
+    assert.deepEqual(repaired.report, { Inspected: "20", Limit: "Bounded sample" });
+    assert.deepEqual(repaired.logs, ["Inspected supplied DTOs"]);
+    assert.equal(repaired.canonical_attempt_settlement?.effect_authority, "worker");
+    await assert.rejects(() => runDynamicRevitProgram(input, env, execute(true, [{ kind: "MoveElement" }])), /Read-only runtime evidence/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("dynamic runner supports authenticated hosted execution, remains bounded, and redacts trusted paths", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-mcp-runner-"));
   try {
@@ -52,6 +139,15 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
     assert.equal(hosted.canonical_attempt_settlement!.effect_state, "none");
     assert.equal(hosted.canonical_attempt_settlement!.effect_authority, "native_rollback");
     assert.equal(hosted.canonical_attempt_settlement!.request_dispatched, true);
+    const unresolved = await runDynamicRevitProgram({ source: "public class MaybeApplied {}", mode: "apply" }, env, async (_file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "timeout waiting for native apply receipt", workerOutput: {
+        ok: true, sourceHash: sha256("public class MaybeApplied {}"), executionStatus: "completed", diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      return { exitCode: 1, stdout: "", stderr: "timeout" };
+    });
+    assert.equal(unresolved.iteration.retryable, false, "a timeout after worker completion cannot authorize replaying an edit");
+    await assert.rejects(() => runDynamicRevitProgram({ source: "public class MaybeApplied {}", mode: "apply", resume: {
+      prior_run_id: unresolved.run_id, prior_evidence_sha256: unresolved.verification.evidence_sha256, mode: "retry" } }, env), /prior retryable failed attempt/);
     await assert.rejects(() => runDynamicRevitProgram({ source: "x".repeat(128_001), mode: "preview" }, env), /128,000/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -307,7 +403,7 @@ test("dynamic runner distinguishes source repair from transient retry and caps t
       };
       const bundle = sha256(`dynamic-revit-worker-diagnostics/v1\nCS1002|compile|error|edit_source|3|18|3|18|||1|${sha256(diagnostic.message)}`);
       const source = fs.readFileSync(config.sourceFile, "utf8");
-      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", workerOutput: {
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", previewReceipt: "", workerOutput: {
         sourceHash: sha256(source), executionStatus: "failed", diagnostics: [diagnostic], diagnosticBundleHash: bundle
       } }));
       return { exitCode: 1, stdout: "", stderr: "" };
@@ -342,5 +438,71 @@ test("dynamic runner distinguishes source repair from transient retry and caps t
     await assert.rejects(() => runDynamicRevitProgram({ source: "public class Broken {", mode: "preview", resume: {
       prior_run_id: current.run_id, prior_evidence_sha256: current.verification.evidence_sha256, mode: "retry"
     } }, env), /limited to five/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("dynamic runner binds2027 to supervisor config and rejects unsupported direct input before dispatch", async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"dynamic-2027-"));
+ try {
+  const supervisor=path.join(root,"supervisor.exe"),token=path.join(root,"token"),worker=path.join(root,"worker");
+  fs.writeFileSync(supervisor,"stub");fs.writeFileSync(token,"0123456789abcdef");fs.mkdirSync(worker);
+  const env={...process.env,REVIT_OPERATOR_MODE:"development",OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH:supervisor,OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY:worker,OPERATOR_TOKEN_FILE:token};
+  let calls=0;
+  const execute=async(_file:string,args:string[])=>{calls++; const config=JSON.parse(fs.readFileSync(args[1]!,"utf8"));assert.equal(config.targetRevitYear,"2027");
+   fs.writeFileSync(config.evidencePath,JSON.stringify({ok:true,workerOutput:{sourceHash:sha256("public class Program {}"),executionStatus:"completed",diagnostics:[],diagnosticBundleHash:emptyDiagnosticBundle}}));
+   return {exitCode:0,stdout:"",stderr:""};
+  };
+  const result=await runDynamicRevitProgram({source:"public class Program {}",mode:"preview",target_revit_year:"2027"},env,execute);
+  assert.equal(result.execution_ok,true);assert.equal(calls,1);
+  for(const year of ["2028","2027.2"])await assert.rejects(()=>runDynamicRevitProgram({source:"public class Program {}",mode:"preview",target_revit_year:year as any},env,execute),/Revit year/);
+  assert.equal(calls,1);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test("partial worker diagnostics stay unverified and dropping them is not repair progress", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-partial-diagnostics-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const execute = (includePartial: boolean) => async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      const source = fs.readFileSync(config.sourceFile, "utf8");
+      const base = { line: null, column: null, endLine: null, endColumn: null, stepId: null, assertionId: null };
+      const diagnostics = [
+        { ...base, code: "PROGRAM_EXCEPTION", message: "System.InvalidOperationException: Missing flow.", phase: "execute", severity: "error",
+          repairAction: "inspect_trace_and_repair_source", line: 10, retryable: true },
+        ...(includePartial ? [{ ...base, code: "PROGRAM_PARTIAL_OUTPUT", phase: "execute", severity: "info", retryable: false,
+          repairAction: "inspect_unverified_partial_output", message: JSON.stringify({ authority: "diagnostic_only", partial: true, replayIndex: 0,
+            report: { Inspected: "20" }, logs: ["Program wrote this before failing."], omittedLogs: 0, omittedReportEntries: 0 }) }] : [])
+      ];
+      const canonical = diagnostics.map(d => [d.code, d.phase, d.severity, d.repairAction, d.line ?? "", d.column ?? "", d.endLine ?? "",
+        d.endColumn ?? "", d.stepId ?? "", d.assertionId ?? "", d.retryable ? "1" : "0", sha256(d.message)].join("|")).join("\n");
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "worker_failed", previewReceipt: "", workerOutput: {
+        ok: false, sourceHash: sha256(source), executionStatus: "failed", deterministicReplayVerified: false,
+        graph: null, logs: [], report: {}, diagnostics, diagnosticBundleHash: sha256("dynamic-revit-worker-diagnostics/v1\n" + canonical)
+      } }));
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+    const source = "public class PartialDiagnosticFixture {}";
+    const initial = await runDynamicRevitProgram({ source, mode: "preview" }, env, execute(true));
+    assert.equal(initial.execution_status, "failed");
+    assert.equal(initial.execution_ok, false);
+    assert.equal(initial.verification.deterministic_replay_verified, false);
+    assert.deepEqual(initial.report, {});
+    assert.deepEqual(initial.logs, []);
+    assert.equal(initial.diagnostics[0]?.line, 10);
+    const partial = initial.diagnostics.find(d => d.code === "PROGRAM_PARTIAL_OUTPUT");
+    assert.equal(partial?.severity, "info");
+    assert.equal(JSON.parse(partial!.message).authority, "diagnostic_only");
+    assert.equal(initial.iteration.progress.current_diagnostic_count, 1);
+    const retried = await runDynamicRevitProgram({ source: source + "\n// logging removed, same unresolved exception", mode: "preview",
+      resume: { prior_run_id: initial.run_id, prior_evidence_sha256: initial.verification.evidence_sha256, mode: "repair" } }, env, execute(false));
+    assert.equal(retried.execution_status, "failed");
+    assert.equal(retried.iteration.progress.classification, "no_progress");
+    assert.equal(retried.iteration.progress.parent_diagnostic_count, 1);
+    assert.equal(retried.iteration.progress.current_diagnostic_count, 1);
+    assert.deepEqual(retried.iteration.progress.resolved_codes, []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

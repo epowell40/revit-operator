@@ -65,6 +65,9 @@ export type EvidenceProjectionV1 = {
   target_scope: string[];
   key_counts: Record<string, number>;
   key_facts: Record<string, string | number | boolean | null>;
+  // Exact small native JSON payload, retained with the same evidence identity.
+  // Its presence does not change observation class or prove inventory coverage.
+  inline_payload?: unknown;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];
@@ -118,6 +121,10 @@ export type EvidenceRetrievalResult = {
   selection: unknown;
   returned_bytes: number;
   complete: boolean;
+  pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
+    has_more: boolean; next_start: number | null; byte_limited: boolean };
+  missing_fields?: string[];
+  selection_origins?: Record<string, "payload" | "deterministic_projection">;
 };
 
 export type EvidenceTelemetryEventV1 = {

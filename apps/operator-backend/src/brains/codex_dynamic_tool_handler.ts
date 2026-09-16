@@ -6,12 +6,14 @@ import { findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js
 import {
   guardTeammateMcpCall,
   recordTeammateMcpResult,
+  reconcileTeammateCanonicalSettlementV2,
+  teammateLoopIsConversationForOwner,
   teammateLoopSessionIdForOwner
 } from "../teammate_loop_runtime.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
 import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
-import { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
+import { adaptMcpToolCallResultToDynamicResponse, attachDynamicObservationContext } from "./codex_dynamic_result_adapter.js";
 import {
   assignmentEvidenceScope,
   assignmentToolEvidenceTrust,
@@ -30,6 +32,7 @@ import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js"
 import { currentAssignmentJournalContext } from "../assignments/turn_journal.js";
 import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 import {
   failAssignmentKernelOperationV2,
   markAssignmentKernelOperationDispatchStartedV2,
@@ -64,7 +67,7 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
   // open until its receipt is reconciled; delaying evaluation itself permits
   // another operation to overtake already-authoritative task evidence.
   const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
-  if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
+  if (["terminal", "blocked", "paused", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
     // The canonical decision is already durable, but interrupting the Codex
     // turn here races the item/tool/call response and can make a successful
     // native result appear as a failed dynamic tool item. Arm the stop now;
@@ -76,6 +79,45 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
 
 export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   const params = request.params ?? {};
+  if ((params.namespace === "revit_operator" || params.namespace === "mcp__revit_operator") && params.tool === "operator_read_attachment") {
+    try {
+      const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId);
+      if (!sessionId) throw new Error("Attachment reads require a current host-owned conversation turn.");
+      const conversation = teammateLoopIsConversationForOwner(runtime, params.turnId);
+      const binding = runtime.assignmentKernelV2Binding?.(params.turnId, sessionId);
+      const snapshot = binding ? getAssignmentKernelSnapshotV2(binding.assignment_id) : null;
+      if (!conversation) {
+        const interrupted = findInterruptedAutoGoalForSession(sessionId);
+        const journal = binding ? null : currentAssignmentJournalContext(sessionId);
+        if (interrupted || snapshot?.execution_control?.state === "paused" || snapshot?.terminal
+          || (!snapshot && (!journal || journal.projection.terminal_state !== "open"))) {
+          throw new Error("The model task is not active; resume it before reading more task documents.");
+        }
+      } else if (binding) {
+        throw new Error("An independent document question cannot use an earlier model-task binding.");
+      }
+      // Document inspection cannot satisfy model observation/change criteria.
+      // The source receipt and page pixels are delivered directly to the active
+      // provider, without opening or settling a native/model operation.
+      return adaptMcpToolCallResultToDynamicResponse(await runtime.readAttachmentForTurn(params.arguments, { turnId: params.turnId, sessionId }));
+    } catch (error) {
+      return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false };
+    }
+  }
+  // Standalone research owns the current provider turn, not an earlier model
+  // assignment in this conversation. Only this read-only, policy-enforced tool
+  // may execute without a model assignment; native tools still need one.
+  if ((params.namespace === "revit_operator" || params.namespace === "mcp__revit_operator")
+      && params.tool === "web_fetch_evidence" && teammateLoopIsConversationForOwner(runtime, params.turnId)) {
+    const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId)!;
+    if (!runtime.assignmentKernelV2Binding?.(params.turnId, sessionId)) {
+      try {
+        return adaptMcpToolCallResultToDynamicResponse(await runtime.callTool(params.tool, params.arguments ?? {}, { turnId: params.turnId, sessionId }));
+      } catch (error) {
+        return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false };
+      }
+    }
+  }
   const interruptedAssignment = findInterruptedAutoGoalForSession(teammateLoopSessionIdForOwner(runtime, params.turnId));
   if (interruptedAssignment) {
     return {
@@ -114,6 +156,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       ? runtime.assignmentKernelV2Binding(params.turnId, sessionId)
       : null;
   const v2Snapshot = v2Binding ? getAssignmentKernelSnapshotV2(v2Binding.assignment_id) : null;
+  if (v2Snapshot?.execution_control?.state === "paused") {
+    runtime.queueAssignmentKernelV2TurnStop(params.turnId, "user_requested_pause");
+    return { contentItems: [{ type: "inputText", text: "Task paused by the user. No new work was dispatched; retain completed work for resume." }], success: false };
+  }
   const journalContext = v2Binding ? null : currentAssignmentJournalContext(sessionId);
   if (!v2Snapshot && !journalContext) {
     return {
@@ -138,6 +184,15 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   });
   const boundParams = { ...params, arguments: boundArguments.arguments };
   const boundRequest = { ...request, params: boundParams };
+  // The connected runtime's advertised schema is checked before the mutation
+  // guard and durable admission. Invalid input has no possible native effect;
+  // errors received after dispatch still require authoritative reconciliation.
+  try {
+    await runtime.validateToolArguments?.(String(params.tool || ""), boundArguments.arguments);
+  } catch (error) {
+    return { contentItems: [{ type: "inputText", text: `[tool_request_invalid] ${
+      (error instanceof Error ? error.message : String(error)).slice(0, 5_000)}` }], success: false };
+  }
   const parallel = parallelGuard.tryAcquire(boundParams);
   if (!parallel.accepted) {
     return { contentItems: [{ type: "inputText", text: parallel.message ?? "Concurrent dependent Revit call blocked." }], success: false };
@@ -199,8 +254,9 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       };
     }
     let accepted = false;
+    let rawResult: any;
     try {
-      const rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
+      rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
         turnId: params.turnId,
         sessionId,
         assignmentKernelV2: lease,
@@ -210,8 +266,13 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         }
       });
       const trustedVerification = recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      // The legacy loop may recognize the same readback again after the kernel
+      // has already verified its apply. Only the admitted canonical verification
+      // operation can carry that assertion; later discovery stays discovery.
       const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
-        trustedVerification ? { ...trustedVerification, operation_id: lease.operation_id } : null);
+        trustedVerification && lease.purpose === "verification" && lease.fulfillment_role === "verification"
+          ? { ...trustedVerification, operation_id: lease.operation_id } : null);
+      reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,
@@ -228,12 +289,15 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         source: `assignment_kernel_v2_context:${params.tool}`,
         budget: getEvidenceContextBudget()
       });
-      return adaptMcpToolCallResultToDynamicResponse(result, {
+      const response = adaptMcpToolCallResultToDynamicResponse(result, {
         tool: params.tool,
         arguments: boundArguments.arguments,
         projections: context.projections,
         omitted: context.omitted
       });
+      const observationContext = codexAssignmentEvidenceContextV2(settled.snapshot, lease.operation_id);
+      attachDynamicObservationContext(response, params.tool, observationContext);
+      return response;
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: error instanceof Error ? error.message : String(error) });
       const currentOperation = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
@@ -257,7 +321,11 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
       return {
-        contentItems: [{ type: "inputText", text: `[assignment_kernel_v2_tool_failed] ${error instanceof Error ? error.message : String(error)}` }],
+        contentItems: [{ type: "inputText", text: `[assignment_kernel_v2_tool_failed] ${error instanceof Error ? error.message : String(error)}` },
+          // Preserve bounded SDK validation/handler diagnostics even when a
+          // canonical receipt is missing. Text never grants effect authority.
+          ...(rawResult?.isError === true ? adaptMcpToolCallResultToDynamicResponse(rawResult).contentItems
+            .filter(item => item.type === "inputText").slice(0, 4).map(item => ({ ...item, text: item.text.slice(0, 8_000) })) : [])],
         success: false
       };
     } finally {

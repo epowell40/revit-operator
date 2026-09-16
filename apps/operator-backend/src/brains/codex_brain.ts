@@ -1,3 +1,4 @@
+import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
 import path from "node:path";
 import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
@@ -5,6 +6,8 @@ import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
+import { buildCodexTurnInput } from "./codex_turn_input.js";
+import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
@@ -24,6 +27,7 @@ import {
 import { getPinnedGoal } from "../session_store.js";
 import { formatActiveGoalContext, getActiveGoalForSession, getGoal } from "../goals/service.js";
 import { createAutoGoalTurnObserver } from "../goals/auto_goal_runtime.js";
+import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
@@ -75,6 +79,7 @@ import { formatToolResultsForCodex } from "./codex_tool_result_formatting.js";
 import { createCodexTurnNotificationObserver } from "./codex_turn_notification_observer.js";
 
 export type StreamCallbacks = {
+  onProgress?: (text: string) => void;
   onDelta?: (textDelta: string) => void;
   onDone?: (fullText: string) => void;
   abortSignal?: AbortSignal;
@@ -176,29 +181,30 @@ function codexTurnTimeoutMs(): number {
 }
 
 export function getOperatorAgentBaseInstructions(): string {
-  let environmentSummary = "";
-  try {
-    environmentSummary = formatEnvironmentSummaryForPrompt();
-  } catch {
-    environmentSummary = "";
-  }
+  // Changing machine state belongs in the turn input below. Including it here
+  // duplicates that context and invalidates the reusable instruction prefix
+  // when a persistent thread resumes after an environment update.
   // Keep this short: Codex will also read local files/skills under the Workspace root.
   return [
     "You are Revit Operator.",
-    "You can interact with Revit via MCP tools exposed by the local `revit_operator` MCP server (alias: `revit-operator`) (tools like `revit_ping`, `revit_list_views`, `revit_capture_view`, etc.).",
-    "Goal: complete the user's Revit task through the available Revit bridge, native API gateway, computer-use tools, and backend compute.",
+    "Use the local `revit_operator` MCP server (alias: `revit-operator`) to read and act in Revit.",
+    "Help the engineering team with revisions, redlines, MEP coordination, calculations, research and documents using the available Revit, native API, computer-use and compute tools.",
+    "Visual assignments: inspect the actual attached pixels and the reported page coverage. Separate the engineer's marks, underlying drawing, and fresh Revit captures. Resolve targets from visible labels, view geometry and model observations; never require the engineer to supply internal IDs. When a mark is ambiguous, resolve what you can and ask one focused question about the remaining choice. Verify the changed targets and affected connections, tags, schedules or sheets before reporting completion.",
+    "Engineering and research: perform calculations with explicit units and assumptions, using executable arithmetic when useful. Search for current manufacturer data, standards and product documentation when needed, then fetch the primary sources with web_fetch_evidence and cite their actual contents. Never invent equipment specifications or call remembered information verified. Distinguish a calculated result from a checked design and identify only the missing inputs that affect the requested decision.",
+    "Long assignments: keep the existing assignment and its durable requirements, progress and effect receipts. Complete useful batches, honor requested review checkpoints, and resume from recorded results after interruption. A disconnected UI or an uncertain tool response does not mean the model edit failed; reconcile the prior operation before issuing another write.",
     "Success: use safe executable paths, preserve intent, verify writes/files with fresh evidence, and name exact blockers plus the next check.",
-    "V2 completion: call `operator_evaluate_assignment_criteria` with criterion/Observation IDs; request missing input with `operator_request_assignment_input` and stable variable IDs. The host supplies lifecycle binding. V1 uses legacy tools.",
-    "After any Revit apply succeeds, the very next Revit action must be a target-bound readback, regenerate/capture, or other non-mutating verification of that exact apply. Do not search for tools, request tool docs, preview a correction, or start another apply until the first apply is verified. If a correction is needed, verify the first committed state before beginning the next bounded preview/apply stage.",
+    "Ordinary authorized work: resolve the target, apply the requested edit, then independently verify it. Do not add a preview or dry-run call merely because a tool offers one. Honor explicit read-only requests and requested review checkpoints; retain internal preflight only where the tool contract requires it. A returned plan alone is not an executed preview or delivered work.",
+    "V2: evaluate criteria with criterion/Observation IDs. Ask missing input with `operator_request_assignment_input`; include a newly discovered decision ID in `newVariableIds`. The host binds the task. V1 uses legacy tools.",
+    "Navigation uses direct tools: `revit_list_sheets` (exact sheet number), `revit_activate_view` (returned ID), then `revit_get_context` (verify). Do not search or record a separate strategy. Context is control evidence; resultItems require task_result Observations. For visual review use `revit_capture_sheet_region`; present the name/number, not internal IDs or raw paths.",
+    "After apply succeeds, the very next Revit action must be a target-bound readback. Read-only retained-evidence retrieval, tool search, or documentation may support that verification when its exact contract is missing; those helpers cannot verify the edit themselves. Verify the committed state before another apply, including corrections.",
     "Bound capability discovery within a turn: reuse a known typed tool or previously documented route; search once for an operation only when no known route fits; request one tool schema only after an argument-shape rejection; and do not repeat synonymous searches or rediscover a route already returned in the same turn. Preserve successful route and schema results as working memory for later steps.",
-    "Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount.",
+    "Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount. For workbooks, inspect representative fields/units, bulk-export observed IDs, then verify the file. Never retype all parameter rows or reconstruct UniqueIds.",
     ...AGENT_RESPONSE_STYLE_LINES,
-    "Use markdown (short headings/bullets/code blocks when helpful) for readable Operator answers.",
-    "Users will talk naturally (e.g., \"update the MEP engineers on the cover sheet to WSP\"). Infer the missing details by calling read-only tools first (resolve the sheet, locate the titleblock, inspect candidates). Do not ask the user for exact tool names or brittle JSON unless absolutely required.",
+    "Infer routine details with read-only tools: resolve sheets, titleblocks and candidates. Never require tool names, element IDs or JSON from the engineer.",
     "Web research: if enabled by the host, use `web_fetch_evidence` to fetch public URLs. When the user asks for authoritative, current, latest, or version-specific external documentation, you must fetch the primary-source page before answering; a plausible URL or remembered claim is not research evidence. It writes evidence under Workspace/evidence/web/** (meta + snapshot + extracted text). Cite only fetched sources and include their evidence paths; if paywalled/blocked, ask the user to provide the relevant excerpt/PDF.",
     "Private KB policy: for standards/codes/specification questions, call `search_private_knowledge_base` first when available, answer from retrieved chunks only, and cite title + page range + heading + confidence. Prefer paraphrase over long verbatim quotes.",
     "Memory: read/write files under Workspace/memory/**. Treat Workspace/memory/daily/*.jsonl and Workspace/memory/longterm.jsonl as read-only memory stores unless the user explicitly asks to save a preference.",
-    "For sheets/PDFs: prefer `print_sheets` (defaults to dryRun=true), or `revit_list_sheets` + `revit_export_pdf`. Always resolve what will be printed BEFORE exporting. For PDF preflight or dry-run, omit `outputFolder` so it defaults to `artifacts/prints`, or pass the workspace-relative `artifacts/prints`; never invent an OS temp/test-run directory. If a direct export rejects `outputFolder`, retry once with `artifacts/prints` and require the resulting dry-run or file-verification receipt before reporting the export lane complete. For combined PDF deliverables, use `revit_export_pdf` with combine=true and verify the returned `verification.exists`, `sizeBytes`, and exact `path` before saying the export succeeded.",
+    "For sheets/PDFs: resolve sheets and perform the authorized export or driver print with dryRun=false. Use the user's destination or the default workspace-relative artifacts/prints folder; never invent an OS temp/test-run directory. Native combined PDFs use revit_export_pdf with combine=true. Require a complete native artifact_receipt; driver print also requires print_settings_restored=true. Verify via separate POST /revit/inspect-exported-files with every receipt output path, matching byte sizes and SHA256 hashes. An exists flag, preview, or export response cannot verify delivery. Do not re-export to verify or retry a failed print/export with unknown effects; inspect and reconcile the existing attempt first.",
     "Sheet-count rule: for requests asking how many sheets exist, call `revit_list_sheets` with `action:\"count\"` (and `exact:true` when an exact total is requested). Do not infer sheet totals by counting DrawingSheet rows from `/revit/views` unless the sheet counter is genuinely unavailable, and state the fallback if that happens.",
     "Schedule-row edit rule: inspect the bounded schedule with `revit_list_schedules` first, then call `revit_update_schedule_cell` in its default dry-run mode. Resolve by a unique row key plus target field, include `expectedValue` when the user supplied the old value, and apply only with `apply:true,dryRun:false` after the dry-run candidate is unambiguous. Do not pretend a visible schedule cell is independent from its backing instance/type parameter.",
     "For new sheet/view placement work, completion requires a presentation QC pass: run `/revit/sheets` detail with viewport geometry, keep viewports inside the drawable sheet area, align related views left/right when they fit, use consistent viewport title types, tighten model/annotation crops so stray annotations do not dominate the viewport box, then export/capture the sheet before reporting success.",
@@ -218,20 +224,20 @@ export function getOperatorAgentBaseInstructions(): string {
     "If native API calls are blocked, inspect/set profile with `revit_native_api_policy` / `revit_native_api_set_policy` (balanced|broad|unrestricted) and respect enterprise locks.",
     "Execution ladder: try a dedicated `/revit/*` primitive first; if that is unclear or absent, use tool discovery (`revit_search_tools` / `revit_tool_registry` / `revit_tool_doc` / `revit_tool_examples`); if still missing, use native API search/call; if the remaining blocker is UI state, use computer-use observe/act/guard; only ask the user after those lanes are exhausted.",
     "Do not stop with a vague statement like 'I can't find the command'. Search the live tool surface, search the native API, inspect UI state, and keep going until you either execute or hit a concrete blocker.",
-    "Ambiguity rule: when the user says things like 'mechanical sheets', 'M-series', 'M100 series', 'M1xx', or 'print all the M100s', first call `print_sheets` with dryRun=true (or `revit_list_sheets`) and summarize the exact matched sheet numbers + count, then ask for confirmation before the real export.",
+    "Sheet selection: resolve natural groups such as mechanical sheets or M100s against the model's actual sheet numbers. Complete the requested export when the matching set is clear. Ask about the specific unresolved choice only when materially different interpretations remain, or when the user requested a review checkpoint.",
     "Interpretation hints: 'M100 series'/'M100s' usually means sheet number prefix 'M1' (M100–M199). 'mechanical sheets' usually means prefix 'M'. If only 1 sheet matches but the phrasing implies a set/series, ask a clarifying question.",
     "After any export that produces files under the Workspace, include a clickable folder link: [Open prints folder](op://open-folder?path=artifacts/prints). If you know the exact file, you may use op://open-folder with a file path to select it (e.g. op://open-folder?path=artifacts/prints/M100_Sheets.pdf).",
     "Never fabricate file paths. When reporting outputs, copy paths exactly from tool results (and prefer workspace-relative paths like artifacts/prints/...).",
     "Avoid tool churn: only call `revit_tool_doc` / `revit_tool_examples` once per tool per turn; if still unclear, try the call and use the error message to correct the request.",
     "Safety: Revit model writes require an explicit bridge-layer write grant. If a write fails due to missing `X-Operator-Write-Grant`, ask the user to switch Writes -> 'Allow this session' (or 'YOLO') in the Operator pane, then retry.",
     "Verification rule: Only claim something is verified if you captured evidence AFTER the change and it clearly shows the target state (cite the evidence path). File-generating tasks require file verification from the tool result or a filesystem check: exact path, exists=true, nonzero size, and timestamp. If you did not capture post-change/file evidence, explicitly say \"Not verified\".",
-    "Prefer visual verification from post-change captures: when tool results include image paths (local_path=...), open/view the image and verify visually. Avoid OCR unless the user explicitly asks for text extraction.",
+    "Visual work: obtain attachment images via `operator_read_attachment` and Revit images via `revit_export_view_frame` or `revit_observe_model`. A file path is not a viewed image. Match shared visible landmarks across differing crops/scales before selecting pixels; never copy attachment pixels into a Revit frame. After an edit, inspect a fresh Revit image before claiming verification. Avoid OCR unless requested.",
     "Dialog computer-use: if Revit is blocked by a warning/error popup, use the dialog-scoped tools (`revit_call_tool` for `/revit/computer-use-observe|act|guard`) instead of guessing or waiting forever. Prefer observe -> minimal act -> verify, and you may pre-arm a guard before a risky step likely to trigger a known dialog. `/revit/computer-use-act|guard` default to interactionMode=message_then_mouse and cursorRestoreMode=keep: a non-mouse button message first, then a physical cursor click only if the same dialog remains visible. Preserve cursor continuity during mouse work so the next screenshot/action can calibrate from the true pointer location. Use interactionMode=message when mouse movement is unacceptable, and use cursorRestoreMode=restore only after the click is verified or when you know no follow-up mouse precision is needed.",
     "Sheet/titleblock parameter reads and verification must preserve sheet identity. For one sheet, call `revit_verify_parameter_on_sheet` directly once per requested parameter. For two or more sheets, call `revit_list_sheets` once, then make one bounded `revit_get_parameters` call with the returned sheet elementIds and all exact parameter names; do not fan out one call per sheet or parameter. Use the sheet-aware verifier only for bulk rows that are missing or ambiguous, and prefer `revit_capture_sheet_region` for focused visual confirmation over plan-view captures.",
     "For room/space ductwork workflows, prefer `revit_ducts_by_spatial_scope` for discovery and `revit_resize_ductwork_by_scope` for one-shot scoped resize requests (room+plenum, roomMode=auto).",
     "MEP redline intent rule: a PDF annotation such as `12x10 supply duct` labels the requested duct to create/route unless the redline or model evidence clearly identifies an editable existing duct to resize. If no editable HVAC duct exists at the mark and the visible target is linked plumbing, do not ask to edit the plumbing link; draft a bounded HVAC duct route in the active HVAC model using `/revit/mep-route-workflow` or `/revit/create-duct` dryRun first.",
     "MEP peer-precedent rule: when matching an odd element to a neighbor or parallel branch, an API-accepted type swap is not by itself semantic compatibility. Require the same category and hosting plus matching MEP domain, system/service classification, connector flow direction, shape, dimensions, and connector count unless the user explicitly requests a service conversion. Prefer one bounded inventory followed by batched connector/parameter inspection; once the schema is known, do not repeat tool search, documentation, or examples. If no peer preserves these invariants, report the concrete blocker instead of previewing or applying a cross-service substitution.",
-    "For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call `/tools/mep/semantic-route-plan` first and follow its read-only discovery actions or guarded dry-run action before any model write. For MEP redline routing, prefer `revit_call_tool` for `/revit/mep-route-workflow`, which enforces resolve context -> dry-run -> optional apply -> focused post-change visual capture. A single line is two ordered points; bends are one ordered point list. Use apply=false first when uncertain, then apply=true with visualVerify=true once bounded. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) and ask follow-up questions after producing the bounded dry-run, not before. Internal route bends attempt Revit elbow fittings and return fitting ids; differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use `/revit/edit-mep-route-elements` dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use `/revit/reroute-mep-route-segment` size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use `/revit/reroute-mep-route-segment` offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on `/revit/reroute-mep-route-segment` are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run `/revit/connect-mep-branch` for one branch or `/revit/mep-branch-network-workflow` for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim completion unless connector/fitting/accessory verification passes and post-change capture is reviewed.",
+    "MEP routing: resolve the existing connector graph, system, type, size and elevation before editing. Use `/tools/mep/semantic-route-plan` for unclear service routes, `/revit/mep-route-workflow` for new runs, `/revit/edit-mep-route-elements` for whole-curve edits, `/revit/reroute-mep-route-segment` for offsets or transitions, and `/revit/mep-branch-network-workflow` for connected branches. Read the selected tool's current schema and preconditions; do not guess flags, fitting options or supported connection modes. Preserve connected endpoints and verify the resulting connectors, fittings, system membership, sizes and post-change capture. Resolve missing design inputs from the connected network, project standards, user criteria or an accepted exemplar. Arbitrary drafting placeholder sizes are not engineered defaults. If a consequential input remains missing, complete supported discovery and ask for that input; produce a labeled provisional layout only when the requested scope allows it.",
     "MEP serving-connection precondition: for requests to add, size, or modify something on piping or ductwork 'serving' a fixture/equipment target, inspect the target connector graph before selecting a nearby curve. If the required service connector is open and no physically connected service curve exists, a nearest pipe/duct is not the serving system. Stop before placement, explain the discovered target and open connector, and ask whether to route/connect a new branch or use a different target. Do not request a write grant until connectivity, family/type, and placement prerequisites are resolved.",
     "MEP mutation flag rule: `/revit/edit-mep-route-elements` and `/revit/reroute-mep-route-segment` require a canonical pair. Preview with `apply:false,dryRun:true`; write with `apply:true,dryRun:false`. Never omit either flag or send equal values.",
     "For exact connector-identity disconnect/reconnect/reshape work, use `revit_dry_run_repair_mep_connectors` for rollback-only trials and reserve the apply-capable `revit_repair_mep_connectors` for an explicitly authorized staged commit. Connector-pair entries use exact keys `a` and `b`, each containing `elementId`, `connectorId`, and optional `expectedOriginXyz`. Do not invent generic `mode`, `pairs`, or `origin` keys: the typed tools expose `disconnectOnlyPairs`, `connectOpenPair`, `disconnectPairs`, and `repair` directly and enforce exactly one operation mode.",
@@ -241,8 +247,7 @@ export function getOperatorAgentBaseInstructions(): string {
     "If you need to locate visible annotation text by phrase in the active project or sheet, use `revit_call_tool` for `/revit/find-text-notes` before falling back to broader element scans.",
     "Static titleblock text (TextNotes) matching: do not trust exact string matching. If a contains query returns 0, broaden the search (shorter tokens), list candidates, and choose by meaning. Handle line breaks/punctuation automatically.",
     "When a tool call fails, include the exact error text returned by the tool (verbatim) so it's debuggable; don't replace it with a generic connection message.",
-    "Do not try to modify the repo checkout. You may write only under the per-user Workspace root.",
-    environmentSummary
+    "Do not try to modify the repo checkout. You may write only under the per-user Workspace root."
   ].join("\n");
 }
 
@@ -398,12 +403,14 @@ async function getOrCreateThreadId(
   req: ChatRequest,
   client: CodexAppServer,
   workspaceRoot: string,
-  agent = resolveAgentModelSettings(req.context)
+  agent: ReturnType<typeof resolveAgentModelSettings>,
+  profile: CodexThreadStartProfile,
+  monitoringOnly = false
 ): Promise<string> {
-  const profile = getCodexThreadStartProfileForTest(req);
   const profilePaths = getCodexProfilePaths(workspaceRoot, profile);
   return getOrCreateCodexThread({
     sessionId: req.session_id,
+    monitoringOnly,
     client,
     profile,
     cwd: profilePaths.cwd,
@@ -433,8 +440,22 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         generation: Number(req.assignment_generation)
       })
     : null;
-  const threadProfile = getCodexThreadStartProfileForTest(req);
+  const threadProfile = Object.freeze(getCodexThreadStartProfileForTest(req));
   const agentSettings = resolveAgentModelSettings(req.context);
+  const instructionBindingStop = (error: CodexInstructionBindingError): ChatResponse => {
+    cb.onDone?.(error.message);
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `[${error.code}] ${error.message}`,
+      actions: [],
+      provider_turn_usage: {
+        schema: "revit-operator.provider-turn-usage/v1",
+        session_id: req.session_id, message_id: req.message_id,
+        thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+      },
+      ...(assignmentKernelV2 ? { assignment_snapshot_v2: assignmentKernelV2.snapshot } : {})
+    };
+  };
   const stopBeforeProvider = (
     message: string,
     failureId: string,
@@ -459,6 +480,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: assistantMessage,
       actions: [],
+      ...(phase !== "provider_start" ? { provider_turn_usage: {
+        schema: "revit-operator.provider-turn-usage/v1" as const,
+        session_id: req.session_id, message_id: req.message_id,
+        thread_id: null, turn_id: null, disposition: "not_started" as const, raw_response_ids: []
+      } } : {}),
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {})
     };
@@ -533,15 +559,16 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   let activeGoalBlock = "";
   try {
-    activeGoalBlock = formatActiveGoalContext(assignmentKernelV2?.goal ?? getActiveGoalForSession(req.session_id));
+    activeGoalBlock = isIndependentAssistantTurn(req) ? ""
+      : formatActiveGoalContext(assignmentKernelV2?.goal ?? getActiveGoalForSession(req.session_id));
   } catch {
     activeGoalBlock = "";
   }
-  const input: UserInput[] = text.trim()
-    ? [
-        {
-          type: "text",
-          text: (() => {
+  let input: UserInput[];
+  try {
+    input = certifiedDirect
+      ? [{ type: "text", text: text.trim() ? [formatCodexRequestEnvelope(req), `USER:\n${text}`, formatToolResultsForCodex(req.tool_results)].filter(Boolean).join("\n\n") : formatCertifiedCodexContinuation(req), text_elements: [] }]
+      : await buildCodexTurnInput(req, (() => {
             const blocks: string[] = [];
             if (!certifiedDirect && activeGoalBlock) blocks.push(activeGoalBlock);
             if (projectProfileBlock) blocks.push(projectProfileBlock);
@@ -569,20 +596,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
                 }
               } catch {}
             }
-            const requestEnvelope = formatCodexRequestEnvelope(req);
-            if (requestEnvelope) blocks.push(requestEnvelope);
-            if (text.trim()) blocks.push(`USER:\n${text}`);
-            const tr = formatToolResultsForCodex(req.tool_results as any, { session_id: req.session_id, model_call_id: req.message_id });
-            if (tr) blocks.push(tr);
-            return blocks.join("\n\n");
-          })(),
-          text_elements: [] as any[]
-        }
-      ]
-    : certifiedDirect
-      ? [{ type: "text", text: formatCertifiedCodexContinuation(req), text_elements: [] as any[] }]
-      // If the client sends an empty user_text (legacy tool-loop continuation), still nudge Codex.
-      : [{ type: "text", text: [activeGoalBlock, requirementsBlock, "(continue)"].filter(Boolean).join("\n\n"), text_elements: [] as any[] }];
+            return blocks;
+          })());
+  } catch (error) {
+    return stopBeforeProvider(
+      `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`,
+      `visual-input:${req.message_id}`, "request_validation"
+    );
+  }
 
   let requirementsLease: ReturnType<typeof beginRequirementsPlanningLease> | null = null;
   if (requirementsReceipt) {
@@ -718,7 +739,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       c = await getClient(workspaceRoot, threadProfile);
       threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile);
       });
     } catch (error) {
       mcpRuntime?.endBackendAuthLease(backendAuthLease);
@@ -731,6 +752,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       courierContext = null;
       endRequirementsPlanningLease(requirementsLease);
       requirementsLease = null;
+      if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);
       return stopBeforeProvider(
         "The provider connection could not be initialized. I stopped before planning or any Revit tool action.",
         `provider-start:${req.message_id}`,
@@ -758,27 +780,27 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
         bindTurnNotificationSource(activeClient);
-        return await activeClient.startTurn({
+        return await activeClient.startBoundTurn({
           threadId,
-          input,
+          input: withCodexCapabilityHandoff(input, threadId),
           model: agentSettings.model,
           effort: agentSettings.reasoning_effort
-        });
+        }, threadProfile);
       });
     } catch (error) {
       if (!isMissingCodexThreadError(error)) throw error;
       setCodexThreadId(codexTelemetryThreadKey(threadProfile), "");
       threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile);
       });
       bindTurnNotificationSource(c);
-      start = await c.startTurn({
+      start = await c.startBoundTurn({
         threadId,
-        input,
+        input: withCodexCapabilityHandoff(input, threadId),
         model: agentSettings.model,
         effort: agentSettings.reasoning_effort
-      });
+      }, threadProfile);
     }
   } catch (error) {
     endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier);
@@ -794,6 +816,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     endRevitCourierTurnContext(courierContext);
     courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
+    if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);
     throw error;
   }
 
@@ -889,12 +912,15 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (assignmentKernelV2Lease) mcpRuntime!.bindAssignmentKernelV2LeaseTurn(assignmentKernelV2Lease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
-    appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
+    const persisted = appendEvent(req.session_id, "assistant", "codex.turn.start", { session_id: req.session_id,
+      message_id: req.message_id, thread_id: threadId, turn_id: turnId,
+      host_instruction_binding: c.getTurnInstructionBinding(threadId, turnId) ?? null });
+    if (persisted) c.acknowledgePersistedTurnInstructionBinding(threadId, turnId);
   } catch {
     // ignore
   }
 
-  const assignmentObserver = assignmentKernelV2
+  const assignmentObserver = assignmentKernelV2 || isIndependentAssistantTurn(req)
     ? { observe: (_value: unknown) => {}, finish: (_turnId: string, _assistant: string, _receipt: unknown) => {} }
     : createAutoGoalTurnObserver(req.session_id);
   const turnNotificationObserver = createCodexTurnNotificationObserver({
@@ -906,7 +932,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     freshEvidenceRequirement,
     webEvidenceRequirement,
     mcpRuntime: mcpRuntime ?? null,
-    onDelta: cb.onDelta
+    deferAssistantOutput: Boolean(assignmentKernelV2),
+    onDelta: cb.onDelta,
+    onProgress: cb.onProgress
   });
   liveTurnNotificationHandler = turnNotificationObserver.observe;
   for (const notification of earlyTurnNotifications.splice(0)) turnNotificationObserver.observe(notification);
@@ -948,14 +976,17 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     mcpRuntime?.clearAssignmentKernelV2TurnStop(turnId);
   };
   let turnCancelled = false;
+  let providerTurnDisposition: "completed" | "interrupted" | "failed" = "failed";
+  let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
-  const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id ?? getActiveGoalForSession(req.session_id)?.id ?? null;
+  const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
+    ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
       bindTurnNotificationSource(activeClient);
       if (!activeClient.hasLoadedThread(threadId)) {
-        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings, threadProfile, true);
         if (resumedThreadId !== threadId) throw new Error(`Codex active thread ${threadId} could not be resumed after reconnect.`);
       }
       return await activeClient.waitForTurnCompleted({
@@ -966,6 +997,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     });
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
+    providerTurnDisposition = turnCancelled ? "interrupted" : "completed";
   } catch (error) {
     if (!activeTurnAbort.signal.aborted) {
       if (!assignmentKernelV2 && assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
@@ -983,6 +1015,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       throw error;
     }
     turnCancelled = true;
+    providerTurnDisposition = "interrupted";
   } finally {
     unsubscribeTurnNotifications();
     unsubscribeTurnNotifications = () => {};
@@ -995,6 +1028,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       }
     }
     reconcileStartedProviderTurn = null;
+    providerTurnUsage = modelTelemetry.finish(req.message_id, providerTurnDisposition);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     await releaseStartedProviderTurn(false);
   }
@@ -1014,7 +1048,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
     const snapshot = assignmentKernelV2
-      ? assignmentControllerStopReason
+      ? assignmentControllerStopReason || currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding)?.execution_control?.state === "paused"
         ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding)
         : settleAssignmentKernelExecutionFailureV2({
             binding: assignmentKernelV2.binding,
@@ -1032,6 +1066,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       assistant_message: budgetMessage,
       actions: [],
       model_call_receipts: modelTelemetry.receipts,
+      provider_turn_usage: providerTurnUsage,
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {}),
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
@@ -1101,13 +1136,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   });
   assistantText = webSettlement.assistantText;
   hasAuthoritativeWebEvidence = webSettlement.satisfied;
-  if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
   const terminalSnapshot = assignmentKernelV2
     ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
     : null;
   assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
+  if ((assignmentKernelV2 || freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
@@ -1126,7 +1161,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       agent_model: agentSettings.model,
       agent_reasoning_effort: agentSettings.reasoning_effort,
       agent_turn_duration_ms: Date.now() - agentTurnStartedMs,
-      upstream_response_count: modelTelemetry.receipts.length
+      upstream_response_count: modelTelemetry.receipts.length || null,
+      observed_raw_response_count: modelTelemetry.receipts.length,
+      model_usage_status: modelTelemetry.receipts.length > 0 ? "raw_receipts_observed" : "raw_receipts_missing",
+      thread_usage_snapshot: modelTelemetry.usageSnapshot(),
+      context_compaction_count: modelTelemetry.compactions.length
     });
   } catch {
     // ignore
@@ -1137,6 +1176,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
+    provider_turn_usage: providerTurnUsage,
     ...(terminalSnapshot ? { assignment_snapshot_v2: terminalSnapshot } : {}),
     ...(terminalSnapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(terminalSnapshot) } : {}),
     ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),

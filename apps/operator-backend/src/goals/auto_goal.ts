@@ -1,6 +1,7 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
-import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
-import { hasAuthoritativeLeadingNoWriteFraming } from "../no_write_intent.js";
+import { requestedWorkbookExport } from "../artifact_export_intent.js";
+import { classifyAgentTurn, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "../no_write_intent.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -8,7 +9,7 @@ const SPATIAL = /\b(room|wall|sheet|view|redline|markup|receptacle|outlet|device
 const VISUAL = /\b(redline|markup|screenshot|capture|image|pdf|shown|marked|visual)\b/i;
 const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply|update|fix|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|print)\b/i;
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
-const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection|branch|fitting|system|connector|topology|level|plan)\b/i;
+const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|note|parameter|selection|branch|fitting|system|connector|topology|level|plan)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|identify|inspect|check|query|report|compare|audit|preview|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 const EXECUTABLE_PREVIEW = /\b(?:execute|perform|run|simulate)\b[^.!?]{0,80}\b(?:preview|preflight|dry[- ]?run|rollback)\b|\b(?:executable|transaction(?:al)?|rollback)\s+(?:change\s+)?preview\b|\bshow me (?:the )?change\b/i;
@@ -26,7 +27,10 @@ export type AutoGoalDecision = {
 };
 
 export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
-  const text = (userText ?? "").replace(/\s+/g, " ").trim();
+  const objective = (userText ?? "").trim();
+  // Classification and titles use a compact copy. The immutable assignment
+  // keeps tables, code indentation and paragraph boundaries from the brief.
+  const text = objective.replace(/\s+/g, " ");
   const signals: string[] = [];
   if (!text) return empty(text);
   if (MULTI_ACTION.test(text)) signals.push("multiple Revit actions or batch scope");
@@ -35,24 +39,26 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (VISUAL.test(text)) signals.push("visual/redline interpretation");
   if (OUTCOME.test(text)) signals.push("outcome-oriented request");
   const explicitMutation = hasExplicitMutationVerb(text);
+  const turnKind = classifyAgentTurn(text);
   const liveModelRequest = LIVE_MODEL_OBJECT.test(text) && (LIVE_MODEL_OPERATION.test(text) || explicitMutation);
   if (liveModelRequest) signals.push("live Revit model work");
 
   let score = signals.length;
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
-  const shouldStart = liveModelRequest || score >= 2;
+  const shouldStart = liveModelRequest || score >= 2 || turnKind === "mutation";
   const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const informationalReadOnlyPlan = isExplicitNoWriteRequest(text)
     && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
     && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
     && !EXECUTABLE_PREVIEW.test(text);
-  const explicitNoWrite = isExplicitNoWriteRequest(text);
+  const whatIfPreview = hasNoncommittingChangePreviewRequest(text);
+  const explicitNoWrite = isExplicitNoWriteRequest(text) || whatIfPreview;
   const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
-  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
+  const requestedEffect = requestedWorkbookExport(text) ? "apply" : (PREVIEW_REQUEST.test(previewIntentText(text)) || whatIfPreview) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
-    : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (explicitMutation && !explicitNoWrite)
+    : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (turnKind === "mutation" && !explicitNoWrite)
       ? "apply"
       : "read";
   return {
@@ -60,18 +66,13 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     score,
     signals,
     title: makeTitle(text),
-    objective: text,
+    objective,
     requestedEffect,
-    acceptanceCriteria: liveModelRequest
-      ? [
-          "The requested Revit work is completed or a concrete blocker is reported.",
-          "The reported result is grounded in successful live Revit tool evidence from this assignment."
-        ]
-      : [
-          "The requested Revit outcome is completed or a concrete blocker is reported.",
-          "Actions are verified with native Revit context, coordinates, exported evidence, or tool validation.",
-          "Any retries are bounded and each retry changes placement, orientation, scope, or evidence."
-        ]
+    // Automatic admission describes one requested outcome. Evidence provenance
+    // and bounded retries are kernel policies, not additional domain criteria
+    // that an unconfigured factory could independently evaluate. Explicit
+    // multi-criterion Goals still require their own semantic fact contracts.
+    acceptanceCriteria: ["The requested Revit outcome is completed and verified with evidence from this assignment."]
   };
 }
 

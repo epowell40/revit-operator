@@ -25,6 +25,20 @@ type AcceptanceCase = {
   expected_effect: "read" | "preview" | "apply";
 };
 
+test("inspection of an existing view's name and scale does not authorize creation", () => {
+  const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
+  assert.equal(classifyAgentTurn(prompt), "inspection");
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(prompt));
+  try {
+    const result = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/create-drafting-view", body: { name: "OPERATOR HANDOFF CHECK", allowExisting: true }
+    } });
+    assert.equal(result.allowed, false);
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test("verified mutation stages may continue while retries and unverified chaining remain blocked", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
@@ -379,6 +393,8 @@ test("structured contract distinguishes teammate modes and fails closed on stale
 test("ordinary Revit mutation verbs authorize writes instead of silently forcing inspection", () => {
   const prompts = [
     "Duplicate sheet M000 and give the new sheet the next available temporary number.",
+    'Duplicate sheet M000 with {"dryRun":false,"verify":true}.',
+    "Duplicate sheet M000 with dryRun=false.",
     "Apply the TEST HVAC COORDINATION TEMPLATE to the coordination view.",
     "Hide Rooms in the active view and leave every other category unchanged.",
     "Filter the equipment schedule so Mark begins with AHU.",
@@ -2126,6 +2142,23 @@ test("a generic successful apply payload cannot impersonate independent verifica
   }
 });
 
+test("repairing generated source without changing the model never authorizes generated apply", () => {
+  for (const text of [
+    "Test the custom C# execution diagnostics without changing the model. Run a small read-only program, then repair that program and run it once. Do not change any elements or parameters.",
+    "Repair the custom C# code without modifying the Revit model.",
+    "Fix the C# test program. Do not edit any elements or parameters."
+  ]) {
+    __testOnlyResetTeammateLoopState(); const owner = {}; const lease = beginTeammateLoopOwner(owner, request(text));
+    try {
+      const read = guardTeammateMcpCall(owner, { tool: "operator_run_dynamic_revit_program", arguments: { mode: "read", source: "public class Probe {}" } });
+      assert.equal(read.allowed, true, read.message);
+      const apply = guardTeammateMcpCall(owner, { tool: "operator_run_dynamic_revit_program", arguments: { mode: "apply", source: "public class Probe {}" } });
+      assert.equal(buildTeammateTurnContract(request(text)).no_write, true);
+      assert.equal(apply.allowed, false); assert.match(apply.message ?? "", /does not authorize model mutation|no.write/i);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
 test("post-apply verification ignores echoed request values outside authoritative result fields", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
@@ -2693,4 +2726,39 @@ test("continuation identity, transaction binding, and expected-value verificatio
     result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }] }
   }]), response([], "Verified."));
   assert.equal(wrongValue.teammate_loop_receipt?.verified, false);
+});
+test("visibility MCP host guard verifies only successful independent scale readback from the affected view", () => {
+  for (const variant of ["exact", "wrong_view", "wrong_scale", "echo", "failed"] as const) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Set view 42 scale to 96 and verify it."));
+    try {
+      const call = (body: Record<string, unknown>) => guardTeammateMcpCall(owner, { tool: "revit_call_tool",
+        arguments: { method: "POST", path: "/revit/visibility", body } });
+      const record = (gate: ReturnType<typeof call>, body: unknown) => recordTeammateMcpResult(owner, gate,
+        { content: [{ type: "text", text: JSON.stringify(body) }] });
+      const preview = call({ action: "set_scale", viewId: 42, scale: 96, dryRun: true });
+      assert.equal(preview.allowed, true);
+      record(preview, { status: "Success", dryRun: true });
+      const apply = call({ action: "set_scale", viewId: 42, scale: 96, dryRun: false });
+      assert.equal(apply.allowed, true);
+      record(apply, { status: "Success", action: "set_scale", dryRun: false, view: { id: 42, scale: 96 } });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+      const read = call({ action: "get", viewId: 42 });
+      assert.equal(read.allowed, true);
+      const assertion = record(read, { status: variant === "failed" ? "Failed" : "Ok", action: "get", dryRun: false,
+        view: variant === "echo" ? undefined : { id: variant === "wrong_view" ? 99 : 42, scale: variant === "wrong_scale" ? 48 : 96 },
+        request: { view: { id: 42, scale: 96 } } });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, variant === "exact");
+      assert.equal(assertion?.mode === "target_bound_readback", variant === "exact");
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
+
+test("state questions inspect Revit while explicit combined edits keep their mutation contract", () => {
+  for (const prompt of ["Is Revit connected?", "Are these ducts connected?", "Does this model contain mechanical equipment?", "Has Revit finished opening?"])
+    assert.equal(classifyAgentTurn(prompt), "inspection", prompt);
+  for (const prompt of ["Is Revit connected? Then delete the selected duct.", "Are these ducts connected? If not, connect them.", "12x10 SUPPLY DUCT at the marked branch"])
+    assert.equal(classifyAgentTurn(prompt), "mutation", prompt);
 });

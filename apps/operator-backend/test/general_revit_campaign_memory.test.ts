@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { getRevitToolContractMemoryAttestation } from "../src/codex/revit_tool_contract_memory.js";
+import { assertGeneralRevitCampaignMemoryStart, observeGeneralRevitCampaignMemory } from "../src/benchmark/general_revit_campaign_memory.js";
+
+test("runtime memory isolation binds the actual store and preserves ordered learning across checkpoints", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-campaign-memory-"));
+  const target = path.join(root, "memory.json"), prior = process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+  process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = target;
+  t.after(() => { if (prior === undefined) delete process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+    else process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = prior; fs.rmSync(root, { recursive: true, force: true }); });
+  const empty = { version: "revit-operator.tool-contract-memory.v1", pending_failures: [], failure_receipts: [], corrections: [], quarantines: [] };
+  const write = (value: unknown) => fs.writeFileSync(target, JSON.stringify(value));
+  const health = () => ({ ok: true, backend: { status: "ok", tool_contract_memory: getRevitToolContractMemoryAttestation() } });
+  write(empty);
+  const original = fs.readFileSync(target);
+  const flags = { tool_contract_memory_policy: "isolated_campaign_initial_empty_ordered_adaptation",
+    tool_contract_memory_path: target, tool_contract_memory_initial_sha256: crypto.createHash("sha256").update(original).digest("hex") };
+  const initial = assertGeneralRevitCampaignMemoryStart(health(), flags);
+  assert.deepEqual(fs.readFileSync(target), original);
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), { ...flags, tool_contract_memory_path: path.join(root, "other.json") }), /runtime_unattested/);
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags, undefined, true), /checkpoint_mismatch/);
+  write({ ...empty, failure_receipts: [{ error: "private-contract-detail" }] });
+  const learned = observeGeneralRevitCampaignMemory(health(), flags);
+  assert.equal(JSON.stringify(learned).includes("private-contract-detail"), false);
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags), /initial_state_not_empty/);
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags, initial, true), /checkpoint_mismatch/);
+  assert.doesNotThrow(() => assertGeneralRevitCampaignMemoryStart(health(), flags, learned, true));
+  write({ ...empty, failure_receipts: [{ error: "different-same-count" }] });
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags, learned, true), /checkpoint_mismatch/);
+  fs.copyFileSync(target, `${target}.bak`);
+  fs.writeFileSync(target, "corrupt");
+  assert.equal(getRevitToolContractMemoryAttestation().effective_source, "backup");
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags), /runtime_unattested/);
+  write(empty);
+  assert.throws(() => assertGeneralRevitCampaignMemoryStart(health(), flags), /initial_state_not_empty/);
+  fs.unlinkSync(`${target}.bak`);
+  write({ version: empty.version });
+  assert.equal(getRevitToolContractMemoryAttestation().initial_empty, false);
+  fs.unlinkSync(target);
+  assert.equal(getRevitToolContractMemoryAttestation().effective_source, "default");
+  assert.throws(() => observeGeneralRevitCampaignMemory(health(), flags), /runtime_unattested/);
+});

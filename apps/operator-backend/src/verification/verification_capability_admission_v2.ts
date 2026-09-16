@@ -8,6 +8,8 @@
  */
 
 import { isExcludedEvidenceContainerV2 } from "./verification_payload_boundary_v2.js";
+import { visibilityTargetTokensV2 } from "./visibility_view_contract_v2.js";
+import { artifactTargetTokensV2 } from "./native_artifact_contract_v2.js";
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -69,6 +71,11 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
+  ["/revit/visibility", {
+    semantic_outputs: ["view.visibility_properties"],
+    preferred_target_field: "viewId"
+  }],
   ["/revit/find-text-notes", {
     semantic_outputs: ["text_note.value"],
     principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
@@ -89,12 +96,12 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
   }],
   ["/revit/get-element-summary", {
     semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["revit_get_element_summary", {
     semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["/revit/get-parameters", {
@@ -222,7 +229,11 @@ export function operationTargetSelectorV2(input: Readonly<{
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
     source: "reviewed_capability_contract",
-    principal_target_tokens: tokensFromReviewedFields(input.value, contract.principal_target_fields ?? []),
+    principal_target_tokens: pathOf(input.operation) === "/revit/inspect-exported-files"
+      ? artifactTargetTokensV2(input.value)
+      : pathOf(input.operation) === "/revit/visibility"
+      ? visibilityTargetTokensV2(input.value)
+      : tokensFromReviewedFields(input.value, contract.principal_target_fields ?? []),
     contextual_scope_tokens: tokensFromReviewedFields(input.value, contract.contextual_scope_fields ?? [])
   };
 }
@@ -231,6 +242,8 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
+  if (path === "/revit/visibility") return ["view.visibility_properties"];
+  if (path === "/revit/export-pdf" || path === "/revit/print" || path === "/revit/export-elements-xlsx") return ["artifact.file_digest"];
   return [];
 }
 
@@ -289,6 +302,8 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (["/revit/mep-route-workflow", "/revit/create-duct"].includes(pathOf(apply))) return " For one straight rectangular duct with explicitly open ends and explicit world XYZ coordinates in model feet, verify the exact created elementId after apply: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height], then POST /revit/get-connectors with includeAllRefs=true. The combined native reads must match the admitted coordinates, type, level, system, dimensions and both open ends. Parameters alone cannot verify placement or connections. This typed contract does not cover other route shapes or connected/multiple segments; do not claim those verified or repeat an applied route.";
+  if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;
   const paths = routesProviding(required);
@@ -299,7 +314,7 @@ export function verificationCapabilityGuidanceV2(apply: OperationContract): stri
     return contract?.preferred_target_field ? [`${path}.${contract.preferred_target_field}`] : [];
   });
   const exactSelector = numericTarget && selectors.length > 0
-    ? ` Bind the exact affected subject with ${selectors.join(" or ")}=${numericTarget}; contextual scope fields such as viewId do not establish affected-target identity.`
+    ? ` Bind the exact affected subject with ${selectors.join(" or ")}=${numericTarget}; ${pathOf(apply) === "/revit/visibility" ? "use action=get and read the returned view.id and requested property." : "contextual scope fields such as viewId do not establish affected-target identity."}`
     : "";
   return ` Required semantic outputs: ${required.join(", ")}. Reviewed readback routes: ${paths.join(", ")}.${exactSelector}`;
 }

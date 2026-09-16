@@ -574,6 +574,25 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   let response: Awaited<ReturnType<typeof doFetch>>;
   try {
     response = await doFetch();
+    // A busy rejection occurs before native dispatch, so wait for admission
+    // within this operation instead of opening a progress-equivalent retry.
+    // Writes additionally require the native settlement to prove no effect.
+    // Keep exact request bytes and never replay an uncertain mutation.
+    const busyDeadline = Date.now() + Math.min(30_000, requestTimeoutMs());
+    for (let attempt = 0; response.status === 409 && attempt < 7; attempt++) {
+      const busyText = await response.text();
+      response = { ...response, text: async () => busyText };
+      const busy = parseBridgeErrorDetails(busyText);
+      if (busy?.code !== "revit_external_event_busy" || busy.request_dispatched !== false
+          || busy.outcome_unknown !== false || busy.retryable !== true) break;
+      const settlement = busy.canonical_attempt_settlement as Record<string, unknown> | undefined;
+      if (settlement && (settlement.request_dispatched !== false || settlement.effect_state !== "none")) break;
+      if (mutating && (!settlement || settlement.effect_authority !== "native_host")) break;
+      const delay = Math.min(250 * 2 ** attempt, 8_000);
+      if (Date.now() + delay > busyDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      response = await doFetch();
+    }
   } catch (error) {
     await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, error);
     throw error;

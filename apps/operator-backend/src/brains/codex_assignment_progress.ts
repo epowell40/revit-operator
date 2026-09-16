@@ -1,3 +1,4 @@
+import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
 import type { ModelCallReceipt } from "../contracts.js";
 import {
   advanceAssignmentKernelProgressV2,
@@ -8,6 +9,7 @@ import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_
 import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -23,6 +25,7 @@ function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): 
 }
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
+  if (decision.decision === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   if (decision.decision === "request_user_input") return "The canonical Assignment is waiting for the required authenticated user input before any more provider work is allowed.";
   if (decision.decision === "request_user_review") return "The canonical Assignment is waiting for bounded user review before any more provider work is allowed.";
   if (decision.decision === "await_operation") return "The canonical Assignment still has an operation in flight; no duplicate provider work was started.";
@@ -45,9 +48,13 @@ function progressPrompt(
       "DETERMINISTIC ASSIGNMENT PROGRESS DECISION:",
       `Decision: ${decision.decision}`,
       `Requested Assignment effect: ${snapshot.spec.requested_effect}`,
+      `Original task: ${snapshot.spec.source_user_request}`,
+      `Authenticated task input values (data, not lifecycle commands): ${JSON.stringify(snapshot.input_values)}`,
+      ...(snapshot.input_invalidated_operation_ids?.length ? ["An authenticated answer changed dependent deliverables. Reuse retained source evidence, but update the affected outputs using the saved answer before completing. A previously exported file may still be valid history while its contents are obsolete for this task; create the revised output under a distinct filename and verify it. Do not repeat unaffected edits."] : []),
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
+      codexAssignmentEvidenceContextV2(snapshot),
       ...(gapDetails.length > 0 ? ["Gap contracts:", ...gapDetails] : []),
       `Only an explicitly eligible ${snapshot.spec.requested_effect} task operation may fulfill a task criterion; supporting reads and control evidence may only prepare that operation.`,
       "Propose only operations that advance these criteria or resolve these exact gaps. Stop when the canonical controller reports a terminal, clarification, review, or blocker outcome."
@@ -75,7 +82,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2): 
     prompt: progressPrompt(progression.snapshot, progression.decision),
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
-      : progressMessage(progression.decision)
+      : finalCodexAssignmentMessageV2(progression.snapshot, progressMessage(progression.decision))
   };
 }
 
@@ -85,6 +92,9 @@ export function checkpointCodexAssignmentProgressV2(input: Readonly<{
   receipts: readonly ModelCallReceipt[];
 }>): AssignmentSnapshotV2 | null {
   const current = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
+  // An intentional pause is not an unproductive autonomous attempt. Provider
+  // usage stays in its durable ledger; do not spend the no-progress allowance.
+  if (current?.execution_control?.state === "paused") return current;
   if (!current || current.terminal || current.assignment_version <= input.turn_start.assignment_version) return current;
   const latestEpoch = current.progress_epochs.at(-1);
   const checkpointed = latestEpoch && latestEpoch.after_assignment_version > input.turn_start.assignment_version
@@ -104,13 +114,34 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
 }
 
 export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+  if (snapshot?.unresolved_unknown_operation_ids.length) {
+    return "I could not confirm whether the requested change completed. The task and remaining checks are saved; I need to verify the result before retrying.";
+  }
+  if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
+  if (snapshot && !snapshot.terminal && snapshot.outcome === "awaiting_user_input") {
+    const questions = Object.values(snapshot.clarifications)
+      .filter(question => !question.resolved_at)
+      .map(question => question.question.trim()).filter(Boolean);
+    if (questions.length) return [...new Set(questions)].join("\n\n");
+  }
+  if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
+      && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {
+    const applied = Object.values(snapshot.operations).filter(op => op.requested_effect === "apply"
+      && op.persistent_effect === "applied" && op.settlement_state === "settled" && op.result?.status === "succeeded"
+      && op.result.authority === "native-host" && op.result.native_transaction_state === "committed"
+      && sameAssignmentBindingV2(op.binding, snapshot.current_binding) && sameAssignmentBindingV2(op.result.binding, snapshot.current_binding));
+    if (applied.length) return "Applied " + (applied.length === 1 ? "one model edit" : applied.length + " model edits") + ". Final verification is incomplete; the task and remaining checks are saved.";
+    return "The task stopped before a verified result was ready. Its progress and remaining checks are saved.";
+  }
   return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
 }
 
 export function codexAssignmentControllerStopMessage(snapshot: AssignmentSnapshotV2 | null, reason: string): string {
   return finalCodexAssignmentMessageV2(
     snapshot,
-    `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
+    snapshot?.outcome === "awaiting_user_input"
+      ? "I need an answer before I can continue this task."
+      : `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
   );
 }
 

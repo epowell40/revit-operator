@@ -1,0 +1,543 @@
+{
+  "mep_curve_endpoints": {
+    "allOf": [
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "startX": {
+                "type": "number"
+              },
+              "startY": {
+                "type": "number"
+              },
+              "startZ": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "startX",
+              "startY",
+              "startZ"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "startPoint": {
+                "type": "object",
+                "properties": {
+                  "xyz": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 3
+                  }
+                },
+                "required": [
+                  "xyz"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "startPoint"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "startPoint": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "startPoint"
+            ],
+            "additionalProperties": true,
+            "anyOf": [
+              {
+                "properties": {
+                  "frameId": {
+                    "type": "null"
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "properties": {
+                  "startPoint": {
+                    "properties": {
+                      "z": {
+                        "type": "null"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "startPoint": {
+                "type": "object",
+                "properties": {
+                  "xIn": {
+                    "type": "number"
+                  },
+                  "yIn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "xIn",
+                  "yIn"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "startPoint"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "startPoint": {
+                "type": "object",
+                "properties": {
+                  "xPx": {
+                    "type": "integer"
+                  },
+                  "yPx": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "xPx",
+                  "yPx"
+                ],
+                "additionalProperties": false
+              },
+              "frameId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "startPoint",
+              "frameId"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "endX": {
+                "type": "number"
+              },
+              "endY": {
+                "type": "number"
+              },
+              "endZ": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "endX",
+              "endY",
+              "endZ"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "endPoint": {
+                "type": "object",
+                "properties": {
+                  "xyz": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 3
+                  }
+                },
+                "required": [
+                  "xyz"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "endPoint"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "endPoint": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "endPoint"
+            ],
+            "additionalProperties": true,
+            "anyOf": [
+              {
+                "properties": {
+                  "frameId": {
+                    "type": "null"
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "properties": {
+                  "endPoint": {
+                    "properties": {
+                      "z": {
+                        "type": "null"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "endPoint": {
+                "type": "object",
+                "properties": {
+                  "xIn": {
+                    "type": "number"
+                  },
+                  "yIn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "xIn",
+                  "yIn"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "endPoint"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "endPoint": {
+                "type": "object",
+                "properties": {
+                  "xPx": {
+                    "type": "integer"
+                  },
+                  "yPx": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "xPx",
+                  "yPx"
+                ],
+                "additionalProperties": false
+              },
+              "frameId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endPoint",
+              "frameId"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      }
+    ]
+  },
+  "mep_repair_operation": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string"
+      },
+      "elementIds": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minItems": 1,
+        "maxItems": 100
+      },
+      "elementId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "vectorX": {
+        "type": "number"
+      },
+      "vectorY": {
+        "type": "number"
+      },
+      "vectorZ": {
+        "type": "number"
+      },
+      "startXyz": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        ]
+      },
+      "endXyz": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        ]
+      },
+      "flexPoints": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "minItems": 2,
+        "maxItems": 256
+      },
+      "startTangent": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        ]
+      },
+      "endTangent": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        ]
+      },
+      "connectorChanges": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "connectorId": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "expectedOriginXyz": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "diameterFt": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "connectorId",
+            "expectedOriginXyz",
+            "diameterFt"
+          ],
+          "additionalProperties": false
+        },
+        "minItems": 1,
+        "maxItems": 16
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "move_elements_vector"
+            ]
+          }
+        },
+        "required": [
+          "elementIds",
+          "vectorX",
+          "vectorY",
+          "vectorZ"
+        ],
+        "additionalProperties": true
+      },
+      {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "set_curve_line"
+            ]
+          },
+          "startXyz": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "endXyz": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "elementId",
+          "startXyz",
+          "endXyz"
+        ],
+        "additionalProperties": true
+      },
+      {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "set_flex_curve"
+            ]
+          }
+        },
+        "required": [
+          "elementId",
+          "flexPoints"
+        ],
+        "additionalProperties": true
+      },
+      {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "resize_round_connectors"
+            ]
+          }
+        },
+        "required": [
+          "elementId",
+          "connectorChanges"
+        ],
+        "additionalProperties": true
+      }
+    ]
+  }
+}

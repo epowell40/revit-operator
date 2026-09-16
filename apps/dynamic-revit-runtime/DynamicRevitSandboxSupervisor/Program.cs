@@ -49,6 +49,8 @@ internal static class Program
     private static async Task<LiveEvidence> RunLiveTask(LiveTaskConfig config, bool replayAdmission)
     {
         var started = DateTimeOffset.UtcNow;
+        if (config.ReadOnly && (config.Apply || config.ResultReference || !string.IsNullOrWhiteSpace(config.ContextRuleFile)))
+            throw new InvalidOperationException("Read-only programs use the basic snapshot/report SDK and cannot enable an execution lane.");
         var contextRuleRequested = !string.IsNullOrWhiteSpace(config.ContextRuleFile) || !string.IsNullOrWhiteSpace(config.ContextRuleVerificationKeyFile) ||
             !string.IsNullOrWhiteSpace(config.ContextCompanyId) || !string.IsNullOrWhiteSpace(config.ContextUserId) || config.CoreEffectBudget != null;
         if (contextRuleRequested)
@@ -83,7 +85,13 @@ internal static class Program
         var runtimeExpires = DateTimeOffset.UtcNow.AddMinutes(8).ToUnixTimeSeconds();
         var registration = "";
         var hostAuthentications = new List<string>();
-        var bootstrapRaw = await Post(config.BridgeUrl, "/revit/dynamic-runtime/bootstrap", token, writeGrant, "{}", Guid.NewGuid().ToString("N"));
+        var bootstrapRead = await BootstrapReadRetry.SendAsync(() => SendPost(config.BridgeUrl, BootstrapReadRetry.Path,
+            token, writeGrant, "{}", Guid.NewGuid().ToString("N")));
+        if (BootstrapReadRetry.IsUndispatchedBusyRead(bootstrapRead.Response))
+            return BootstrapBusyEvidence(started, config.TargetRevitYear, bootstrapRead.Attempts);
+        if (!bootstrapRead.Response.Success)
+            throw new InvalidOperationException("Bridge bootstrap returned " + bootstrapRead.Response.StatusCode + ": " + bootstrapRead.Response.Body);
+        var bootstrapRaw = bootstrapRead.Response.Body;
         var bootstrap = await CompleteBootstrap(bootstrapRaw, runtimeId, hostSessionKey, launcherHash, selectedHost);
         hostAuthentications.Add(bootstrap.Receipt);
         var snapshotCore = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget }, WireJson);
@@ -96,6 +104,7 @@ internal static class Program
         using var snapshotDocument = JsonDocument.Parse(snapshotRaw);
         var snapshotRoot = snapshotDocument.RootElement;
         var document = snapshotRoot.GetProperty("document").Deserialize<DynamicDocumentDto>(Json) ?? throw new InvalidOperationException("Snapshot document DTO is missing.");
+        ValidateExpectedDocument(config.ExpectedDocumentFingerprint, document.ProjectFingerprint);
         var elements = snapshotRoot.GetProperty("elements").Deserialize<List<DynamicElementDto>>(Json) ?? throw new InvalidOperationException("Snapshot element DTOs are missing.");
         var snapshotToken = snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
         var snapshotInputHash = snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
@@ -181,7 +190,7 @@ internal static class Program
                 compilationCacheKey, cachedAssemblyBase64 }, Json);
         }
         inputPipe.DisposeLocalCopyOfClientHandle();
-        using var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true };
+        using var inputWriter = CreateWorkerInputWriter(inputPipe);
         await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new
         {
             turnIndex = 0, nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey),
@@ -352,6 +361,12 @@ internal static class Program
         if (output.TryGetProperty("resultReferenceProgramResult", out var unexpectedResult) && unexpectedResult.ValueKind != JsonValueKind.Null)
             throw new InvalidOperationException("A result-reference program was returned on the legacy execution lane.");
         var graph = output.GetProperty("graph").Clone();
+        try { ValidateReadOnlyGraph(config.ReadOnly, graph); }
+        catch (InvalidOperationException exception)
+        {
+            return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw,
+                output.Clone(), exception.Message);
+        }
         var graphHash = graph.GetProperty("graphHash").GetString()!;
         if (!FixedEquals(snapshotInputHash, graph.GetProperty("inputHash").GetString() ?? "")) throw new InvalidOperationException("Worker graph is not bound to the exact issued snapshot DTO input.");
         var admission = new DynamicWorkerAdmission
@@ -433,6 +448,23 @@ internal static class Program
             ok = ok && replayRejected;
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
+    }
+
+    // Own the input channel. With leaveOpen:true, a second Dispose flushes an
+    // already-closed pipe and replaces even a completed native apply receipt.
+    internal static StreamWriter CreateWorkerInputWriter(Stream pipe) =>
+        new(pipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: false) { AutoFlush = true };
+
+    internal static void ValidateExpectedDocument(string? expected, string actual)
+    {
+        if (!string.IsNullOrWhiteSpace(expected) && !FixedEquals(expected.StartsWith("sha256:", StringComparison.Ordinal) ? expected : "sha256:" + expected, actual))
+            throw new InvalidOperationException("Dynamic runtime snapshot does not match the admitted assignment document.");
+    }
+
+    internal static void ValidateReadOnlyGraph(bool readOnly, JsonElement graph)
+    {
+        if (readOnly && (!graph.TryGetProperty("operations", out var operations) || operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 0))
+            throw new InvalidOperationException("Read-only generated code produced model operations. No preview or apply was dispatched.");
     }
 
     internal static void RequireDevelopmentLaboratory()
@@ -903,6 +935,13 @@ internal static class Program
         PrincipalIdHash = value.PrincipalIdHash, PrincipalSessionHash = value.PrincipalSessionHash
     };
 
+    internal static LiveEvidence BootstrapBusyEvidence(DateTimeOffset started, string targetYear, int attempts) => new()
+    {
+        Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+        TargetRevitYear = targetYear, WorkerOutput = JsonSerializer.SerializeToElement<object?>(null),
+        Failure = BootstrapReadRetry.ExhaustedFailure, BootstrapAttempts = attempts, WorkerStarted = false
+    };
+
     private static async Task<string> Post(string baseUrl, string path, string token, string writeGrant, string json, string correlation)
     {
         var response = await SendPost(baseUrl, path, token, writeGrant, json, correlation);
@@ -1202,6 +1241,8 @@ internal static class Program
 internal sealed class ProbeResult { public string Action { get; set; } = ""; public string Expected { get; set; } = ""; public bool Denied { get; set; } public string Observed { get; set; } = ""; public string? ExceptionType { get; set; } }
 internal sealed class LiveTaskConfig
 {
+    public bool ReadOnly { get; set; }
+    public string? ExpectedDocumentFingerprint { get; set; }
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
     public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
     public bool ResultReference { get; set; } public bool RequireExecutionTrace { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }
@@ -1252,6 +1293,8 @@ internal sealed class DynamicObservationDeltaEvidenceV1
 }
 internal sealed class LiveEvidence
 {
+    public int? BootstrapAttempts { get; set; }
+    public bool? WorkerStarted { get; set; }
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
     public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }

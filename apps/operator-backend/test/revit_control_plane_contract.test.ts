@@ -38,6 +38,24 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
   assert.ok(releasesSingleFlight < execute.indexOf("item.Completion.TrySetException(error)"));
 });
 
+test("background wake posts a coalesced UI signal without executing model work outside API callbacks", () => {
+  const source = addinFile(path.join("RevitBridge", "Services", "RevitEventService.cs"));
+  const app = addinFile(path.join("RevitBridge", "App.cs"));
+  const constructor = source.slice(source.indexOf("public RevitEventService("), source.indexOf("public Task<T> Run"));
+  assert.match(constructor, /Dispatcher\.CurrentDispatcher/);
+  assert.match(constructor, /new OperatorUiWakeScheduler/);
+  assert.match(constructor, /dispatcher\.BeginInvoke\(DispatcherPriority\.Background, callback\)/);
+  assert.match(constructor, /_externalEvent\.Raise\(\)/);
+  assert.doesNotMatch(constructor, /item\.Action|Execute\(|ActiveUIDocument|Transaction\(/);
+  assert.match(source, /_uiWake\.Request\(\)/);
+  assert.match(constructor, /wakeMessageLoop: PostHostWakeMessage/);
+  const messageWake = source.slice(source.indexOf("private void PostHostWakeMessage"), source.indexOf("private void CancelQueuedItem"));
+  assert.match(messageWake, /PostMessage\(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero\)/);
+  assert.doesNotMatch(messageWake, /SetForegroundWindow|SendInput|ActiveUIDocument|item\.Action|Execute\(/);
+  assert.match(app, /_eventService\?\.StopBackgroundWake\(\)/);
+  assert.match(source, /internal void StopBackgroundWake\(\)[\s\S]{0,140}_uiWake\.Stop\(\)/);
+});
+
 test("metadata and native discovery bypass the Revit event queue while actions propagate cancellation", () => {
   const runner = addinFile(path.join("RevitBridge", "Operator", "OperatorActionRunner.cs"));
   const server = addinFile(path.join("RevitBridge", "Server", "RevitHttpServer.cs"));
@@ -48,9 +66,13 @@ test("metadata and native discovery bypass the Revit event queue while actions p
     assert.match(server, new RegExp(`/revit/${route}`));
   }
   assert.match(runner, /OperatorActionDeadlinePolicy\.Resolve/);
-  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId\)\.ConfigureAwait\(false\)/);
+  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId,\s*"courier:" \+ method \+ ":" \+ path\)\.ConfigureAwait\(false\)/);
+  assert.match(server, /localDeadline\.Token,\s*correlationId,\s*"http:" \+ effectiveMethod \+ ":" \+ path/);
   assert.match(server, /X-Operator-Correlation-Id/);
-  assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
+  for (const boundary of [server, runner, courier]) {
+    assert.match(boundary, /catch \(OperationCanceledException ex\)/);
+    assert.match(boundary, /deadline\.ClassifyCancellation\(ex, correlationId\)/);
+  }
   assert.match(server, /root is RevitEventQueueException/);
   assert.match(courier, /OperatorCourierBusyRetryExecutor\.ExecuteAsync/);
   assert.match(courierBusyRetry, /failure\.Code, "revit_external_event_busy"/);
@@ -387,4 +409,17 @@ test("Revit batch settlement forwards the exact fencing token", () => {
   assert.match(index, /failRevitBatchItem\(\{[\s\S]{0,260}claim_token:\s*claimToken/);
   assert.match(batch, /claim_token is required to settle this fenced batch claim/);
   assert.match(batch, /Stale or invalid batch claim_token/);
+});
+
+test("workbook destination admission and execution share the read-only path guard before any write",()=>{
+  const validator=addinFile("RevitBridge/Operator/OperatorActionSchemaValidator.cs");
+  const branch=validator.slice(validator.indexOf('if (string.Equals(path, "/revit/export-elements-xlsx"'),validator.indexOf('if (string.Equals(path, "/revit/import-elements-xlsx-updates"'));
+  assert.match(branch,/OperatorWorkbookExportPath.TryValidateRequest/);
+  const server=addinFile("RevitBridge/Server/RevitHttpServer.cs");
+  const destinationCheck=server.indexOf("OperatorWorkbookExportPath.TryValidateRequest");
+  assert(destinationCheck>0 && destinationCheck<server.indexOf("result = await _eventService.Run",destinationCheck));
+  const handler=addinFile("RevitBridge/Handlers/ExportElementsXlsxHandler.cs");
+  assert(handler.indexOf("OperatorWorkbookExportPath.Resolve")<handler.indexOf("OperatorWorkbookWriter.Write"));
+  const guard=addinFile("RevitBridge.Common/OperatorWorkbookExportPath.cs");
+  assert.doesNotMatch(guard,/Directory.CreateDirectory|File.Write|OperatorWorkbookWriter.Write/);
 });

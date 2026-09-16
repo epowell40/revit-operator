@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { retainAssignmentCompletionV2 } from "./assignmentCompletionOutbox.js";
 import {
   canonicalPayloadJsonV2,
   payloadDigestV2,
@@ -6,6 +7,8 @@ import {
 } from "@revitoperator/payload-digest-v2";
 import {
   OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+  nativeArtifactReceiptEffectV1,
+  nativeArtifactResultEffectV2,
   assignmentKernelControlEvidenceFactsV2,
   isAssignmentKernelDurableControlEvidenceProducerV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -91,7 +94,7 @@ type OperationEdge = {
   markDispatch(lease: Context): Promise<void>;
   settle(lease: Context, mcpResult: unknown): Promise<unknown>;
 };
-type Scope = { context: Context; native_calls: NativeCall[]; parent_claimed: boolean; edge: OperationEdge };
+type Scope = { context: Context; native_calls: NativeCall[]; parent_claimed: boolean; edge: OperationEdge; dynamic_result?: Record<string, unknown>; dynamic_dispatch_started?: boolean };
 
 export type AssignmentKernelNativeRequestV2 = Readonly<{
   request_id: string;
@@ -102,6 +105,74 @@ export type AssignmentKernelNativeRequestV2 = Readonly<{
 
 const storage = new AsyncLocalStorage<Scope>();
 const bindingStorage = new AsyncLocalStorage<Binding>();
+
+export function beginAssignmentKernelDynamicDispatchV2(): void {
+  const scope = storage.getStore();
+  if (!scope) return;
+  if (scope.context.capability_id !== "operator_run_dynamic_revit_program" || scope.native_calls.length || scope.dynamic_dispatch_started)
+    throw new Error("assignment_dynamic_dispatch_context_mismatch");
+  scope.dynamic_dispatch_started = true;
+}
+
+/** Called only by the trusted supervisor runner, never from a model result envelope. */
+export function recordAssignmentKernelDynamicResultV2(value: Record<string, unknown>): void {
+  const scope = storage.getStore();
+  if (!scope) return;
+  if (scope.context.capability_id !== "operator_run_dynamic_revit_program" || !scope.dynamic_dispatch_started || scope.dynamic_result
+      || scope.native_calls.length || value.schema !== "revit-operator.dynamic-revit-program-run.v1"
+      || value.requested_mode !== scope.context.requested_effect) throw new Error("assignment_dynamic_result_context_mismatch");
+  const evidence = object(value.evidence);
+  const snapshot = typeof evidence.snapshotReceipt === "string" && evidence.snapshotReceipt.trim() ? object(JSON.parse(evidence.snapshotReceipt)) : {};
+  const expected = scope.context.binding.document_fingerprint?.replace(/^sha256:/, "");
+  // The native snapshot serializes DynamicDocumentDto with PascalCase fields.
+  const actual = text(object(snapshot.document).ProjectFingerprint).replace(/^sha256:/, "");
+  if (expected && actual !== expected) throw new Error("assignment_dynamic_result_document_mismatch");
+  if (value.execution_ok === true && (!text(object(value.verification).evidence_sha256).match(/^sha256:[a-f0-9]{64}$/)
+      || !text(object(value.iteration).source_sha256).match(/^sha256:[a-f0-9]{64}$/)
+      || !Array.isArray(evidence.hostAuthenticationReceipts) || evidence.hostAuthenticationReceipts.length < 2))
+    throw new Error("assignment_dynamic_result_authority_missing");
+  scope.dynamic_result = structuredClone(value);
+}
+
+function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
+  const payload = scope.dynamic_result!;
+  const evidence = object(payload.evidence);
+  const completed = payload.execution_ok === true && payload.execution_status === "completed";
+  const worker = object(evidence.workerOutput);
+  const preview = typeof evidence.previewReceipt === "string" && evidence.previewReceipt.trim() ? object(JSON.parse(evidence.previewReceipt)) : {};
+  const snapshotReport = preview.schema === "dynamic-revit-read-report-receipt/v0";
+  const apply = scope.context.requested_effect === "apply";
+  // A failed compilation never ran an edit. Other failed apply executions are
+  // conservatively unknown until the native receipt can be reconciled.
+  const effect = completed && apply ? "applied" : apply && worker.ok !== false ? "unknown" : "none";
+  const provenance = payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload");
+  const receiptId = `dynamic-evidence:${text(object(payload.verification).evidence_sha256)}`;
+  const operationResult = {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `resultv2_${sha256({ operation_id: scope.context.operation_id, payload })}`,
+    operation_id: scope.context.operation_id, binding: scope.context.binding,
+    status: completed ? "succeeded" : "failed_after_dispatch",
+    dispatch_state: "dispatched", persistent_effect: effect,
+    native_transaction_state: effect === "applied" ? "committed" : effect === "unknown" ? "unknown"
+      : completed && scope.context.requested_effect === "preview" && !snapshotReport ? "rolled_back" : "not_applicable",
+    authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
+    observation_required: true, raw_payload_hash: provenance.normalized.digest, payload_provenance: provenance,
+    receipt_id: receiptId, native_correlation_id: receiptId,
+    affected_target_identities: object(payload.canonical_attempt_settlement).affected_target_identities ?? [],
+    request_identity: scope.context.request_identity, completed_at: new Date().toISOString(),
+    ...(!completed ? { error_code: text(evidence.failure) || "dynamic_execution_failed" } : {})
+  };
+  return { ...object(result), structuredContent: {
+    schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: operationResult,
+    observation: {
+      raw_payload: payload,
+      semantic_facts: completed && scope.context.fulfillment_role === "delegated_task_execution" && scope.context.eligible_criterion_ids.length > 0
+        ? [{ fact_id: scope.context.requested_effect === "preview" && !snapshotReport ? "task.preview_valid" : "task.result_available", fact_class: "domain", value: true }] : [],
+      target_scope: {}, verification_relevance: [evidenceClass(scope.context.fulfillment_role)],
+      evidence_class: evidenceClass(scope.context.fulfillment_role)
+    }
+  } };
+}
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -445,6 +516,7 @@ export async function recordAssignmentKernelNativeResultV2(
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, false);
     const settlementEnvelope = mcpEnvelopeForCall(call, result);
+    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
     call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
   }
   call.state = "completed";
@@ -479,7 +551,9 @@ export async function recordAssignmentKernelNativeFailureV2(
   };
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, true);
-    call.settlement = await scope.edge.settle(call.lease, mcpEnvelopeForCall(call, result));
+    const settlementEnvelope = mcpEnvelopeForCall(call, result);
+    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
+    call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
   }
   call.state = "completed";
 }
@@ -499,7 +573,9 @@ function aliasedField(row: Record<string, unknown>, names: readonly string[]): u
 
 function nativeDomainFailure(payload: unknown): boolean {
   const root = object(payload);
-  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false;
+  const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
+  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
+    || status === "partialfailure" || status === "printfailed" || status === "blocked";
 }
 
 function nativeDomainFailureCode(payload: unknown): string {
@@ -553,10 +629,10 @@ function semanticFacts(
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
   }
   const root = object(payload);
-  const textNoteResult = evidence === "task_result"
-    && domainSucceeded
-    && ["/revit/replace-text-note", "/revit/set-text-note-text"].includes(path.toLowerCase());
-  if (textNoteResult) {
+  // The typed adapter owns route recognition; keep admission and published
+  // semantic facts on the same registry so new adapters cannot lose their proof.
+  const typedPreviewResult = evidence === "task_result" && domainSucceeded;
+  if (typedPreviewResult) {
     facts.push(...previewSemanticEvidenceV2({
       path,
       payload,
@@ -678,9 +754,25 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
   if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
   if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
-  const nativeTransactionState = persistentEffect === "applied" ? "committed"
-    : call.lease.requested_effect === "preview" && !transportFailed && dispatched ? "rolled_back"
-      : persistentEffect === "unknown" ? "unknown" : "not_applicable";
+  const confirmedNativeRollback = persistentEffect === "none" && !transportFailed && dispatched
+    && settlement.effect_authority === "native_rollback"
+    && settlement.effect_reason === "verified_native_rollback";
+  const confirmedNativePreflight = persistentEffect === "none" && !transportFailed && dispatched
+    && ["native_host", "native_transaction"].includes(text(settlement.effect_authority))
+    && settlement.effect_reason === "native_transaction_not_started";
+  const artifactReceipt = object(call.observation_payload).artifact_receipt;
+  const artifactEffect = !transportFailed && dispatched
+    ? nativeArtifactReceiptEffectV1(artifactReceipt, call.method, call.path, call.lease.requested_effect) : null;
+  if (artifactReceipt !== undefined && artifactEffect === null && persistentEffect === "applied")
+    throw new Error("assignment_kernel_v2_native_artifact_receipt_invalid");
+  if (artifactEffect !== null && (persistentEffect !== artifactEffect || settlement.effect_authority !== "native_receipt"
+      || settlement.effect_reason !== (artifactEffect === "applied" ? "native_artifact_export_completed" : "native_artifact_export_not_started"))) {
+    throw new Error("assignment_kernel_v2_native_artifact_settlement_conflict");
+  }
+  const nativeTransactionState = artifactEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
+    : persistentEffect === "unknown" ? "unknown"
+      : confirmedNativeRollback
+        ? "rolled_back" : confirmedNativePreflight ? "not_started" : "not_applicable";
   const provenance = transportFailed ? undefined : call.payload_provenance;
   if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");
@@ -691,7 +783,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     && call.lease.requested_effect === "preview"
     && dispatched
     && persistentEffect === "none"
-    && nativeTransactionState === "rolled_back";
+    && (nativeTransactionState === "rolled_back" || artifactEffect === "none");
   const previewEvidence = authoritativeTaskPreview ? previewSemanticEvidenceV2({
     path: call.path,
     payload: call.observation_payload,
@@ -702,7 +794,9 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const resultSemanticReason = previewEvidence && !previewEvidence.admitted
     ? previewEvidence.recognized ? "preview_result_contract_invalid" : "preview_semantic_adapter_missing"
     : null;
-  const resultFailed = failed || resultSemanticReason !== null;
+  const previewAuthorityMissing = call.lease.requested_effect === "preview" && dispatched
+    && !transportFailed && !confirmedNativeRollback && artifactEffect === null;
+  const resultFailed = failed || resultSemanticReason !== null || previewAuthorityMissing;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
     result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed: resultFailed, result_semantic_reason: resultSemanticReason })}`,
@@ -712,6 +806,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     dispatch_state: dispatchState,
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
+    ...(artifactEffect !== null ? { native_artifact_receipt: structuredClone(artifactReceipt) } : {}),
     authority: "native-host",
     result_schema_id: resultSchemaId,
     observation_required: !transportFailed,
@@ -738,6 +833,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     ...(transportFailed ? { error_code: "native_operation_failed" }
       : domainFailed ? { error_code: nativeDomainFailureCode(call.observation_payload) }
         : resultSemanticReason ? { error_code: resultSemanticReason }
+          : previewAuthorityMissing ? { error_code: "native_preview_execution_unproven" }
           : {})
   };
 }
@@ -748,7 +844,7 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
     && operationResult.status === "succeeded"
     && operationResult.dispatch_state === "dispatched"
     && operationResult.persistent_effect === "none"
-    && operationResult.native_transaction_state === "rolled_back";
+    && (operationResult.native_transaction_state === "rolled_back" || nativeArtifactResultEffectV2(operationResult) === "none");
   return {
     content: [],
     structuredContent: {
@@ -848,6 +944,25 @@ function transportOnlyResult(
 }
 
 function decoratedResult(result: unknown, capabilityId: string, scope: Scope): unknown {
+  if (scope.dynamic_result) {
+    if (capabilityId !== scope.context.capability_id) throw new Error("assignment_dynamic_result_capability_mismatch");
+    return dynamicDecoratedResultV2(result, scope);
+  }
+  if (scope.dynamic_dispatch_started) {
+    const unknown = scope.context.requested_effect === "apply";
+    return { ...object(result), structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: {
+        schema: OPERATION_RESULT_V2_SCHEMA, result_id: `resultv2_${sha256({ operation: scope.context.operation_id, missing_dynamic_receipt: true })}`,
+        operation_id: scope.context.operation_id, binding: scope.context.binding,
+        status: "failed_after_dispatch", dispatch_state: "dispatched", persistent_effect: unknown ? "unknown" : "none",
+        native_transaction_state: unknown ? "unknown" : "not_applicable", authority: "dynamic-runtime",
+        result_schema_id: "operator-dynamic-runtime/mcp-program/v2", observation_required: false,
+        request_identity: scope.context.request_identity, completed_at: new Date().toISOString(),
+        error_code: "dynamic_supervisor_completion_missing"
+      }
+    } };
+  }
   const calls = scope.native_calls;
   if (calls.some(call => call.state !== "completed")) throw new Error("assignment_kernel_v2_native_result_missing");
   const failed = Boolean(object(result).isError);
@@ -869,7 +984,7 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       && operationResult.status === "succeeded"
       && operationResult.dispatch_state === "dispatched"
       && operationResult.persistent_effect === "none"
-      && operationResult.native_transaction_state === "rolled_back"
+      && (operationResult.native_transaction_state === "rolled_back" || nativeArtifactResultEffectV2(operationResult) === "none")
     : false;
   const root = object(result);
   const childOperationResults = calls
@@ -929,5 +1044,8 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
 
 export function decorateAssignmentKernelMcpResultV2(result: unknown, capabilityId: string): unknown {
   const scope = storage.getStore();
-  return scope ? decoratedResult(result, capabilityId, scope) : result;
+  if (!scope) return result;
+  const envelope = decoratedResult(result, capabilityId, scope);
+  retainAssignmentCompletionV2(scope.context, envelope);
+  return envelope;
 }

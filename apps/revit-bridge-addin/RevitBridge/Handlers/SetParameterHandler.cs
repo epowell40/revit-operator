@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
@@ -78,170 +79,183 @@ namespace RevitBridge.Handlers
             var titleblockHits = new Dictionary<long, HashSet<string>>();
             var appliedTargets = new List<AppliedTarget>();
             var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted(targetElementIds);
-
-            using (Transaction trans = new Transaction(doc, "Set Parameters"))
+            var changeInventory = new OperatorNativeChangeInventory(doc);
+            void Changed(object sender, DocumentChangedEventArgs args)
             {
-                trans.Start();
-                var preconditionFailures = new List<object>();
-                foreach (var entry in effectiveChanges.Where(x => x.expectedOldValue != null))
+                changeInventory.Observe(() => args.GetDocument(),
+                    () => args.GetAddedElementIds().Select(ElementIdCompat.GetValue),
+                    () => args.GetModifiedElementIds().Select(ElementIdCompat.GetValue),
+                    () => args.GetDeletedElementIds().Select(ElementIdCompat.GetValue));
+            }
+            app.Application.DocumentChanged += Changed;
+            try
+            {
+                using (Transaction trans = new Transaction(doc, "Set Parameters"))
                 {
-                    var elem = doc.GetElement(ElementIdCompat.Create(entry.elementId));
-                    var param = elem?.LookupParameter(entry.parameterName);
-                    var actual = param == null ? null : ParameterValueUtil.SnapshotForWire(param);
-                    if (param != null && ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(actual, entry.expectedOldValue)) continue;
-                    preconditionFailures.Add(new
+                    trans.Start();
+                    var preconditionFailures = new List<object>();
+                    foreach (var entry in effectiveChanges.Where(x => x.expectedOldValue != null))
                     {
-                        elementId = entry.elementId,
-                        parameterName = entry.parameterName,
-                        ok = false,
-                        changed = false,
-                        errorCode = "expected_old_value_mismatch",
-                        error = elem == null ? "Element not found while checking expectedOldValue."
-                            : param == null ? $"Parameter '{entry.parameterName}' not found while checking expectedOldValue."
-                            : "Parameter changed after it was read; no requested changes were applied.",
-                        expectedOldValue = entry.expectedOldValue,
-                        actual
-                    });
-                }
-                if (preconditionFailures.Count > 0)
-                {
-                    var rollbackStatus = trans.RollBack();
-                    transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
-                        ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
-                        : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Precondition Failed",
-                        dryRun = !apply,
-                        requestedCount,
-                        effectiveCount,
-                        excludedCount,
-                        changedCount = 0,
-                        writeFailedCount = 0,
-                        preconditionFailedCount = preconditionFailures.Count,
-                        preconditionFailures,
-                        changedElementIds = Array.Empty<long>(),
-                        verificationPerformed = false,
-                        verifiedCount = 0,
-                        verificationFailedCount = 0,
-                        unresolvedElementIds = Array.Empty<long>(),
-                        verification = Array.Empty<object>(),
-                        diffs = preconditionFailures,
-                        transaction = transactionReceipt,
-                        requiredConfirm,
-                        confirmReceived
-                    });
-                }
-                foreach (var entry in effectiveChanges)
-                {
-                    var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(entry.elementId));
-                    if (elem == null)
-                    {
-                        diffs.Add(new
+                        var elem = doc.GetElement(ElementIdCompat.Create(entry.elementId));
+                        var param = elem?.LookupParameter(entry.parameterName);
+                        var actual = param == null ? null : ParameterValueUtil.SnapshotForWire(param);
+                        if (param != null && ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(actual, entry.expectedOldValue)) continue;
+                        preconditionFailures.Add(new
                         {
                             elementId = entry.elementId,
                             parameterName = entry.parameterName,
                             ok = false,
                             changed = false,
-                            error = "Element not found."
+                            errorCode = "expected_old_value_mismatch",
+                            error = elem == null ? "Element not found while checking expectedOldValue."
+                                : param == null ? $"Parameter '{entry.parameterName}' not found while checking expectedOldValue."
+                                : "Parameter changed after it was read; no requested changes were applied.",
+                            expectedOldValue = entry.expectedOldValue,
+                            actual
                         });
-                        continue;
                     }
-
-                    var param = elem.LookupParameter(entry.parameterName);
-                    if (param == null)
+                    if (preconditionFailures.Count > 0)
                     {
-                        diffs.Add(new
+                        var rollbackStatus = trans.RollBack();
+                        transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                            ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
+                            : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
+                        return Task.FromResult<object>(new
                         {
-                            elementId = entry.elementId,
-                            parameterName = entry.parameterName,
-                            ok = false,
-                            changed = false,
-                            error = $"Parameter '{entry.parameterName}' not found on element."
+                            status = "Precondition Failed",
+                            dryRun = !apply,
+                            requestedCount,
+                            effectiveCount,
+                            excludedCount,
+                            changedCount = 0,
+                            writeFailedCount = 0,
+                            preconditionFailedCount = preconditionFailures.Count,
+                            preconditionFailures,
+                            changedElementIds = Array.Empty<long>(),
+                            verificationPerformed = false,
+                            verifiedCount = 0,
+                            verificationFailedCount = 0,
+                            unresolvedElementIds = Array.Empty<long>(),
+                            verification = Array.Empty<object>(),
+                            diffs = preconditionFailures,
+                            transaction = transactionReceipt,
+                            changeTracking = changeInventory.Diagnostics(),
+                            requiredConfirm,
+                            confirmReceived
                         });
-                        continue;
                     }
-
-                    var before = ParameterValueUtil.SnapshotForWire(param);
-                    var preserveTextCase = entry.preserveTextCase ?? p.preserveTextCase ?? false;
-                    var requestedValue = preserveTextCase
-                        ? (entry.value ?? "")
-                        : RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value);
-                    if (!ParameterValueUtil.TrySetFromString(param, requestedValue, out var didChange, out var message))
+                    foreach (var entry in effectiveChanges)
                     {
-                        diffs.Add(new
+                        var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(entry.elementId));
+                        if (elem == null)
                         {
-                            elementId = entry.elementId,
-                            parameterName = entry.parameterName,
-                            ok = false,
-                            changed = false,
-                            error = message,
-                            before,
-                            after = before
-                        });
-                        continue;
-                    }
-
-                    // Revit can defer derived/display-value updates until regeneration.
-                    // Regenerate inside the transaction so both apply and rollback-backed
-                    // dry-run receipts report the value that Revit actually accepted.
-                    doc.Regenerate();
-                    var after = ParameterValueUtil.SnapshotForWire(param);
-                    appliedTargets.Add(new AppliedTarget
-                    {
-                        ElementId = entry.elementId,
-                        ParameterName = entry.parameterName.Trim(),
-                        ExpectedValue = requestedValue
-                    });
-                    if (didChange) changedCount++;
-                    if (didChange) changedElementIds.Add(entry.elementId);
-                    diffs.Add(new
-                    {
-                        elementId = entry.elementId,
-                        parameterName = entry.parameterName,
-                        ok = true,
-                        changed = didChange,
-                        before,
-                        after
-                    });
-
-                    if (didChange)
-                    {
-                        try
-                        {
-                            var catId = RevitBridge.Common.ElementIdCompat.GetValue(elem.Category?.Id);
-                            if (catId == (int)BuiltInCategory.OST_TitleBlocks)
+                            diffs.Add(new
                             {
-                                if (!titleblockHits.TryGetValue(entry.elementId, out var set))
+                                elementId = entry.elementId,
+                                parameterName = entry.parameterName,
+                                ok = false,
+                                changed = false,
+                                error = "Element not found."
+                            });
+                            continue;
+                        }
+
+                        var param = elem.LookupParameter(entry.parameterName);
+                        if (param == null)
+                        {
+                            diffs.Add(new
+                            {
+                                elementId = entry.elementId,
+                                parameterName = entry.parameterName,
+                                ok = false,
+                                changed = false,
+                                error = $"Parameter '{entry.parameterName}' not found on element."
+                            });
+                            continue;
+                        }
+
+                        var before = ParameterValueUtil.SnapshotForWire(param);
+                        var preserveTextCase = entry.preserveTextCase ?? p.preserveTextCase ?? false;
+                        var requestedValue = preserveTextCase
+                            ? (entry.value ?? "")
+                            : RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value);
+                        if (!ParameterValueUtil.TrySetFromString(param, requestedValue, out var didChange, out var message))
+                        {
+                            diffs.Add(new
+                            {
+                                elementId = entry.elementId,
+                                parameterName = entry.parameterName,
+                                ok = false,
+                                changed = false,
+                                error = message,
+                                before,
+                                after = before
+                            });
+                            continue;
+                        }
+
+                        // Revit can defer derived/display-value updates until regeneration.
+                        // Regenerate inside the transaction so both apply and rollback-backed
+                        // dry-run receipts report the value that Revit actually accepted.
+                        doc.Regenerate();
+                        var after = ParameterValueUtil.SnapshotForWire(param);
+                        appliedTargets.Add(new AppliedTarget
+                        {
+                            ElementId = entry.elementId,
+                            ParameterName = entry.parameterName.Trim(),
+                            ExpectedValue = requestedValue
+                        });
+                        if (didChange) changedCount++;
+                        if (didChange) changedElementIds.Add(entry.elementId);
+                        diffs.Add(new
+                        {
+                            elementId = entry.elementId,
+                            parameterName = entry.parameterName,
+                            ok = true,
+                            changed = didChange,
+                            before,
+                            after
+                        });
+
+                        if (didChange)
+                        {
+                            try
+                            {
+                                var catId = RevitBridge.Common.ElementIdCompat.GetValue(elem.Category?.Id);
+                                if (catId == (int)BuiltInCategory.OST_TitleBlocks)
                                 {
-                                    set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                                    titleblockHits[entry.elementId] = set;
+                                    if (!titleblockHits.TryGetValue(entry.elementId, out var set))
+                                    {
+                                        set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                        titleblockHits[entry.elementId] = set;
+                                    }
+                                    set.Add(entry.parameterName);
                                 }
-                                set.Add(entry.parameterName);
+                            }
+                            catch
+                            {
+                                // best effort
                             }
                         }
-                        catch
-                        {
-                            // best effort
-                        }
+                    }
+
+                    if (apply && changedCount > 0)
+                    {
+                        var commitStatus = trans.Commit();
+                        transactionReceipt = commitStatus == TransactionStatus.Committed
+                            ? changeInventory.CommittedReceipt()
+                            : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), targetElementIds);
+                    }
+                    else
+                    {
+                        var rollbackStatus = trans.RollBack();
+                        transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                            ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
+                            : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
                     }
                 }
-
-                if (apply && changedCount > 0)
-                {
-                    var commitStatus = trans.Commit();
-                    transactionReceipt = commitStatus == TransactionStatus.Committed
-                        ? OperatorNativeTransactionReceipt.Committed(changedElementIds)
-                        : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), targetElementIds);
-                }
-                else
-                {
-                    var rollbackStatus = trans.RollBack();
-                    transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
-                        ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
-                        : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
-                }
             }
+            finally { app.Application.DocumentChanged -= Changed; }
 
             if (apply && changedCount > 0)
             {
@@ -367,6 +381,7 @@ namespace RevitBridge.Handlers
                 verification,
                 diffs,
                 transaction = transactionReceipt,
+                changeTracking = changeInventory.Diagnostics(),
                 requiredConfirm,
                 confirmReceived,
                 titleblockImpacts

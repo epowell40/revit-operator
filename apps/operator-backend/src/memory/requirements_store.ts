@@ -186,7 +186,7 @@ export function beginRequirementsPlanningLease(receiptSha256: string, durationMs
     leases.set(token, { receipt_sha256: hash, expires_at_ms: createdAt.getTime() + boundedDurationMs });
     activePlanningLeases.set(ledger_path, leases);
     return { ledger_path, lease_path, token, receipt_sha256: hash };
-  });
+  }, "planning_lease");
 }
 
 export function endRequirementsPlanningLease(lease: RequirementsPlanningLease | null | undefined): void {
@@ -228,7 +228,7 @@ function waitMilliseconds(ms: number): void {
   Atomics.wait(signal, 0, 0, ms);
 }
 
-function withRequirementsWriteLock<T>(fn: () => T): T {
+function withRequirementsWriteLock<T>(fn: () => T, purpose: "ledger_write" | "planning_lease" = "ledger_write"): T {
   const p = ledgerPath();
   const lockPath = `${p}.write.lock`;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -253,7 +253,10 @@ function withRequirementsWriteLock<T>(fn: () => T): T {
     }
   }
   try {
-    assertRequirementsWriteUnlocked(p);
+    // Acquiring another reader lease does not change requirements. Serialize its
+    // creation with ledger writers, but let independent planning readers coexist.
+    // Every actual ledger mutation still waits for all reader leases to release.
+    if (purpose === "ledger_write") assertRequirementsWriteUnlocked(p);
     return fn();
   } finally {
     try { fs.closeSync(fd); } catch { /* best effort */ }

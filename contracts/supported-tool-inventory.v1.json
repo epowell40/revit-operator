@@ -1,0 +1,590 @@
+{
+  "schema": "revit-operator.supported-tool-inventory.v1",
+  "description": "Fixed product support scope. Inclusion permits existing authorization checks; it is not execution authority or a claim of live verification. No runtime mode expands this inventory.",
+  "native_routes": [
+    {
+      "method": "GET",
+      "path": "/revit/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/context"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/native-api-policy"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/native-capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/ping"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/tool-registry"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/views"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/write-grant-status"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/activate-view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-family-evolution"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-revision-to-sheets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/capture-screenshare"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/capture-sheet-region"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/change-element-type"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/close-active-model"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/close-doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/configure-schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-mep-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-dimension"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-drafting-view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-duct"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-family-instance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-filled-region"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-mep-route"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-pipe"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-revision"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-revision-cloud"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-sheet"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-similar-from-instance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-text"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/draw-detail-curves"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-element-type"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-sheet"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-type-and-swap-instance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-elements-xlsx"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-image"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-pdf"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-schedule-csv"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-view-frame"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-visible-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/find-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/find-text-notes"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-connectors"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-element-summary"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-family-file-path"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-parameters"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-placement-context"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-titleblock-info"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-exported-files"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-family-content"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/list-element-types"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/load-family"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/load-family-doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-branch-network-workflow"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-route-workflow"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/move-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-call"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-catalog"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-mutation-ops"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-ops"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-policy"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-search"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/open-family-doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/open-model"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/place-families"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/place-view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/plan-family-evolution"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/print"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/print-sets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/query"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/read-family-evolution"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/replace-text-note"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/reroute-mep-route-segment"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/resolve"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/resolve-element-type"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/rooms"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/rotate-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/save-as"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/save-family-doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/schedules"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-parameter"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-selection"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-text-note-text"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-type-parameters"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/sheets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/state-snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tag-elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-examples"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-search"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/trace-connected-network"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-apply"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-plan"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-validate"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/update-parameter-by-query"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/update-schedule-cell"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/views"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/visibility"
+    }
+  ],
+  "mcp_aliases": [
+    "operator_discover_capabilities",
+    "operator_evaluate_assignment_criteria",
+    "operator_plan_semantic_mep_route",
+    "operator_record_execution_strategy",
+    "operator_request_assignment_input",
+    "operator_request_clarification",
+    "operator_retrieve_evidence",
+    "operator_run_dynamic_revit_program",
+    "operator_runtime_probe",
+    "operator_submit_noop_completion",
+    "operator_submit_read_completion",
+    "read_excel",
+    "read_pdf_text",
+    "read_word",
+    "revit_activate_view",
+    "revit_call_tool",
+    "revit_capture_sheet_region",
+    "revit_capture_view",
+    "revit_change_element_type",
+    "revit_close_doc",
+    "revit_count_sheets_certified",
+    "revit_create_drafting_view",
+    "revit_create_duct",
+    "revit_create_family_instance",
+    "revit_create_filled_region",
+    "revit_create_pipe",
+    "revit_create_revision_cloud",
+    "revit_create_sheet",
+    "revit_create_text",
+    "revit_delete_elements",
+    "revit_draw_detail_curves",
+    "revit_duplicate_element_type",
+    "revit_duplicate_type_and_swap_instance",
+    "revit_export_pdf",
+    "revit_export_view_frame",
+    "revit_find_elements",
+    "revit_find_text_notes",
+    "revit_get_connectors",
+    "revit_get_context",
+    "revit_get_element_summary",
+    "revit_get_family_file_path",
+    "revit_get_parameters",
+    "revit_get_room_details",
+    "revit_get_titleblock_info",
+    "revit_list_element_types",
+    "revit_list_rooms",
+    "revit_list_schedules",
+    "revit_list_sheets",
+    "revit_list_views",
+    "revit_load_family",
+    "revit_load_family_doc",
+    "revit_move_elements",
+    "revit_move_one_certified",
+    "revit_native_api_call",
+    "revit_native_api_catalog",
+    "revit_native_api_ops",
+    "revit_native_api_policy",
+    "revit_native_api_search",
+    "revit_native_api_set_policy",
+    "revit_observe_model",
+    "revit_open_family_doc",
+    "revit_open_model",
+    "revit_ping",
+    "revit_place_families",
+    "revit_place_view",
+    "revit_query_elements",
+    "revit_query_views",
+    "revit_read_move_targets_certified",
+    "revit_replace_text_note",
+    "revit_resolve_level",
+    "revit_resolve_sheet",
+    "revit_resolve_view",
+    "revit_rotate_elements",
+    "revit_save_family_doc",
+    "revit_search_tools",
+    "revit_set_parameters",
+    "revit_set_selection",
+    "revit_set_type_parameters",
+    "revit_set_view_visibility",
+    "revit_tool_doc",
+    "revit_tool_examples",
+    "revit_tool_registry",
+    "revit_trace_connected_network",
+    "revit_transaction_apply",
+    "revit_transaction_plan",
+    "revit_transaction_validate",
+    "revit_update_schedule_cell",
+    "revit_write_grant_status",
+    "web_fetch_evidence",
+    "workspace_pdf_merge",
+    "workspace_pdf_reorder",
+    "workspace_rename_file"
+  ],
+  "internal_routes": [
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/annotation-result-apply-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/annotation-result-authorize-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/annotation-result-preview-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/authorize-apply"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/bootstrap"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/core-apply-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/core-authorize-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/core-preview-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/mep-result-apply-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/mep-result-authorize-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/mep-result-preview-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/observe-building-systems-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/observe-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/register"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/result-reference-facts-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/snapshot"
+    }
+  ],
+  "standalone_routes": [
+    {
+      "method": "POST",
+      "path": "/revit/certified/sheets/count",
+      "executor_id": "revit-operator.safe-read-host.v1"
+    }
+  ],
+  "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route."
+}

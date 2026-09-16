@@ -320,7 +320,7 @@ namespace RevitBridge.Logic.Handlers
 
             Document? changedDoc = null;
             try { changedDoc = args.GetDocument(); } catch { changedDoc = null; }
-            if (changedDoc == null || !ReferenceEquals(changedDoc, _doc)) return;
+            if (changedDoc == null || !_doc.Equals(changedDoc)) return;
 
             ICollection<ElementId>? addedIds = null;
             ICollection<ElementId>? deletedIds = null;

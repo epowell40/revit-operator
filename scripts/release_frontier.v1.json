@@ -1,6 +1,30 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "revit_batch_service.test.ts",
+    "assignment_status_projection.test.ts",
+    "assistant_intake_http.test.ts",
+    "assistant_context_policy.test.ts",
+    "conversation_assignment_isolation.test.ts",
+    "session_history_recovery.test.ts",
+    "local_desktop_launcher_registration.test.ts",
+    "generated_parameter_postcondition_v2.test.ts",
+    "mcp_input_validation.test.ts",
+    "codex_turn_input.test.ts",
+    "codex_research_config.test.ts",
+    "chat_stream_attachment_parity.test.ts",
+    "inline_images.test.ts",
+    "external_provider_brain.test.ts",
+    "agent_response_policy.test.ts",
+    "general_revit_export_isolation.test.ts",
+    "tool_registry_audit.test.ts",
+    "native_artifact_contract_v2.test.ts",
+    "assignment_kernel_v2_pause_reporting.test.ts",
+    "assignment_kernel_v2_pause_http.test.ts",
+    "goal_endpoint_security.test.ts",
+    "revit_control_plane_contract.test.ts",
+    "assignment_auto_goal_admission.test.ts",
+    "assignment_kernel_v2_controls.test.ts",
     "assignment_async_settlement_barrier.test.ts",
     "assignment_kernel_v2.test.ts",
     "assignment_kernel_v2_architecture.test.ts",
@@ -20,14 +44,17 @@
     "assignment_turn_journal.test.ts",
     "assignment_typed_native_settlement.test.ts",
     "benchmark_protocol_v2.test.ts",
+    "general_revit_acceptance_review.test.ts",
     "benchmark_protocol_v2_interaction.test.ts",
     "candidate51_v2_session_receipt_coherence.test.ts",
     "candidate52_v2_session_receipt_authority.test.ts",
     "candidate53_v2_native_evidence_authority.test.ts",
     "codex_app_server_compatibility.test.ts",
     "dynamic_runtime_orchestration.test.ts",
+    "direct_revit_execution_authorization.test.ts",
     "endpoint_mutability.test.ts",
     "evidence_projection.test.ts",
+    "evidence_http_routes.test.ts",
     "evidence_retrieval_selector_contract.test.ts",
     "general_revit_model_telemetry.test.ts",
     "general_revit_candidate_identity_preflight.test.ts",
@@ -43,9 +70,63 @@
     "teammate_verification_evidence.test.ts",
     "tool_result_normalization.test.ts",
     "verification_capability_admission_v2.test.ts",
-    "verified_work_packet.test.ts"
+    "verified_work_packet.test.ts",
+    "general_revit_fixture_preconditions.test.ts",
+    "codex_turn_model_telemetry.test.ts",
+    "codex_brain_spatial_guidance.test.ts",
+    "teammate_canonical_settlement.test.ts",
+    "teammate_native_rollback_handoff.test.ts",
+    "provider_turn_usage.test.ts",
+    "general_revit_campaign_completion.test.ts",
+    "general_revit_capability_report.test.ts",
+    "general_revit_capability_acceptance.test.ts",
+    "general_revit_campaign_memory.test.ts",
+    "revit_tool_contract_memory.test.ts",
+    "supported_tool_inventory.test.ts",
+    "revit_courier_contract.test.ts",
+    "dynamic_program_admission.test.ts",
+    "codex_instruction_binding.test.ts",
+    "codex_app_server_lifecycle.test.ts",
+    "general_revit_instruction_preflight.test.ts",
+    "benchmark_protocol_v2_instruction_evidence.test.ts",
+    "instruction_binding_http.test.ts",
+    "general_revit_request.test.ts",
+    "view_artifact_evidence.test.ts",
+    "pdfjs_standard_fonts.test.ts",
+    "team_assistant_live_regressions.test.ts",
+    "simple_context_question.test.ts",
+    "simple_assistant_presentation.test.ts",
+    "runtime_source_identity.test.ts",
+    "document_review_routing.test.ts",
+    "mep_route_redline_resolver.test.ts",
+    "composer_recovery.test.ts",
+    "read_attachment.test.ts",
+    "codex_tool_catalog.test.ts",
+    "result_delivery_diagnostics.test.ts",
+    "requirements_store.test.ts",
+    "requirements_parallel_planning.test.ts",
+    "bounded_evidence_delivery.test.ts",
+    "brain.test.ts",
+    "existing_conditions_source_disposition_ledger.test.ts",
+    "execution_strategy.test.ts",
+    "result_projection_delivery.test.ts",
+    "tool_progress_delivery.test.ts",
+    "workbook_export_intent.test.ts",
+    "deferred_proposal_admission.test.ts",
+    "discovered_input_projection.test.ts",
+    "read_attachment_redline.test.ts",
+    "pdf_source_annotations.test.ts",
+    "goals_service.test.ts",
+    "pdf_source_landmarks.test.ts",
+    "pdf_source_landmarks_pdfjs.test.ts",
+    "assignment_mutation_acknowledgment.test.ts",
+    "content_verified_projection.test.ts",
+    "input_result_freshness.test.ts",
+    "assignment_input_result_continuation.test.ts",
+    "open_duct_postcondition_v2.test.ts"
   ],
   "mcp_tests": [
+    "lib/dynamicProgramPresentation.test.ts",
     "lib/assignmentKernelV2.test.ts",
     "lib/dynamicRevitProgramRunner.test.ts",
     "lib/evidenceRetrievalSelectorContract.test.ts",
@@ -60,50 +141,1821 @@
     "lib/toolExposurePolicy.test.ts",
     "lib/toolSearchRanking.test.ts",
     "lib/toolSearchRiskSemantics.test.ts",
-    "skills/quantify.test.ts"
+    "skills/quantify.test.ts",
+    "lib/supportedToolInventory.test.ts",
+    "lib/dynamicRuntimeInstallation.test.ts",
+    "lib/dynamicAssignmentIntegration.test.ts",
+    "lib/generalAgentCapabilityDiscovery.test.ts",
+    "viewFrameImage.test.ts",
+    "spatialObservationV1.test.ts"
   ],
-  "desktop_tests": [],
+  "desktop_tests": [
+    "test/assignment_workspace_ux.test.js",
+    "test/simple_assistant_ui.test.js",
+    "test/sidecar_secure_integration.test.js",
+    "test/runtime_source_freshness.test.js",
+    "test/browser_asset_freshness.test.js",
+    "test/idle_batch_worker.test.js",
+    "test/composer_intake.test.js",
+    "test/conversation_rendering.test.js"
+  ],
   "dotnet_test_classes": [
+    "OperatorDesktopLaunchPlanTests",
+    "OperatorDuplicateSheetContractTests",
+    "OperatorPrinterDestinationTests",
+    "OperatorPrintOutputPathTests",
+    "OperatorPrintSettingsGuardTests",
+    "OperatorNativeArtifactReceiptTests",
+    "OperatorAttemptSettlementTests",
+    "OperatorNativeTransactionExecutionTests",
+    "OperatorRevitQueueDiagnosticTests",
     "OperatorApprovalPolicyTests",
     "OperatorNativeExecutionAttestationAuthorityTests",
+    "OperatorNativeAuthorizationTransportTests",
     "OperatorNativeHttpAdmissionTests",
     "OperatorNativeMutationScopePolicyTests",
     "OperatorNativeToolExposureAuthorityTests",
     "OperatorNativeTransportTests",
     "OperatorToolSearchRankingTests",
     "ScheduleAppearanceContractTests",
-    "TextNoteCanonicalizationTests"
+    "TextNoteCanonicalizationTests",
+    "OperatorProjectCloseFocusTests",
+    "OperatorWriteGrantRenewalTests",
+    "OperatorWriteGrantAdmissionTests",
+    "RevitTextCasePolicyTests",
+    "OperatorJsonWireSchemaTests",
+    "OperatorRequestPropertyPresenceTests",
+    "OperatorConditionalRequestContractsTests",
+    "OperatorLevelLookupDiagnosticTests",
+    "OperatorNativeChangeInventoryTests",
+    "TransactionTruthTests",
+    "OperatorActionDeadlinePolicyTests",
+    "OperatorSupportedToolInventoryTests",
+    "OperatorRetiredPrototypeToolTests",
+    "OperatorUiContextSnapshotTests",
+    "OperatorUiWakeSchedulerTests",
+    "OperatorEmbeddedNavigationTests",
+    "OperatorDesktopLauncherTests",
+    "OperatorPaneIntegrationContractTests",
+    "OperatorActiveIdleLeaseTests",
+    "OperatorProactivityLifecycleContractTests",
+    "OperatorWorkbookWriterTests",
+    "ExportedRasterFrameGeometryTests",
+    "MepDuctProfilePolicyTests",
+    "MepDuctTypeSelectionPolicyTests",
+    "MepRouteSizeInputPolicyTests",
+    "OperatorWorkbookSupplementalTablesTests",
+    "DraftPointCoordinatePolicyTests",
+    "OperatorWorkbookExportPathTests"
   ],
   "failure_families": [
-    { "id": "kernel-liveness-and-operation-ownership", "coverage": ["backend:assignment_kernel_v2_architecture.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
-    { "id": "payload-digest-and-observation-commit", "coverage": ["backend:payload_digest_v2.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/payloadDigestV2.test.ts"] },
-    { "id": "semantic-evidence-and-effect-causality", "coverage": ["backend:assignment_kernel_v2_candidate3_semantic_replay.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/previewSemanticEvidenceV2.test.ts"] },
-    { "id": "terminal-result-handoff", "coverage": ["backend:assignment_outcome_handoff.test.ts", "backend:assignment_kernel_v2_progress_controller.test.ts"] },
-    { "id": "session-index-and-exact-publication", "coverage": ["backend:assignment_kernel_v2_session_index_contract.test.ts", "backend:assignment_kernel_v2_publication.test.ts"] },
-    { "id": "provider-ledger-and-protocol-v2", "coverage": ["backend:benchmark_protocol_v2.test.ts", "backend:candidate52_v2_session_receipt_authority.test.ts", "backend:candidate53_v2_native_evidence_authority.test.ts", "backend:general_revit_model_telemetry.test.ts"] },
-    { "id": "startup-session-and-binding", "coverage": ["backend:session_creation_idempotency.test.ts", "backend:assignment_kernel_v2_execution.test.ts"] },
-    { "id": "route-effect-and-request-identity", "coverage": ["backend:endpoint_mutability.test.ts", "mcp:lib/revitRouteEffect.test.ts", "mcp:lib/revitClient.test.ts"] },
-    { "id": "native-transport-and-exact-body", "coverage": ["mcp:lib/nativeTransport.test.ts", "mcp:lib/revitClient.test.ts", "dotnet:OperatorNativeHttpAdmissionTests"] },
-    { "id": "structured-input-repair", "coverage": ["backend:assignment_mcp_error_settlement.test.ts", "mcp:lib/genericToolPreflight.test.ts", "mcp:skills/quantify.test.ts"] },
-    { "id": "preview-apply-and-postcondition-truth", "coverage": ["backend:assignment_typed_native_settlement.test.ts", "backend:teammate_mutation_intent_binding.test.ts", "mcp:lib/previewSemanticEvidenceV2.test.ts"] },
-    { "id": "recovery-and-idempotency", "coverage": ["backend:assignment_kernel_v2_store.test.ts", "backend:openai_brain_recovery.test.ts"] },
-    { "id": "work-return-and-work-packet", "coverage": ["backend:verified_work_packet.test.ts", "backend:benchmark_protocol_v2_interaction.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },
-    { "id": "capability-ranking-and-risk", "coverage": ["mcp:lib/toolSearchRanking.test.ts", "mcp:lib/toolSearchRiskSemantics.test.ts", "dotnet:OperatorToolSearchRankingTests"] },
-    { "id": "native-admission-and-mutation-scope", "coverage": ["dotnet:OperatorApprovalPolicyTests", "dotnet:OperatorNativeMutationScopePolicyTests"] },
-    { "id": "textnote-cross-runtime-postcondition", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "dotnet:TextNoteCanonicalizationTests"] },
-    { "id": "qualification-write-authorization-preflight", "coverage": ["backend:general_revit_qualification_preflight.test.ts", "backend:revit_preflight.test.ts"] },
-    { "id": "qualification-candidate-identity-preflight", "coverage": ["backend:general_revit_candidate_identity_preflight.test.ts", "backend:benchmark_protocol_v2.test.ts"] },
-    { "id": "focused-evidence-selector-and-exact-target-binding", "coverage": ["backend:evidence_retrieval_selector_contract.test.ts", "backend:evidence_projection.test.ts", "mcp:lib/evidenceRetrievalSelectorContract.test.ts"] },
-    { "id": "runtime-mode-and-v2-qualification-attestation", "coverage": ["backend:assignment_kernel_v2_session_index_contract.test.ts", "backend:general_revit_qualification_preflight.test.ts", "backend:benchmark_protocol_v2.test.ts"] },
-    { "id": "verification-assertion-provenance-and-predicate", "coverage": ["backend:teammate_verification_evidence.test.ts", "backend:teammate_loop_runtime.test.ts", "backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts"] },
-    { "id": "native-affected-target-to-verification-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
-    { "id": "dynamic-runtime-affected-target-publication", "coverage": ["backend:provider_dynamic_program.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/dynamicRevitProgramRunner.test.ts"] },
-    { "id": "typed-schedule-configuration-readback", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:teammate_loop_runtime.test.ts", "dotnet:ScheduleAppearanceContractTests"] },
-    { "id": "post-admission-execution-failure-and-provider-bootstrap", "coverage": ["backend:assignment_kernel_v2_provider_failure.test.ts", "backend:assignment_kernel_v2_architecture.test.ts", "backend:assignment_kernel_v2_session_index_contract.test.ts"] },
-    { "id": "postcondition-verifier-capability-admission", "coverage": ["backend:verification_capability_admission_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "backend:assignment_kernel_v2_architecture.test.ts"] },
-    { "id": "provider-response-output-drain-before-budget-settlement", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "backend:codex_app_server_compatibility.test.ts", "backend:openai_brain_recovery.test.ts"] },
-    { "id": "typed-principal-target-and-context-scope-separation", "coverage": ["backend:assignment_kernel_v2_architecture.test.ts", "backend:verification_capability_admission_v2.test.ts", "backend:teammate_mutation_intent_binding.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "mcp:lib/genericToolPreflight.test.ts"] },
-    { "id": "property-bound-parameter-postcondition-evidence", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:verification_capability_admission_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "backend:teammate_loop_runtime.test.ts", "backend:assignment_kernel_v2_architecture.test.ts"] },
-    { "id": "verification-parent-native-child-subject-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/assignmentKernelV2.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"] }
+    {
+      "id": "local-checkpoint-ribbon-selects-stale-installed-desktop-launcher",
+      "coverage": [
+        "backend:local_desktop_launcher_registration.test.ts",
+        "dotnet:OperatorDesktopLaunchPlanTests"
+      ]
+    },
+    {
+      "id": "generated-parameter-commit-requires-graph-bound-fresh-native-verification",
+      "coverage": [
+        "backend:generated_parameter_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:postcondition_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "generated-failure-feedback-preserves-cause-without-changing-authority",
+      "coverage": [
+        "mcp:lib/dynamicProgramPresentation.test.ts",
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "committed-checkpoint-task-id-is-not-a-secret-credential",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "visual-attachments-and-empty-continuations-lose-pixels-or-current-evidence",
+      "coverage": [
+        "backend:codex_turn_input.test.ts",
+        "backend:chat_stream_attachment_parity.test.ts",
+        "backend:inline_images.test.ts"
+      ]
+    },
+    {
+      "id": "research-settings-must-survive-thread-start-and-resume-without-policy-bypass",
+      "coverage": [
+        "backend:codex_research_config.test.ts",
+        "backend:codex_instruction_binding.test.ts"
+      ]
+    },
+    {
+      "id": "mep-alternate-points-and-operation-specific-required-fields",
+      "coverage": [
+        "dotnet:OperatorConditionalRequestContractsTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "nested-wire-scalars-erased-at-reflection-depth-limit",
+      "coverage": [
+        "dotnet:OperatorJsonWireSchemaTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "mode-specific-native-inputs-incorrectly-required-and-unions-unchecked",
+      "coverage": [
+        "dotnet:OperatorConditionalRequestContractsTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "fixture-close-browser-focus-cannot-assign-active-view",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "nullable-view-selectors-and-default-flags-required-by-reflection",
+      "coverage": [
+        "dotnet:OperatorRequestPropertyPresenceTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "inspection-scale-noun-admits-an-unrequested-repeat-apply",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "fixture-close-reactivates-an-already-active-drawing",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "resumed-provider-usage-missing-is-not-zero-cost",
+      "coverage": [
+        "backend:codex_turn_model_telemetry.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "json-action-wire-schema-reflected-as-clr-valuekind",
+      "coverage": [
+        "dotnet:OperatorJsonWireSchemaTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "bundled-sheet-examples-disagree-with-native-request-fields",
+      "coverage": [
+        "dotnet:OperatorDuplicateSheetContractTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "drafting-summary-omits-requested-scale-after-confirmed-commit",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "graphical-active-view-does-not-prove-drawing-keyboard-focus",
+      "coverage": [
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "sheet-creation-readback-native-name-policy-and-parameter-vocabulary",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "dotnet:RevitTextCasePolicyTests"
+      ]
+    },
+    {
+      "id": "drafting-view-legacy-completion-without-native-transaction-authority",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "provider-cache-accounting-lost-at-durable-ledger-and-summary",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:general_revit_model_telemetry.test.ts",
+        "backend:codex_turn_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "disabled-dryrun-option-misclassified-as-preview-at-ui-admission",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "sheet-option-missing-enum-dispatched-as-unknown-pretransaction-failure",
+      "coverage": [
+        "dotnet:OperatorDuplicateSheetContractTests",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "sheet-duplicate-boolean-success-without-commit-and-created-identity-readback",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:general_revit_export_isolation.test.ts"
+      ]
+    },
+    {
+      "id": "interactive-print-destination-dialog-timeout-and-untouched-preflight",
+      "coverage": [
+        "dotnet:OperatorPrinterDestinationTests",
+        "dotnet:OperatorNativeArtifactReceiptTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "driver-print-virtual-output-with-disabled-print-to-file-checkbox",
+      "coverage": [
+        "dotnet:OperatorPrintSettingsGuardTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "driver-print-staged-settings-global-readback-before-submit",
+      "coverage": [
+        "dotnet:OperatorPrintSettingsGuardTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "driver-print-explicit-single-copy-collation-is-inapplicable",
+      "coverage": [
+        "dotnet:OperatorPrintSettingsGuardTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "driver-print-unavailable-unrequested-collation-getter",
+      "coverage": [
+        "dotnet:OperatorPrintSettingsGuardTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "agent-instructions-match-real-work-and-verification-contracts",
+      "coverage": [
+        "backend:external_provider_brain.test.ts",
+        "backend:agent_response_policy.test.ts",
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "driver-print-relative-path-partial-failure-settings-and-file-truth",
+      "coverage": [
+        "dotnet:OperatorPrintOutputPathTests",
+        "dotnet:OperatorPrintSettingsGuardTests",
+        "dotnet:OperatorNativeArtifactReceiptTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:general_revit_export_isolation.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark-native-export-start-state-and-retained-output-isolation",
+      "coverage": [
+        "backend:general_revit_export_isolation.test.ts",
+        "backend:general_revit_fixture_preconditions.test.ts"
+      ]
+    },
+    {
+      "id": "post-apply-verification-helper-admission-after-criterion-pass",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "native-pdf-artifact-effect-and-independent-readback",
+      "coverage": [
+        "dotnet:OperatorNativeArtifactReceiptTests",
+        "dotnet:OperatorApprovalPolicyTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "backend:tool_registry_audit.test.ts"
+      ]
+    },
+    {
+      "id": "paused-user-handoff-packet-and-provider-non-invocation",
+      "coverage": [
+        "backend:assignment_kernel_v2_pause_reporting.test.ts",
+        "backend:assignment_kernel_v2_pause_http.test.ts",
+        "backend:benchmark_protocol_v2.test.ts"
+      ]
+    },
+    {
+      "id": "created-native-identity-without-documentchanged",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-native-transaction-receipt-and-canonical-handoff",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "dotnet:OperatorAttemptSettlementTests",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "authenticated-multiline-input-exact-mutation-admission",
+      "coverage": [
+        "backend:teammate_mutation_intent_binding.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "typed-primary-native-fulfillment-handoff",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "supplementary-read-after-canonical-verification",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "blocked-packet-trust-and-linked-postcondition-reporting",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "native-queue-contention-owner-observability",
+      "coverage": [
+        "dotnet:OperatorRevitQueueDiagnosticTests",
+        "backend:revit_control_plane_contract.test.ts",
+        "mcp:lib/revitClient.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "native-authorization-reconnect-after-backend-restart",
+      "coverage": [
+        "dotnet:OperatorNativeAuthorizationTransportTests",
+        "dotnet:OperatorNativeHttpAdmissionTests",
+        "backend:direct_revit_execution_authorization.test.ts"
+      ]
+    },
+    {
+      "id": "native-queue-admission-before-preview-and-apply",
+      "coverage": [
+        "mcp:lib/revitClient.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/nativeTransport.test.ts"
+      ]
+    },
+    {
+      "id": "saved-input-requestion-and-predispatch-busy-read-recovery",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "mcp:lib/revitClient.test.ts",
+        "dynamic:BootstrapReadRetryTests"
+      ]
+    },
+    {
+      "id": "browser-control-json-content-type-and-binding",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "canonical-pause-resume-and-pending-input-continuation",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "durable-discovery-and-idle-continuation",
+      "coverage": [
+        "backend:assignment_kernel_v2_store.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "normal-chat-auto-goal-admission",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "kernel-liveness-and-operation-ownership",
+      "coverage": [
+        "backend:assignment_kernel_v2_architecture.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "payload-digest-and-observation-commit",
+      "coverage": [
+        "backend:payload_digest_v2.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "mcp:lib/payloadDigestV2.test.ts"
+      ]
+    },
+    {
+      "id": "semantic-evidence-and-effect-causality",
+      "coverage": [
+        "backend:assignment_kernel_v2_candidate3_semantic_replay.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/previewSemanticEvidenceV2.test.ts"
+      ]
+    },
+    {
+      "id": "terminal-result-handoff",
+      "coverage": [
+        "backend:assignment_outcome_handoff.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "session-index-and-exact-publication",
+      "coverage": [
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "backend:assignment_kernel_v2_publication.test.ts"
+      ]
+    },
+    {
+      "id": "provider-ledger-and-protocol-v2",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:candidate52_v2_session_receipt_authority.test.ts",
+        "backend:candidate53_v2_native_evidence_authority.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "startup-session-and-binding",
+      "coverage": [
+        "backend:session_creation_idempotency.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "route-effect-and-request-identity",
+      "coverage": [
+        "backend:endpoint_mutability.test.ts",
+        "mcp:lib/revitRouteEffect.test.ts",
+        "mcp:lib/revitClient.test.ts"
+      ]
+    },
+    {
+      "id": "native-transport-and-exact-body",
+      "coverage": [
+        "mcp:lib/nativeTransport.test.ts",
+        "mcp:lib/revitClient.test.ts",
+        "dotnet:OperatorNativeHttpAdmissionTests"
+      ]
+    },
+    {
+      "id": "structured-input-repair",
+      "coverage": [
+        "backend:assignment_mcp_error_settlement.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "mcp:skills/quantify.test.ts"
+      ]
+    },
+    {
+      "id": "preview-apply-and-postcondition-truth",
+      "coverage": [
+        "backend:assignment_typed_native_settlement.test.ts",
+        "backend:teammate_mutation_intent_binding.test.ts",
+        "mcp:lib/previewSemanticEvidenceV2.test.ts"
+      ]
+    },
+    {
+      "id": "recovery-and-idempotency",
+      "coverage": [
+        "backend:assignment_kernel_v2_store.test.ts",
+        "backend:openai_brain_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "work-return-and-work-packet",
+      "coverage": [
+        "backend:verified_work_packet.test.ts",
+        "backend:benchmark_protocol_v2_interaction.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "capability-ranking-and-risk",
+      "coverage": [
+        "mcp:lib/toolSearchRanking.test.ts",
+        "mcp:lib/toolSearchRiskSemantics.test.ts",
+        "dotnet:OperatorToolSearchRankingTests"
+      ]
+    },
+    {
+      "id": "native-admission-and-mutation-scope",
+      "coverage": [
+        "dotnet:OperatorApprovalPolicyTests",
+        "dotnet:OperatorNativeMutationScopePolicyTests"
+      ]
+    },
+    {
+      "id": "textnote-cross-runtime-postcondition",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "dotnet:TextNoteCanonicalizationTests"
+      ]
+    },
+    {
+      "id": "qualification-write-authorization-preflight",
+      "coverage": [
+        "backend:general_revit_qualification_preflight.test.ts",
+        "backend:revit_preflight.test.ts"
+      ]
+    },
+    {
+      "id": "qualification-candidate-identity-preflight",
+      "coverage": [
+        "backend:general_revit_candidate_identity_preflight.test.ts",
+        "backend:benchmark_protocol_v2.test.ts"
+      ]
+    },
+    {
+      "id": "focused-evidence-selector-and-exact-target-binding",
+      "coverage": [
+        "backend:evidence_retrieval_selector_contract.test.ts",
+        "backend:evidence_projection.test.ts",
+        "mcp:lib/evidenceRetrievalSelectorContract.test.ts"
+      ]
+    },
+    {
+      "id": "runtime-mode-and-v2-qualification-attestation",
+      "coverage": [
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "backend:general_revit_qualification_preflight.test.ts",
+        "backend:benchmark_protocol_v2.test.ts"
+      ]
+    },
+    {
+      "id": "verification-assertion-provenance-and-predicate",
+      "coverage": [
+        "backend:teammate_verification_evidence.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "native-affected-target-to-verification-binding",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "dynamic-runtime-affected-target-publication",
+      "coverage": [
+        "backend:provider_dynamic_program.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "typed-schedule-configuration-readback",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "dotnet:ScheduleAppearanceContractTests"
+      ]
+    },
+    {
+      "id": "post-admission-execution-failure-and-provider-bootstrap",
+      "coverage": [
+        "backend:assignment_kernel_v2_provider_failure.test.ts",
+        "backend:assignment_kernel_v2_architecture.test.ts",
+        "backend:assignment_kernel_v2_session_index_contract.test.ts"
+      ]
+    },
+    {
+      "id": "postcondition-verifier-capability-admission",
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_async_settlement_barrier.test.ts",
+        "backend:assignment_kernel_v2_architecture.test.ts"
+      ]
+    },
+    {
+      "id": "provider-response-output-drain-before-budget-settlement",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_async_settlement_barrier.test.ts",
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:openai_brain_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "typed-principal-target-and-context-scope-separation",
+      "coverage": [
+        "backend:assignment_kernel_v2_architecture.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:teammate_mutation_intent_binding.test.ts",
+        "backend:assignment_async_settlement_barrier.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "property-bound-parameter-postcondition-evidence",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:assignment_kernel_v2_architecture.test.ts"
+      ]
+    },
+    {
+      "id": "verification-parent-native-child-subject-binding",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "mutation-completion-crash-recovery-without-replay",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "fixture-starting-view-and-browser-focus-reset",
+      "coverage": [
+        "backend:general_revit_fixture_preconditions.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "dotnet:OperatorProjectCloseFocusTests",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "contextual-chat-admission-and-session-reset",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "authoritative-request-effect-and-noncommitting-natural-requests",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:goal_endpoint_security.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "generic-read-result-delivery-before-terminal-handoff",
+      "coverage": [
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "followup-native-read-remains-task-evidence-after-generic-criterion-pass",
+      "coverage": [
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "post-apply-schema-recovery-and-supporting-documentation-child",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:codex_app_server_compatibility.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "active-session-renewal-prepared-write-token",
+      "coverage": [
+        "dotnet:OperatorWriteGrantRenewalTests",
+        "dotnet:OperatorWriteGrantAdmissionTests"
+      ]
+    },
+    {
+      "id": "visibility-category-rejection-native-rollback-and-committed-readback",
+      "coverage": [
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "visibility-view-property-postcondition-and-restart",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "canonical-native-rollback-releases-legacy-apply-fence",
+      "coverage": [
+        "backend:teammate_canonical_settlement.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "dotnet:OperatorLevelLookupDiagnosticTests"
+      ]
+    },
+    {
+      "id": "interrupted-provider-turn-and-missing-followup-usage",
+      "coverage": [
+        "backend:provider_turn_usage.test.ts",
+        "backend:codex_turn_model_telemetry.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "native-change-event-wrapper-identity-and-incomplete-inventory",
+      "coverage": [
+        "dotnet:OperatorNativeChangeInventoryTests",
+        "dotnet:OperatorNativeTransactionExecutionTests"
+      ]
+    },
+    {
+      "id": "plan-only-preview-must-not-fabricate-rollback-or-completion",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:codex_brain_spatial_guidance.test.ts"
+      ]
+    },
+    {
+      "id": "outer-transaction-group-authoritative-settlement-and-diff-identities",
+      "coverage": [
+        "dotnet:TransactionTruthTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "stopped-campaign-retains-final-report-without-advancing-unknown-effect",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_export_isolation.test.ts",
+        "backend:general_revit_capability_report.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-stops-before-next-case-on-provider-coverage-or-configuration-gap",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_model_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-final-cleanup-and-initialization-stop-survives-checkpoint-reload",
+      "coverage": [
+        "backend:general_revit_campaign_completion.test.ts",
+        "backend:general_revit_export_isolation.test.ts",
+        "backend:general_revit_capability_report.test.ts"
+      ]
+    },
+    {
+      "id": "campaign-effective-contract-memory-empty-start-and-checkpoint-binding",
+      "coverage": [
+        "backend:general_revit_campaign_memory.test.ts",
+        "backend:revit_tool_contract_memory.test.ts"
+      ]
+    },
+    {
+      "id": "queued-cancellation-metadata-survives-nested-deadline-boundaries",
+      "coverage": [
+        "dotnet:OperatorActionDeadlinePolicyTests",
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "set-parameter-native-collateral-inventory-beyond-request-targets",
+      "coverage": [
+        "dotnet:OperatorNativeChangeInventoryTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "approved-enum-correction-survives-memory-redaction",
+      "coverage": [
+        "backend:revit_tool_contract_memory.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "supported-tool-surface-denied-before-mode-and-transport-bypass",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "backend:direct_revit_execution_authorization.test.ts",
+        "backend:revit_courier_contract.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests",
+        "dotnet:OperatorRetiredPrototypeToolTests"
+      ]
+    },
+    {
+      "id": "acceptance-verification-does-not-imply-collateral-verification",
+      "coverage": [
+        "backend:verified_work_packet.test.ts",
+        "backend:assignment_kernel_v2_publication.test.ts"
+      ]
+    },
+    {
+      "id": "revit-year-bound-across-dynamic-admission-and-supervisor-dispatch",
+      "coverage": [
+        "backend:dynamic_program_admission.test.ts",
+        "backend:provider_dynamic_program.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "loaded-thread-instruction-binding-before-provider-dispatch",
+      "coverage": [
+        "backend:codex_instruction_binding.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "scored-benchmark-requires-runtime-and-provider-turn-instruction-evidence",
+      "coverage": [
+        "backend:general_revit_instruction_preflight.test.ts",
+        "backend:benchmark_protocol_v2_instruction_evidence.test.ts",
+        "backend:codex_instruction_binding.test.ts",
+        "backend:instruction_binding_http.test.ts"
+      ]
+    },
+    {
+      "id": "native-benchmark-admission-preserves-browser-origin-and-freshness-boundaries",
+      "coverage": [
+        "backend:general_revit_request.test.ts",
+        "backend:general_revit_instruction_preflight.test.ts"
+      ]
+    },
+    {
+      "id": "raw-runtime-pass-retains-independent-review-and-collateral-qualification",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:general_revit_acceptance_review.test.ts"
+      ]
+    },
+    {
+      "id": "view-rename-exact-replacement-requires-target-bound-full-name",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "applied-mutation-with-unresolved-trusted-verification-is-not-first-pass-verified",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "useful-native-discovery-counts-once-without-fulfilling-edit",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "no-progress-stop-is-not-authorization-denial",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "visual-artifact-verification-requires-requested-view",
+      "coverage": [
+        "backend:general_revit_capability_acceptance.test.ts",
+        "backend:general_revit_acceptance_review.test.ts",
+        "backend:view_artifact_evidence.test.ts"
+      ]
+    },
+    {
+      "id": "generated-code-admission-distinguishes-prose-from-executable-api",
+      "coverage": [
+        "dynamic:GeneratedCodeAdmissionTests",
+        "dynamic:RuntimeWorkspaceTests"
+      ]
+    },
+    {
+      "id": "bundled-generated-runtime-is-reachable-without-manual-paths",
+      "coverage": [
+        "mcp:lib/dynamicRuntimeInstallation.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "standard-font-redline-text-survives-pdf-to-provider-pixels",
+      "coverage": [
+        "backend:pdfjs_standard_fonts.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-research-calculation-avoids-model-obligation",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_research_config.test.ts"
+      ]
+    },
+    {
+      "id": "no-write-followup-preserves-read-contract-and-report-delivery",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "continued-task-raw-token-budget-and-stop-reason",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "native-file-handoff-and-result-path-correction",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "generated-read-sdk-report-has-no-model-operations",
+      "coverage": [
+        "dynamic:ReadOnlyGeneratedProgramTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "generated-task-authority-and-lost-apply-receipt",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "code-mode-tool-discovery-retains-sdk-and-validation-diagnostics",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-research-escapes-stale-model-task-without-native-authority",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:team_assistant_live_regressions.test.ts"
+      ]
+    },
+    {
+      "id": "native-generated-receipt-casing-and-empty-preview-preserve-compile-repair",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "bounded-generated-sample-does-not-require-full-model-census",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "invalid-generated-apply-input-never-opens-unknown-effect",
+      "coverage": [
+        "backend:mcp_input_validation.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "supervisor-input-pipe-cleanup-preserves-native-result-and-unknown-apply",
+      "coverage": [
+        "dynamic:WorkerInputChannelTests",
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "plain-model-visibility-question-misclassified-as-apply-and-stalls",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:agent_response_policy.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "assistant-conversation-obscured-by-diagnostics-and-stale-task-progress",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/simple_assistant_ui.test.js"
+      ]
+    },
+    {
+      "id": "background-revit-context-queue-starves-simple-model-identity",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "dotnet:OperatorUiContextSnapshotTests",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "refresh-or-restart-loses-conversation-and-direct-context-followups",
+      "coverage": [
+        "backend:session_history_recovery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "background-revit-queue-stalls-general-agent-bootstrap",
+      "coverage": [
+        "dotnet:OperatorUiWakeSchedulerTests",
+        "backend:revit_control_plane_contract.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "sidecar-stop-route-scope-error-leaves-provider-running",
+      "coverage": [
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:codex_app_server_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "connection-state-paraphrase-admitted-as-edit-and-hides-transport-failure",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "generated-runtime-failure-discards-partial-output-and-source-location",
+      "coverage": [
+        "dynamic:RuntimeFailureDiagnosticTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts",
+        "mcp:lib/dynamicProgramPresentation.test.ts"
+      ]
+    },
+    {
+      "id": "document-review-with-no-model-changes-enters-apply-and-requires-revit",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-document-review-enters-legacy-redline-resolver",
+      "coverage": [
+        "backend:document_review_routing.test.ts",
+        "backend:mep_route_redline_resolver.test.ts"
+      ]
+    },
+    {
+      "id": "launcher-retains-stale-imported-helper-when-server-entrypoint-is-unchanged",
+      "coverage": [
+        "backend:runtime_source_identity.test.ts",
+        "desktop:test/runtime_source_freshness.test.js"
+      ]
+    },
+    {
+      "id": "answer-drafting-followup-enters-model-task-and-replaces-answer",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:document_review_routing.test.ts"
+      ]
+    },
+    {
+      "id": "stale-browser-warning-is-overwritten-and-refresh-loses-unsent-draft",
+      "coverage": [
+        "backend:composer_recovery.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/browser_asset_freshness.test.js"
+      ]
+    },
+    {
+      "id": "idle-assignment-health-polling-occupies-native-work-queue",
+      "coverage": [
+        "backend:composer_recovery.test.ts",
+        "desktop:test/simple_assistant_ui.test.js",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "unfinished-document-plan-replaces-new-selected-duct-question",
+      "coverage": [
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
+      ]
+    },
+    {
+      "id": "general-engineering-question-inherits-model-task-and-suppresses-answer",
+      "coverage": [
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:document_review_routing.test.ts",
+        "backend:agent_response_policy.test.ts"
+      ]
+    },
+    {
+      "id": "general-question-waits-on-unnecessary-native-context-bootstrap",
+      "coverage": [
+        "backend:assistant_context_policy.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "empty-background-batch-queue-requests-live-model-binding",
+      "coverage": [
+        "backend:revit_batch_service.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "desktop:test/idle_batch_worker.test.js"
+      ]
+    },
+    {
+      "id": "criterion-status-repeats-entire-native-registry-in-model-context",
+      "coverage": [
+        "backend:assignment_status_projection.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "compound-model-view-question-enters-agent-and-omits-model-name",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:session_history_recovery.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
+      "id": "successful-dispatcher-wake-suppresses-native-window-message-while-event-pending",
+      "coverage": [
+        "dotnet:OperatorUiWakeSchedulerTests",
+        "backend:revit_control_plane_contract.test.ts"
+      ]
+    },
+    {
+      "id": "document-review-capability-question-completes-with-unrequested-model-schedules",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "deferred-pdf-pages-cannot-be-read-as-registered-conversation-evidence",
+      "coverage": [
+        "backend:read_attachment.test.ts",
+        "backend:codex_turn_input.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "send-intake-awaits-freshness-before-acknowledgment-and-click-capture",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/composer_intake.test.js",
+        "desktop:test/browser_asset_freshness.test.js"
+      ]
+    },
+    {
+      "id": "generated-code-repair-without-changing-model-misclassified-as-apply",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "generated-support-read-attaches-domain-facts-to-control-evidence",
+      "coverage": [
+        "mcp:lib/dynamicAssignmentIntegration.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "resumed-provider-keeps-old-tool-catalog-and-cannot-read-deferred-pdf-pages",
+      "coverage": [
+        "backend:codex_tool_catalog.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "failed-read-diagnostics-disappear-from-successful-repair-answer",
+      "coverage": [
+        "backend:result_delivery_diagnostics.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "provider-progress-concatenates-into-final-document-answer",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "narrow-assistant-reply-overlaps-header-and-renders-raw-markdown",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js",
+        "dotnet:OperatorPaneIntegrationContractTests"
+      ]
+    },
+    {
+      "id": "long-audit-journal-rehydration-replays-every-prefix-and-stalls-ui",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "code-mode-pdf-display-repeats-reads-and-dumps-base64",
+      "coverage": [
+        "backend:read_attachment.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "checklist-audit-final-answer-is-raw-inventory-without-priorities-or-questions",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "standalone-engineering-model-prohibition-creates-unfinished-model-assignment",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "code-mode-evidence-json-framing-causes-retrieval-loop-and-audit-budget-exhaustion",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "generated-audit-snapshot-exceeds-hidden-code-mode-bound",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "independent-conversations-contend-for-requirements-reader-planning-lease",
+      "coverage": [
+        "backend:requirements_store.test.ts",
+        "backend:requirements_parallel_planning.test.ts"
+      ]
+    },
+    {
+      "id": "schedule-assessment-with-row-count-is-forced-into-model-quantify-contract",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-equations-arrive-as-unrendered-tex",
+      "coverage": [
+        "backend:agent_response_policy.test.ts",
+        "backend:simple_assistant_presentation.test.ts"
+      ]
+    },
+    {
+      "id": "read-execution-progress-incorrectly-says-making-model-changes",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "engineering-anything-in-revit-exclusion-enters-native-assignment",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "backend:assistant_context_policy.test.ts"
+      ]
+    },
+    {
+      "id": "assessment-answer-dumps-raw-evidence-over-the-actionable-findings",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "broad-audit-manual-row-scan-omits-an-anomaly-present-in-complete-schedule",
+      "coverage": [
+        "backend:agent_response_policy.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "generated-code-bootstrap-busy-exits-without-bounded-evidence",
+      "coverage": [
+        "dynamic:BootstrapReadRetryTests",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
+    },
+    {
+      "id": "projected-inventory-fields-and-byte-limited-pages-stall-broad-audit",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:evidence_http_routes.test.ts"
+      ]
+    },
+    {
+      "id": "evidence-envelope-overhead-exceeds-budget-or-restores-omitted-raw-output",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "retained-result-followup-restarts-model-work-and-rejects-prior-evidence",
+      "coverage": [
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:assistant_context_policy.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "backend:codex_turn_input.test.ts"
+      ]
+    },
+    {
+      "id": "simple-sample-report-hides-requested-names-in-prioritized-assessment",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:agent_response_policy.test.ts"
+      ]
+    },
+    {
+      "id": "valid-assistant-table-renders-as-unreadable-pipe-delimited-prose",
+      "coverage": [
+        "backend:simple_assistant_presentation.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "retained-answer-context-column-labels-create-fresh-model-obligation",
+      "coverage": [
+        "backend:assistant_context_policy.test.ts",
+        "backend:assistant_intake_http.test.ts",
+        "backend:codex_turn_input.test.ts",
+        "backend:team_assistant_live_regressions.test.ts"
+      ]
+    },
+    {
+      "id": "navigation-further-model-changes-prohibition-admits-apply-and-rejects-read-delivery",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:team_assistant_live_regressions.test.ts",
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "navigation-guidance-selects-control-context-for-result-delivery-and-leaks-internal-fields",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:result_delivery_diagnostics.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "small-native-results-and-discovery-instructions-require-redundant-retrieval",
+      "coverage": [
+        "backend:bounded_evidence_delivery.test.ts",
+        "backend:evidence_projection.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "native-default-idle-between-provider-calls-delays-sequential-api-work",
+      "coverage": [
+        "dotnet:OperatorActiveIdleLeaseTests",
+        "dotnet:OperatorProactivityLifecycleContractTests",
+        "dotnet:OperatorUiWakeSchedulerTests"
+      ]
+    },
+    {
+      "id": "immediate-status-and-retained-inspection-bypassed-by-general-assistant-route",
+      "coverage": [
+        "backend:brain.test.ts",
+        "backend:existing_conditions_source_disposition_ledger.test.ts",
+        "backend:conversation_assignment_isolation.test.ts",
+        "backend:assignment_kernel_v2_provider_failure.test.ts"
+      ]
+    },
+    {
+      "id": "native-double-settlement-loses-evidence-projection-and-bypasses-model-budget",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:bounded_evidence_delivery.test.ts",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "routine-sheet-navigation-requires-deferred-search-and-standalone-strategy-roundtrips",
+      "coverage": [
+        "backend:codex_app_server_compatibility.test.ts",
+        "backend:execution_strategy.test.ts",
+        "backend:direct_revit_execution_authorization.test.ts"
+      ]
+    },
+    {
+      "id": "complete-native-counts-repeatedly-read-because-projected-values-cannot-be-delivered",
+      "coverage": [
+        "backend:result_projection_delivery.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "control-observations-offered-as-result-items-cause-avoidable-completion-retries",
+      "coverage": [
+        "backend:result_projection_delivery.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "active-native-work-does-not-update-conversation-progress",
+      "coverage": [
+        "backend:tool_progress_delivery.test.ts",
+        "backend:bounded_evidence_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "bulk-workbook-export-is-implemented-but-unreachable-in-supported-discovery",
+      "coverage": [
+        "mcp:lib/generalAgentCapabilityDiscovery.test.ts",
+        "dotnet:OperatorToolSearchRankingTests",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
+    },
+    {
+      "id": "model-preservation-denies-requested-workbook-file-effect-and-forces-unbounded-parameter-retyping",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "dotnet:OperatorWorkbookWriterTests",
+        "mcp:lib/generalAgentCapabilityDiscovery.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "proposed-engineering-analysis-with-deferred-drawing-is-admitted-as-model-write",
+      "coverage": [
+        "backend:deferred_proposal_admission.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
+      ]
+    },
+    {
+      "id": "native-workbook-preview-lacks-exact-selection-and-parameter-semantic-adapter",
+      "coverage": [
+        "mcp:lib/previewSemanticEvidenceV2.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:native_artifact_contract_v2.test.ts",
+        "dotnet:OperatorWorkbookWriterTests"
+      ]
+    },
+    {
+      "id": "discovered-engineering-input-cannot-be-asked-or-resumed-with-immutable-spec",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "new-unanswered-question-is-lost-behind-resolved-history-in-model-status",
+      "coverage": [
+        "backend:discovered_input_projection.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "verified-workbook-file-silently-omits-requested-analysis-and-decisions",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:workbook_export_intent.test.ts"
+      ]
+    },
+    {
+      "id": "pending-engineering-question-stops-provider-with-internal-error-and-hidden-answer-form",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "assessment-obligation-falsely-describes-an-uncreated-workbook-as-verified",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "advertised-room-array-field-selectors-return-missing-retained-values",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "valid-evidence-pages-falsely-exhaust-progress-while-missing-fields-mint-knowledge",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "mcp:lib/evidenceRetrievalSelectorContract.test.ts"
+      ]
+    },
+    {
+      "id": "blocked-mep-trial-loses-native-rollback-truth-and-is-reported-as-uncertain-apply",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "native-view-frame-export-delivers-only-metadata-before-redline-placement",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "mcp:spatialObservationV1.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "incomplete-redline-budget-handoff-becomes-annotation-only-failure-and-hides-applied-effects",
+      "coverage": [
+        "backend:brain.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "generic-native-view-exports-bypass-image-delivery-and-send-only-paths",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "status-only-native-rollback-leaves-outer-apply-verification-fence-closed",
+      "coverage": [
+        "backend:teammate_native_rollback_handoff.test.ts",
+        "backend:teammate_canonical_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "concurrent-native-grant-publication-temporarily-hides-the-active-file",
+      "coverage": [
+        "dotnet:OperatorWriteGrantRenewalTests",
+        "dotnet:OperatorWriteGrantAdmissionTests"
+      ]
+    },
+    {
+      "id": "pdf-reader-omits-marked-centerline-vectors-and-cannot-inspect-a-magnified-region",
+      "coverage": [
+        "backend:read_attachment_redline.test.ts",
+        "backend:pdf_source_annotations.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "delivered-native-jpeg-is-printed-as-base64-instead-of-displayed-in-code-mode",
+      "coverage": [
+        "backend:read_attachment_redline.test.ts",
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:viewFrameImage.test.ts"
+      ]
+    },
+    {
+      "id": "identical-exported-raster-uses-different-crop-and-outline-model-origins",
+      "coverage": [
+        "dotnet:ExportedRasterFrameGeometryTests",
+        "mcp:viewFrameImage.test.ts",
+        "mcp:spatialObservationV1.test.ts"
+      ]
+    },
+    {
+      "id": "settled-observation-retains-large-duplicate-payload-through-every-journal-replay",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-duct-preview-omits-observed-rollback-and-quarantines-the-next-authorized-edit",
+      "coverage": [
+        "dotnet:MepDuctTypeSelectionPolicyTests",
+        "dotnet:MepDuctProfilePolicyTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/previewSemanticEvidenceV2.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-brief-tables-and-late-instructions-are-flattened-or-truncated-before-resume",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:goals_service.test.ts"
+      ]
+    },
+    {
+      "id": "scoped-engineering-workbook-request-is-refused-as-unauthorized-file-creation",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:assignment_auto_goal_admission.test.ts"
+      ]
+    },
+    {
+      "id": "advertised-legacy-workbook-writer-has-no-executable-assignment-effect-contract",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "native-preflight-no-transaction-is-collapsed-and-corrected-duct-retry-remains-blocked",
+      "coverage": [
+        "backend:teammate_native_rollback_handoff.test.ts",
+        "backend:teammate_canonical_settlement.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "pdf-circle-centers-estimated-from-pixels-without-bounded-source-landmarks",
+      "coverage": [
+        "backend:pdf_source_landmarks.test.ts",
+        "backend:pdf_source_landmarks_pdfjs.test.ts",
+        "backend:read_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "engineering-workbook-omits-supplied-airflows-proposals-or-selected-space-rows",
+      "coverage": [
+        "dotnet:OperatorWorkbookSupplementalTablesTests",
+        "dotnet:OperatorWorkbookWriterTests",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "saved-answer-refresh-is-superseded-by-status-poll-and-task-does-not-continue",
+      "coverage": [
+        "backend:assignment_mutation_acknowledgment.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "accepted-journal-append-and-snapshot-repeat-whole-payload-history",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "persisted-assignment-snapshot-replays-unchanged-large-history-on-every-read",
+      "coverage": [
+        "backend:content_verified_projection.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "answered-airflow-completes-from-stale-pre-answer-workbook-without-regeneration",
+      "coverage": [
+        "backend:input_result_freshness.test.ts",
+        "backend:assignment_input_result_continuation.test.ts"
+      ]
+    },
+    {
+      "id": "committed-open-duct-lacks-target-bound-geometry-verification-and-truthful-handoff",
+      "coverage": [
+        "backend:open_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "shared-model-and-current-view-question-falls-through-to-slow-assignment",
+      "coverage": [
+        "backend:simple_context_question.test.ts",
+        "backend:session_history_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "view-plane-point-silently-discards-world-elevation",
+      "coverage": [
+        "dotnet:DraftPointCoordinatePolicyTests",
+        "mcp:lib/genericToolPreflight.test.ts"
+      ]
+    },
+    {
+      "id": "straight-create-duct-compatibility-path-lacks-native-postcondition-verification",
+      "coverage": [
+        "backend:open_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "workbook-path-rejection-becomes-unknown-write-and-prevents-corrected-export",
+      "coverage": [
+        "dotnet:OperatorWorkbookExportPathTests",
+        "backend:revit_control_plane_contract.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "workbook-schema-omits-provenance-and-selected-target-coverage",
+      "coverage": [
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorWorkbookSupplementalTablesTests"
+      ]
+    }
+  ],
+  "dynamic_runtime_test_classes": [
+    "GeneratedCodeAdmissionTests",
+    "RuntimeWorkspaceTests",
+    "ReadOnlyGeneratedProgramTests",
+    "WorkerInputChannelTests",
+    "RuntimeFailureDiagnosticTests",
+    "BootstrapReadRetryTests"
   ]
 }

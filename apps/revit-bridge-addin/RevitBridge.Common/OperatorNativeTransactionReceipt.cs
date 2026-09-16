@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace RevitBridge.Common
@@ -24,26 +25,77 @@ namespace RevitBridge.Common
         [JsonPropertyName("affected_element_ids")]
         public IReadOnlyList<long> AffectedElementIds { get; }
 
+        [JsonPropertyName("added_element_ids")]
+        public IReadOnlyList<long> AddedElementIds { get; }
+
+        [JsonPropertyName("deleted_element_ids")]
+        public IReadOnlyList<long> DeletedElementIds { get; }
+
         private OperatorNativeTransactionReceipt(
             string status,
             bool? committed,
             IEnumerable<long>? modifiedElementIds,
-            IEnumerable<long>? affectedElementIds)
+            IEnumerable<long>? affectedElementIds,
+            IEnumerable<long>? addedElementIds = null,
+            IEnumerable<long>? deletedElementIds = null)
         {
             Status = status;
             CommittedValue = committed;
             ModifiedElementIds = Normalize(modifiedElementIds);
             AffectedElementIds = Normalize(affectedElementIds);
+            AddedElementIds = Normalize(addedElementIds);
+            DeletedElementIds = Normalize(deletedElementIds);
         }
 
         public static OperatorNativeTransactionReceipt Committed(IEnumerable<long> modifiedElementIds)
             => new OperatorNativeTransactionReceipt("committed", true, modifiedElementIds, modifiedElementIds);
+
+        public static OperatorNativeTransactionReceipt CommittedChanges(
+            IEnumerable<long> added, IEnumerable<long> modified, IEnumerable<long> deleted)
+            => new OperatorNativeTransactionReceipt("committed", true, modified,
+                added.Concat(modified).Concat(deleted), added, deleted);
+
+        public OperatorNativeTransactionReceipt WithNativeCreatedElements(IEnumerable<long> createdElementIds)
+        {
+            if (Status != "committed" || CommittedValue != true)
+                throw new InvalidOperationException("Created identities require a confirmed native commit.");
+            var created = Normalize(createdElementIds);
+            return new OperatorNativeTransactionReceipt(Status, true, ModifiedElementIds,
+                AffectedElementIds.Concat(created), AddedElementIds.Concat(created), DeletedElementIds);
+        }
+
+        public OperatorNativeTransactionReceipt WithNativeModifiedElements(IEnumerable<long> modifiedElementIds)
+        {
+            if (Status != "committed" || CommittedValue != true)
+                throw new InvalidOperationException("Modified identities require a confirmed native commit.");
+            var modified = Normalize(modifiedElementIds);
+            return new OperatorNativeTransactionReceipt(Status, true, ModifiedElementIds.Concat(modified),
+                AffectedElementIds.Concat(modified), AddedElementIds, DeletedElementIds);
+        }
 
         public static OperatorNativeTransactionReceipt RolledBack(IEnumerable<long> affectedElementIds)
             => new OperatorNativeTransactionReceipt("rolled_back", false, Array.Empty<long>(), affectedElementIds);
 
         public static OperatorNativeTransactionReceipt NotStarted(IEnumerable<long>? targetElementIds = null)
             => new OperatorNativeTransactionReceipt("not_started", false, Array.Empty<long>(), targetElementIds);
+
+        public static OperatorNativeTransactionReceipt FromObservedStatus(string status, IEnumerable<long> affected)
+        {
+            if (status == "Committed") return Committed(affected);
+            if (status == "RolledBack") return RolledBack(affected);
+            if (status == "Uninitialized") return NotStarted();
+            return Unknown(status, affected);
+        }
+
+        // Composite workflows must forward only the last attempted transaction
+        // stage. A successful trial cannot establish the outcome of a later apply.
+        public static object? LastAttemptedStage(object preview, object? apply, bool applyAttempted)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(applyAttempted ? apply : preview));
+            var stage = document.RootElement;
+            return stage.ValueKind == JsonValueKind.Object && stage.TryGetProperty("transaction", out var receipt)
+                ? receipt.Clone() : (object?)null;
+        }
 
         public static OperatorNativeTransactionReceipt Unknown(string nativeStatus, IEnumerable<long>? targetElementIds = null)
         {

@@ -1,0 +1,5 @@
+export function circularLabelPdf(rotation=0,crop=false){
+ const stream='105 100 m 105 102.761425 102.761425 105 100 105 c 97.238575 105 95 102.761425 95 100 c 95 97.238575 97.238575 95 100 95 c 102.761425 95 105 97.238575 105 100 c h S\nBT /F1 5 Tf 98.3325 98.7 Td (A) Tj ET\n';
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>',`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] ${crop?'/CropBox [20 40 200 180]':''} /Rotate ${rotation} /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`,`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+ let output='%PDF-1.4\n';const offsets=[0];objects.forEach((object,i)=>{offsets.push(Buffer.byteLength(output));output+=`${i+1} 0 obj\n${object}\nendobj\n`;});const xref=Buffer.byteLength(output);output+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`+offsets.slice(1).map(offset=>`${String(offset).padStart(10,'0')} 00000 n \n`).join('');output+=`trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;return Buffer.from(output);
+}

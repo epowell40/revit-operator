@@ -1,0 +1,13 @@
+{
+  "apply": {
+    "method": "POST",
+    "path": "/revit/create-drafting-view",
+    "body": { "name": "OPERATOR HANDOFF CHECK", "scale": 100, "allowExisting": false }
+  },
+  "retained_read": {
+    "result": [{ "id": 1542917, "found": true, "className": "ViewDrafting", "fullClassName": "Autodesk.Revit.DB.ViewDrafting", "category": "Views", "name": "OPERATOR HANDOFF CHECK", "boundingBox": { "min": { "x": -100, "y": -100, "z": -1000 }, "max": { "x": 100, "y": 100, "z": -0.1 } }, "location": null, "viewIdUsed": null }]
+  },
+  "repaired_read": {
+    "result": [{ "id": 1542917, "found": true, "className": "ViewDrafting", "fullClassName": "Autodesk.Revit.DB.ViewDrafting", "category": "Views", "name": "OPERATOR HANDOFF CHECK", "viewType": "DraftingView", "viewScale": 100, "boundingBox": { "min": { "x": -100, "y": -100, "z": -1000 }, "max": { "x": 100, "y": 100, "z": -0.1 } }, "location": null, "viewIdUsed": null }]
+  }
+}

@@ -435,7 +435,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
   fs.mkdirSync(packagedRouteEffectPackage, { recursive: true });
-  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js", "certifiedMoveTargetLedger.js"]) {
+  for (const file of ["toolExposurePolicy.js", "supportedToolInventory.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js", "certifiedMoveTargetLedger.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
   }
   for (const file of ["index.js", "package.json"]) {
@@ -452,7 +452,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   assert.equal(loaded.trustSource, "bundled");
 });
 
-test("laboratory decision is explicit and does not require an arbitrary policy file", () => {
+test("laboratory cannot expand the fixed product inventory even without a policy file", () => {
   const decision = evaluateToolExposure({
     method: "POST",
     path: "/revit/unknown-laboratory-route",
@@ -464,15 +464,15 @@ test("laboratory decision is explicit and does not require an arbitrary policy f
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: "Z:\\missing\\policy.json"
     }
   });
-  assert.equal(decision.allowed, true);
-  assert.deepEqual(decision.reasonCodes, ["LABORATORY_MODE_ACTIVE"]);
+  assert.equal(decision.allowed, false);
+  assert.deepEqual(decision.reasonCodes, ["PRODUCT_TOOL_NOT_SUPPORTED"]);
 });
 
 test("laboratory preserves JSON wire semantics for ordinary optional undefined values", () => {
   const body = { action: "list\r\nall", optional: undefined };
   const decision = evaluateToolExposure({
     method: "POST",
-    path: "/revit/laboratory-json-wire",
+    path: "/revit/schedules",
     body,
     channel: "typed_mcp",
     env: {

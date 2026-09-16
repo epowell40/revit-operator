@@ -829,3 +829,10 @@ test("OpenAI contract carries dynamic_program and production-default execution s
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+for (const year of ["2023", "2024", "2025", "2026", "2027"] as const) {
+  test(`provider program preserves supported year ${year}`,()=>{ const normalized=normalizeProviderDynamicProgram(program({target_revit_year:year})); assert.ok(normalized); assert.equal(normalized.target_revit_year,year); });
+}
+for (const year of ["2028", "2027.2"]) {
+  test(`provider program rejects unsupported year ${year}`,()=>assert.throws(()=>normalizeProviderDynamicProgram(program({target_revit_year:year as any})),/target_revit_year/));
+}

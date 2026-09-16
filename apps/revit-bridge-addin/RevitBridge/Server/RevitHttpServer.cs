@@ -130,6 +130,7 @@ namespace RevitBridge.Server
                 { "/revit/visibility", new ViewVisibilityHandler() },
                 { "/revit/datums", new DatumsHandler() },
                 { "/revit/export-pdf", new ExportPdfHandler() },
+                { "/revit/inspect-exported-files", new InspectExportedFilesHandler() },
                 { "/revit/print", new PrintHandler() },
                 { "/revit/export-images", new ExportImagesBatchHandler() },
                 { "/revit/export-dwg", new ExportDwgHandler() },
@@ -199,8 +200,6 @@ namespace RevitBridge.Server
                 { "/revit/quantify", new QuantifyElementsHandler() },
                 { "/revit/quantify-visualize", new QuantifyVisualizeHandler() },
                 { "/revit/ensure-spaces", new EnsureSpacesHandler() },
-                { "/revit/create-zones", new CreateZonesHandler() },
-                { "/revit/create-zone-visuals", new CreateZoneVisualsHandler() },
                 { "/revit/query-zone-data", new QueryZoneDataHandler() },
                 { "/revit/place-families", new PlaceFamiliesHandler() },
                 { "/revit/place-family-instance-on-host", new PlaceFamilyInstanceOnHostActionHandler() },
@@ -812,6 +811,7 @@ namespace RevitBridge.Server
                 // is no longer the only approval gate.
                 // GET is always treated as read-only here.
                 var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
+                OperatorSupportedToolInventory.RequireSupportedTransport(effectiveMethod, path);
                 actionMethod = effectiveMethod;
                 actionPath = path;
                 requestedEffect = OperatorApprovalPolicy.GetEffectWireValue(effectiveMethod, path, requestBody);
@@ -882,7 +882,7 @@ namespace RevitBridge.Server
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
-                        new { status = "ok", timestamp = DateTime.Now }, requestedEffect, effectiveMethod, path,
+                        new { status = "ok", timestamp = DateTime.Now, ui_context = RevitUiContextSnapshot.Read() }, requestedEffect, effectiveMethod, path,
                         attemptId: correlationId));
                 }
                 else if (path == "/revit/capabilities")
@@ -912,6 +912,15 @@ namespace RevitBridge.Server
                 else if (_handlers.TryGetValue(path, out var handler))
                 {
                     string body = requestBody;
+
+                    // This destination check is read-only and precedes the
+                    // native queue. An invalid export path has no file effect.
+                    if (path == "/revit/export-elements-xlsx")
+                    {
+                        using var workbookRequest = JsonDocument.Parse(body);
+                        if (!OperatorWorkbookExportPath.TryValidateRequest(WorkspacePaths.GetWorkspaceRoot(), workbookRequest.RootElement, out var workbookError))
+                            throw new ArgumentException(workbookError);
+                    }
 
                     // Support GET query-string style for documentation endpoints (human/tooling convenience).
                     // Operator tool calls from the agent typically use POST bodies (no query support in action runner).
@@ -1018,11 +1027,12 @@ namespace RevitBridge.Server
                                     return certifiedResult;
                                 },
                                 localDeadline.Token,
-                                correlationId);
+                                correlationId,
+                                "http:" + effectiveMethod + ":" + path);
                         }
-                        catch (OperationCanceledException) when (localDeadline.IsCancellationRequested)
+                        catch (OperationCanceledException ex) when (localDeadline.IsCancellationRequested)
                         {
-                            throw deadline.CreateTimeoutException(correlationId);
+                            throw deadline.ClassifyCancellation(ex, correlationId);
                         }
                     }
                     responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(

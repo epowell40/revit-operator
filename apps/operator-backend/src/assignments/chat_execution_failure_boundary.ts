@@ -2,6 +2,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatResponse } from "../contrac
 import { appendEvent } from "../memory/sqlite_store.js";
 import { persistence } from "../persistence/persistence_manager.js";
 import { appendMessage } from "../session_store.js";
+import { conversationDisplay } from "../conversation_history.js";
 import {
   classifyAssignmentKernelExecutionFailureV2,
   settleAssignmentKernelExecutionFailureV2
@@ -53,7 +54,8 @@ export function handleChatExecutionFailureBoundaryV2(input: Readonly<{
   };
   if (input.persist_terminal_response !== false) {
     try {
-      appendMessage(input.assignment.bindingV2.session_id, { role: "assistant", text: response.assistant_message });
+      appendMessage(input.assignment.bindingV2.session_id, { role: "assistant", text: response.assistant_message },
+        { display: conversationDisplay(input.message_id, response.assistant_message) });
       persistence.appendAssistantTurn({
         sessionId: input.assignment.bindingV2.session_id,
         messageId: input.message_id,

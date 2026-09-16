@@ -1,3 +1,5 @@
+import { buildProviderUsageCoverageV1, PROVIDER_USAGE_COVERAGE_V1_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
+
 type JsonRecord = Record<string, unknown>;
 
 export type RequestedComputerAgentConfig = {
@@ -98,6 +100,7 @@ function mergeReceipt(left: JsonRecord, right: JsonRecord): JsonRecord {
   const rightTokens = asRecord(right.tokens);
   const conflicts = [
     ["route", left.route, right.route],
+    ["turn_id", left.turn_id, right.turn_id],
     ["model", left.model, right.model],
     ["reasoning_effort", left.reasoning_effort, right.reasoning_effort],
     ["started_at_utc", left.started_at_utc, right.started_at_utc],
@@ -158,17 +161,19 @@ function completeSum(values: Array<number | null>): number | null {
 
 const PRICING_SNAPSHOT = {
   schema: "revit-operator.openai-pricing-snapshot.v1",
-  effective_date: "2026-08-21",
+  effective_date: "2026-09-06",
   currency: "USD",
   unit_tokens: 1_000_000,
   long_context_input_threshold_tokens: 272_000,
   rates: {
     "gpt-5.6-sol": { input: 4, cached_input: 0.4, cache_write_input: 5, output: 20 },
-    "gpt-5.6-luna": { input: 0.2, cached_input: 0.02, cache_write_input: 0.25, output: 1.2 }
+    "gpt-5.6-luna": { input: 0.2, cached_input: 0.02, cache_write_input: 0.25, output: 1.2 },
+    "gpt-6-astra": { input: 10, cached_input: 1, cache_write_input: 12.5, output: 50 }
   },
   sources: {
     "gpt-5.6-sol": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-    "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+    "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra"
   }
 } as const;
 
@@ -177,16 +182,37 @@ function receiptCostUsd(receipt: JsonRecord): number | null {
   const rates = PRICING_SNAPSHOT.rates[model as keyof typeof PRICING_SNAPSHOT.rates];
   const tokens = asRecord(receipt.tokens);
   const input = nonNegativeInteger(tokens.input_tokens);
-  const cached = nonNegativeInteger(tokens.cached_input_tokens) ?? 0;
-  const cacheWrite = nonNegativeInteger(tokens.cache_write_input_tokens) ?? 0;
+  const cached = nonNegativeInteger(tokens.cached_input_tokens);
+  const cacheWrite = nonNegativeInteger(tokens.cache_write_input_tokens);
   const output = nonNegativeInteger(tokens.output_tokens);
-  if (!rates || input === null || output === null || cached + cacheWrite > input) return null;
+  if (!rates || input === null || output === null || cached === null || cacheWrite === null || cached + cacheWrite > input) return null;
   const longContext = input > PRICING_SNAPSHOT.long_context_input_threshold_tokens;
   const inputMultiplier = longContext ? 2 : 1;
   const outputMultiplier = longContext ? 1.5 : 1;
   const uncached = input - cached - cacheWrite;
   return ((uncached * rates.input + cached * rates.cached_input + cacheWrite * rates.cache_write_input) * inputMultiplier
     + output * rates.output * outputMultiplier) / PRICING_SNAPSHOT.unit_tokens;
+}
+
+function cacheAccounting(tokens: JsonRecord[]): JsonRecord {
+  const valid = tokens.filter(entry => {
+    const input = nonNegativeInteger(entry.input_tokens);
+    const read = nonNegativeInteger(entry.cached_input_tokens);
+    const write = nonNegativeInteger(entry.cache_write_input_tokens);
+    return input !== null && read !== null && write !== null && read + write <= input;
+  });
+  const complete = tokens.length > 0 && valid.length === tokens.length;
+  const input = completeSum(valid.map(entry => nonNegativeInteger(entry.input_tokens)));
+  const read = completeSum(valid.map(entry => nonNegativeInteger(entry.cached_input_tokens)));
+  return {
+    cache_accounting_status: complete ? "complete" : valid.length > 0 ? "partial" : "missing_or_invalid",
+    calls_with_complete_cache_accounting: valid.length,
+    calls_missing_or_invalid_cache_accounting: tokens.length - valid.length,
+    cache_write_input_tokens: complete ? completeSum(valid.map(entry => nonNegativeInteger(entry.cache_write_input_tokens))) : null,
+    cache_read_fraction: complete && input !== null && input > 0 && read !== null ? read / input : null,
+    max_input_tokens: complete ? Math.max(...valid.map(entry => Number(entry.input_tokens))) : null,
+    long_context_call_count: complete ? valid.filter(entry => Number(entry.input_tokens) > PRICING_SNAPSHOT.long_context_input_threshold_tokens).length : null
+  };
 }
 
 export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
@@ -219,6 +245,7 @@ export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
         : durations.some((value) => value === null) ? "partial" : "complete",
       input_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.input_tokens))),
       cached_input_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.cached_input_tokens))),
+      ...cacheAccounting(tokens),
       output_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.output_tokens))),
       reasoning_output_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.reasoning_output_tokens))),
       total_tokens: completeSum(tokens.map((entry) => nonNegativeInteger(entry.total_tokens))),
@@ -245,6 +272,7 @@ export function aggregateModelCallReceipts(values: unknown[]): JsonRecord {
       : allDurations.some((value) => value === null) ? "partial" : "complete",
     input_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.input_tokens))),
     cached_input_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.cached_input_tokens))),
+    ...cacheAccounting(allTokens),
     output_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.output_tokens))),
     reasoning_output_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.reasoning_output_tokens))),
     total_tokens: completeSum(allTokens.map((entry) => nonNegativeInteger(entry.total_tokens))),
@@ -280,17 +308,39 @@ export function modelCallReceiptsFromTraces(traces: unknown[]): JsonRecord[] {
 
 export function modelTelemetryCaseCoverage(traces: unknown[]): JsonRecord {
   const rows = traces.map(asRecord);
-  const missingCaseIds = rows
-    .filter((trace) => modelCallReceiptsFromSources(trace).length === 0)
+  const withoutReceipts = rows.filter(trace => modelCallReceiptsFromSources(trace).length === 0);
+  const usage = rows.map(trace => providerUsageCoverageFromTrace(trace));
+  const noInvocation = withoutReceipts.filter(trace => providerUsageCoverageFromTrace(trace).no_provider_invocation);
+  const missingCaseIds = withoutReceipts.filter(trace => !noInvocation.includes(trace))
     .map((trace) => String(trace.case_id || ""));
   return {
     schema: "revit-operator.model-telemetry-case-coverage.v1",
     expected_case_count: rows.length,
-    cases_with_model_receipts: rows.length - missingCaseIds.length,
+    cases_with_model_receipts: rows.length - withoutReceipts.length,
+    cases_without_model_invocation: noInvocation.length,
+    no_model_invocation_case_ids: noInvocation.map(trace => String(trace.case_id || "")),
     cases_missing_model_receipts: missingCaseIds.length,
     missing_case_ids: missingCaseIds,
-    complete: missingCaseIds.length === 0
+    cases_missing_turn_coverage: usage.filter(row => !row.complete).length,
+    missing_turn_coverage_case_ids: rows.filter((_row, index) => !usage[index]!.complete).map(row => String(row.case_id || "")),
+    complete: rows.length > 0 && missingCaseIds.length === 0 && usage.every(row => row.complete)
   };
+}
+
+export function providerUsageCoverageFromTrace(trace: JsonRecord) {
+  const turns = Array.isArray(trace.provider_usage_turns) ? trace.provider_usage_turns.map(asRecord) : [];
+  const captured = turns.length > 0 && turns.every(turn => turn.schema === PROVIDER_USAGE_COVERAGE_V1_SCHEMA
+    && turn.overflow !== true && Array.isArray(turn.attempts) && turn.attempts.length > 0
+    && turn.request_count === turn.attempts.length);
+  const result = buildProviderUsageCoverageV1(turns.flatMap(turn => Array.isArray(turn.attempts) ? turn.attempts : []),
+    modelCallReceiptsFromSources(trace));
+  return { ...result, complete: captured && result.complete, no_provider_invocation: captured && result.no_provider_invocation };
+}
+
+export function aggregateCoveredModelCallReceipts(receipts: unknown[], traces: unknown[]): JsonRecord {
+  const summary = aggregateModelCallReceipts(receipts);
+  if (modelTelemetryCaseCoverage(traces).complete === true) return summary;
+  return { ...summary, known_observed_cost_usd: summary.cost_usd, cost_usd: null, cost_status: "incomplete" };
 }
 
 export function requestedVsObservedComputerAgent(

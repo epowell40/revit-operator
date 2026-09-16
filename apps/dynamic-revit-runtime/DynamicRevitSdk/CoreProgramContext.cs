@@ -56,6 +56,8 @@ public sealed class DynamicCoreProgramContextV1
     public IReadOnlyList<DynamicObservedElementV1> Candidates => Array.AsReadOnly(_candidates.Select(Clone).ToArray());
     public DynamicCoreOperationGraphBuilderV1 Plan { get; }
 
+    internal DynamicProgramDiagnosticSnapshot CaptureDiagnostics() => new(_logs, _report);
+
     public void Log(string message) { if (!string.IsNullOrWhiteSpace(message) && _logs.Count < 64) _logs.Add(message.Trim().Length > 512 ? message.Trim().Substring(0, 512) : message.Trim()); }
     public void Report(string key, string value)
     {

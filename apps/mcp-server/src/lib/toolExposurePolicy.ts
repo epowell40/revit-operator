@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isSupportedMcpAlias, isSupportedNativeTool, isSupportedToolRoute } from "./supportedToolInventory.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -127,7 +128,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:ebc821b5b52cda478cd3b81833b502da7f44446a1ddb2bd8ab96e99141dca424";
+const BUNDLED_POLICY_HASH = "sha256:c10fcbe3d1a0a23b4f6c59d9d3c3bd6368c639d5f75b7eeeb34ab0005b07b01d";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
@@ -543,6 +544,11 @@ function evaluateToolExposureInternal(input: {
   }
   const reqHash = input.requestFamily ? input.requestInstanceHash! : requestHash(method, input.path, input.body, runtime.certified);
   const effHash = effectHash(input.path, method, input.body, input.workflow);
+  if (!isSupportedToolRoute(method, input.path) || (alias && !isSupportedMcpAlias(alias))) {
+    return { allowed: false, mode: runtime.mode, runtimeMode: runtime.runtimeMode, method, path: input.path,
+      channel, requestHash: reqHash, effectHash: effHash, knownRoute: false,
+      reasonCodes: ["PRODUCT_TOOL_NOT_SUPPORTED"], ...(alias ? { alias } : {}) };
+  }
   if (runtime.mode === "laboratory" || runtime.mode === "general") {
     return {
       allowed: true,
@@ -1035,6 +1041,7 @@ export function runWithRevitToolAlias<T>(alias: string, operation: () => T): T {
 }
 
 export function isMcpToolAliasExposed(alias: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isSupportedMcpAlias(alias)) return false;
   if (!alias.startsWith("revit_")) return true;
   if (!isCertifiedToolExposureMode(env)) return true;
   try {
@@ -1058,6 +1065,7 @@ export function isCertifiedToolExposureMode(env: NodeJS.ProcessEnv = process.env
 }
 
 export function isKnownToolExposureRoute(method: string, toolPath: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isSupportedToolRoute(normalizedMethod(method), toolPath)) return false;
   if (!isCertifiedToolExposureMode(env)) return true;
   const { policy } = loadToolExposurePolicy(env);
   const normalized = normalizedMethod(method);
@@ -1065,6 +1073,7 @@ export function isKnownToolExposureRoute(method: string, toolPath: string, env: 
 }
 
 export function isToolRouteExposedForSearch(method: string, toolPath: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isSupportedNativeTool(normalizedMethod(method), toolPath)) return false;
   if (!isCertifiedToolExposureMode(env)) return true;
   const { policy } = loadToolExposurePolicy(env);
   const normalized = normalizedMethod(method);
@@ -1080,6 +1089,7 @@ export function filterRegistryEntriesForSearch<T extends { method?: unknown; pat
   entries: readonly T[],
   env: NodeJS.ProcessEnv = process.env
 ): T[] {
+  entries = entries.filter(entry => isSupportedNativeTool(normalizedMethod(String(entry.method ?? "")), String(entry.path ?? "")));
   if (!isCertifiedToolExposureMode(env)) return [...entries];
   const { policy } = loadToolExposurePolicy(env);
   const exposed = new Set(policy.records

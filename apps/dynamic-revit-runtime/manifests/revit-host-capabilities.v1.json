@@ -1,6 +1,6 @@
 {
   "schema": "dynamic-revit-host-capabilities/v1",
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "1.1.0",
   "protocolVersion": "dynamic-revit-protocol/v1",
   "hosts": [
     {
@@ -9,7 +9,15 @@
       "installDirectoryName": "Revit 2023",
       "executableName": "Revit.exe",
       "hostArtifactRelativePath": "hosts/2023/DynamicRevitHost.dll",
-      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+      "sdkDomains": [
+        "elements",
+        "parameters",
+        "operation-graph",
+        "preview",
+        "admission-v1",
+        "authorized-apply",
+        "verification"
+      ]
     },
     {
       "revitYear": "2024",
@@ -17,7 +25,15 @@
       "installDirectoryName": "Revit 2024",
       "executableName": "Revit.exe",
       "hostArtifactRelativePath": "hosts/2024/DynamicRevitHost.dll",
-      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+      "sdkDomains": [
+        "elements",
+        "parameters",
+        "operation-graph",
+        "preview",
+        "admission-v1",
+        "authorized-apply",
+        "verification"
+      ]
     },
     {
       "revitYear": "2025",
@@ -25,7 +41,15 @@
       "installDirectoryName": "Revit 2025",
       "executableName": "Revit.exe",
       "hostArtifactRelativePath": "hosts/2025/DynamicRevitHost.dll",
-      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+      "sdkDomains": [
+        "elements",
+        "parameters",
+        "operation-graph",
+        "preview",
+        "admission-v1",
+        "authorized-apply",
+        "verification"
+      ]
     },
     {
       "revitYear": "2026",
@@ -33,7 +57,31 @@
       "installDirectoryName": "Revit 2026",
       "executableName": "Revit.exe",
       "hostArtifactRelativePath": "hosts/2026/DynamicRevitHost.dll",
-      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+      "sdkDomains": [
+        "elements",
+        "parameters",
+        "operation-graph",
+        "preview",
+        "admission-v1",
+        "authorized-apply",
+        "verification"
+      ]
+    },
+    {
+      "revitYear": "2027",
+      "targetFramework": "net10.0-windows",
+      "installDirectoryName": "Revit 2027",
+      "executableName": "Revit.exe",
+      "hostArtifactRelativePath": "hosts/2027/DynamicRevitHost.dll",
+      "sdkDomains": [
+        "elements",
+        "parameters",
+        "operation-graph",
+        "preview",
+        "admission-v1",
+        "authorized-apply",
+        "verification"
+      ]
     }
   ]
 }

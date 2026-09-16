@@ -1,8 +1,12 @@
-import path from "node:path";
-import { benchmarkDataRoot, readJsonFile } from "./files.js";
+import { hasUnresolvedTrustedVerificationFailureV2, verificationChecksPass } from "./trusted_verification_state.js";
+import { generalRevitCapabilityManifestPath, readJsonFile } from "./files.js";
+export { generalRevitCapabilityManifestPath } from "./files.js";
 import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
 import { canonicalAssignmentLifecycleTruth } from "./canonical_assignment_truth.js";
 import { assignmentKernelAcceptanceTruthV2 } from "./assignment_kernel_v2_acceptance.js";
+import { validateGeneralRevitAcceptanceReviewCase, type GeneralRevitAcceptanceCriteria } from "./general_revit_acceptance_review.js";
+import { validateGeneralRevitFixturePrecondition } from "./general_revit_fixture_preconditions.js";
+import { requestedViewArtifactEvidence } from "./view_artifact_evidence.js";
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
   "not_run", "accepted", "planned", "previewed", "completed", "verified", "refused", "failed"
@@ -31,10 +35,11 @@ export type GeneralRevitCapabilityCase = {
   dispatch_any_of: string[];
   expected_effect: GeneralRevitExpectedEffect;
   fixture_precondition?: {
-    active_view?: { name: string; view_type?: string }; selection?: { category: string };
+    active_view?: { name: string; view_type?: string }; selection?: { category: string }; clear_selection?: boolean;
   };
   production_expected_effect?: GeneralRevitExpectedEffect;
   probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
+  acceptance_review?: GeneralRevitAcceptanceCriteria;
   allow_verified_noop?: boolean;
   require_target_bound_preview_verification?: boolean;
   epic0441_task_refs: string[];
@@ -278,9 +283,9 @@ const STRUCTURED_EVIDENCE_KEYS = new Set([
   "verification_result", "verification_results", "affected_element_ids"
 ]);
 
-export function loadGeneralRevitCapabilityCorpus(): GeneralRevitCapabilityCorpus {
+export function loadGeneralRevitCapabilityCorpus(manifestPath?: string): GeneralRevitCapabilityCorpus {
   const corpus = readJsonFile<GeneralRevitCapabilityCorpus>(
-    path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json")
+    generalRevitCapabilityManifestPath(manifestPath)
   );
   validateGeneralRevitCapabilityCorpus(corpus);
   return corpus;
@@ -305,12 +310,8 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     families.add(testCase.operation_family);
     if (testCase.prompt.trim().length < 12 || testCase.probe_prompt.trim().length < 30) throw new Error(`Case ${testCase.case_id} has no meaningful user or probe prompt.`);
     if (testCase.probe_expected_effect && !["read", "preview"].includes(testCase.probe_expected_effect)) throw new Error(`Case ${testCase.case_id} has an invalid safe-probe effect.`);
-    if (testCase.fixture_precondition) {
-      const { active_view: activeView, selection } = testCase.fixture_precondition;
-      if (!activeView && !selection) throw new Error(`Case ${testCase.case_id} has an empty fixture precondition.`);
-      if (activeView && (!activeView.name.trim() || (activeView.view_type != null && !activeView.view_type.trim()))) throw new Error(`Case ${testCase.case_id} has an invalid active-view fixture precondition.`);
-      if (selection && !selection.category.trim()) throw new Error(`Case ${testCase.case_id} has an invalid selection fixture precondition.`);
-    }
+    validateGeneralRevitAcceptanceReviewCase(testCase);
+    validateGeneralRevitFixturePrecondition(testCase);
     if (testCase.allow_verified_noop && (testCase.expected_effect !== "apply" || !testCase.answer_assertions)) {
       throw new Error(`Case ${testCase.case_id} may allow a verified no-op only for an apply case with fixture answer assertions.`);
     }
@@ -832,20 +833,6 @@ function answerEvidenceFailures(
   ];
 }
 
-function verificationChecksPass(value: unknown): boolean {
-  const rows = Array.isArray(value) ? value : [value];
-  if (rows.length === 0) return false;
-  return rows.every((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-    const row = entry as Record<string, unknown>;
-    const named = typeof row.name === "string" && row.name.trim().length > 0;
-    const grounded = Object.prototype.hasOwnProperty.call(row, "expected")
-      || Object.prototype.hasOwnProperty.call(row, "actual")
-      || (Array.isArray(row.evidence_refs) && row.evidence_refs.length > 0);
-    return row.ok === true && named && grounded;
-  });
-}
-
 function hasModelStateReadbackEvidence(value: unknown, depth = 0): boolean {
   if (value === null || value === undefined || depth > 8) return false;
   if (typeof value === "string") {
@@ -934,6 +921,8 @@ function verificationBasis(
   durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }, canonicalV2Verified = false
 ): GeneralRevitVerificationBasis {
   if (!completed) return "none";
+  const viewArtifact = requestedViewArtifactEvidence(testCase, attempt);
+  if (viewArtifact !== null) return viewArtifact ? "artifact_evidence" : "none";
   if (testCase.answer_assertions && answerAssertionPassed === true) return "fixture_semantic_oracle";
   if (teammate.verified) return "target_bound_model_state";
   if (nestedEvidenceMatches(attempt, (key, child) =>
@@ -1137,7 +1126,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable,
     canonicalV2.verified && canonicalV2.requested_effects.includes(testCase.expected_effect));
-  const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
+  const trustedVerificationFailed = hasUnresolvedTrustedVerificationFailureV2({
+    durable_assignment_kernel_v2: attempt.assignment_kernel_v2, durable_assignment_projection: attempt.assignment_projection
+  });
+  const verified = completed && !trustedVerificationFailed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (effectiveMissingTargetClarification && attemptSucceeded && !effectiveSubstantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
@@ -1168,8 +1160,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     fixture_blocker_assertion_passed: fixtureBlockerAssertionPassed,
     fixture_blocker_assertion_failures: fixtureBlockerAssertionFailures,
     fixture_blocker_accepted: fixtureBlockerAccepted,
-    verification_basis: basis,
-    summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
+    verification_basis: trustedVerificationFailed ? "none" : basis,
+    summary: trustedVerificationFailed ? "Applied work is retained, but canonical target-bound verification failed without acknowledged recovery."
+      : tier === "refused" ? "Agent refused an in-scope Revit capability."
       : tier === "failed" ? answerAssertionPassed === false
         ? "Tool-backed execution completed, but the fixture-grounded answer assertions failed."
         : targetBoundPreviewVerificationMissing

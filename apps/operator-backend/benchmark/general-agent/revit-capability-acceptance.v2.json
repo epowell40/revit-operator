@@ -1,0 +1,4405 @@
+{
+  "schema_version": "revit-operator.general-revit-capability-acceptance/v1",
+  "suite_id": "general-revit-engineer-requests-v2",
+  "purpose": "Evaluate realistic lightly specified engineer requests on independently reset Snowdon fixtures, separating verified delivery, justified questions, fixture blockers, and failed or unverified work.",
+  "truth_policy": {
+    "tiers": [
+      "not_run",
+      "accepted",
+      "planned",
+      "previewed",
+      "completed",
+      "verified",
+      "refused",
+      "failed"
+    ],
+    "non_refusal_is_not_completion": true,
+    "assistant_self_report_is_not_verification": true,
+    "live_completion_requires_successful_dispatch": true,
+    "live_verification_requires_readback_or_artifact_evidence": true,
+    "clarification_for_missing_target_is_accepted": true,
+    "capability_subset_refusal_is_failure": true
+  },
+  "corpus_evidence": {
+    "taxonomy_path": "data/redline_hardening/redline_task_types.json",
+    "actionable_comment_total": 6990,
+    "top_task_type_comment_total": 5599,
+    "task_types": [
+      {
+        "rank": 1,
+        "task_type_id": "schedule_text_edit",
+        "corpus_count": 1015,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "c04_fix_equipment_schedule",
+          "c06_schedule_remark_note_sync",
+          "c08_schedule_heading_cleanup",
+          "c09_bulk_schedule_comments",
+          "c10_schedule_filter_underspecified",
+          "c11_schedule_driven_equipment_rename",
+          "r13_schedule_airflow_sync"
+        ]
+      },
+      {
+        "rank": 2,
+        "task_type_id": "existing_tag_work",
+        "corpus_count": 715,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "c16_tag_missing_equipment_terse",
+          "c17_tag_collision_cleanup_terse",
+          "c18_tag_designation_bulk",
+          "c19_match_neighbor_tag_type",
+          "r02_add_tag",
+          "r14_tag_designation_sync",
+          "r16_tag_layout_cleanup"
+        ]
+      },
+      {
+        "rank": 3,
+        "task_type_id": "text_note_edit",
+        "corpus_count": 643,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "c12_replace_outdated_note_terse",
+          "c13_add_coordination_note",
+          "c14_bulk_note_terminology",
+          "c15_move_notes_clear",
+          "r01_text_note_edit"
+        ]
+      },
+      {
+        "rank": 4,
+        "task_type_id": "add_mep_accessory",
+        "corpus_count": 630,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r17_add_connected_accessory",
+          "c21_add_another_selected_device"
+        ]
+      },
+      {
+        "rank": 5,
+        "task_type_id": "pipe_size_transition",
+        "corpus_count": 560,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r09_pipe_size_transition",
+          "c26_pipe_size_terse"
+        ]
+      },
+      {
+        "rank": 6,
+        "task_type_id": "tag_value_text_edit",
+        "corpus_count": 422,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r14_tag_designation_sync",
+          "c18_tag_designation_bulk"
+        ]
+      },
+      {
+        "rank": 7,
+        "task_type_id": "pipe_route_creation",
+        "corpus_count": 302,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r11_pipe_route"
+        ]
+      },
+      {
+        "rank": 8,
+        "task_type_id": "duct_size_transition",
+        "corpus_count": 283,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r08_duct_size_transition",
+          "c25_duct_12x10_markup"
+        ]
+      },
+      {
+        "rank": 9,
+        "task_type_id": "move_mep_accessory",
+        "corpus_count": 212,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r18_move_connected_accessory",
+          "c23_move_damper_upstream"
+        ]
+      },
+      {
+        "rank": 10,
+        "task_type_id": "type_change_mep_accessory",
+        "corpus_count": 202,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r07_type_change",
+          "c22_accessory_type_match"
+        ]
+      },
+      {
+        "rank": 11,
+        "task_type_id": "delete_mep_accessory",
+        "corpus_count": 174,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r04_delete_preview",
+          "c24_delete_duplicate_device"
+        ]
+      },
+      {
+        "rank": 12,
+        "task_type_id": "duct_route_creation",
+        "corpus_count": 134,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r10_duct_route",
+          "c27_connect_diffuser_terse",
+          "c29_add_branch_match_neighbor"
+        ]
+      },
+      {
+        "rank": 13,
+        "task_type_id": "add_tag",
+        "corpus_count": 110,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r02_add_tag",
+          "c16_tag_missing_equipment_terse"
+        ]
+      },
+      {
+        "rank": 14,
+        "task_type_id": "delete_pipe_route",
+        "corpus_count": 102,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r19_delete_bounded_route_preflight"
+        ]
+      },
+      {
+        "rank": 15,
+        "task_type_id": "delete_duct_route",
+        "corpus_count": 95,
+        "coverage_kind": "direct",
+        "case_ids": [
+          "r19_delete_bounded_route_preflight"
+        ]
+      }
+    ]
+  },
+  "required_operation_families": [
+    "project_query",
+    "parameter_edit",
+    "print_export",
+    "view_create",
+    "view_rename",
+    "view_settings",
+    "enlarged_plan",
+    "sheet_create",
+    "sheet_duplicate",
+    "family_edit",
+    "schedule_create",
+    "schedule_configure",
+    "schedule_value_edit",
+    "view_visibility",
+    "view_filter",
+    "view_template",
+    "tag",
+    "text_edit",
+    "add",
+    "delete",
+    "move",
+    "rotate",
+    "type_change",
+    "size_transition",
+    "route",
+    "reroute_offset",
+    "graphics_override",
+    "research_and_compliance",
+    "data_export",
+    "visual_verification"
+  ],
+  "cases": [
+    {
+      "case_id": "q01_air_device_inventory",
+      "source": "user_basic",
+      "operation_family": "project_query",
+      "prompt": "Count all air devices in the project and break the total down by family and type. Use an existing air-device schedule if that is the best source.",
+      "probe_prompt": "Count all air devices in the project and break the total down by family and type. Use an existing air-device schedule if that is the best source. Do not change the model.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/schedules"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/schedules",
+        "/revit/tool-search",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "(?<!\\d)509(?!\\d)",
+          "Supply Grille\\s*[-–—]\\s*Double Deflection(?:\\s*[-–—]\\s*Curve Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)266(?!\\d)",
+          "Return Grille\\s*[-–—]\\s*Double Deflection(?:\\s*[-–—]\\s*Curve Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)138(?!\\d)",
+          "Air Terminal\\s*[-–—]\\s*Exhaust Cap\\s*[-–—]\\s*FB[^\\r\\n;]*?(?<!\\d)37(?!\\d)",
+          "Air Terminal\\s*[-–—]\\s*Supply Cap\\s*[-–—]\\s*FB[^\\r\\n;]*?(?<!\\d)37(?!\\d)",
+          "Supply Diffuser\\s*[-–—]\\s*Square(?:\\s*[-–—]\\s*Hosted)?[^\\r\\n;]*?(?<!\\d)28(?!\\d)",
+          "Return Grille\\s*[-–—]\\s*Perforated(?:\\s*[-–—]\\s*Rectangular Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)2(?!\\d)",
+          "Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot(?:\\s*[-–—]\\s*Hosted)?[^\\r\\n;]*?(?<!\\d)1(?!\\d)"
+        ]
+      },
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Project-wide air-device total reconciles to a complete native inventory and family/type subtotals; schedule scope and linked-model exclusions are stated."
+        ],
+        "collateral_criteria": [
+          "No model changes are committed; safe previews must prove rollback."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "b01_equipment_rename",
+      "source": "user_basic",
+      "operation_family": "parameter_edit",
+      "prompt": "Rename the selected equipment TEST-AHU-01.",
+      "probe_prompt": "Rename the selected equipment TEST-AHU-01. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Mechanical Equipment"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/update-parameter-by-query"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The initial selected equipment has Mark TEST-AHU-01 after the edit; identity and value are read back."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b02_print_sheet",
+      "source": "user_basic",
+      "operation_family": "print_export",
+      "prompt": "Give me a PDF of M000 using the project print settings.",
+      "probe_prompt": "Give me a PDF of M000 using the project print settings. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/print"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/print",
+        "/revit/print-sets"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g25_export_publish"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "Cover Sheet",
+          "view_type": "DrawingSheet"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "An accessible, nonempty PDF contains sheet M000 and its expected title/content, using the established print settings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b03_create_view",
+      "source": "user_basic",
+      "operation_family": "view_create",
+      "prompt": "Make a Level 2 mechanical coordination plan called M-LEVEL 2 COORDINATION.",
+      "probe_prompt": "Make a Level 2 mechanical coordination plan called M-LEVEL 2 COORDINATION. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/create-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/create-view",
+        "/revit/resolve"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A Level 2 mechanical plan named M-LEVEL 2 COORDINATION exists with the correct level and discipline."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b04_duplicate_view",
+      "source": "user_basic",
+      "operation_family": "view_create",
+      "prompt": "Make a coordination copy of this plan, including its annotations. Call it M-COORDINATION COPY.",
+      "probe_prompt": "Make a coordination copy of this plan, including its annotations. Call it M-COORDINATION COPY. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/duplicate-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/duplicate-view",
+        "/revit/views"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "One new plan named M-COORDINATION COPY retains the source plan and its annotations."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b05_duplicate_sheet",
+      "source": "user_basic",
+      "operation_family": "sheet_duplicate",
+      "prompt": "Make a working copy of M000 with its contents on a separate sheet. Use an available temporary sheet number.",
+      "probe_prompt": "Make a working copy of M000 with its contents on a separate sheet. Use an available temporary sheet number. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/duplicate-sheet",
+        "/revit/create-sheet",
+        "/revit/duplicate-view",
+        "/revit/place-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/duplicate-sheet",
+        "/revit/create-sheet",
+        "/revit/duplicate-view",
+        "/revit/place-view",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "Cover Sheet",
+          "view_type": "DrawingSheet"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "One separate working sheet has an available number, matching title block and source content; shared schedules may be reused where Revit requires it."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "b06_edit_loaded_family",
+      "source": "user_basic",
+      "operation_family": "family_edit",
+      "prompt": "Make a separate TEST-ONLY type for this equipment with the revised dimensions. Use it only on this instance.",
+      "probe_prompt": "Make a separate TEST-ONLY type for this equipment with the revised dimensions. Use it only on this instance. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/plan-family-evolution",
+        "/revit/apply-family-evolution",
+        "/revit/read-family-evolution"
+      ],
+      "dispatch_any_of": [
+        "/revit/plan-family-evolution",
+        "/revit/open-family-doc",
+        "/revit/get-parameters",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r13_type_change_accessory",
+        "r14_type_change_device"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Mechanical Equipment"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The agent obtains the missing dimensions before changing geometry; if supplied, a separate TEST-ONLY type is used by only the initial selected instance."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Other instances and existing types retain their dimensions and type assignments."
+        ],
+        "intentional_missing_information": [
+          "revised equipment dimensions"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "b07_grounded_equipment_rename",
+      "source": "user_basic",
+      "operation_family": "parameter_edit",
+      "prompt": "Change HRU202 to TEST-AHU-01.",
+      "probe_prompt": "Change HRU202 to TEST-AHU-01. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/update-parameter-by-query"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The unique equipment initially marked HRU202 is now TEST-AHU-01; any ambiguity or collision is resolved before editing."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b08_create_and_rename_sheet",
+      "source": "user_basic",
+      "operation_family": "sheet_create",
+      "prompt": "Make a sheet for mechanical coordination. Number it TEST-M900 and call it TEST MECHANICAL COORDINATION. Match our title block.",
+      "probe_prompt": "Make a sheet for mechanical coordination. Number it TEST-M900 and call it TEST MECHANICAL COORDINATION. Match our title block. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/create-sheet",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/create-sheet",
+        "/revit/set-parameter"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A sheet numbered TEST-M900 and named TEST MECHANICAL COORDINATION uses a title block matching the project."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "b09_rename_view",
+      "source": "user_basic",
+      "operation_family": "view_rename",
+      "prompt": "Rename the Level 2 HVAC plan TEST LEVEL 2 HVAC COORDINATION.",
+      "probe_prompt": "Rename the Level 2 HVAC plan TEST LEVEL 2 HVAC COORDINATION. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/create-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/create-view",
+        "/revit/set-parameter"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The existing Level 2 HVAC plan is renamed TEST LEVEL 2 HVAC COORDINATION with its identity preserved."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b10_change_view_scale_and_settings",
+      "source": "user_basic",
+      "operation_family": "view_settings",
+      "prompt": "Make this plan 1/8 inch scale and show the fine detail. Keep its template.",
+      "probe_prompt": "Make this plan 1/8 inch scale and show the fine detail. Keep its template. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The initial plan is 1:96 (1/8 inch = 1 foot), Fine detail, retaining its template; affected shared-template scope is checked."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Unrelated views are not changed through a shared template without a justified scope decision."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "b11_create_enlarged_plan",
+      "source": "user_basic",
+      "operation_family": "enlarged_plan",
+      "prompt": "Make an enlarged mechanical plan of the Level 4 live/work units and put it on its own sheet.",
+      "probe_prompt": "Make an enlarged mechanical plan of the Level 4 live/work units and put it on its own sheet. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-view",
+        "/revit/visibility",
+        "/revit/create-sheet",
+        "/revit/place-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-view",
+        "/revit/visibility",
+        "/revit/create-sheet",
+        "/revit/place-view"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A legible enlarged plan covers the Level 4 live/work units and is placed on a new sheet; scale, crop and placement are evidenced."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "b12_visual_observe_verify",
+      "source": "user_basic",
+      "operation_family": "visual_verification",
+      "prompt": "Check whether the Level 4 mechanical plan shows the equipment clearly. Give me a view capture and describe any visibility problems.",
+      "probe_prompt": "Check whether the Level 4 mechanical plan shows the equipment clearly. Give me a view capture and describe any visibility problems. Do not change the model.",
+      "capability_paths": [
+        "/revit/export-view-frame",
+        "/revit/export-visible-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-view-frame",
+        "/revit/export-visible-elements",
+        "/revit/export-image"
+      ],
+      "expected_effect": "read",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A retrievable capture of the actual Level 4 plan accompanies an assessment supported by visible equipment and graphics."
+        ],
+        "collateral_criteria": [
+          "No model changes are committed; safe previews must prove rollback."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "s01_create_schedule",
+      "source": "user_extended",
+      "operation_family": "schedule_create",
+      "prompt": "Make a mechanical equipment schedule with the equipment names, family/type, level, and comments. Call it TEST MECHANICAL EQUIPMENT.",
+      "probe_prompt": "Make a mechanical equipment schedule with the equipment names, family/type, level, and comments. Call it TEST MECHANICAL EQUIPMENT. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-schedule",
+        "/revit/schedules",
+        "/revit/tool-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A schedule named TEST MECHANICAL EQUIPMENT has the requested name/Mark, family/type, level and comments fields and correct category."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "s02_add_schedule_field",
+      "source": "user_extended",
+      "operation_family": "schedule_configure",
+      "prompt": "Add Comments after Mark in the Heat Recovery Unit Summary.",
+      "probe_prompt": "Add Comments after Mark in the Heat Recovery Unit Summary. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The existing Heat Recovery Unit Summary has Comments immediately after Mark without duplicate fields."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "s03_schedule_filter",
+      "source": "user_extended",
+      "operation_family": "schedule_configure",
+      "prompt": "Filter the Heat Recovery Unit Summary to units whose names start with HRU4.",
+      "probe_prompt": "Filter the Heat Recovery Unit Summary to units whose names start with HRU4. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The schedule filter includes exactly names starting HRU4 and its visible rows agree with the native equipment inventory."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "s04_schedule_sort_group",
+      "source": "user_extended",
+      "operation_family": "schedule_configure",
+      "prompt": "Organize the Heat Recovery Unit Summary by level, then family and type. Give each level a heading and remove the blank lines.",
+      "probe_prompt": "Organize the Heat Recovery Unit Summary by level, then family and type. Give each level a heading and remove the blank lines. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The schedule sorts by level then family/type, with level headings and no blank lines; row membership is preserved."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "s05_schedule_value_edit",
+      "source": "user_extended",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Put OWNER REVIEW in Comments for HRU202 in the equipment schedule.",
+      "probe_prompt": "Put OWNER REVIEW in Comments for HRU202 in the equipment schedule. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/update-schedule-cell"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/update-schedule-cell",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "HRU202 Comments reads OWNER REVIEW in the element and corresponding schedule row."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Pressure drop and unrelated equipment parameters remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "s06_filter_named_schedule",
+      "source": "user_extended",
+      "operation_family": "schedule_configure",
+      "prompt": "Make a QA copy of the Heat Recovery Unit Summary that only shows the HRU4 units.",
+      "probe_prompt": "Make a QA copy of the Heat Recovery Unit Summary that only shows the HRU4 units. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A separate QA schedule contains exactly HRU4 units and leaves the original Heat Recovery Unit Summary intact."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "The original schedule and equipment data remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v01_hide_show_category",
+      "source": "user_extended",
+      "operation_family": "view_visibility",
+      "prompt": "Hide the rooms on this plan. Leave the other categories alone.",
+      "probe_prompt": "Hide the rooms on this plan. Leave the other categories alone. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/visibility",
+        "/revit/context"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Room graphics are hidden on the initial plan, including relevant linked-room representation if applicable."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Other categories, especially MEP spaces, remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v02_category_graphics_override",
+      "source": "user_extended",
+      "operation_family": "graphics_override",
+      "prompt": "Make the ductwork halftone with thin gray lines on this plan.",
+      "probe_prompt": "Make the ductwork halftone with thin gray lines on this plan. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/visibility",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Ductwork on the initial plan is halftone with thin gray lines; the visible result agrees with saved graphic settings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v03_create_apply_view_filter",
+      "source": "user_extended",
+      "operation_family": "view_filter",
+      "prompt": "Show the supply ducts in red on this plan.",
+      "probe_prompt": "Show the supply ducts in red on this plan. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/visibility",
+        "/revit/tool-search",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Supply ducts on the initial plan display red; the selection/filter excludes other systems."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Return/exhaust ducts and other views do not acquire the supply override."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v04_create_view_template",
+      "source": "user_extended",
+      "operation_family": "view_template",
+      "prompt": "Save the settings from this plan as TEST HVAC COORDINATION TEMPLATE.",
+      "probe_prompt": "Save the settings from this plan as TEST HVAC COORDINATION TEMPLATE. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/create-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/create-view",
+        "/revit/views"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A view template named TEST HVAC COORDINATION TEMPLATE records the intended current-plan settings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v05_apply_view_template",
+      "source": "user_extended",
+      "operation_family": "view_template",
+      "prompt": "Make the Level 2 HVAC plan use the same template as the Level 4 HVAC plan.",
+      "probe_prompt": "Make the Level 2 HVAC plan use the same template as the Level 4 HVAC plan. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The Level 2 HVAC plan uses the same template identity as the Level 4 HVAC plan, or the agent identifies that Level 4 has no template before choosing an alternative."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "v06_create_apply_named_view_template",
+      "source": "user_extended",
+      "operation_family": "view_template",
+      "prompt": "Turn the Level 2 HVAC plan into our coordination template and use that template on the plan. Call it TEST HVAC COORDINATION TEMPLATE.",
+      "probe_prompt": "Turn the Level 2 HVAC plan into our coordination template and use that template on the plan. Call it TEST HVAC COORDINATION TEMPLATE. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/create-view",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/create-view",
+        "/revit/visibility",
+        "/revit/native-api-search",
+        "/revit/native-api-mutation-ops"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A template named TEST HVAC COORDINATION TEMPLATE is derived from the existing Level 2 HVAC plan and assigned to it."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "r01_text_note_edit",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Replace the outdated selected note with the current issue wording without creating a duplicate.",
+      "probe_prompt": "Replace the outdated selected note with the current issue wording without creating a duplicate. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Text Notes"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/find-text-notes",
+        "/revit/replace-text-note",
+        "/revit/create-text"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-text-notes",
+        "/revit/replace-text-note",
+        "/revit/create-text",
+        "/revit/tool-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r02_text_note_edit"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The original selected note is updated in place to the authenticated follow-up wording, preserving line breaks and exactly one note."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r02_add_tag",
+      "source": "redline_corpus",
+      "operation_family": "tag",
+      "prompt": "Tag the untagged equipment on this electrical plan. Match the nearby tags.",
+      "probe_prompt": "Tag the untagged equipment on this electrical plan. Match the nearby tags. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/tag-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/tag-elements",
+        "/revit/find-elements",
+        "/revit/export-visible-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r05_add_tag"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Visible untagged electrical equipment receives compatible tags consistent with neighboring tags; coverage and tag-to-element references are verified."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r03_add_family_instance",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "Add the missing device at the marked location. Match the one nearby.",
+      "probe_prompt": "Add the missing device at the marked location. Match the one nearby. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-similar-from-instance"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-similar-from-instance",
+        "/revit/create-family-instance",
+        "/revit/find-elements",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r07_add_family_instance",
+        "r08_add_mep_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A matching device is placed at the supplied marked location; absent markup must elicit a specific location question."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "marked location (no markup supplied)"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r04_delete_preview",
+      "source": "redline_corpus",
+      "operation_family": "delete",
+      "prompt": "Pick an accessory on this plan and explain what it connects to and what would be affected by removing it. Leave it in place.",
+      "probe_prompt": "Pick an accessory on this plan and explain what it connects to and what would be affected by removing it. Do not change the model.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/trace-connected-network"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/trace-connected-network"
+      ],
+      "expected_effect": "read",
+      "epic0441_task_refs": [
+        "r19_delete_accessory_preflight",
+        "r20_delete_route_preflight"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Identify an actual accessory on the active plan and explain its connections and removal impacts using model evidence. Distinguish observed connections from inferred consequences."
+        ],
+        "collateral_criteria": [
+          "Leave the model unchanged; no deletion or simulated deletion is required."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "r05_move_element",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Center this device between the two next to it.",
+      "probe_prompt": "Center this device between the two next to it. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/move-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/move-elements",
+        "/revit/locate-elements",
+        "/revit/find-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r11_move_accessory",
+        "r12_move_device"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Electrical Fixtures"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected device is centered between the defensible two neighbors; positions and host/connection validity are verified."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "which two neighbors if the visible context does not distinguish them"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r06_rotate_element",
+      "source": "redline_corpus",
+      "operation_family": "rotate",
+      "prompt": "Turn this note 90 degrees.",
+      "probe_prompt": "Turn this note 90 degrees. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/rotate-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/rotate-elements",
+        "/revit/find-elements",
+        "/revit/locate-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r06_move_tag_cleanup",
+        "r12_move_device"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Text Notes"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The original selected note rotates 90 degrees relative to its initial orientation, with content preserved."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r07_type_change",
+      "source": "redline_corpus",
+      "operation_family": "type_change",
+      "prompt": "Make this device match the compatible one next to it.",
+      "probe_prompt": "Make this device match the compatible one next to it. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Electrical Fixtures"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/change-element-type"
+      ],
+      "dispatch_any_of": [
+        "/revit/change-element-type",
+        "/revit/resolve-element-type",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r13_type_change_accessory",
+        "r14_type_change_device"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected device uses the compatible neighboring type; compatibility, host and connector constraints are checked."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r08_duct_size_transition",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "Reduce this duct after the takeoff. Keep it connected.",
+      "probe_prompt": "Reduce this duct after the takeoff. Keep it connected. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/reroute-mep-route-segment",
+        "/revit/resize-duct-run",
+        "/revit/trace-connected-network"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r10_duct_size_transition"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Ducts"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The missing new duct size is obtained before resizing; a requested transition preserves the original connected route."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "new duct size"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r09_pipe_size_transition",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "Step this pipe down after the branch. Keep it connected.",
+      "probe_prompt": "Step this pipe down after the branch. Keep it connected. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/reroute-mep-route-segment",
+        "/revit/trace-connected-network",
+        "/revit/get-connectors"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r09_pipe_size_transition"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Pipes"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The missing new pipe size is obtained before resizing; a requested transition preserves the original connected route."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "new pipe size"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r10_duct_route",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Connect the loose diffuser to a nearby supply main. Match the surrounding ductwork.",
+      "probe_prompt": "Connect the loose diffuser to a nearby supply main. Match the surrounding ductwork. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-mep-route"
+      ],
+      "dispatch_any_of": [
+        "/revit/resolve-mep-routing-context",
+        "/revit/create-mep-route",
+        "/revit/get-connectors",
+        "/revit/tool-search"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "r16_duct_route"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A semantically compatible loose supply diffuser is connected to supply with matching ductwork; connector continuity is independently evidenced, or absence of a valid target is proved."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r11_pipe_route",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Connect the missing pipe between this branch and the fixture.",
+      "probe_prompt": "Connect the missing pipe between this branch and the fixture. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-mep-route"
+      ],
+      "dispatch_any_of": [
+        "/revit/resolve-mep-routing-context",
+        "/revit/create-mep-route",
+        "/revit/create-pipe-between-connectors",
+        "/revit/get-connectors"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "r15_pipe_route"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Pipes"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The identified pipe branch connects to the intended fixture with compatible system, diameter and continuous connectors; unresolved destination requires clarification."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "which destination fixture"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r12_reroute_offset",
+      "source": "redline_corpus",
+      "operation_family": "reroute_offset",
+      "prompt": "Take this duct around the obstruction without leaving the ends disconnected.",
+      "probe_prompt": "Take this duct around the obstruction without leaving the ends disconnected. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/reroute-mep-route-segment",
+        "/revit/trace-connected-network",
+        "/revit/get-connectors"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r17_pipe_reroute",
+        "r18_duct_reroute"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Ducts"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected duct clears the identified obstruction with valid clearance and connected ends; obstruction/clearance must be grounded first."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "obstruction identity and required clearance"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r13_schedule_airflow_sync",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Set HRU202's supply air pressure drop to 0.10 inches of water and make sure the equipment schedule agrees.",
+      "probe_prompt": "Set HRU202's supply air pressure drop to 0.10 inches of water and make sure the equipment schedule agrees. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/get-parameters",
+        "/revit/update-schedule-cell"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/get-parameters",
+        "/revit/update-schedule-cell",
+        "/revit/set-parameter"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "HRU202 supply air pressure drop is 0.10 inches of water in both native parameter and schedule, with correct unit conversion."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "r14_tag_designation_sync",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Change the selected device designation to TEST-DEVICE-01. Check that its tag and any schedule agree.",
+      "probe_prompt": "Change the selected device designation to TEST-DEVICE-01. Check that its tag and any schedule agree. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/update-parameter-by-query"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r03_tag_designation_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Electrical Fixtures"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected electrical device designation is TEST-DEVICE-01 and its tag and any schedule reflect the same underlying value."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r15_bulk_visible_status_rule",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Put TEST-ISSUE in the empty equipment Comments on this plan. Keep any existing comments.",
+      "probe_prompt": "Put TEST-ISSUE in the empty equipment Comments on this plan. Keep any existing comments. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/get-parameters",
+        "/revit/update-parameter-by-query"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/update-parameter-by-query"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r04_bulk_status_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Only initially empty Comments on equipment visible in the plan become TEST-ISSUE; target count reconciles before and after."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Existing nonempty Comments and equipment outside the plan remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r16_tag_layout_cleanup",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Tidy up the crowded device tags on Level 4 without changing what they label.",
+      "probe_prompt": "Tidy up the crowded device tags on Level 4 without changing what they label. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/move-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/locate-elements",
+        "/revit/move-elements",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r06_move_tag_cleanup"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Crowded Level 4 electrical device tags are legible, with valid leaders and unchanged labeled-element references."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "r17_add_connected_accessory",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "Add a damper to this branch, like the branch next door.",
+      "probe_prompt": "Add a damper to this branch, like the branch next door. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/get-connectors",
+        "/revit/create-similar-from-instance",
+        "/revit/connect-mep-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/get-connectors",
+        "/revit/find-elements",
+        "/revit/create-similar-from-instance",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r08_add_mep_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Ducts"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A compatible damper is inserted into the selected branch using a defensible neighboring precedent; physical connector continuity is verified."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "damper location if no clear neighboring precedent"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r18_move_connected_accessory",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Move this damper clear of the elbow. Keep the branch connected.",
+      "probe_prompt": "Move this damper clear of the elbow. Keep the branch connected. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/get-connectors",
+        "/revit/move-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/get-connectors",
+        "/revit/locate-elements",
+        "/revit/move-elements",
+        "/revit/trace-connected-network"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r11_move_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The grounded damper is moved clear of the elbow while retaining its identity and valid branch connections."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "damper identity if no defensible target exists"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "r19_delete_bounded_route_preflight",
+      "source": "redline_corpus",
+      "operation_family": "delete",
+      "prompt": "Trace this branch and explain what equipment or terminals it serves. Leave the model as it is.",
+      "probe_prompt": "Trace this branch and explain what equipment or terminals it serves. Do not change the model.",
+      "capability_paths": [
+        "/revit/trace-connected-network"
+      ],
+      "dispatch_any_of": [
+        "/revit/trace-connected-network",
+        "/revit/get-connectors",
+        "/revit/find-elements"
+      ],
+      "expected_effect": "read",
+      "production_expected_effect": "read",
+      "epic0441_task_refs": [
+        "r20_delete_route_preflight"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Ducts"
+        },
+        "clear_selection": true
+      },
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Trace the branch containing the selected duct and report the equipment or terminals it serves with model evidence. State any uncertain boundaries or incomplete connectivity honestly."
+        ],
+        "collateral_criteria": [
+          "Leave the model unchanged; no deletion or simulated deletion is required."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "x01_native_api_fallback",
+      "source": "user_extended",
+      "operation_family": "data_export",
+      "prompt": "Give me a CSV of the Level 4 equipment: name, family/type, level, and location in feet.",
+      "probe_prompt": "Give me a CSV of the Level 4 equipment: name, family/type, level, and location in feet. Do not change the model.",
+      "capability_paths": [
+        "/revit/tool-search",
+        "/revit/native-api-search",
+        "/revit/native-api-call"
+      ],
+      "dispatch_any_of": [
+        "/revit/tool-search",
+        "/revit/native-api-search",
+        "/revit/native-api-catalog",
+        "/revit/native-api-call",
+        "/revit/query",
+        "/revit/find-elements",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "read",
+      "epic0441_task_refs": [
+        "n28_novel_holdout",
+        "n29_novel_holdout",
+        "n30_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "An accessible CSV contains all scoped Level 4 equipment with names, family/type, levels and numeric locations in feet; row count matches native inventory."
+        ],
+        "collateral_criteria": [
+          "No model changes are committed; safe previews must prove rollback."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "lh01_bulk_hru_to_eru_marks",
+      "source": "long_horizon",
+      "operation_family": "parameter_edit",
+      "prompt": "Rename all the HRUs to ERUs. Keep the numbers and suffixes, and flag any naming conflicts.",
+      "probe_prompt": "Rename all the HRUs to ERUs. Keep the numbers and suffixes, and flag any naming conflicts. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/update-parameter-by-query",
+        "/revit/get-parameters"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/update-parameter-by-query",
+        "/revit/set-parameter",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "All original HRU Marks become ERU with each numeric/suffix remainder preserved; counts and naming conflicts reconcile."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "lh02_hru_schedule_transform_verify",
+      "source": "long_horizon",
+      "operation_family": "schedule_configure",
+      "prompt": "Rename the HRUs to ERUs, then make a QA schedule of those units with their names and family/type, sorted by name. Check that none are missing or duplicated.",
+      "probe_prompt": "Rename the HRUs to ERUs, then make a QA schedule of those units with their names and family/type, sorted by name. Check that none are missing or duplicated. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-schedule",
+        "/revit/configure-schedule",
+        "/revit/find-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-schedule",
+        "/revit/configure-schedule",
+        "/revit/find-elements",
+        "/revit/schedules"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The HRU-to-ERU rename completes and a new QA schedule contains every renamed unit once, sorted by name with family/type."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "lh03_sheet_view_area_migration",
+      "source": "long_horizon",
+      "operation_family": "sheet_create",
+      "prompt": "Make separate Area A and Area B mechanical coordination sheets for Level 4, with a matching plan on each.",
+      "probe_prompt": "Make separate Area A and Area B mechanical coordination sheets for Level 4, with a matching plan on each. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/duplicate-view",
+        "/revit/create-sheet",
+        "/revit/place-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/duplicate-view",
+        "/revit/create-sheet",
+        "/revit/place-view",
+        "/revit/views",
+        "/revit/sheets"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Separate Level 4 Area A/B mechanical plans and sheets use grounded area boundaries and consistent names; missing boundaries require clarification."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "Area A and Area B boundaries if not established in model"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "lh04_titleblock_initials_discovery",
+      "source": "long_horizon",
+      "operation_family": "parameter_edit",
+      "prompt": "Make working copies of M000, M101, and M104. Put EP for drawn by and QA for checked by on the copies.",
+      "probe_prompt": "Make working copies of M000, M101, and M104. Put EP for drawn by and QA for checked by on the copies. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/plan-family-evolution"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Working copies of M000, M101 and M104 retain their contents and have EP drawn-by and QA checked-by values on the copies."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Original sheets retain their title-block values and contents."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "lh05_create_similar_receptacles",
+      "source": "long_horizon",
+      "operation_family": "add",
+      "prompt": "Add two receptacles in Unit 403 to match the existing ones. Use circuit P403/1.",
+      "probe_prompt": "Add two receptacles in Unit 403 to match the existing ones. Use circuit P403/1. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-similar-from-instance",
+        "/revit/get-parameters",
+        "/revit/get-connectors"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-similar-from-instance",
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/get-connectors"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "n28_novel_holdout",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Exactly two matching receptacles are placed at confirmed Unit 403 locations and attached to the intended P403/1 circuit."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "outlet locations"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "lh06_visibility_range_template",
+      "source": "long_horizon",
+      "operation_family": "view_template",
+      "prompt": "Make a coordination copy of the Level 4 plan that hides the floor below and service-clearance graphics. Save its settings as a coordination template.",
+      "probe_prompt": "Make a coordination copy of the Level 4 plan that hides the floor below and service-clearance graphics. Save its settings as a coordination template. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/duplicate-view",
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/create-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/duplicate-view",
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/create-view",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "r21_graphics_override",
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A Level 4 coordination copy hides lower-floor and clearance graphics, and a new template reproduces those settings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "lh07_family_clearance_evolution",
+      "source": "long_horizon",
+      "operation_family": "family_edit",
+      "prompt": "Add a switchable service-clearance outline to a separate type of this equipment and show it on plan. Leave the other equipment types alone.",
+      "probe_prompt": "Add a switchable service-clearance outline to a separate type of this equipment and show it on plan. Leave the other equipment types alone. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/plan-family-evolution",
+        "/revit/apply-family-evolution",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/plan-family-evolution",
+        "/revit/apply-family-evolution",
+        "/revit/open-family-doc",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "n29_novel_holdout",
+        "n30_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Mechanical Equipment"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A separate equipment type has a switchable, correctly sized service-clearance outline visible in plan, grounded in supplied or authoritative dimensions."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Other equipment types and instances retain their original geometry."
+        ],
+        "intentional_missing_information": [
+          "service clearance dimensions or authoritative manufacturer requirement"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "dp01_individual_bw_pdf_set",
+      "source": "document_production",
+      "operation_family": "print_export",
+      "prompt": "Give me separate black-and-white PDFs of M000, M101, and M104. Name them with the sheet number and name.",
+      "probe_prompt": "Give me separate black-and-white PDFs of M000, M101, and M104. Name them with the sheet number and name. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/export-pdf"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g25_export_publish"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Three accessible separate PDFs contain M000, M101 and M104 respectively, in black and white, named with sheet number and name."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "dp02_combined_discipline_pdf",
+      "source": "document_production",
+      "operation_family": "print_export",
+      "prompt": "Give me one color PDF of the HVAC plans M100 through M106 in sheet order. Call it TEST-MECHANICAL-ISSUE.pdf.",
+      "probe_prompt": "Give me one color PDF of the HVAC plans M100 through M106 in sheet order. Call it TEST-MECHANICAL-ISSUE.pdf. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g25_export_publish"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "One accessible TEST-MECHANICAL-ISSUE.pdf contains the HVAC sheets M100 through M106 in sheet order using color settings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "cx01_dynamic_hru_to_eru_program",
+      "source": "code_execution",
+      "operation_family": "bulk_edit_and_export",
+      "prompt": "Rename every HRU to ERU while keeping the rest of each name. Give me a CSV listing what changed.",
+      "probe_prompt": "Rename every HRU to ERU while keeping the rest of each name. Give me a CSV listing what changed. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-parameters"
+      ],
+      "dispatch_any_of": [
+        "/revit/dynamic-runtime/preview",
+        "/revit/dynamic-runtime/apply",
+        "/revit/find-elements",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "n28_novel_holdout",
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Every original HRU Mark becomes ERU with remainder preserved, and an accessible CSV reconciles old/new values to the actual edited elements."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "q02_air_devices_terse",
+      "source": "redline_corpus",
+      "operation_family": "project_query",
+      "prompt": "How many diffusers are in here? Break them out by type.",
+      "probe_prompt": "How many diffusers are in here? Break them out by type. Do not change the model.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/schedules"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/schedules",
+        "/revit/tool-search"
+      ],
+      "expected_effect": "read",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A complete native inventory supports the reported diffuser count and type breakdown; the chosen meaning of diffuser and project/view scope are stated."
+        ],
+        "collateral_criteria": [
+          "No model changes are committed; safe previews must prove rollback."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c01_hru_eru_terse",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Change all the HRUs to ERUs. Keep the numbers.",
+      "probe_prompt": "Change all the HRUs to ERUs. Keep the numbers. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/dynamic-runtime/preview",
+        "/revit/dynamic-runtime/apply",
+        "/revit/find-elements",
+        "/revit/update-parameter-by-query"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "All original HRU equipment Marks become ERU while preserving each numeric/suffix remainder and avoiding naming collisions."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c02_clean_level2_view_names",
+      "source": "redline_corpus",
+      "operation_family": "view_rename",
+      "prompt": "Clean up the Level 2 HVAC view names so they follow the pattern already used on the other levels.",
+      "probe_prompt": "Clean up the Level 2 HVAC view names so they follow the pattern already used on the other levels. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/set-parameter",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Level 2 HVAC view names follow a demonstrated neighboring-level convention; any claimed no-op is supported by complete relevant name readback."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c03_level4_enlarged_plan_terse",
+      "source": "redline_corpus",
+      "operation_family": "enlarged_plan",
+      "prompt": "Make an enlarged mechanical plan for Level 4 around the live/work units.",
+      "probe_prompt": "Make an enlarged mechanical plan for Level 4 around the live/work units. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/views",
+        "/revit/duplicate-view",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/duplicate-view",
+        "/revit/visibility",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "n29_novel_holdout"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "An enlarged mechanical plan visibly covers the Level 4 live/work units with a useful crop and scale."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c04_fix_equipment_schedule",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Fix the mechanical equipment schedule. It is missing the useful information and the order is a mess.",
+      "probe_prompt": "Fix the mechanical equipment schedule. It is missing the useful information and the order is a mess. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule",
+        "/revit/export-schedule-csv"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The intended mechanical equipment schedule is identified and improved with defensible useful fields and ordering; unspecified preferences are explained or clarified."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c05_schedule_counts_totals",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Add counts and totals to the equipment schedule where they make sense, without changing its data.",
+      "probe_prompt": "Add counts and totals to the equipment schedule where they make sense, without changing its data. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Appropriate equipment counts/totals are configured and reconcile to source data; totals are limited to meaningful numeric fields."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c06_schedule_remark_note_sync",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Put NOTE 1 on HRU202 in the equipment schedule, and add this explanation below the schedule: VERIFY SERVICE ACCESS BEFORE INSTALLATION.",
+      "probe_prompt": "Put NOTE 1 on HRU202 in the equipment schedule, and add this explanation below the schedule: VERIFY SERVICE ACCESS BEFORE INSTALLATION. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/set-parameter",
+        "/revit/create-text"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/set-parameter",
+        "/revit/create-text",
+        "/revit/sheets"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit",
+        "r02_text_note_edit",
+        "g23_schedule_configure"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "HRU202 receives NOTE 1 in the intended schedule remarks field and the exact supplied explanation is visibly placed below the schedule."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c07_duplicate_schedule_for_qa",
+      "source": "redline_corpus",
+      "operation_family": "schedule_create",
+      "prompt": "Make me a QA copy of the mechanical equipment schedule and filter it to equipment with blank Marks.",
+      "probe_prompt": "Make me a QA copy of the mechanical equipment schedule and filter it to equipment with blank Marks. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/create-schedule",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/create-schedule",
+        "/revit/configure-schedule"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A separate QA mechanical equipment schedule contains exactly equipment with blank Marks."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c08_schedule_heading_cleanup",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Clean up the headings in the equipment schedule so they are readable and use the project's normal terminology.",
+      "probe_prompt": "Clean up the headings in the equipment schedule so they are readable and use the project's normal terminology. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule",
+        "/revit/export-schedule-csv"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Schedule headings are readable and use demonstrated project terminology while preserving field bindings."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c09_bulk_schedule_comments",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Rename the HRUs to ERUs and put OWNER REVIEW in Comments for those units. Leave the other equipment alone.",
+      "probe_prompt": "Rename the HRUs to ERUs and put OWNER REVIEW in Comments for those units. Leave the other equipment alone. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/find-elements",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/update-parameter-by-query",
+        "/revit/set-parameter",
+        "/revit/dynamic-runtime/preview"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit",
+        "r04_bulk_status_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Original HRUs are renamed ERU and those exact units receive OWNER REVIEW in Comments; membership is reconciled."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Non-HRU equipment retains Marks and Comments."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c10_schedule_filter_underspecified",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "This schedule is too long. Only show the units we are actually coordinating on Level 4.",
+      "probe_prompt": "This schedule is too long. Only show the units we are actually coordinating on Level 4. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/configure-schedule",
+        "/revit/find-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/configure-schedule",
+        "/revit/find-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g23_schedule_configure",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The intended equipment schedule is scoped to the grounded Level 4 coordination set; the agent clarifies any additional undefined exclusions."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "coordination scope beyond Level 4 if not inferable"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c11_schedule_driven_equipment_rename",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "In the mechanical equipment schedule, change HRU401A and HRU401B to ERU401A and ERU401B and make sure the plan tags follow.",
+      "probe_prompt": "In the mechanical equipment schedule, change HRU401A and HRU401B to ERU401A and ERU401B and make sure the plan tags follow. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/schedules",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/export-visible-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/schedules",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/export-visible-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r01_schedule_value_edit",
+        "r03_tag_designation_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "HRU401A/B become ERU401A/B in the equipment data, schedule and corresponding plan tags."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c12_replace_outdated_note_terse",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Fix the old ventilation note on this sheet.",
+      "probe_prompt": "Fix the old ventilation note on this sheet. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-text-notes",
+        "/revit/set-text-note-text"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-text-notes",
+        "/revit/set-text-note-text",
+        "/revit/sheets"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r02_text_note_edit",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "Cover Sheet",
+          "view_type": "DrawingSheet"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The obsolete ventilation note is identified and replaced with supplied or authoritative current wording; invented replacement text is unacceptable."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "replacement ventilation wording"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c13_add_coordination_note",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Add a coordination note by the Level 4 mechanical plan telling the contractor to verify routing in field.",
+      "probe_prompt": "Add a coordination note by the Level 4 mechanical plan telling the contractor to verify routing in field. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/create-text",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/create-text",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r02_text_note_edit",
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A legible note near the Level 4 mechanical plan instructs the contractor to verify routing in field without obstructing the drawing."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c14_bulk_note_terminology",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Every mechanical note that says HRU needs to say ERU. Don't touch tags or equipment Marks.",
+      "probe_prompt": "Every mechanical note that says HRU needs to say ERU. Don't touch tags or equipment Marks. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-text-notes",
+        "/revit/replace-text-note"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-text-notes",
+        "/revit/replace-text-note",
+        "/revit/dynamic-runtime/preview"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r02_text_note_edit",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Mechanical text notes replace HRU terminology with ERU with complete scope and before/after evidence."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Tags, equipment Marks and nonmechanical notes remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c15_move_notes_clear",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Move the notes off the ductwork on M104 and make the leaders readable.",
+      "probe_prompt": "Move the notes off the ductwork on M104 and make the leaders readable. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/find-text-notes",
+        "/revit/move-elements",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-text-notes",
+        "/revit/move-elements",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r02_text_note_edit",
+        "r06_move_tag_cleanup"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Notes on M104 clear ductwork and their leaders remain readable and correctly associated."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c16_tag_missing_equipment_terse",
+      "source": "redline_corpus",
+      "operation_family": "tag",
+      "prompt": "Tag the untagged equipment on M104.",
+      "probe_prompt": "Tag the untagged equipment on M104. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/tag-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/tag-elements",
+        "/revit/views"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r05_add_tag",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "All relevant untagged equipment on M104 receives compatible legible tags without duplicate tags on already tagged equipment."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c17_tag_collision_cleanup_terse",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Clean up the tags around the live/work units. They're all on top of each other.",
+      "probe_prompt": "Clean up the tags around the live/work units. They're all on top of each other. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/move-elements",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/move-elements",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r06_move_tag_cleanup"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Live/work-unit tags become legible with collisions addressed and label/leader associations preserved."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c18_tag_designation_bulk",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Update the HRU tags to read ERU, but don't break the equipment schedule.",
+      "probe_prompt": "Update the HRU tags to read ERU, but don't break the equipment schedule. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/schedules"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/schedules"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r03_tag_designation_edit",
+        "r01_schedule_value_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "HRU tag designations read ERU through a consistent underlying equipment naming change, with schedules reconciled."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "No text-only tag hack breaks the relationship to equipment data."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c19_match_neighbor_tag_type",
+      "source": "redline_corpus",
+      "operation_family": "type_change",
+      "prompt": "Make the odd equipment tag on M104 match the others.",
+      "probe_prompt": "Make the odd equipment tag on M104 match the others. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/export-visible-elements",
+        "/revit/change-element-type"
+      ],
+      "dispatch_any_of": [
+        "/revit/export-visible-elements",
+        "/revit/change-element-type",
+        "/revit/views"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r06_move_tag_cleanup",
+        "r13_type_change_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A defensible outlier equipment tag on M104 matches the compatible prevailing tag type."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c20_add_duplex_match_circuit",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "ADD DUPLEX RECEPTACLE - MATCH CIRCUIT P403/1 - at the marked location in Unit 403.",
+      "probe_prompt": "ADD DUPLEX RECEPTACLE - MATCH CIRCUIT P403/1 - at the marked location in Unit 403. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/create-similar-from-instance",
+        "/revit/get-parameters",
+        "/revit/get-connectors"
+      ],
+      "dispatch_any_of": [
+        "/revit/create-similar-from-instance",
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/get-connectors"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r07_add_family_instance",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A duplex receptacle matches circuit P403/1 at the confirmed marked location in Unit 403; absent markup requires clarification."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "marked location (no markup supplied)"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c21_add_another_selected_device",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "Add another one here like the selected device.",
+      "probe_prompt": "Add another one here like the selected device. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4 - Power",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Electrical Fixtures"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/context",
+        "/revit/create-similar-from-instance"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/create-similar-from-instance",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r07_add_family_instance",
+        "g26_context_rule"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "One matching device is added at a confirmed location, retaining intended host, orientation and circuit behavior."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "placement location"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c22_accessory_type_match",
+      "source": "redline_corpus",
+      "operation_family": "type_change",
+      "prompt": "Change the odd damper to match the one on the parallel branch.",
+      "probe_prompt": "Change the odd damper to match the one on the parallel branch. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/change-element-type"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/change-element-type"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r13_type_change_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The grounded outlier damper uses the compatible type from the parallel branch and remains connected."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "damper/parallel-branch identities if no defensible outlier exists"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c23_move_damper_upstream",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Move the damper upstream so it clears the elbow.",
+      "probe_prompt": "Move the damper upstream so it clears the elbow. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/move-elements"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/move-elements"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r11_move_accessory"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The grounded damper moves upstream enough to clear the elbow, with connected branch continuity verified."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "damper identity if no defensible target exists"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c24_delete_duplicate_device",
+      "source": "redline_corpus",
+      "operation_family": "delete",
+      "prompt": "Delete the duplicate device and clean up whatever it is connected to.",
+      "probe_prompt": "Delete the duplicate device and clean up whatever it is connected to. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/trace-connected-network",
+        "/revit/delete"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/trace-connected-network",
+        "/revit/delete"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "r19_delete_accessory_preflight",
+        "r20_delete_route_preflight"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Only an independently established duplicate is deleted, with its connected dependencies deliberately resolved; ambiguity must stop deletion."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "proof of duplicate or engineer confirmation before deletion"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c25_duct_12x10_markup",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "12x10 SUPPLY DUCT at the marked Unit 405 branch.",
+      "probe_prompt": "12x10 SUPPLY DUCT at the marked Unit 405 branch. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r10_duct_size_transition",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The confirmed marked Unit 405 supply branch is 12 by 10 inches with continuity preserved; absent markup requires clarification."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "marked branch (no markup supplied)"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c26_pipe_size_terse",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "Make this pipe branch 2 inches after the tee.",
+      "probe_prompt": "Make this pipe branch 2 inches after the tee. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r09_pipe_size_transition",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Pipes"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected pipe branch is 2 inches after the tee, including a valid transition and connector continuity."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c27_connect_diffuser_terse",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Connect the loose diffuser to the supply.",
+      "probe_prompt": "Connect the loose diffuser to the supply. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/mep-route-workflow"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/mep-route-workflow"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r16_duct_route",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A semantically compatible loose supply diffuser is continuously connected to supply, or native evidence proves no valid target."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c28_reroute_conflict_terse",
+      "source": "redline_corpus",
+      "operation_family": "reroute_offset",
+      "prompt": "Reroute this duct around the conflict.",
+      "probe_prompt": "Reroute this duct around the conflict. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/get-connectors",
+        "/revit/reroute-mep-route-segment"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r18_duct_reroute",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Ducts"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The selected duct clears a grounded conflict with valid clearance, endpoints and continuity."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "conflict location and clearance"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c29_add_branch_match_neighbor",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Add the missing branch to the unit and match the one next door.",
+      "probe_prompt": "Add the missing branch to the unit and match the one next door. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/mep-branch-network-workflow"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-connectors",
+        "/revit/mep-branch-network-workflow"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r08_add_mep_accessory",
+        "r16_duct_route",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The intended missing branch connects to the intended unit and matches a defensible neighboring branch configuration."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "missing branch and destination if not established in model"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c30_hide_arch_rooms_level4",
+      "source": "redline_corpus",
+      "operation_family": "view_visibility",
+      "prompt": "Turn off the architectural room stuff on the Level 4 mechanical plans. Leave the MEP spaces alone.",
+      "probe_prompt": "Turn off the architectural room stuff on the Level 4 mechanical plans. Leave the MEP spaces alone. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override",
+        "g26_context_rule"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Architectural room graphics are absent from Level 4 mechanical plans while MEP space graphics remain unchanged."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "MEP spaces and unrelated levels are unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c31_fix_view_range_terse",
+      "source": "redline_corpus",
+      "operation_family": "view_settings",
+      "prompt": "Fix the view range. I shouldn't see the floor below.",
+      "probe_prompt": "Fix the view range. I shouldn't see the floor below. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/visibility"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The initial plan no longer displays the floor below through an appropriate range/template correction, or native range and visual evidence prove an existing compliant state."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c32_make_coordination_template_terse",
+      "source": "redline_corpus",
+      "operation_family": "view_template",
+      "prompt": "Turn this into our mechanical coordination template and use it on the other coordination plans.",
+      "probe_prompt": "Turn this into our mechanical coordination template and use it on the other coordination plans. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/create-view"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/create-view",
+        "/revit/visibility"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "r21_graphics_override"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A mechanical coordination template derived from the initial view is applied to the grounded coordination-plan set."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c33_match_view_graphics_across_level",
+      "source": "redline_corpus",
+      "operation_family": "graphics_override",
+      "prompt": "Make the other Level 4 HVAC plans look like M104 without changing their scale or crop.",
+      "probe_prompt": "Make the other Level 4 HVAC plans look like M104 without changing their scale or crop. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override",
+        "g22_sheet_view_package"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Other Level 4 HVAC plans match the relevant M104 graphics while retaining their individual scales and crops."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Each existing scale and crop is preserved."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c34_sheet_numbers_dashes_to_dots",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Change the dashes in the mechanical sheet numbers to dots. Keep the ordering and don't touch other disciplines.",
+      "probe_prompt": "Change the dashes in the mechanical sheet numbers to dots. Keep the ordering and don't touch other disciplines. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/set-parameter",
+        "/revit/dynamic-runtime/preview"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Mechanical sheet-number dashes become dots with stable ordering; a no-op requires complete proof that no in-scope dash remains."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Other disciplines and sheet identity/order are preserved."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c35_area1_area2_to_ab",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Area 1 and Area 2 are now Area A and Area B. Update the mechanical views and sheets consistently.",
+      "probe_prompt": "Area 1 and Area 2 are now Area A and Area B. Update the mechanical views and sheets consistently. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/views",
+        "/revit/sheets",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/views",
+        "/revit/sheets",
+        "/revit/set-parameter",
+        "/revit/dynamic-runtime/preview"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Existing mechanical Area 1/2 names consistently become Area A/B across views and sheets; absent targets are reported with evidence."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c36_titleblock_initials_all_mech",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Put EP for drawn by and QA for checked by on all the mechanical sheets.",
+      "probe_prompt": "Put EP for drawn by and QA for checked by on all the mechanical sheets. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/get-parameters",
+        "/revit/set-parameter"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/get-parameters",
+        "/revit/set-parameter",
+        "/revit/plan-family-evolution"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g22_sheet_view_package",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Every mechanical sheet/title block reads EP drawn-by and QA checked-by with complete scope/count readback."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "Nonmechanical sheets and unrelated title-block fields remain unchanged."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c37_print_current_mechanical_set",
+      "source": "redline_corpus",
+      "operation_family": "print_export",
+      "prompt": "Print the current mechanical set in black and white. One PDF per sheet.",
+      "probe_prompt": "Print the current mechanical set in black and white. One PDF per sheet. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g25_export_publish",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "One accessible black-and-white PDF per current mechanical sheet is produced with no missing or duplicate sheets."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c38_export_each_mechanical_subdiscipline",
+      "source": "redline_corpus",
+      "operation_family": "print_export",
+      "prompt": "Give me separate bound PDFs for each mechanical subdiscipline, with filenames that sort in sheet order.",
+      "probe_prompt": "Give me separate bound PDFs for each mechanical subdiscipline, with filenames that sort in sheet order. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "dispatch_any_of": [
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/print-sets"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "epic0441_task_refs": [
+        "g25_export_publish",
+        "n29_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Each grounded mechanical subdiscipline has a separate accessible bound PDF with complete ordered membership and sortable filenames."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "terse"
+    },
+    {
+      "case_id": "c39_add_service_clearance_terse",
+      "source": "redline_corpus",
+      "operation_family": "family_edit",
+      "prompt": "Add service clearance to this equipment and make it show up on plan.",
+      "probe_prompt": "Add service clearance to this equipment and make it show up on plan. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/plan-family-evolution",
+        "/revit/export-view-frame"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/plan-family-evolution",
+        "/revit/open-family-doc",
+        "/revit/export-view-frame"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "n29_novel_holdout",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Mechanical Equipment"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "An appropriately sized service-clearance representation is added to the selected equipment and is visible in plan; dimensions are supplied or authoritatively grounded."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "service clearance dimensions or authoritative manufacturer requirement"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c40_fix_family_label",
+      "source": "redline_corpus",
+      "operation_family": "family_edit",
+      "prompt": "The family label still says HRU. Make it follow the equipment Mark instead.",
+      "probe_prompt": "The family label still says HRU. Make it follow the equipment Mark instead. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/context",
+        "/revit/inspect-family-content",
+        "/revit/plan-family-evolution",
+        "/revit/get-parameters"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/inspect-family-content",
+        "/revit/plan-family-evolution",
+        "/revit/open-family-doc",
+        "/revit/get-parameters"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "n29_novel_holdout",
+        "r03_tag_designation_edit"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "selection": {
+          "category": "Mechanical Equipment"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The intended family label follows equipment Mark dynamically and displays correctly after reload; the label identity must be grounded."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": [
+          "family label identity if no such label exists"
+        ]
+      },
+      "prompt_specificity": "ambiguous_actionable"
+    },
+    {
+      "case_id": "c41_ashrae170_or_diffuser_review",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "This operating room layout doesn't comply with ASHRAE 170. Fix the air distribution.",
+      "probe_prompt": "This operating room layout doesn't comply with ASHRAE 170. Fix the air distribution. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "capability_paths": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/views"
+      ],
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/get-parameters",
+        "/revit/views",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "n28_novel_holdout",
+        "g26_context_rule"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The agent checks the operating-room premise against this residential fixture and seeks the correct room/model or design context before altering air distribution."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced.",
+          "No residential air-distribution design is changed on an unsupported operating-room premise."
+        ],
+        "intentional_missing_information": [
+          "operating room premise is unsupported by this residential fixture"
+        ]
+      },
+      "prompt_specificity": "research_required"
+    },
+    {
+      "case_id": "c42_research_revit_template_controls",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "Figure out why the view template won't let me change visibility here and fix the right setting.",
+      "probe_prompt": "Figure out why the view template won't let me change visibility here and fix the right setting. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "capability_paths": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/native-api-search"
+      ],
+      "dispatch_any_of": [
+        "/revit/context",
+        "/revit/views",
+        "/revit/visibility",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "epic0441_task_refs": [
+        "r21_graphics_override",
+        "n28_novel_holdout"
+      ],
+      "production_expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "The agent identifies the specific template-controlled visibility restriction and corrects the appropriate control with visible readback."
+        ],
+        "collateral_criteria": [
+          "Only the justified target set is changed; no unexplained deletions, duplicates or disconnected systems are introduced."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    },
+    {
+      "case_id": "c43_research_revit2026_api_change",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "Our Revit add-in uses ElementId.IntegerValue. Find out what needs to change for Revit 2026 while keeping Revit 2023 support. Explain the fix; do not edit the add-in.",
+      "probe_prompt": "Our Revit add-in uses ElementId.IntegerValue. Find out what needs to change for Revit 2026 while keeping Revit 2023 support. Explain the fix; do not edit the add-in. Do not change the model.",
+      "capability_paths": [
+        "/revit/native-api-search",
+        "/revit/context"
+      ],
+      "dispatch_any_of": [
+        "/revit/native-api-search",
+        "/revit/context",
+        "/revit/tool-search"
+      ],
+      "expected_effect": "read",
+      "epic0441_task_refs": [
+        "n28_novel_holdout",
+        "g27_program_reuse"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "A read-only explanation cites authoritative Revit API documentation and provides a technically valid IntegerValue/Value compatibility approach for Revit 2023 and 2026."
+        ],
+        "collateral_criteria": [
+          "No model changes are committed; safe previews must prove rollback."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "research_required"
+    },
+    {
+      "case_id": "c44_research_pdf_color_failure",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "We need a color issue set. Export M000 in color first so I can check it before you do the rest.",
+      "probe_prompt": "Identify the sheet and available color export settings for M000. Do not export a file or change the model.",
+      "capability_paths": [
+        "/revit/print-sets",
+        "/revit/sheets",
+        "/revit/export-pdf"
+      ],
+      "dispatch_any_of": [
+        "/revit/print-sets",
+        "/revit/sheets",
+        "/revit/export-pdf",
+        "/revit/native-api-search"
+      ],
+      "expected_effect": "apply",
+      "probe_expected_effect": "read",
+      "epic0441_task_refs": [
+        "g25_export_publish",
+        "n28_novel_holdout"
+      ],
+      "fixture_precondition": {
+        "active_view": {
+          "name": "L4",
+          "view_type": "FloorPlan"
+        },
+        "clear_selection": true
+      },
+      "production_expected_effect": "apply",
+      "acceptance_review": {
+        "delivery_criteria": [
+          "Deliver an accessible, nonempty color PDF of M000 with the correct sheet content and verify the actual file. The first completed sheet is the review deliverable; a proposed setting or export plan is insufficient."
+        ],
+        "collateral_criteria": [
+          "Export only M000 and stop for review before producing the rest of the set. Preserve model content and unrelated files."
+        ],
+        "intentional_missing_information": []
+      },
+      "prompt_specificity": "ordinary"
+    }
+  ]
+}

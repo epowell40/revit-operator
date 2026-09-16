@@ -1,3 +1,5 @@
+import { isStandaloneAssistantRequest } from "../goals/standalone_assistant_request.js";
+
 export type FreshRevitEvidenceRequirement = {
   required: boolean;
   kind: "none" | "sheet_count" | "revit_tool";
@@ -10,6 +12,7 @@ export const FRESH_REVIT_EVIDENCE_FAILURE =
 export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEvidenceRequirement {
   const text = (userText ?? "").toString().trim().toLowerCase();
   if (!text) return { required: false, kind: "none", prompt: "" };
+  if (isStandaloneAssistantRequest(text)) return { required: false, kind: "none", prompt: "" };
   const sheetCount =
     /\b(?:how\s+many|count|number\s+of|total)\b[^?\n]{0,80}\bsheets?\b/.test(text)
     || /\bsheets?\b[^?\n]{0,80}\b(?:how\s+many|count|number|total)\b/.test(text);

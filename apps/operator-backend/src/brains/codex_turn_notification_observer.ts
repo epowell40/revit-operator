@@ -28,6 +28,28 @@ export type CodexTurnNotificationSnapshot = {
   hasAuthoritativeWebEvidence: boolean;
 };
 
+/** Runtime stage text is descriptive, never an assertion that an effect succeeded. */
+function toolProgressStage(item: any): string | undefined {
+  if (!["dynamicToolCall", "mcpToolCall"].includes(item?.type)) return undefined;
+  let tool = typeof item.tool === "string" ? item.tool : "";
+  if (tool === "revit_call_tool") {
+    let args = item.arguments;
+    if (typeof args === "string" && args.length <= 16_384) { try { args = JSON.parse(args); } catch { args = null; } }
+    const path = args && typeof args === "object" && !Array.isArray(args) ? args.path : null;
+    // Only the bounded route contributes to progress text. Never display parameters or other argument data.
+    if (typeof path === "string" && /^\/revit\/[a-z][a-z0-9-]{0,100}$/.test(path)) tool = "revit_" + path.slice(7).replace(/-/g, "_");
+  }
+  if (["operator_evaluate_assignment_criteria"].includes(tool)) return "Checking the result…";
+  if (["operator_request_assignment_input", "operator_request_clarification", "request_user_input"].includes(tool)) return "Preparing a question…";
+  if (tool === "revit_inspect_exported_files") return "Checking the exported file…";
+  if (["operator_discover_capabilities", "revit_search_tools", "revit_tool_doc"].includes(tool)) return "Finding the right tool…";
+  if (tool === "operator_retrieve_evidence") return "Reviewing the collected information…";
+  if (/capture/.test(tool)) return "Capturing the view…";
+  if (/excel|xlsx/.test(tool)) return "Preparing the workbook…";
+  if (/^revit_(get|list|find|query)/.test(tool)) return "Reading model information…";
+  return "Working through the next step…";
+}
+
 function shouldNotifyCodexToolCalls(): boolean {
   const value = (process.env.OPERATOR_NOTIFY_CODEX_TOOL_CALLS ?? "1").toString().trim().toLowerCase();
   return value !== "0" && value !== "false" && value !== "no";
@@ -48,12 +70,17 @@ export function createCodexTurnNotificationObserver(args: {
   webEvidenceRequirement: AuthoritativeWebEvidenceRequirement;
   mcpRuntime: Pick<CodexMcpToolRuntime, "flushAssignmentKernelV2TurnStop"> | null;
   onDelta?: (delta: string) => void;
+  onProgress?: (text: string) => void;
+  deferAssistantOutput?: boolean;
 }): {
   observe(notification: CodexNotificationEnvelope): void;
   snapshot(): CodexTurnNotificationSnapshot;
 } {
   let assistantText = "";
   let assistantDeltas = "";
+  const messagePhases = new Map<string, string>();
+  const messageDeltas = new Map<string, string>();
+  const canStream = !args.deferAssistantOutput && !args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required;
   let hasFreshRevitEvidence = !args.freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !args.webEvidenceRequirement.required;
 
@@ -61,12 +88,22 @@ export function createCodexTurnNotificationObserver(args: {
     try {
       if (!notification || notification.threadId !== args.threadId) return;
       args.modelTelemetry.observe(notification);
+      if (notification.method === "item/started" && notification.params?.turnId === args.turnId) {
+        const item = notification.params?.item;
+        const stage = toolProgressStage(item);
+        if (stage) args.onProgress?.(stage);
+        if (item?.type === "agentMessage" && typeof item.id === "string") messagePhases.set(item.id, item.phase ?? "unknown");
+      }
       if (notification.method === "item/agentMessage/delta") {
         if (notification.params?.turnId !== args.turnId) return;
         const delta = typeof notification.params?.delta === "string" ? notification.params.delta : "";
         if (delta) {
-          assistantDeltas += delta;
-          if (!args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required) args.onDelta?.(delta);
+          const id = String(notification.params?.itemId ?? "unknown");
+          messageDeltas.set(id, (messageDeltas.get(id) ?? "") + delta);
+          if (messagePhases.get(id) === "final_answer") {
+            assistantDeltas = messageDeltas.get(id)!;
+            if (canStream) args.onDelta?.(delta);
+          }
         }
       }
 
@@ -74,11 +111,19 @@ export function createCodexTurnNotificationObserver(args: {
       const item = notification.params?.item;
       if (item?.type === "agentMessage") {
         const full = typeof item.text === "string" ? item.text : "";
-        if (full) assistantText = full;
+        const phase = item.phase ?? messagePhases.get(String(item.id));
+        if (phase === "commentary") {
+          if (full) args.onProgress?.(full.replace(/\s+/g, " ").trim().slice(0, 240));
+        } else if (full) {
+          assistantText = full; assistantDeltas = full;
+          if (canStream && messagePhases.get(String(item.id)) !== "final_answer") args.onDelta?.(full);
+        }
+        messageDeltas.delete(String(item.id)); messagePhases.delete(String(item.id));
       }
 
       const dynamicTool = adaptDynamicToolCompletedItem(item);
       if (dynamicTool) {
+        args.onProgress?.(dynamicTool.success === false ? "Reviewing a tool issue…" : "Reviewing the result…");
         args.assignmentObserver.observe(dynamicTool);
         if (isSuccessfulFreshRevitEvidence(args.freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
         if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
@@ -162,6 +207,7 @@ export function createCodexTurnNotificationObserver(args: {
       if (item?.type !== "mcpToolCall") return;
       const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
       const error = typeof item.error === "string" ? item.error.trim() : "";
+      args.onProgress?.(error || ["failed", "error"].includes(status) ? "Reviewing a tool issue…" : "Reviewing the result…");
       args.assignmentObserver.observe({
         action_id: typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null,
         server: typeof item.server === "string" ? item.server : null,

@@ -1,3 +1,4 @@
+import { buildGeneralRevitAcceptanceReviewPacket } from "./general_revit_acceptance_review.js";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureDir, readJsonFile, writeJsonFileNew } from "./files.js";
@@ -8,10 +9,12 @@ import {
 import { buildBenchmarkCaseResultV2 } from "./protocol_v2_case.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "./protocol_v2_envelope.js";
 import { sha256File, sha256Value } from "./protocol_v2_hash.js";
+import { assertProtocolV2InstructionEvidence } from "./protocol_v2_instruction_evidence.js";
 import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
 import { verifyVerifiedWorkPacketHash } from "../work_packets/generator.js";
+import { assignmentUserPauseV2, assignmentPauseWithoutProviderCallV2 } from "../work_packets/assignment_kernel_v2_pause.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, isTerminalProviderCallStateV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import type {
@@ -50,7 +53,8 @@ function workPacketStatusMatchesTerminal(packet: JsonRecord, assignment: JsonRec
     if (status === "verified_complete") return terminal && outcome === "complete" && !hasUnknown;
     if (status === "verified_no_op") return terminal && outcome === "verified_noop" && !hasUnknown;
     if (status === "complete_with_issues") return terminal && outcome === "complete_with_issues";
-    if (status === "blocked_truthfully" || status === "awaiting_clarification") return terminal && outcome === "blocked";
+    if (status === "awaiting_clarification") return assignmentUserPauseV2(kernel) !== null || terminal && outcome === "blocked";
+    if (status === "blocked_truthfully") return terminal && outcome === "blocked";
     if (status === "failed") return terminal && outcome === "failed";
     if (status === "rolled_back") return terminal;
     return false;
@@ -190,7 +194,7 @@ export function assertCompleteProtocolV2Receipts(
         const callIds = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String) : [];
         const calls = record(ledger.calls);
         const inFlight = Array.isArray(ledger.in_flight_call_ids) ? ledger.in_flight_call_ids.map(String) : [];
-        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => {
+        if ((callIds.length === 0 && !assignmentPauseWithoutProviderCallV2(publication.snapshot)) || inFlight.length > 0 || callIds.some((id) => {
           const call = record(calls[id]);
           return call.call_id !== id || !isTerminalProviderCallStateV2(call.state);
         })) {
@@ -230,7 +234,7 @@ export function assertCompleteProtocolV2Receipts(
         && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
       const validKernelRead = publications.some(row => {
         const kernel = record(row.snapshot);
-        if (kernel.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA || kernel.terminal !== true) return false;
+        if (kernel.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA || (kernel.terminal !== true && !assignmentUserPauseV2(kernel))) return false;
         const observations = record(kernel.observations);
         return Object.values(record(kernel.operations)).map(record).some(operation =>
           operation.requested_effect === "read" && operation.dispatch_state === "dispatched"
@@ -250,15 +254,15 @@ export function assertCompleteProtocolV2Receipts(
       || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
       throw new Error(`Benchmark Protocol V2 Verified Work Packet hash is invalid for ${caseId}.`);
     }
-    const terminalAssignments = [...v2AssignmentRows, ...assignmentRows].filter(row => {
+    const settledAssignments = [...v2AssignmentRows, ...assignmentRows].filter(row => {
       const kernel = record(row.assignment_snapshot_v2);
       return kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA
-        ? kernel.terminal === true
+        ? kernel.terminal === true || assignmentUserPauseV2(kernel) !== null
         : String(record(row.control_plane).terminal_state || "") !== "open";
     });
     const exactBindings = packets.flatMap(packet => {
       const identity = record(packet.identity);
-      const assignment = terminalAssignments.find(row => {
+      const assignment = settledAssignments.find(row => {
         const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
         const kernel = record(row.assignment_snapshot_v2);
         const binding = kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA ? record(kernel.current_binding) : record(row.control_plane);
@@ -392,6 +396,8 @@ export function buildProtocolV2ReportFromFlight(args: {
       require_assignment_kernel_v2: args.draft.feature_flags.assignment_kernel_v2 === true
     });
   }
+  // Scoring never substitutes launcher declarations for the instructions acknowledged on each paid turn.
+  assertProtocolV2InstructionEvidence(args.draft, traces);
   for (const caseId of traceIds) {
     const testCase = byId.get(caseId);
     if (!testCase) throw new Error(`Flight contains case ${caseId}, which is absent from the bound corpus.`);
@@ -420,7 +426,9 @@ export function buildProtocolV2ReportFromFlight(args: {
       evaluatorVersion: envelope.evaluator_version
     });
   });
-  return buildBenchmarkRawReportV2(envelope, results, judgedAt);
+  const review = buildGeneralRevitAcceptanceReviewPacket(envelope.identity.run_id,
+    traces.map(trace => byId.get(String(trace.case_id))!), traces);
+  return buildBenchmarkRawReportV2(envelope, results, judgedAt, review ? { original: review, reviewed: review } : undefined);
 }
 
 export function writeProtocolV2ReportFromFlight(args: {

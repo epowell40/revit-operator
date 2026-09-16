@@ -835,9 +835,8 @@ async function loadLiveCapabilities(): Promise<{ raw: unknown; source: string }>
   const bridgeUrl = read(path.join(localAppData, "RevitOperator", "bridge_url.txt")).trim().replace(/\/+$/, "");
   const token = read(path.join(localAppData, "RevitOperator", "Workspace", "operator_token.txt")).trim();
   const response = await fetch(`${bridgeUrl}/revit/capabilities`, {
-    method: "POST",
+    method: "GET",
     headers: { "content-type": "application/json", "x-operator-token": token },
-    body: "{}",
     signal: AbortSignal.timeout(5_000)
   });
   if (!response.ok) throw new Error(`Live capabilities failed: HTTP ${response.status}`);

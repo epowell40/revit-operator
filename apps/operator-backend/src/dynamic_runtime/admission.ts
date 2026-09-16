@@ -3,7 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 export const DYNAMIC_PROGRAM_ADMISSION_SCHEMA = "dynamic_program_admission/v1" as const;
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-const REVIT_VERSIONS = new Set(["2023", "2024", "2025"]);
+const REVIT_VERSIONS = new Set(["2023", "2024", "2025", "2026", "2027"]);
 
 export type DynamicProgramAdmissionV1 = {
   schema: typeof DYNAMIC_PROGRAM_ADMISSION_SCHEMA;
@@ -19,7 +19,7 @@ export type DynamicProgramAdmissionV1 = {
   sandbox_profile_version: string;
   sandbox_profile_hash: string;
   authenticated_worker_identity_hash: string;
-  target_revit_version: "2023" | "2024" | "2025" | "2026";
+  target_revit_version: "2023" | "2024" | "2025" | "2026" | "2027";
   host_adapter_manifest_hash: string;
   document_fingerprint: string;
   document_session_id: string;

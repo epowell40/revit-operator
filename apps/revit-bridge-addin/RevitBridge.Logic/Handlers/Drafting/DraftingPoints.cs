@@ -37,6 +37,7 @@ namespace RevitBridge.Logic.Handlers.Drafting
 
         public XYZ Resolve(string? frameId)
         {
+            RevitBridge.Common.DraftPointCoordinatePolicy.Validate(xyz, xPx, yPx, xIn, yIn, x, y, z, frameId);
             if (xyz != null && xyz.Length >= 2)
             {
                 var x = xyz[0];

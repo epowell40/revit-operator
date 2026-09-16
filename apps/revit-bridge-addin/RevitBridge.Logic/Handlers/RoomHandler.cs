@@ -24,9 +24,9 @@ namespace RevitBridge.Logic.Handlers
 
         public class RoomRequest
         {
-            public string action { get; set; } // "list", "detail"
-            public string levelName { get; set; }
-            public string roomNumber { get; set; }
+            public string action { get; set; } // "list", "detail"; required by native admission
+            public string? levelName { get; set; }
+            public string? roomNumber { get; set; }
             public int? max { get; set; }
             public List<int> roomIds { get; set; }
             public string spatialKindPreference { get; set; } = "auto";

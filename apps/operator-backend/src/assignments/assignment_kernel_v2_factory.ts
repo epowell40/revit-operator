@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { requestedWorkbookAssessment } from "../artifact_export_intent.js";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
   ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
@@ -55,6 +56,13 @@ function requestedEffect(goal: GoalRecord): RequestedEffectV2 {
 function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly string[] = []): string[] | null {
   if (configuredFacts.some((fact) => fact.startsWith("inventory."))) return [...configuredFacts];
   const source = `${goal.objective}\n${goal.acceptance_criteria.join("\n")}\n${text(goal.work_budget?.source_user_request, 20_000)}`;
+  // Counting a table's rows or a review's findings is part of an assessment,
+  // not a request for the model-wide quantify contract. Keep the full read
+  // outcome deliverable instead of forcing every audit through inventory facts.
+  if (/\b(?:reviews?|audits?|assess(?:ment)?|prioriti[sz]e(?:d)?|gaps?|missing|blank|schedules?)\b/i.test(source)) return null;
+  const boundedSample = /\bsampled\b|\b(?:sample|samples|sampling)\b(?!\s+models?\b)|\bsnapshot_limit\s*[=:]?\s*\d+/i.test(source);
+  const fullInventory = /\b(?:all|every|entire|whole)\b[^.!?\n]{0,60}\b(?:model|project|instances?|elements?|ducts?|devices?|equipment)\b|\bcomplete\s+inventory\b/i.test(source);
+  if (boundedSample && !fullInventory) return null;
   if (!/\b(inventory|quantif(?:y|ication)|count|how many|group(?:ed|ing)?)\b/i.test(source)) return null;
   const grouped = /\b(group(?:ed|ing)?|family|type)\b/i.test(source);
   return ["inventory.complete", "inventory.total", ...(grouped ? ["inventory.group"] : [])];
@@ -173,6 +181,12 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     source_user_request: input.goal.objective,
     requested_effect: effect,
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
+    ...(effect === "read"
+      && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))
+      && criterionSpecs.some(criterion => criterion.semantic_fact_requirements.includes("task.result_available"))
+      ? { result_delivery_required: true } : {}),
+    ...(effect === "apply" && requestedWorkbookAssessment(input.goal.objective)
+      ? { result_delivery_required: true, result_assessment_required: true } : {}),
     criteria: criterionSpecs,
     input_variables: inputVariables,
     work_units: [

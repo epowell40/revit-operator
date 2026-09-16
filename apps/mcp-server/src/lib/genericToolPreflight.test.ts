@@ -1,11 +1,60 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   genericToolRegistryLookupFailure,
   genericToolUnknownPathFailure,
   mcpPreDispatchFailureResult,
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
+
+test("sheet duplication uses the native published schema to reject the live invalid option before dispatch", () => {
+  const schema = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json", import.meta.url), "utf8"));
+  const contract = { method: "POST", path: "/revit/duplicate-sheet", required_fields: schema.required, request_schema: schema };
+  const failure = preflightKnownGenericToolBody(contract, { sourceQuery: "M000", sourceSheetNumber: "M000", option: "withViewsAndDetailing", newNumber: "TEMP-M000-CHECK", newName: "Cover Sheet - Working Copy", dryRun: false, verify: true });
+  assert.equal(failure?.request_dispatched, false);
+  assert.equal(failure?.outcome_unknown, false);
+  assert.ok(failure?.invalid_fields?.includes("body.option"));
+  for (const selector of [{ sourceSheetId: 1420963 }, { sourceSheetNumber: "M000" }, { sourceQuery: "M000" }]) {
+    for (const option of schema.properties.option.enum) {
+      assert.equal(preflightKnownGenericToolBody(contract, { ...selector, option, dryRun: false, verify: true }), null);
+    }
+  }
+});
+
+test("bundled sheet-copy examples pass the same native contract enforced before MCP dispatch", () => {
+  const schema = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  const entries = Array.isArray(catalog) ? catalog : catalog.tools;
+  const sheet = entries.find((entry: any) => entry.path === "/revit/duplicate-sheet");
+  assert.ok(sheet?.examples.length >= 2);
+  const contract = { method: "POST", path: sheet.path, request_schema: schema };
+  for (const example of sheet.examples) {
+    assert.equal(preflightKnownGenericToolBody(contract, example.request), null, example.name);
+  }
+  const stale = preflightKnownGenericToolBody(contract, { sourceSheetNumber: "M000", newSheetNumber: "M000-COPY", newSheetName: "Cover Sheet Copy" });
+  assert.equal(stale?.request_dispatched, false);
+  assert.ok(stale?.invalid_fields?.includes("body.newSheetNumber"));
+});
+
+test("JSON-valued transaction actions use their wire schema while typed outer fields remain strict", () => {
+  for (const route of ["/revit/transaction-plan", "/revit/transaction-apply"]) {
+    const contract = { method: "POST", path: route, request_schema: {
+      type: "object", properties: { actions: { type: "array", items: {} } }, additionalProperties: false
+    } };
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: [
+      { kind: "setViewScale", viewId: 1542917, scale: 100 },
+      { kind: "setParameters", changes: [{ elementId: 1542917, parameterName: "Comments", value: "Coordination" }] }
+    ] }), null);
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: "not an array" })?.request_dispatched, false);
+    assert.equal(preflightKnownGenericToolBody(contract, { actions: [], inventedOuterField: true })?.request_dispatched, false);
+    // The old reflected CLR property bag rejected valid native action JSON.
+    const stale = { ...contract, request_schema: { ...contract.request_schema, properties: {
+      actions: { type: "array", items: { type: "object", properties: { ValueKind: { type: "integer" } }, additionalProperties: false } }
+    } } };
+    assert.equal(preflightKnownGenericToolBody(stale, { actions: [{ kind: "setViewScale", viewId: 1542917, scale: 100 }] })?.request_dispatched, false);
+  }
+});
 
 test("known generic tools reject missing required fields before dispatch with retry-safe truth", () => {
   const failure = preflightKnownGenericToolBody({
@@ -233,6 +282,114 @@ test("Candidate 12 replace-text-note preview requires only the actual mutation i
   assert.deepEqual(missingTarget?.missing_required_fields, ["elementId"]);
 });
 
+test("installed drafting-view activation permits omitted nullable selectors and default Boolean controls", () => {
+  const contract = {
+    method: "POST", path: "/revit/activate-view", required_fields: [],
+    request_schema: {
+      type: "object", additionalProperties: false,
+      properties: {
+        viewId: { type: "integer" }, viewName: { type: "string" },
+        query: { type: "string" }, viewType: { type: "string" },
+        exact: { type: "boolean" }, zoomToFit: { type: "boolean" }
+      }, required: []
+    }
+  };
+  // Exact installed request: the native handler resolves this ID without names.
+  assert.equal(preflightKnownGenericToolBody(contract, { viewId: 1542917, exact: true, zoomToFit: true }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { viewName: "OPERATOR HANDOFF CHECK", exact: true }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { query: "OPERATOR HANDOFF CHECK" }), null);
+  const wrongType = preflightKnownGenericToolBody(contract, { viewId: "1542917", zoomToFit: "yes" });
+  assert.deepEqual(wrongType?.invalid_fields, ["body.viewId", "body.zoomToFit"]);
+  assert.equal(wrongType?.request_dispatched, false);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { viewId: 1542917, madeUpSelector: true })?.invalid_fields,
+    ["body.madeUpSelector"]);
+  assert.deepEqual(preflightKnownGenericToolBody({ ...contract, required_fields: ["viewId"] }, {})?.missing_required_fields,
+    ["viewId"]);
+});
+
+test("native arbitrary JSON values admit geometry arrays and deferred scalar bindings without opening the request envelope", () => {
+  const contract = {
+    method: "POST", path: "/revit/import-zippybim-geometry", required_fields: ["geometry"],
+    request_schema: {
+      type: "object", additionalProperties: false, required: ["geometry"],
+      properties: {
+        geometry: { type: "object", additionalProperties: false, properties: {
+          elements: { type: "array", items: { type: "object", additionalProperties: false,
+            properties: { path: { type: "array", items: {} }, binding: {} } } }
+        } }
+      }
+    }
+  };
+  assert.equal(preflightKnownGenericToolBody(contract, { geometry: { elements: [
+    { path: [[0, 0, 0], [1, 2, 3]], binding: { created_by_action: "draft-1", output: "elementId" } },
+    { path: [], binding: "draft-1" }
+  ] } }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { geometry: { elements: [ { path: 4 } ] } })?.invalid_fields,
+    ["body.geometry.elements[0].path"]);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { geometry: {}, invented: true })?.invalid_fields,
+    ["body.invented"]);
+});
+
+test("native nullable alternatives enforce nested requirements without rejecting explicit null values", () => {
+  const contract = { method: "POST", path: "/revit/nullable-contract", request_schema: {
+    oneOf: [{ type: "null" }, { type: "object", additionalProperties: false, required: ["selector"], properties: {
+      selector: { oneOf: [{ type: "null" }, { type: "integer", minimum: 1 }] },
+      name: { oneOf: [{ type: "null" }, { type: "string" }] }
+    } }]
+  } };
+  for (const body of [null, { selector: 123 }, { selector: null, name: null }])
+    assert.equal(preflightKnownGenericToolBody(contract, body), null);
+  for (const body of [{}, { selector: "123" }, { selector: 0 }, { selector: 123, name: false }, { selector: 123, extra: true }]) {
+    const failure = preflightKnownGenericToolBody(contract, body);
+    assert.equal(failure?.request_dispatched, false);
+    assert.equal(failure?.validation_issues?.[0]?.expected_constraint.kind, "schema_alternative");
+  }
+  assert.equal(preflightKnownGenericToolBody(contract, undefined)?.request_dispatched, false);
+  const requiredNullable = { method: "POST", path: "/revit/nullable-required", required_fields: ["value"], request_schema: {
+    type: "object", required: ["value"], properties: { value: { oneOf: [{ type: "null" }, { type: "integer" }] } }
+  } };
+  assert.equal(preflightKnownGenericToolBody(requiredNullable, { value: null }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(requiredNullable, {})?.missing_required_fields, ["value"]);
+});
+
+test("native move alternatives require only the selected coordinate mode and preserve the closed outer envelope", () => {
+  const properties = Object.fromEntries(["vectorX", "vectorY", "vectorZ", "fromX", "fromY", "fromZ", "toX", "toY", "toZ"].map(name => [name, { type: "number" }]));
+  const contract = { method: "POST", path: "/revit/move-elements", request_schema: {
+    type: "object", additionalProperties: false, required: ["ids", "mode"],
+    properties: { ...properties, ids: { type: "array", minItems: 1, items: { type: "integer" } }, mode: { type: "string" } },
+    oneOf: [
+      { properties: { mode: { enum: ["vector"] } }, required: ["vectorX", "vectorY", "vectorZ"] },
+      { properties: { mode: { enum: ["fromTo"] } }, required: ["fromX", "fromY", "fromZ", "toX", "toY", "toZ"] }
+    ]
+  } };
+  const vector = { ids: [123], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0 };
+  assert.equal(preflightKnownGenericToolBody(contract, vector), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { ids: [123], mode: "fromTo", fromX: 0, fromY: 0, fromZ: 0, toX: 1, toY: 0, toZ: 0 }), null);
+  for (const body of [{ ...vector, mode: "fromTo" }, { ...vector, vectorX: "1" }, { ...vector, invented: true }, { ...vector, ids: [] }, { ...vector, vectorZ: undefined }])
+    assert.equal(preflightKnownGenericToolBody(contract, body)?.request_dispatched, false);
+});
+
+test("anyOf permits overlapping native selectors while allOf and nested required fields remain enforced", () => {
+  const contract = { method: "POST", path: "/revit/type-selector", request_schema: {
+    type: "object", anyOf: [{ required: ["typeId"] }, { required: ["typeIds"] }],
+    allOf: [{ required: ["change"] }, { properties: { change: { type: "object", required: ["value"], properties: { value: { type: "string" } } } } }]
+  } };
+  assert.equal(preflightKnownGenericToolBody(contract, { typeId: 1, typeIds: [2], change: { value: "" } }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, { typeIds: [2], change: {} })?.invalid_fields, ["body.change.value"]);
+  assert.equal(preflightKnownGenericToolBody(contract, { change: { value: "x" } })?.validation_issues?.[0]?.expected_constraint.kind, "schema_alternative");
+  const ambiguous = { method: "POST", path: "/revit/ambiguous", request_schema: { oneOf: [{ type: "integer" }, { type: "number" }] } };
+  assert.equal(preflightKnownGenericToolBody(ambiguous, 1)?.request_dispatched, false);
+});
+
+test("alternative validation cannot bypass depth, branch-count or total-work limits", () => {
+  const contract = (request_schema: unknown) => ({ method: "POST", path: "/revit/bounded-alternatives", request_schema });
+  assert.equal(preflightKnownGenericToolBody(contract({ oneOf: Array.from({ length: 17 }, () => ({})) }), {})?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+  let deep: unknown = { type: "object" };
+  for (let index = 0; index < 26; index++) deep = { allOf: [deep] };
+  assert.equal(preflightKnownGenericToolBody(contract({ anyOf: [{}, deep] }), {})?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "array", items: { type: "number" } }), Array(100_001).fill(0))?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+});
+
 test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
   const tooMany = preflightKnownGenericToolBody({
     method: "POST",
@@ -250,4 +407,88 @@ test("schema diagnostics fail closed within bounded issue and field-path limits"
   }, {});
   assert.equal(oversizedPath?.validation_issues?.[0]?.field_path, "body");
   assert.equal(oversizedPath?.validation_issues?.[0]?.actual_type, "schema_contract_out_of_bounds");
+});
+
+test("native conditional contracts accept bundled requests without fields from unused modes", () => {
+  const schemas = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  for (const [path, request_schema] of Object.entries(schemas)) {
+    const tool = catalog.tools.find((entry: any) => entry.method === "POST" && entry.path === path);
+    assert.ok(tool?.examples.length, path);
+    for (const example of tool.examples) assert.equal(preflightKnownGenericToolBody({method:"POST",path,request_schema}, example.request), null, `${path}: ${example.name}`);
+  }
+  const validate = (path: string, body: unknown) => preflightKnownGenericToolBody({method:"POST",path,request_schema:schemas[path]}, body);
+  const rotation = {ids:[123],angleDegrees:30,axis:{mode:"zThroughPoint",pointX:0,pointY:0,pointZ:0}};
+  assert.equal(validate("/revit/rotate-elements", rotation), null);
+  assert.ok(validate("/revit/rotate-elements", {...rotation,axis:{...rotation.axis,mode:"throughPoints"}}));
+  assert.equal(validate("/revit/rotate-elements", {...rotation,axis:{...rotation.axis,mode:"throughPoints",endPointX:0,endPointY:0,endPointZ:1}}), null);
+  assert.ok(validate("/revit/rotate-elements", {...rotation,axis:null}));
+  assert.equal(validate("/revit/export-view-region", {region:{mode:"center",centerX:0,centerY:0,halfWidth:1,halfHeight:1}}), null);
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"center",centerX:0,centerY:0}}));
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"focusElements",focusElementIds:null}}));
+  assert.ok(validate("/revit/export-view-region", {region:{mode:"focusElements",focusElementIds:[]}}));
+  assert.equal(validate("/revit/transaction-validate", {checks:[{kind:"exists",elementId:123},{kind:"parameterEquals",elementId:123,parameterName:"Mark",expectedValue:""}]}), null);
+  assert.ok(validate("/revit/transaction-validate", {checks:[{kind:"parameterEquals",elementId:123}]}));
+  assert.ok(validate("/revit/transaction-validate", {checks:[]}));
+  assert.ok(validate("/revit/transaction-validate", {checks:[{kind:"madeUp",elementId:123}]}));
+});
+
+
+test("MEP fragments accept all bundled endpoint and repair modes and reject incomplete requests", () => {
+  const fragments = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json", import.meta.url), "utf8"));
+  const catalog = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge/Tooling/tool_examples.json", import.meta.url), "utf8"));
+  const validate = (path: string, body: unknown) => preflightKnownGenericToolBody({ method: "POST", path,
+    request_schema: path === "/revit/repair-mep-connectors"
+      ? { type: "object", properties: { repair: fragments.mep_repair_operation } }
+      : { type: "object", allOf: [fragments.mep_curve_endpoints] }
+  }, body);
+  for (const path of ["/revit/create-duct", "/revit/create-pipe", "/revit/repair-mep-connectors"]) {
+    const tool = catalog.tools.find((entry: any) => entry.method === "POST" && entry.path === path);
+    assert.ok(tool?.examples.length, path);
+    for (const example of tool.examples) assert.equal(validate(path, example.request), null, path + ": " + example.name);
+  }
+  for (const path of ["/revit/create-duct", "/revit/create-pipe"]) {
+    const flat = { startX: 0, startY: 0, startZ: 0, endX: 1, endY: 2, endZ: 3 };
+    const points = [{ xyz: [0, 0] }, { xyz: [0, 0, 0] }, { x: 0, y: 0 }, { xIn: 0, yIn: 0 }, { xPx: 0, yPx: 0 }];
+    assert.equal(validate(path, flat), null);
+    for (const point of points) assert.equal(validate(path, { startPoint: point, endPoint: point, frameId: "frame" }), null);
+    for (const bad of [{}, { ...flat, endZ: undefined }, { startPoint: {}, endPoint: { xyz: [0, 0] } },
+      { startPoint: { xPx: 0, yPx: 0 }, endPoint: { xPx: 1, yPx: 1 } },
+      { startPoint: { xPx: 0.5, yPx: 0 }, endPoint: { xyz: [0, 0] }, frameId: "frame" },
+      { startPoint: { xyz: [0] }, endPoint: { xyz: [0, 0] } }])
+      assert.equal(validate(path, bad)?.request_dispatched, false);
+  }
+  const repairs = [
+    { kind: "move_elements_vector", elementIds: [1, 2], vectorX: 1, vectorY: 0, vectorZ: 0 },
+    { kind: "set_curve_line", elementId: 1, startXyz: [0, 0, 0], endXyz: [1, 1, 1] },
+    { kind: "set_flex_curve", elementId: 1, flexPoints: [[0, 0, 0], [1, 1, 1]], startTangent: null },
+    { kind: "resize_round_connectors", elementId: 1, connectorChanges: [{ connectorId: 0, expectedOriginXyz: [0, 0, 0], diameterFt: 0.5 }] }
+  ];
+  for (const repair of repairs) assert.equal(validate("/revit/repair-mep-connectors", { repair }), null);
+  for (const repair of [{ ...repairs[0], elementIds: [] }, { ...repairs[0], vectorZ: undefined },
+    { ...repairs[1], startXyz: null }, { ...repairs[1], startXyz: [0, 0] },
+    { ...repairs[2], flexPoints: [[0, 0, 0]] }, { ...repairs[3], connectorChanges: [] },
+    { ...repairs[3], elementId: 0 }, { ...repairs[0], invented: true }, { kind: "unknown" }])
+    assert.equal(validate("/revit/repair-mep-connectors", { repair })?.request_dispatched, false);
+});
+
+test("retained C36 pixel z is rejected before MEP dispatch while explicit world elevation remains valid",()=>{
+  const fragments=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json",import.meta.url),"utf8"));
+  const validate=(point:any,frameId:any="frame")=>preflightKnownGenericToolBody({method:"POST",path:"/revit/create-duct",request_schema:{type:"object",allOf:[fragments.mep_curve_endpoints]}},{frameId,startPoint:point,endPoint:point});
+  for(const point of [{xPx:1208,yPx:1002,z:44.16666666667046},{xIn:2,yIn:3,z:44},{x:2,y:3,z:44},{xyz:[1,2,3,4]},{xyz:[1,2,3],z:44},{xyz:[1,2,3],xPx:1,yPx:2}])assert.equal(validate(point)?.request_dispatched,false);
+  for(const point of [{xyz:[1,2,44.16666666667046]},{xPx:1208,yPx:1002},{xIn:1,yIn:2}])assert.equal(validate(point),null);
+  assert.equal(validate({x:1,y:2,z:44},null),null);
+});
+
+test("workbook schema publishes content provenance and complete target coverage before export",()=>{
+  const contracts=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json",import.meta.url),"utf8"));
+  const schema=contracts["/revit/export-elements-xlsx"];
+  const validate=(body:any)=>preflightKnownGenericToolBody({method:"POST",path:"/revit/export-elements-xlsx",request_schema:schema},body);
+  const good={elementIds:[99,100],parameterNames:["Area","Number"],fileName:"review.xlsx",supplementalTables:[{name:"Review",contentKind:"review",columns:["Input"],rows:[{elementId:99,values:[null]},{elementId:100,values:[0]}]}]};
+  assert.equal(validate(good),null);
+  for(const kind of ["native","engineering_verified","user_input","proposal"]){const f=structuredClone(good);f.supplementalTables[0]!.contentKind=kind;assert.equal(validate(f)?.request_dispatched,false);}
+  const nested=structuredClone(good) as any;nested.supplementalTables[0].rows[0].values=[{}];assert.equal(validate(nested)?.request_dispatched,false);
+  assert.match(schema.properties.outputFolder.description,/default is artifacts\/xlsx/);
+  assert.match(schema.properties.supplementalTables.description,/each selected elementId exactly once/);
+  assert.match(schema.properties.supplementalTables.description,/review row even/);
 });

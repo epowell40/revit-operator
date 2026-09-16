@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -7,6 +8,7 @@ type SqliteDb = {
   exec: (s: string) => unknown;
   prepare: (s: string) => { run: (...args: any[]) => any; get: (...args: any[]) => any; all: (...args: any[]) => any };
   close: () => void;
+  transaction: <T>(fn: () => T) => () => T;
 };
 
 type DbState = {
@@ -85,6 +87,12 @@ function openDb(): SqliteDb | null {
         thread_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS codex_thread_capabilities (
+        thread_id TEXT PRIMARY KEY,
+        tool_sha256 TEXT NOT NULL,
+        previous_thread_id TEXT,
+        handoff_text TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,9 +245,34 @@ export function setCodexThreadId(sessionId: string, threadId: string): void {
   ).run(sessionId, threadId, ts, ts);
 }
 
-export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): void {
+export function getCodexThreadCapabilities(threadId: string): { tool_sha256: string; previous_thread_id: string | null; handoff_text: string } | null {
   const d = openDb();
-  if (!d) return;
+  if (!d) throw new Error("Provider capability binding storage is unavailable.");
+  return d.prepare("SELECT tool_sha256, previous_thread_id, handoff_text FROM codex_thread_capabilities WHERE thread_id=?").get(threadId) ?? null;
+}
+
+/** Commit the acknowledged tool catalog and conversation mapping together. */
+export function bindCodexThreadCapabilities(key: string, threadId: string, toolSha256: string, previousThreadId: string | null, handoffText: string): void {
+  const d = openDb();
+  if (!d) throw new Error("Provider capability binding storage is unavailable.");
+  const ts = nowIso();
+  d.transaction(() => {
+    d.prepare("INSERT INTO codex_thread_capabilities(thread_id,tool_sha256,previous_thread_id,handoff_text) VALUES(?,?,?,?)").run(threadId, toolSha256, previousThreadId, handoffText);
+    d.prepare("INSERT INTO codex_threads(session_id,thread_id,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at").run(key,threadId,ts,ts);
+  })();
+}
+
+export function getPendingCodexThreadHandoff(threadId: string): string {
+  const binding = getCodexThreadCapabilities(threadId);
+  if (!binding?.handoff_text) return "";
+  const d = openDb()!;
+  const started = d.prepare("SELECT 1 FROM events WHERE kind='codex.turn.start' AND json_valid(payload_json) AND json_extract(payload_json,'$.thread_id')=? LIMIT 1").get(threadId);
+  return started ? "" : binding.handoff_text;
+}
+
+export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): boolean {
+  const d = openDb();
+  if (!d) return false;
   const payload_json = payload === undefined ? null : JSON.stringify(payload);
   d.prepare("INSERT INTO events(ts, session_id, role, kind, payload_json) VALUES(?,?,?,?,?)").run(
     nowIso(),
@@ -249,6 +282,33 @@ export function appendEvent(sessionId: string, role: string, kind: string, paylo
     payload_json
   );
   d.prepare("UPDATE sessions SET last_active_at=? WHERE session_id=?").run(nowIso(), sessionId);
+  return true;
+}
+
+export function readCodexInstructionTurns(sessionId: string, startedAt = ""): { turns: unknown[]; complete: boolean } {
+  const d = openDb();
+  if (!d) return { turns: [], complete: false };
+  const rows = d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind='codex.turn.start' AND ts>=? ORDER BY id ASC LIMIT 10001").all(sessionId, startedAt);
+  let complete = rows.length <= 10000;
+  const turns = rows.slice(0, 10000).flatMap((row: { payload_json: string }) => {
+    try {
+      const value = JSON.parse(row.payload_json);
+      const binding = value.host_instruction_binding;
+      const runtime = binding?.benchmark_runtime;
+      return [{ session_id: value.session_id, message_id: value.message_id, thread_id: value.thread_id, turn_id: value.turn_id,
+        host_instruction_binding: binding ? {
+          schema: binding.schema, source: binding.source, prompt_sha256: binding.prompt_sha256,
+          system_instruction_sha256: binding.system_instruction_sha256,
+          ...(runtime ? { benchmark_runtime: {
+            schema: runtime.schema, configured: runtime.configured, status: runtime.status,
+            backend_instance_id: runtime.backend_instance_id, process_id: runtime.process_id,
+            envelope_sha256: runtime.envelope_sha256, run_id: runtime.run_id,
+            prompt_sha256: runtime.prompt_sha256, system_instruction_sha256: runtime.system_instruction_sha256
+          } } : {})
+        } : null }];
+    } catch { complete = false; return []; }
+  });
+  return { turns, complete };
 }
 
 export type StoredMessage = { role: "user" | "assistant" | "tool"; text: string };
@@ -299,9 +359,12 @@ export function getNotificationsAfter(sessionId: string, afterId: number, limit:
   return out;
 }
 
-export function getRecentMessages(sessionId: string, limit: number): StoredMessage[] {
+export function getRecentMessages(sessionId: string, limit: number, requireAvailable = false): StoredMessage[] {
   const d = openDb();
-  if (!d) return [];
+  if (!d) {
+    if (requireAvailable) throw new Error("Conversation history is unavailable.");
+    return [];
+  }
   const rows = d
     .prepare("SELECT role, kind, payload_json FROM events WHERE session_id=? AND kind='chat.message' ORDER BY id DESC LIMIT ?")
     .all(sessionId, Math.max(1, Math.min(500, limit)));
@@ -322,6 +385,58 @@ export function getRecentMessages(sessionId: string, limit: number): StoredMessa
     }
   }
   return out;
+}
+
+export type ConversationDisplay = {
+  source?: "ui_context";
+  message_id: string;
+  text: string;
+  attachments?: Array<{ id: string; name: string }>;
+};
+
+export type ConversationEntry = ConversationDisplay & { role: "user" | "assistant"; created_at: string };
+
+// Only explicitly recorded display text is exposed to the browser. Provider
+// prompts and tool summaries may contain attachment machinery or internal data.
+export function getConversationHistory(sessionId: string, limit = 80): ConversationEntry[] {
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_type(payload_json, '$.display')='object' ORDER BY id DESC LIMIT 1000").all(sessionId);
+  return conversationRows(rows, limit);
+}
+
+export function getUiContextConversationHistory(sessionId: string): ConversationEntry[] {
+  if (!fs.existsSync(dbFilePath())) return [];
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source')='ui_context' ORDER BY id DESC LIMIT 40").all(sessionId);
+  return conversationRows(rows, 8);
+}
+
+export function getConversationTurn(sessionId: string, messageId: string): ConversationEntry[] {
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.message_id')=? ORDER BY id DESC LIMIT 20").all(sessionId, messageId);
+  return conversationRows(rows, 2);
+}
+
+function conversationRows(rows: any[], limit: number): ConversationEntry[] {
+  const result: ConversationEntry[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.role !== "user" && row.role !== "assistant") continue;
+    try {
+      const display = JSON.parse(row.payload_json).display;
+      if (typeof display?.message_id !== "string" || typeof display?.text !== "string") continue;
+      const key = `${row.role}:${display.message_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ role: row.role, message_id: display.message_id, text: display.text,
+        attachments: Array.isArray(display.attachments) ? display.attachments : [], created_at: row.ts });
+      if (result.length >= Math.max(1, Math.min(200, limit))) break;
+    } catch { /* Ignore a malformed historical event without exposing raw data. */ }
+  }
+  return result.reverse();
 }
 
 export type StopReason = "NO_ACTIONS" | "AWAITING_APPROVAL" | "MAX_STEPS" | "ERROR" | "USER_CANCELLED";

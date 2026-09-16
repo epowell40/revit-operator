@@ -42,6 +42,7 @@ import {
 import { ensureWorkspaceLayout } from "./workspace.js";
 import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
+import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -182,7 +183,14 @@ export function __testOnlyIsBridgeStatusQuestion(userText: string): boolean {
   if (!text || /\b(open|launch|start)\s+revit\b/.test(text)) return false;
 
   if (/\bbridge\b/.test(text)) {
-    return /\b(is|are|was|check|status|open|running|up|available|connected|reachable|ping|see|alive|online|healthy|responding|responsive)\b/.test(text);
+    // A bridge can also be an engineering subject. Only a complete service-
+    // health question gets this shortcut; mixed model work remains a task.
+    const name = "(?:(?:the|revit|operator|api|mcp|backend)\\s+)*bridge";
+    const lead = "(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?";
+    const health = "(?:open|running|up|available|connected|reachable|alive|online|healthy|responding|responsive)";
+    return new RegExp(`^${lead}(?:(?:check|see|verify|confirm)\\s+(?:if|whether)\\s+)?(?:is\\s+)?${name}(?:\\s+is)?\\s+${health}(?:\\s+(?:now|currently))?[?.!]*$`).test(text)
+      || new RegExp(`^${lead}(?:check|test|ping|reach|see)\\s+${name}(?:\\s+(?:connection|status|health))?[?.!]*$`).test(text)
+      || new RegExp(`^${name}\\s+(?:connection|connectivity|status|health)[?.!]*$`).test(text);
   }
 
   return [
@@ -314,7 +322,7 @@ function finalizeGenericDecision(req: ChatRequest, decision: ChatResponse): Chat
 
 function genericStreamGate(req: ChatRequest, cb: StreamCallbacks): { buffered: boolean; callbacks: StreamCallbacks } {
   const buffered = buildTeammateTurnContract(req).turn_kind === "mutation";
-  return { buffered, callbacks: buffered ? { abortSignal: cb.abortSignal } : cb };
+  return { buffered, callbacks: buffered ? { abortSignal: cb.abortSignal, onProgress: cb.onProgress } : cb };
 }
 
 function emitBufferedGenericDecision(cb: StreamCallbacks, decision: ChatResponse): void {
@@ -442,6 +450,14 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
       ? finalizeDecision(req, decision)
       : finalizeGenericDecision(req, decision);
   }
+  // A reference document is not an implicit request to enter a model workflow.
+  // Route standalone work before legacy PDF/schedule/redline shortcuts.
+  if (isIndependentAssistantTurn(req)) {
+    const immediate = maybeBuildExistingConditionsSourceDispositionInspection(req) ?? maybeBuildBridgeStatusDecision(req);
+    if (immediate) return finalizeDecision(req, immediate);
+    const decision = await decideWithSelectedBrain(resolveOperatorBrainRoute(), req, dependencies);
+    return isCertifiedSidecarRequest(req) ? finalizeDecision(req, decision) : finalizeGenericDecision(req, decision);
+  }
   const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);
   if (sourceDispositionInspection) return finalizeDecision(req, sourceDispositionInspection);
   const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
@@ -563,6 +579,21 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
       await (dependencies.codexStreamingBrain ?? decideCodexStreaming)(req, streamGate.callbacks)
     );
     if (streamGate.buffered) emitBufferedGenericDecision(cb, decision);
+    return decision;
+  }
+  if (isIndependentAssistantTurn(req)) {
+    const immediate = maybeBuildExistingConditionsSourceDispositionInspection(req) ?? maybeBuildBridgeStatusDecision(req);
+    if (immediate) {
+      const decision = finalizeDecision(req, immediate);
+      emitBufferedGenericDecision(cb, decision);
+      return decision;
+    }
+    const route = resolveOperatorBrainRoute();
+    const certified = isCertifiedSidecarRequest(req);
+    const gate = certified ? { buffered: true, callbacks: { abortSignal: cb.abortSignal } } : genericStreamGate(req, cb);
+    const raw = await decideWithSelectedBrainStreaming(route, req, gate.callbacks, dependencies);
+    const decision = certified ? finalizeDecision(req, raw) : finalizeGenericDecision(req, raw);
+    if (gate.buffered || route === "rule") emitBufferedGenericDecision(cb, decision);
     return decision;
   }
   const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);

@@ -43,16 +43,16 @@ function textReplacementRoute(toolValue: unknown, pathValue: unknown): boolean {
     || tool === "revit_replace_textnote";
 }
 
-function firstText(body: JsonObject, keys: string[]): string {
+function firstText(body: JsonObject, keys: string[], preserveWhitespace = false): string {
   for (const key of keys) {
     const value = text(body[key]);
-    if (value) return value;
+    if (value) return preserveWhitespace ? body[key] as string : value;
   }
   return "";
 }
 
-function replacementText(body: JsonObject): string {
-  return firstText(body, ["newText", "new_text", "replacementText", "replacement_text", "replaceWith", "replace_with"]);
+function replacementText(body: JsonObject, preserveWhitespace = false): string {
+  return firstText(body, ["newText", "new_text", "replacementText", "replacement_text", "replaceWith", "replace_with"], preserveWhitespace);
 }
 
 function expectedOldText(body: JsonObject): string {
@@ -119,12 +119,20 @@ export function mutationIntentBindingDecision(input: {
   path: unknown;
   body: unknown;
   authoritative_user_text: string;
+  authenticated_replacement_text?: string;
 }): MutationIntentBindingDecision {
   if (!textReplacementRoute(input.tool, input.path)) {
     return { applicable: false, authorized: true, missing_fields: [], reason: null, proposed_value: null };
   }
   const body = objectValue(input.body);
-  const proposed = replacementText(body);
+  // Authenticated journal values are exact text, including leading/trailing
+  // whitespace. Validate presence/size without normalizing the comparison.
+  const proposed = replacementText(body, input.authenticated_replacement_text !== undefined);
+  if (input.authenticated_replacement_text !== undefined) {
+    const authorized = Boolean(proposed) && proposed === input.authenticated_replacement_text;
+    return { applicable: true, authorized, missing_fields: authorized ? [] : ["replacement_text"],
+      reason: authorized ? null : "desired_postcondition_conflicts_with_authenticated_input", proposed_value: proposed || null };
+  }
   if (!proposed || !replacementIsAuthenticated(input.authoritative_user_text, proposed, expectedOldText(body))) {
     return {
       applicable: true,
@@ -143,14 +151,16 @@ export function mutationIntentBlockReason(
   effect: string,
   tool: unknown,
   body: unknown,
-  authoritativeUserText: string
+  authoritativeUserText: string,
+  authenticatedReplacementText?: string
 ): string | null {
   if (effect !== "preview" && effect !== "apply") return null;
   const decision = mutationIntentBindingDecision({
     tool,
     path: tool,
     body,
-    authoritative_user_text: authoritativeUserText
+    authoritative_user_text: authoritativeUserText,
+    authenticated_replacement_text: authenticatedReplacementText
   });
   return decision.applicable && !decision.authorized ? decision.reason : null;
 }

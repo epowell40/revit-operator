@@ -184,14 +184,23 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            using (var tx = new Transaction(doc, "Set View Visibility"))
+            var changedViews = new HashSet<long>();
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Set View Visibility", _ =>
             {
-                tx.Start();
+                var before = JsonSerializer.Serialize(BuildViewState(doc, view, "Ok", "get", dryRun: false, p)["view"]);
                 ApplyAction(doc, view, action, p);
-                tx.Commit();
-            }
-
-            return Task.FromResult<object>(BuildViewState(doc, view, "Success", action, dryRun: false, p));
+                doc.Regenerate();
+                // This projection and exact native state difference are tentative
+                // until commit. Request IDs alone never mint affected identities.
+                var after = BuildViewState(doc, view, "Success", action, dryRun: false, p);
+                if (!string.Equals(before, JsonSerializer.Serialize(after["view"]), StringComparison.Ordinal))
+                    changedViews.Add(RevitBridge.Common.ElementIdCompat.GetValue(view.Id));
+                return after;
+            }, () => changedViews);
+            result["status"] = result["success"] is true ? "Success" : "Failed";
+            result["action"] = action;
+            result["dryRun"] = false;
+            return Task.FromResult<object>(result);
         }
 
         private static void ApplyAction(Document doc, View view, string action, Params p)
@@ -1395,7 +1404,7 @@ namespace RevitBridge.Handlers
             return null;
         }
 
-        private static object BuildViewState(Document doc, View view, string status, string action, bool dryRun, Params? p = null)
+        private static Dictionary<string, object?> BuildViewState(Document doc, View view, string status, string action, bool dryRun, Params? p = null)
         {
             View? viewTemplate = null;
             if (view.ViewTemplateId != ElementId.InvalidElementId)
@@ -1489,12 +1498,12 @@ namespace RevitBridge.Handlers
             }
             var categoryOverride = BuildCategoryOverrideState(doc, view, p?.categoryName);
 
-            return new
+            return new Dictionary<string, object?>
             {
-                status,
-                action,
-                dryRun,
-                view = new
+                ["status"] = status,
+                ["action"] = action,
+                ["dryRun"] = dryRun,
+                ["view"] = new
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                     name = view.Name,

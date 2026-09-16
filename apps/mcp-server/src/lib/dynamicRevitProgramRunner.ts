@@ -3,13 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getWorkspaceRoot } from "./workspace.js";
+import { resolveDynamicRuntimeInstallation } from "./dynamicRuntimeInstallation.js";
+import { currentAssignmentKernelV2Context, beginAssignmentKernelDynamicDispatchV2, recordAssignmentKernelDynamicResultV2 } from "./assignmentKernelV2.js";
 
 export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-program-run.v1" as const;
 
 export type DynamicRevitProgramRunInput = {
   source: string;
-  mode: "preview" | "apply";
-  target_revit_year?: "2023" | "2024" | "2025" | "2026";
+  mode: "read" | "preview" | "apply";
+  target_revit_year?: "2023" | "2024" | "2025" | "2026" | "2027";
   category?: string;
   parameters?: string[];
   snapshot_limit?: number;
@@ -81,19 +83,22 @@ type Executor = (file: string, args: string[], timeoutMs: number) => Promise<{ e
  */
 export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput, env: NodeJS.ProcessEnv = process.env, execute: Executor = executeFile) {
   if (!input || typeof input.source !== "string" || input.source.length < 1 || input.source.length > 128_000 || input.source.includes("\0")) throw new Error("Dynamic Revit program source is invalid or exceeds 128,000 characters.");
-  if (input.mode !== "preview" && input.mode !== "apply") throw new Error("Dynamic Revit program mode must be preview or apply.");
+  if (!["read", "preview", "apply"].includes(input.mode)) throw new Error("Dynamic Revit program mode must be read, preview or apply.");
+  if (input.mode === "read" && (input.result_reference || input.continue_from_checkpoint)) throw new Error("Read-only reports use the basic snapshot SDK; result-reference edits and committed continuation require preview or apply.");
+  const snapshotLimit = boundedInteger(input.snapshot_limit, 1, 1000, 200);
+  const assignment = currentAssignmentKernelV2Context();
+  if (assignment && (assignment.capability_id !== "operator_run_dynamic_revit_program" || assignment.requested_effect !== input.mode))
+    throw new Error("Dynamic execution mode does not match the admitted assignment operation.");
   if (input.category !== undefined && !/^OST_[A-Za-z0-9_]{1,120}$/.test(input.category)) throw new Error("Dynamic snapshot category must be a bounded BuiltInCategory token.");
   const parameters = input.parameters ?? [];
   if (!Array.isArray(parameters) || parameters.length > 16 || parameters.some(value => typeof value !== "string" || value.length < 1 || value.length > 128)) throw new Error("Dynamic snapshot parameters are invalid.");
   const normalizedSource = input.source.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   const sourceHash = sha256(Buffer.from(normalizedSource, "utf8"));
   const resultReference = input.result_reference === undefined ? undefined : normalizeResultReference(input.result_reference);
-  const supervisor = requiredFile(env.OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH, "OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH");
-  const workerDirectory = requiredDirectory(env.OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY, "OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY");
-  const tokenFile = requiredFile(env.OPERATOR_TOKEN_FILE, "OPERATOR_TOKEN_FILE");
-  const year = input.target_revit_year ?? boundedYear(env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR || "2024");
-  const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
+  const year = boundedYear(input.target_revit_year ?? env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR ?? "2024");
   const workspaceRoot = getWorkspaceRoot();
+  const { supervisor, workerDirectory, tokenFile } = resolveDynamicRuntimeInstallation(year, workspaceRoot, env);
+  const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
   ensureRunsRoot(workspaceRoot, runsRoot);
   const compilationCacheDirectory = path.join(workspaceRoot, "artifacts", "dynamic-runtime-compilation-cache");
@@ -111,8 +116,9 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const config = {
     workerDirectory, evidencePath: evidenceFile, bridgeUrl: env.OPERATOR_REVIT_URL || "http://127.0.0.1:5000",
     operatorTokenFile: tokenFile, sourceFile, targetRevitYear: year, category: input.category ?? null,
-    limit: boundedInteger(input.snapshot_limit, 1, 1000, 200), parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
-    workerDeadlineMs: boundedInteger(input.worker_deadline_ms, 1000, 30_000, 15_000), apply: input.mode === "apply",
+    limit: snapshotLimit, parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
+    workerDeadlineMs: boundedInteger(input.worker_deadline_ms, 1000, 30_000, 15_000), apply: input.mode === "apply", readOnly: input.mode === "read",
+    ...(assignment?.binding.document_fingerprint ? { expectedDocumentFingerprint: assignment.binding.document_fingerprint } : {}),
     applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000), compilationCacheDirectory,
     ...(resultReference ? {
       resultReference: true,
@@ -128,6 +134,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     } : {})
   };
   fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  beginAssignmentKernelDynamicDispatchV2();
   const execution = await execute(supervisor, ["--execute-task", configFile], Math.max(config.workerDeadlineMs + 90_000, 120_000));
   if (!fs.existsSync(evidenceFile)) throw new Error(`Dynamic supervisor returned ${execution.exitCode} without bounded evidence: ${execution.stderr.slice(0, 2000)}`);
   const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, 8 * 1024 * 1024);
@@ -138,11 +145,20 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     ? "needs_facts"
     : execution.exitCode === 0 && evidence.ok === true ? "completed" : "failed";
   const emittedSourceHash = workerString(evidence, "sourceHash");
+  if (input.mode === "read" && executionStatus === "completed") {
+    const operations = workerGraph(evidence).operations;
+    if (!Array.isArray(operations) || operations.length !== 0 || evidence.applyReceipt || evidence.applyAuthorizationReceipt)
+      throw new Error("Read-only runtime evidence contains an operation graph or apply receipt.");
+  }
   if ((executionStatus === "completed" || executionStatus === "needs_facts") && emittedSourceHash === null)
     throw new Error("Successful worker evidence omitted its normalized source identity.");
   if (emittedSourceHash !== null && emittedSourceHash !== sourceHash) throw new Error("Worker evidence is not bound to the submitted source bytes.");
   const emittedStatus = workerString(evidence, "executionStatus");
-  if (emittedStatus !== null && emittedStatus !== executionStatus) throw new Error("Worker and supervisor execution statuses disagree.");
+  // Compilation can succeed while native admission or read-only policy rejects
+  // the resulting graph. Retain that host failure for source repair.
+  if (emittedStatus !== null && emittedStatus !== executionStatus
+      && !(emittedStatus === "completed" && executionStatus === "failed"))
+    throw new Error("Worker and supervisor execution statuses disagree.");
   const continuation = executionStatus === "needs_facts" ? continuationFromEvidence(evidence) : undefined;
   const structuredDiagnostics = diagnosticsFromEvidence(evidence, execution.stderr);
   const stepPlan = executionStepPlan(evidence);
@@ -151,7 +167,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     executionIdentityHash: workerString(evidence, "executionIdentityHash"),
     diagnosticBundleHash: workerString(evidence, "diagnosticBundleHash"),
     factRequestHash: continuation === undefined ? null : String(continuation.fact_request.requestHash),
-    retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable), diagnostics: structuredDiagnostics, resume,
+    // A worker that completed may already have dispatched an apply. Missing or
+    // failed host completion must be reconciled, even when its error says timeout.
+    retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable)
+      && !(input.mode === "apply" && executionStatus === "failed" && workerString(evidence, "executionStatus") !== "failed"),
+    diagnostics: structuredDiagnostics, resume,
     checkpointParent: activeCheckpoint?.parent ?? null });
   fs.writeFileSync(path.join(runRoot, "iteration.json"), JSON.stringify(iteration, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   const committedApplyEvidence = input.mode === "apply" && executionStatus === "completed"
@@ -160,6 +180,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const committedCheckpoint = committedApplyEvidence ? createCheckpoint({
     runId, sourceHash, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null, verified: committedApplyEvidence
   }) : null;
+  const snapshotReport = typeof evidence.previewReceipt === "string" && evidence.previewReceipt.trim().length > 0
+    && JSON.parse(evidence.previewReceipt)?.schema === "dynamic-revit-read-report-receipt/v0";
   if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   const canonicalAttemptSettlement = executionStatus === "completed" ? {
     schema: "revit-operator.native-attempt-settlement.v1" as const,
@@ -176,8 +198,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     effect_state: input.mode === "apply" ? "applied" as const : "none" as const,
     effect_reason: input.mode === "apply"
       ? "trusted_dynamic_runtime_committed_checkpoint"
-      : "trusted_dynamic_runtime_preview_noncommit",
-    effect_authority: input.mode === "apply" ? "native_receipt" as const : "native_rollback" as const,
+      : input.mode === "read" || snapshotReport ? "trusted_dynamic_runtime_read_report" : "trusted_dynamic_runtime_preview_noncommit",
+    effect_authority: input.mode === "apply" ? "native_receipt" as const : input.mode === "read" || snapshotReport ? "worker" as const : "native_rollback" as const,
     affected_target_identities: committedApplyEvidence?.affectedTargetIdentities ?? [],
     receipt_refs: [
       `dynamic-run:${runId}`,
@@ -187,9 +209,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     evidence_refs: [`dynamic-evidence:${evidenceSha256}`],
     settled_at_utc: new Date().toISOString()
   } : null;
-  return {
+  const result = {
     schema: DYNAMIC_REVIT_PROGRAM_RUN_V1, run_id: runId, requested_mode: input.mode,
     execution_status: executionStatus, execution_ok: executionStatus === "completed",
+    report: executionStatus === "completed" ? workerRecord(evidence)?.report ?? {} : {},
+    logs: workerRecord(evidence)?.logs ?? [],
     evidence: { ...evidence, taskDirectory: "opaque:trusted-task", runtimeImageDirectory: "opaque:trusted-runtime" },
     continuation,
     step_plan: stepPlan,
@@ -209,6 +233,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       compiled_assembly_sha256: canonicalHashOrNull(workerString(evidence, "compiledAssemblyHash"))
     }
   };
+  recordAssignmentKernelDynamicResultV2(result);
+  return result;
 }
 
 function normalizeResultReference(value: DynamicResultReferenceRunInput) {
@@ -281,7 +307,7 @@ type IterationReceipt = {
   run_id: string; attempt: number; lane: ExecutionLane; resume_mode: "root" | "facts" | "repair" | "retry";
   parent: null | { run_id: string; evidence_sha256: string; iteration_sha256: string; execution_status: ExecutionStatus };
   checkpoint_parent: CheckpointParent | null;
-  source_sha256: string; requested_mode: "preview" | "apply"; execution_status: ExecutionStatus;
+  source_sha256: string; requested_mode: "read" | "preview" | "apply"; execution_status: ExecutionStatus;
   evidence_sha256: string; execution_identity_sha256: string | null; diagnostic_bundle_sha256: string | null;
   fact_request_sha256: string | null; retryable: boolean;
   progress: { classification: "root" | "completed" | "advanced_to_observation" | "diagnostics_reduced" | "no_progress" | "regressed_or_changed";
@@ -501,7 +527,7 @@ function optionalElementIds(value: Record<string, unknown>, key: string, label: 
   return ids;
 }
 
-function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, sourceHash: string, requestedMode: "preview" | "apply",
+function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, sourceHash: string, requestedMode: "read" | "preview" | "apply",
   lane: ExecutionLane, currentSelector: NormalizedSelector | undefined): LoadedResume {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Dynamic resume input is invalid.");
   if (!/^dynamic-[a-f0-9]{32}$/.test(input.prior_run_id)) throw new Error("Dynamic resume run ID is invalid.");
@@ -534,7 +560,7 @@ function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, source
   return { mode: input.mode, receipt, diagnostics: priorDiagnostics };
 }
 
-function createIterationReceipt(input: { runId: string; sourceHash: string; requestedMode: "preview" | "apply"; lane: ExecutionLane;
+function createIterationReceipt(input: { runId: string; sourceHash: string; requestedMode: "read" | "preview" | "apply"; lane: ExecutionLane;
   executionStatus: ExecutionStatus; evidenceSha256: string; executionIdentityHash: string | null; diagnosticBundleHash: string | null;
   factRequestHash: string | null; retryable: boolean; diagnostics: StructuredDiagnostic[]; resume: LoadedResume | undefined;
   checkpointParent: CheckpointParent | null }): IterationReceipt {
@@ -577,7 +603,7 @@ function validateIterationReceipt(receipt: IterationReceipt, expectedRunId: stri
     !/^sha256:[a-f0-9]{64}$/.test(receipt.source_sha256) || !/^sha256:[a-f0-9]{64}$/.test(receipt.evidence_sha256) ||
     !/^sha256:[a-f0-9]{64}$/.test(receipt.iteration_sha256)) throw new Error("Dynamic parent iteration receipt is malformed.");
   if (!new Set(["legacy", "result_reference"]).has(receipt.lane) || !new Set(["root", "facts", "repair", "retry"]).has(receipt.resume_mode) ||
-    !new Set(["preview", "apply"]).has(receipt.requested_mode) || !new Set(["completed", "needs_facts", "failed"]).has(receipt.execution_status) ||
+    !new Set(["read", "preview", "apply"]).has(receipt.requested_mode) || !new Set(["completed", "needs_facts", "failed"]).has(receipt.execution_status) ||
     typeof receipt.retryable !== "boolean" || !nullableHash(receipt.execution_identity_sha256) || !nullableHash(receipt.diagnostic_bundle_sha256) ||
     !nullableHash(receipt.fact_request_sha256)) throw new Error("Dynamic parent iteration semantic fields are malformed.");
   validateCheckpointParent(receipt.checkpoint_parent);
@@ -624,14 +650,18 @@ function nullableHash(value: unknown): boolean { return value === null || typeof
 function boundedCodes(value: unknown): boolean { return Array.isArray(value) && value.length <= 32 && value.every(item => typeof item === "string" && item.length >= 1 && item.length <= 128) && new Set(value).size === value.length; }
 
 function iterationProgress(resume: LoadedResume | undefined, status: ExecutionStatus, current: StructuredDiagnostic[]): IterationReceipt["progress"] {
-  const parentCodes = [...new Set((resume?.diagnostics ?? []).map(value => value.code))].sort();
-  const currentCodes = [...new Set(current.map(value => value.code))].sort();
+  // Partial program text is useful diagnostic context, not a repair obligation.
+  // Removing informational output cannot count as task progress.
+  const parentIssues = (resume?.diagnostics ?? []).filter(value => value.severity !== "info");
+  const currentIssues = current.filter(value => value.severity !== "info");
+  const parentCodes = [...new Set(parentIssues.map(value => value.code))].sort();
+  const currentCodes = [...new Set(currentIssues.map(value => value.code))].sort();
   const resolved = parentCodes.filter(code => !currentCodes.includes(code));
   const introduced = currentCodes.filter(code => !parentCodes.includes(code));
   const classification = resume === undefined ? "root" : status === "completed" ? "completed" : status === "needs_facts" ?
-    "advanced_to_observation" : current.length < resume.diagnostics.length ? "diagnostics_reduced" :
+    "advanced_to_observation" : currentIssues.length < parentIssues.length ? "diagnostics_reduced" :
       resolved.length === 0 && introduced.length === 0 ? "no_progress" : "regressed_or_changed";
-  return { classification, parent_diagnostic_count: resume?.diagnostics.length ?? 0, current_diagnostic_count: current.length,
+  return { classification, parent_diagnostic_count: parentIssues.length, current_diagnostic_count: currentIssues.length,
     resolved_codes: resolved, introduced_codes: introduced };
 }
 
@@ -651,9 +681,21 @@ function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: stri
     const diagnostics = raw.map((value, index) => normalizeDiagnostic(value, index));
     const claimed = workerString(evidence, "diagnosticBundleHash");
     if (claimed === null || claimed !== diagnosticBundleHash(diagnostics)) throw new Error("Worker diagnostic bundle identity is invalid.");
-    return diagnostics;
+    if (diagnostics.length || evidence.ok === true) return diagnostics;
   }
   if (evidence.ok === true) return [];
+  if (evidence.failure === "Revit remained busy before generated-code startup. No worker was launched and no preview or apply was dispatched."
+      && evidence.bootstrapAttempts === 8 && evidence.workerStarted === false && evidence.workerOutput === null
+      && !evidence.registrationReceipt && !evidence.snapshotReceipt && !evidence.previewReceipt
+      && !evidence.admission && !evidence.v1Admission && !evidence.applyReceipt && !evidence.applyAuthorizationReceipt
+      && Array.isArray(evidence.hostAuthenticationReceipts) && evidence.hostAuthenticationReceipts.length === 0)
+    return [{ code: "REVIT_STARTUP_BUSY", message: evidence.failure, phase: "supervisor", severity: "error",
+      repair_action: "refresh_state_or_inspect_runtime", line: null, column: null, end_line: null, end_column: null,
+      step_id: null, assertion_id: null, retryable: true }];
+  if (evidence.failure === "Read-only generated code produced model operations. No preview or apply was dispatched.")
+    return [{ code: "READ_ONLY_GRAPH_REQUIRED", message: evidence.failure, phase: "supervisor", severity: "error",
+      repair_action: "edit_source", line: null, column: null, end_line: null, end_column: null,
+      step_id: null, assertion_id: null, retryable: true }];
   const detailHash = sha256(Buffer.from(stderr.slice(0, 4_000), "utf8"));
   return [{ code: "SUPERVISOR_FAILURE", message: `Execution failed outside structured worker diagnostics (${detailHash}).`, phase: "supervisor",
     severity: "error", repair_action: "refresh_state_or_inspect_runtime", line: null, column: null, end_line: null, end_column: null,
@@ -809,9 +851,7 @@ function executeFile(file: string, args: string[], timeoutMs: number): Promise<{
   return new Promise(resolve => execFile(file, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) =>
     resolve({ exitCode: typeof (error as NodeJS.ErrnoException | null)?.code === "number" ? (error as unknown as { code: number }).code : error ? 1 : 0, stdout, stderr })));
 }
-function requiredFile(value: string | undefined, label: string): string { const resolved = value ? path.resolve(value) : ""; if (!resolved || !fs.statSync(resolved, { throwIfNoEntry: false })?.isFile()) throw new Error(`${label} must identify an existing trusted file.`); return resolved; }
-function requiredDirectory(value: string | undefined, label: string): string { const resolved = value ? path.resolve(value) : ""; if (!resolved || !fs.statSync(resolved, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${label} must identify an existing trusted directory.`); return resolved; }
 function boundedInteger(value: number | undefined, minimum: number, maximum: number, fallback: number): number { const result = value ?? fallback; if (!Number.isSafeInteger(result) || result < minimum || result > maximum) throw new Error("Dynamic runtime numeric bound is invalid."); return result; }
 function boundedText(value: string, maximum: number, label: string): string { if (typeof value !== "string" || value.length < 1 || value.length > maximum || value.includes("\0")) throw new Error(`Dynamic ${label} is invalid.`); return value; }
 function boundedStrings(value: string[], maximumItems: number, maximumChars: number, label: string): string[] { if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`Dynamic ${label} exceeds its item bound.`); const result = value.map(item => boundedText(item, maximumChars, label)); if (new Set(result).size !== result.length) throw new Error(`Dynamic ${label} contains duplicates.`); return result; }
-function boundedYear(value: string): "2023" | "2024" | "2025" | "2026" { if (value !== "2023" && value !== "2024" && value !== "2025" && value !== "2026") throw new Error("Dynamic runtime Revit year must be 2023, 2024, 2025, or 2026."); return value; }
+function boundedYear(value: string): "2023" | "2024" | "2025" | "2026" | "2027" { if (value !== "2023" && value !== "2024" && value !== "2025" && value !== "2026" && value !== "2027") throw new Error("Dynamic runtime Revit year must be 2023, 2024, 2025, 2026, or 2027."); return value; }

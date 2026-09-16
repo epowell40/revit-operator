@@ -1,8 +1,12 @@
 using System;
 using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 namespace RevitBridge.Common
 {
@@ -25,34 +29,96 @@ namespace RevitBridge.Common
 
     public static class OperatorWriteGrant
     {
-        private static readonly object _lock = new object();
-        private static readonly byte[] _hmacKey;
+        private static readonly Lazy<OperatorWriteGrantStore> Store = new Lazy<OperatorWriteGrantStore>(() =>
+            new OperatorWriteGrantStore(Path.Combine(WorkspacePaths.GetWorkspaceRoot(), "write_grant.json"),
+                OperatorSecurity.GetOrCreateOperatorToken()));
 
-        static OperatorWriteGrant()
+        public static OperatorWriteGrantStatus Issue(OperatorWriteGrantMode mode, TimeSpan ttl) => Store.Value.Issue(mode, ttl);
+        public static OperatorWriteGrantStatus RenewSession(TimeSpan ttl) => Store.Value.RenewSession(ttl);
+        public static OperatorWriteGrantStatus ReadStatus() => Store.Value.ReadStatus();
+        public static void Clear() => Store.Value.Clear();
+        public static bool ValidateAndConsumeIfNeeded(string? providedToken, out string error) =>
+            Store.Value.ValidateAndConsumeIfNeeded(providedToken, out error);
+    }
+
+    // The same signed file is shared by the native pane, Sidecar and native HTTP
+    // admission. An instance also allows executable tests with an isolated store.
+    internal sealed class OperatorWriteGrantStore
+    {
+        private readonly object _lock = new object();
+        private readonly byte[] _hmacKey;
+        private readonly string _grantFilePath;
+        private readonly Func<DateTime> _utcNow;
+
+        internal OperatorWriteGrantStore(string grantFilePath, string operatorToken, Func<DateTime>? utcNow = null)
         {
-            _hmacKey = new byte[32];
-            try
-            {
-                // Stable per-workspace key to avoid "signature mismatch" after restarting Revit.
-                // Security model: this is a local-only consent gate to prevent accidental writes, not a remote attacker model.
-                var token = OperatorSecurity.GetOrCreateOperatorToken() ?? "";
-                using (var sha = SHA256.Create())
-                {
-                    var seed = Encoding.UTF8.GetBytes("write_grant|" + token);
-                    var hash = sha.ComputeHash(seed);
-                    Array.Copy(hash, 0, _hmacKey, 0, Math.Min(_hmacKey.Length, hash.Length));
-                }
-            }
-            catch
-            {
-                // ignore
-            }
+            _grantFilePath = grantFilePath;
+            _utcNow = utcNow ?? (() => DateTime.UtcNow);
+            using var sha = SHA256.Create();
+            _hmacKey = sha.ComputeHash(Encoding.UTF8.GetBytes("write_grant|" + operatorToken));
         }
 
-        private static string GetGrantFilePath()
+        private string GetGrantFilePath() => _grantFilePath;
+
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle OpenPublicationFile(string path, uint access, uint share, IntPtr security, uint creation, uint attributes, IntPtr template);
+
+        [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool RenamePublicationFile(SafeFileHandle handle, int informationClass, IntPtr information, uint size);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PublicationRenameInfo
         {
-            var root = WorkspacePaths.GetWorkspaceRoot();
-            return Path.Combine(root, "write_grant.json");
+            public uint Flags;
+            public IntPtr RootDirectory;
+            public uint FileNameLength;
+            public char FileName;
+        }
+
+        private static void PublishGrantFile(string temporary, string target)
+        {
+            // Windows 10+ POSIX rename keeps existing readers on the old complete
+            // file while subsequent opens see the new complete file. ReplaceFile
+            // has a transient sharing/name gap; MoveFileEx rejects held readers.
+            // Never fall back to deleting/truncating the active grant or ignoring
+            // read-only/access-control failures on an unsupported filesystem.
+            const uint DeleteAccess = 0x10000, SharedReadWriteDelete = 0x7, OpenExisting = 3;
+            const int FileRenameInfoEx = 22;
+            const uint ReplaceExistingAndPosixSemantics = 0x3;
+            using var handle = OpenPublicationFile(temporary, DeleteAccess, SharedReadWriteDelete, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+            if (handle.IsInvalid)
+                throw new IOException("Could not open the completed write grant for publication.", new Win32Exception(Marshal.GetLastWin32Error()));
+            var name = Encoding.Unicode.GetBytes(Path.GetFullPath(target));
+            var offset = Marshal.OffsetOf<PublicationRenameInfo>(nameof(PublicationRenameInfo.FileName)).ToInt32();
+            var size = checked(Marshal.SizeOf<PublicationRenameInfo>() + name.Length + sizeof(char));
+            var information = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(new PublicationRenameInfo { Flags = ReplaceExistingAndPosixSemantics, FileNameLength = (uint)name.Length }, information, false);
+                Marshal.Copy(name, 0, IntPtr.Add(information, offset), name.Length);
+                Marshal.WriteInt16(information, offset + name.Length, 0);
+                if (!RenamePublicationFile(handle, FileRenameInfoEx, information, (uint)size))
+                    throw new IOException("Could not publish the complete write grant.", new Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            finally { Marshal.FreeHGlobal(information); }
+        }
+
+        private string ReadGrantFile()
+        {
+            // Windows replacement can briefly make the name unavailable while a
+            // previous reader still holds the replaced file. Retry only the file
+            // read, then validate the newly read signature and expiry normally.
+            for (int attempt = 0; ; ++attempt)
+            {
+                try
+                {
+                    using var stream = new FileStream(GetGrantFilePath(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    return reader.ReadToEnd();
+                }
+                catch (IOException) when (attempt < 4) { Thread.Sleep(5); }
+            }
         }
 
         private static string ModeToString(OperatorWriteGrantMode mode)
@@ -81,7 +147,7 @@ namespace RevitBridge.Common
             public string sig { get; set; } = "";
         }
 
-        private static string ComputeSignature(GrantFile f)
+        private string ComputeSignature(GrantFile f)
         {
             var payload = $"{f.version}|{f.token}|{f.mode}|{f.issued_at_utc}|{f.expires_at_utc}|{(f.uses_remaining.HasValue ? f.uses_remaining.Value.ToString() : "")}";
             using (var h = new HMACSHA256(_hmacKey))
@@ -92,12 +158,20 @@ namespace RevitBridge.Common
             }
         }
 
-        public static OperatorWriteGrantStatus Issue(OperatorWriteGrantMode mode, TimeSpan ttl)
+        public OperatorWriteGrantStatus RenewSession(TimeSpan ttl) => IssueCore(OperatorWriteGrantMode.Session, ttl, true);
+
+        public OperatorWriteGrantStatus Issue(OperatorWriteGrantMode mode, TimeSpan ttl) => IssueCore(mode, ttl, false);
+
+        private OperatorWriteGrantStatus IssueCore(OperatorWriteGrantMode mode, TimeSpan ttl, bool renewActiveSession)
         {
             lock (_lock)
             {
-                var now = DateTime.UtcNow;
-                var token = Guid.NewGuid().ToString("N");
+                var now = _utcNow();
+                var current = renewActiveSession ? ReadStatus() : null;
+                // Renewing the same active consent must not revoke a header already
+                // prepared by the other process. Explicit Issue always rotates.
+                var token = current?.Active == true && current.Mode == "session" && current.UsesRemaining == null
+                    ? current.Token : Guid.NewGuid().ToString("N");
                 var expires = now.Add(ttl);
 
                 var f = new GrantFile
@@ -112,8 +186,16 @@ namespace RevitBridge.Common
                 f.sig = ComputeSignature(f);
 
                 var json = JsonSerializer.Serialize(f, new JsonSerializerOptions { WriteIndented = true });
-                // Write without BOM so non-.NET consumers can JSON.parse reliably.
-                try { File.WriteAllText(GetGrantFilePath(), json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)); } catch { /* ignore */ }
+                // Atomically publish a complete signed file to concurrent readers.
+                // A persistence failure must not report an active grant.
+                var target = GetGrantFilePath();
+                var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(temporary, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    PublishGrantFile(temporary, target);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
 
                 return new OperatorWriteGrantStatus
                 {
@@ -126,7 +208,7 @@ namespace RevitBridge.Common
             }
         }
 
-        public static void Clear()
+        public void Clear()
         {
             lock (_lock)
             {
@@ -142,16 +224,13 @@ namespace RevitBridge.Common
             }
         }
 
-        public static OperatorWriteGrantStatus ReadStatus()
+        public OperatorWriteGrantStatus ReadStatus()
         {
             lock (_lock)
             {
                 try
                 {
-                    var p = GetGrantFilePath();
-                    if (!File.Exists(p)) return new OperatorWriteGrantStatus { Active = false };
-
-                    var raw = File.ReadAllText(p, Encoding.UTF8) ?? "";
+                    var raw = ReadGrantFile();
                     var f = JsonSerializer.Deserialize<GrantFile>(raw);
                     if (f == null) return new OperatorWriteGrantStatus { Active = false, Error = "Invalid write grant file." };
 
@@ -166,7 +245,7 @@ namespace RevitBridge.Common
                         return new OperatorWriteGrantStatus { Active = false, Error = "Write grant expiry invalid." };
 
                     var expiresAtUtc = expiresAtOffset.UtcDateTime;
-                    if (DateTime.UtcNow > expiresAtUtc)
+                    if (_utcNow() >= expiresAtUtc)
                         return new OperatorWriteGrantStatus { Active = false, Error = "Write grant expired." };
 
                     return new OperatorWriteGrantStatus
@@ -185,7 +264,7 @@ namespace RevitBridge.Common
             }
         }
 
-        public static bool ValidateAndConsumeIfNeeded(string? providedToken, out string error)
+        public bool ValidateAndConsumeIfNeeded(string? providedToken, out string error)
         {
             error = "";
             lock (_lock)

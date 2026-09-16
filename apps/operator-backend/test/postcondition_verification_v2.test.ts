@@ -16,6 +16,97 @@ const applyText = (newText: string) => ({
   body: { elementId: 1478627, newText, apply: true }
 });
 
+const renameView = (body: Record<string, unknown> = {}) => ({ path: "/revit/create-view", body: {
+  action: "rename_batch", viewIds: [9948], findText: "L2", replaceText: "TEST LEVEL 2 HVAC COORDINATION", exact: true, max: 1, dryRun: false, ...body
+} });
+
+test("exact rename_batch verifies the retained b09 full-name request against the same view", () => {
+  const name = "TEST LEVEL 2 HVAC COORDINATION";
+  for (const row of [{ id: 9948, name }, { elementId: 9948, parameters: { "View Name": name } }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), { result: { views: [row] } }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), { request: { views: [row] } }), false);
+  }
+  for (const payload of [{ views: [{ id: 9949, name }] }, { views: [{ name }] },
+    { views: [{ id: 9948, name: "L2" }, { id: 9949, name }] }, { success: true },
+    { viewIds: [9948], views: [{ name }] }, { views: [{ id: 9948, viewId: 9949, name }] },
+    { views: [{ id: 9948, name: name.toLowerCase() }] }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(), payload), false);
+  }
+  assert.equal(postconditionSatisfiedByPayloadV2({ body: JSON.stringify(renameView().body) },
+    JSON.stringify({ views: [{ id: 9948, name }] }), { path: "/revit/create-view" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ viewIds: [9948, 9949] }),
+    { views: [{ id: 9948, name }, { id: 9949, name: name + " (2)" }] }), false);
+});
+
+test("rename_batch full replacements normalize native prefix/suffix but never infer partial or unbound renames", () => {
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ prefix: " A ", suffix: " B ", replaceText: "x" }), { id: 9948, name: "AxB" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ replaceText: " " }), { id: 9948, name: "View" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(renameView({ replaceText: "x".repeat(130) }), { id: 9948, name: "x".repeat(120) }), true);
+  for (const body of [{ exact: false }, { findText: "" }, { viewIds: [], nameContains: "L2" },
+    { viewIds: [9948, 9949] }, { replaceText: "new", name: "new", exact: false }]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(renameView(body), { id: 9948, name: body.replaceText ?? "TEST LEVEL 2 HVAC COORDINATION" }), false);
+  }
+  assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/set-parameter", body: renameView().body }, { id: 9948, name: "TEST LEVEL 2 HVAC COORDINATION" }), false);
+});
+
+test("drafting summary must read the requested scale instead of only confirming creation identity", () => {
+  const replay = JSON.parse(readFileSync(path.resolve("test/fixtures/drafting-view-summary-readback.json"), "utf8"));
+  assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, replay.retained_read), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, replay.repaired_read), true);
+  for (const scale of [null, 50]) {
+    const wrong = structuredClone(replay.repaired_read);
+    wrong.result[0].viewScale = scale;
+    wrong.request = replay.apply.body;
+    assert.equal(postconditionSatisfiedByPayloadV2(replay.apply, wrong), false);
+  }
+});
+
+test("sheet creation verifies actual native name policy and sheet parameter vocabulary", () => {
+  for (const path of ["/revit/duplicate-sheet", "/revit/create-sheet"]) {
+    const input = { path, body: path === "/revit/duplicate-sheet"
+      ? { sourceSheetNumber: "M000", newNumber: "TEMP-M000-CHECK", newName: "Cover Sheet - Working Copy" }
+      : { number: "TEMP-M000-CHECK", name: "Cover Sheet - Working Copy" } };
+    for (const [name, number, matches] of [
+      ["COVER SHEET - WORKING COPY", "TEMP-M000-CHECK", true],
+      ["Cover Sheet - Working Copy", "TEMP-M000-CHECK", false],
+      ["COVER SHEET - WORKING COPY", "M000", false],
+      ["OTHER SHEET", "TEMP-M000-CHECK", false]
+    ] as const) {
+      for (const row of [{ id: 1542977, name, number },
+        { id: 1542977, parameters: { "Sheet Number": number, "Sheet Name": name } }]) {
+        assert.equal(postconditionSatisfiedByPayloadV2(input, { items: [row] }), matches);
+        assert.equal(postconditionSatisfiedByPayloadV2(input, { request: { items: [row] } }), false);
+      }
+    }
+  }
+  // Neither arbitrary parameters nor view names acquire sheet casing semantics.
+  assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/set-parameter", body: { parameterName: "Comments", value: "Mixed Case" } },
+    { parameters: { Comments: "MIXED CASE" } }), false);
+});
+
+test("view creation verifies requested name and scale without sheet uppercasing", () => {
+  for (const path of ["/revit/create-view", "/revit/create-drafting-view"]) {
+    const input = { path, body: { name: " Working Draft ", scale: 50 } };
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { id: 1543005, name: "Working Draft", scale: 50 }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { items: [{ id: 1543005, parameters: { "View Name": "Working Draft", "View Scale": 50 } }] }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { name: "WORKING DRAFT", scale: 50 }), false);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { name: "Working Draft", scale: 100 }), false);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { success: true, created: true }), false);
+  }
+});
+
+test("posting project close after browser focus restoration is not proof that the document closed", () => {
+  const input = { method: "POST", path: "/revit/close-active-model", body: { discardUnsavedChanges: true } };
+  for (const restoredGraphicalFocus of [false, true]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(input, {
+      status: "Close Posted", commandPosted: true, restoredGraphicalFocus,
+      requestedEffectSatisfied: false, verificationRequired: true,
+      title: "Snowdon Towers Sample Electrical",
+      context: { document: { title: "Snowdon Towers Sample Electrical", activeView: { type: "ProjectBrowser" } } }
+    }), false);
+  }
+});
+
 const readText = (text: string) => ({
   ok: true,
   requestedElementIds: [1478627],
@@ -273,4 +364,49 @@ test("schedule field and settings verification consume only the typed detail con
     schedule: { id: 1543072 },
     table: { body: { rows: [{ name: "Count", showGrandTotals: true, filterBySheet: false }] } }
   }, { path: "/revit/configure-schedule" }), false);
+});
+test("visibility properties require successful native get on the exact returned view", () => {
+  const input = { path: "/revit/visibility", body: JSON.stringify({ action: "set_scale", viewId: 1363433, scale: 96 }) };
+  const read = { status: "Ok", action: "get", dryRun: false, view: { id: 1363433, scale: 96 } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read), true);
+  const retained = JSON.parse(readFileSync(path.resolve("test/fixtures/visibility-scale-native-readback.json"), "utf8"));
+  assert.equal(retained.read.status, "Ok");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, retained.read), true, "exact retained installed-native wire");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, retained.applied), false, "the commit projection is not an independent read");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { content: [{ type: "text", text: JSON.stringify(retained.read) }] }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { isError: true, content: [{ type: "text", text: JSON.stringify(retained.read) }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { content: [
+    { type: "text", text: JSON.stringify(retained.read) }, { type: "text", text: JSON.stringify({ ...read, view: { id: 1363433, scale: 48 } }) }
+  ] }), false, "conflicting MCP blocks cannot be combined");
+  for (const bad of [
+    { ...read, view: { id: 1363433, scale: 48 }, request: read },
+    { ...read, view: { id: 99, scale: 96, scopeBox: { id: 1363433 } } },
+    { ...read, view: { scale: 96 }, viewId: 1363433 },
+    { ...read, view: { id: 1363433, scale: "96" } },
+    { ...read, view: { id: 1363433, scale: 48 }, result: read },
+    { status: "Success", request: read, metadata: read, provenance: read },
+    { ...read, status: "Failed" }, { ...read, success: false }, { ...read, ok: false },
+    { ...read, error: "read failed" }, { ...read, dryRun: true },
+    { ...read, action: "set_scale" }, { view: read.view },
+    { ...read, view: { id: 1363433, scale: 48 }, scale: 96 }
+  ]) assert.equal(postconditionSatisfiedByPayloadV2(input, bad), false, JSON.stringify(bad));
+  for (const body of [
+    { action: "get", viewId: 1363433, scale: 96 },
+    { action: "set_scale", scale: 96 },
+    { action: "set_scale", viewId: 1363433, scale: 96, dryRun: true },
+    { action: "set_scale", viewId: 1363433, scale: "96" },
+    { action: "set_scope_box", viewId: 1363433, value: 96 }
+  ]) assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/visibility", body }, read), false);
+});
+
+test("visibility enum properties normalize native enum spelling without matching unrelated properties", () => {
+  for (const [action, field, desired, other] of [
+    ["set_detail_level", "detailLevel", "Fine", "Medium"],
+    ["set_discipline", "discipline", "Mechanical", "Electrical"]
+  ]) {
+    const input = { action, viewId: 42, [field!]: desired!.toLowerCase() };
+    const read = { status: "Ok", action: "get", dryRun: false, view: { id: 42, [field!]: desired } };
+    assert.equal(postconditionSatisfiedByPayloadV2(input, read, { path: "/revit/visibility" }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, view: { id: 42, [field!]: other }, request: input }, { path: "/revit/visibility" }), false);
+  }
 });

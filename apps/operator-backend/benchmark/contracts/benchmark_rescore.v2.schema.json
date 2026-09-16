@@ -5,6 +5,7 @@
   "type": "object",
   "required": ["schema", "source_report_ref", "source_report_sha256", "source_run_id", "evaluator_version", "rescored_at", "cases", "verdict_changes", "rescore_sha256"],
   "properties": {
+    "source_qualification": { "type": "object" },
     "schema": { "const": "revit-operator.benchmark-rescore/v2" },
     "source_report_ref": { "type": "string", "minLength": 1 },
     "source_report_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },

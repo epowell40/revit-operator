@@ -1,4 +1,23 @@
 type JsonRecord = Record<string, unknown>;
+import type { GeneralRevitCapabilityCase } from "./general_revit_capability_acceptance.js";
+import path from "node:path";
+import { sha256File } from "./protocol_v2_hash.js";
+
+export function assertGeneralRevitFixtureBytes(fixtureRoot: string, filename: string, expectedSha256: string): void {
+  const fixturePath = path.isAbsolute(filename) ? filename : path.join(fixtureRoot, filename);
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || sha256File(fixturePath) !== expectedSha256.toLowerCase()) {
+    throw new Error(`Fixture bytes changed before case setup: ${fixturePath}. Stop the campaign; preserve evidence and restore the pristine fixture before a new run.`);
+  }
+}
+
+export function validateGeneralRevitFixturePrecondition(testCase: GeneralRevitCapabilityCase): void {
+  if (!testCase.fixture_precondition) return;
+  const { active_view: activeView, selection, clear_selection: clearSelection } = testCase.fixture_precondition;
+  if (clearSelection != null && typeof clearSelection !== "boolean") throw new Error(`Case ${testCase.case_id} has an invalid clear-selection fixture precondition.`);
+  if (!activeView && !selection && clearSelection !== true) throw new Error(`Case ${testCase.case_id} has an empty fixture precondition.`);
+  if (activeView && (!activeView.name.trim() || (activeView.view_type != null && !activeView.view_type.trim()))) throw new Error(`Case ${testCase.case_id} has an invalid active-view fixture precondition.`);
+  if (selection && !selection.category.trim()) throw new Error(`Case ${testCase.case_id} has an invalid selection fixture precondition.`);
+}
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};

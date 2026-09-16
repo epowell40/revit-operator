@@ -5,6 +5,7 @@ import {
   ensureSessionRow,
   getPinnedGoal as getPinnedGoalDb,
   getRecentMessages,
+  type ConversationDisplay,
   getSessionOwner,
   setPinnedGoal as setPinnedGoalDb,
   type SessionOwner
@@ -15,6 +16,7 @@ export type SessionMessage = { role: "user" | "assistant" | "tool"; text: string
 type SessionState = {
   createdAt: string;
   messages: SessionMessage[];
+  historyLoaded?: boolean;
   owner?: SessionOwner;
   /**
    * Pinned user goal/instruction that should not be evicted when the rolling
@@ -130,10 +132,18 @@ export function assertSessionOwnership(
   }
 }
 
-export function appendMessage(sessionId: string, msg: SessionMessage): void {
+export function appendMessage(sessionId: string, msg: SessionMessage, options: { display?: ConversationDisplay; pinGoal?: boolean; requirePersistence?: boolean } = {}): void {
   const state = ensureSession(sessionId);
+  hydrateHistory(sessionId, state);
+  // Required durable writes must succeed before the in-memory turn is visible.
+  try {
+    const saved = appendEvent(sessionId, msg.role, "chat.message", { text: msg.text, ...(options.display ? { display: options.display } : {}) });
+    if (!saved && options.requirePersistence) throw new Error("Conversation history could not be saved.");
+  } catch (error) {
+    if (options.requirePersistence) throw error;
+  }
   state.messages.push(msg);
-  if (msg.role === "user" && shouldPinAsGoal(msg.text)) {
+  if (options.pinGoal !== false && msg.role === "user" && shouldPinAsGoal(msg.text)) {
     state.pinnedGoal = msg.text.trim();
     try {
       setPinnedGoalDb(sessionId, state.pinnedGoal);
@@ -144,11 +154,6 @@ export function appendMessage(sessionId: string, msg: SessionMessage): void {
   if (state.messages.length > maxMessages) {
     state.messages.splice(0, state.messages.length - maxMessages);
   }
-  try {
-    appendEvent(sessionId, msg.role, "chat.message", { text: msg.text });
-  } catch {
-    // ignore
-  }
 }
 
 export function appendToolSummary(sessionId: string, summary: string): void {
@@ -157,15 +162,20 @@ export function appendToolSummary(sessionId: string, summary: string): void {
 
 export function getHistory(sessionId: string): SessionMessage[] {
   const state = ensureSession(sessionId);
-  if (state.messages.length === 0) {
+  hydrateHistory(sessionId, state);
+  return state.messages.slice();
+}
+
+function hydrateHistory(sessionId: string, state: SessionState): void {
+  if (!state.historyLoaded) {
     try {
-      const fromDb = getRecentMessages(sessionId, maxMessages);
+      const fromDb = getRecentMessages(sessionId, maxMessages, true);
       if (fromDb.length > 0) state.messages = fromDb.slice(-maxMessages);
+      state.historyLoaded = true;
     } catch {
-      // ignore
+      // Leave hydration retryable when the database is temporarily unavailable.
     }
   }
-  return state.messages.slice();
 }
 
 export function getPinnedGoal(sessionId: string): string | null {

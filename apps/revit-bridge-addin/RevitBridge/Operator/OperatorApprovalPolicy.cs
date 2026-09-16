@@ -291,6 +291,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/set-text-note-text", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/reload-family-edit-session", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/get-element-summary", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/get-parameters", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/quantify", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/quantify-visualize", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
@@ -378,7 +379,6 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/create-revision-cloud", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/create-dimension", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
-                if (string.Equals(p, "/revit/create-zone-visuals", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/fire-alarm-visualizer", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/create-print-set", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/create-revision", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
@@ -439,6 +439,7 @@ namespace RevitBridge.Operator
 
             if (m == "GET" || m == "HEAD" || m == "OPTIONS") return OperatorActionEffect.Read;
             if (m != "POST") return OperatorActionEffect.Apply;
+            if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
 
             if (string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
             {

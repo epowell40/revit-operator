@@ -32,6 +32,7 @@ function Assert-ManifestCoverage($Manifest) {
     mcp = @($Manifest.mcp_tests)
     desktop = @($Manifest.desktop_tests)
     dotnet = @($Manifest.dotnet_test_classes)
+    dynamic = @($Manifest.dynamic_runtime_test_classes)
   }
   $ids = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
   foreach ($family in @($Manifest.failure_families)) {
@@ -57,6 +58,9 @@ function Invoke-Composition([string]$Root, [string]$Label) {
 
   Invoke-External "$Label architecture authorities" {
     & (Join-Path $Root "scripts/check_assignment_kernel_boundary.ps1") -RepoRoot $Root
+  }
+  Invoke-External "$Label benchmark/runtime separation" {
+    & (Join-Path $Root "scripts/check_benchmark_runtime_boundary.ps1") -RepoRoot $Root
   }
 
   $backendRoot = Resolve-AppRoot $Root "operator-backend"
@@ -113,6 +117,21 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     $filter = @($manifest.dotnet_test_classes | ForEach-Object { "FullyQualifiedName~$_" }) -join '|'
     Invoke-External "$Label native frontier" {
       & dotnet test $testProject -c Release --nologo --filter $filter
+    }
+  }
+
+  if (-not $SkipDotNet) {
+    $dynamicRoot = Resolve-AppRoot $Root "dynamic-revit-runtime"
+    if (-not $dynamicRoot) { throw "$Label generated-code runtime source root is missing." }
+    foreach ($class in @($manifest.dynamic_runtime_test_classes)) {
+      if (-not (Test-Path -LiteralPath (Join-Path $dynamicRoot "DynamicRevitSandboxSupervisor.Tests/$class.cs"))) {
+        throw "$Label generated-code frontier test is missing: $class"
+      }
+    }
+    $dynamicProject = Join-Path $dynamicRoot "DynamicRevitSandboxSupervisor.Tests/DynamicRevitSandboxSupervisor.Tests.csproj"
+    $dynamicFilter = @($manifest.dynamic_runtime_test_classes | ForEach-Object { "FullyQualifiedName~$_" }) -join '|'
+    Invoke-External "$Label generated-code frontier" {
+      & dotnet test $dynamicProject -c Release --nologo --filter $dynamicFilter --disable-build-servers -p:UseSharedCompilation=false -m:1
     }
   }
 

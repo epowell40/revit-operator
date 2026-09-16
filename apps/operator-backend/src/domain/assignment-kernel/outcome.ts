@@ -1,10 +1,11 @@
-import type { AssignmentInputVariableV2, AssignmentSpecV2 } from "./assignment_spec.js";
+import { assignmentInputVariablesV2 } from "./input_registry.js";
+import type { AssignmentInputVariableV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 import { executionFailureOutcomeV2 } from "./progress/execution_failure.js";
 
-function requiredInputsKnown(spec: AssignmentSpecV2, snapshot: AssignmentSnapshotV2): boolean {
-  return spec.input_variables.every((input: AssignmentInputVariableV2) => !input.required
+function requiredInputsKnown(snapshot: AssignmentSnapshotV2): boolean {
+  return assignmentInputVariablesV2(snapshot).every((input: AssignmentInputVariableV2) => !input.required
     || input.value_state === "known"
     || Object.prototype.hasOwnProperty.call(snapshot.input_values, input.variable_id));
 }
@@ -34,21 +35,33 @@ export function appliedOperationHasVerifiedPostconditionV2(
       || operation.requested_effect !== "apply"
       || operation.persistent_effect !== "applied"
       || operation.settlement_state !== "settled") return false;
-  return operation.verification_operation_ids.some((verificationId) => {
-    const verification = snapshot.operations[verificationId];
-    return verification?.verification_of_operation_id === operation.operation_id
-      && verification.requested_effect === "read"
-      && verification.purpose === "verification"
-      && verification.persistent_effect === "none"
-      && verification.settlement_state === "settled"
-      && verification.result?.status === "succeeded"
-      && verification.observation_ids.length > 0
-      && provesAppliedPostcondition(snapshot, verification.operation_id);
-  });
+  return operation.verification_operation_ids.some((verificationId) =>
+    snapshot.operations[verificationId]?.verification_of_operation_id === operation.operation_id
+      && verificationOperationHasVerifiedPostconditionV2(snapshot, verificationId));
+}
+
+export function verificationOperationHasVerifiedPostconditionV2(
+  snapshot: AssignmentSnapshotV2,
+  verificationOperationId: string
+): boolean {
+  const verification = snapshot.operations[verificationOperationId];
+  const applied = verification?.verification_of_operation_id
+    ? snapshot.operations[verification.verification_of_operation_id] : undefined;
+  return Boolean(applied?.requested_effect === "apply"
+    && applied.persistent_effect === "applied"
+    && applied.settlement_state === "settled"
+    && applied.verification_operation_ids.includes(verificationOperationId)
+    && verification?.requested_effect === "read"
+    && verification.purpose === "verification"
+    && verification.persistent_effect === "none"
+    && verification.settlement_state === "settled"
+    && verification.result?.status === "succeeded"
+    && verification.observation_ids.length > 0
+    && provesAppliedPostcondition(snapshot, verificationOperationId));
 }
 
 export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): AssignmentOutcomeV2 {
-  if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot.spec, snapshot)) {
+  if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot)) {
     return "awaiting_user_input";
   }
   if (snapshot.pending_review_ids.length > 0) return "awaiting_user_review";
@@ -78,6 +91,7 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   }
   if (!evaluations.every((evaluation) => evaluation.status === "pass" || evaluation.status === "not_applicable")) return "active";
 
+  if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) return "active";
   if (snapshot.spec.requested_effect !== "apply") return "complete";
   const appliedOperations = Object.values(snapshot.operations)
     .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");

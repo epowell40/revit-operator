@@ -56,7 +56,6 @@ import {
   extractSheetCandidatesFromText
 } from "../redline/sheet_candidate_classifier.js";
 import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
-import type { StreamCallbacks } from "./codex_brain.js";
 import { getRequestPrincipal } from "../request_context.js";
 import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKnowledgeBase } from "../knowledge_base/service.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
@@ -4478,10 +4477,6 @@ function extractLatestExportPdfBaselinePathFromToolResults(toolResults: ToolResu
     }
   }
   return null;
-}
-
-function extractLatestExportPdfBaselinePath(req: ChatRequest): string | null {
-  return extractLatestExportPdfBaselinePathFromToolResults(getAugmentedToolResults(req, 60));
 }
 
 function buildAutoAnalyzeRedlineAction(seed: { file_path: string; expected_sheet?: string | null }): WorkbenchAction {
@@ -17886,33 +17881,6 @@ function bridgeHasHostedPlacementAction(response: ChatResponse | null): boolean 
   return !!response?.actions?.some((action) => isHostedPlacementPath(action.path));
 }
 
-function bridgeHasHeuristicHostedPlacementAction(response: ChatResponse | null): boolean {
-  if (!bridgeHasHostedPlacementAction(response)) return false;
-  const message = (response?.assistant_message ?? "").toLowerCase();
-  if (message.includes("heuristic")) return true;
-  return !!response?.actions?.some((action) => {
-    if (!isHostedPlacementPath(action.path)) return false;
-    const body = action.body && typeof action.body === "object" ? (action.body as Record<string, unknown>) : null;
-    if (!body) return false;
-    const placements = Array.isArray(body.placements) ? body.placements : [];
-    const placementHasMeasuredTarget = placements.some((placement) => {
-      if (!placement || typeof placement !== "object") return false;
-      const row = placement as Record<string, unknown>;
-      return Number.isFinite(row.targetChainageFt as number) || Number.isFinite(row.targetNormalizedChainage as number);
-    });
-    const hasDirectMeasuredTarget =
-      Number.isFinite(body.targetChainageFt as number) ||
-      Number.isFinite(body.targetNormalizedChainage as number);
-    const hasExplicitPoint =
-      Array.isArray(body.pointXyz) ||
-      placements.some((placement) => !!placement && typeof placement === "object" && Array.isArray((placement as Record<string, unknown>).pointXyz));
-    const hasOffset =
-      Number.isFinite(body.alongHostOffsetFt as number) ||
-      placements.some((placement) => !!placement && typeof placement === "object" && Number.isFinite((placement as Record<string, unknown>).alongHostOffsetFt as number));
-    return (hasExplicitPoint || hasOffset) && !placementHasMeasuredTarget && !hasDirectMeasuredTarget;
-  });
-}
-
 function hasFrameAlignedRedlineHintForLatestFrame(req: ChatRequest, workbenchResults: WorkbenchActionResult[]): boolean {
   const latestFrameImage = extractLatestFrameImageContext(getAugmentedToolResults(req, 80));
   if (!latestFrameImage) return false;
@@ -22341,10 +22309,6 @@ export function __testOnlyNormalizeNativeRevitActionBodiesForRouting(
 
 export async function decideOpenAi(req: ChatRequest): Promise<ChatResponse> {
   return decideOpenAiInternal(req);
-}
-
-export async function decideOpenAiStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
-  return decideOpenAiInternal(req, cb.abortSignal);
 }
 
 function naturalizeActionMessage(response: ChatResponse): ChatResponse {

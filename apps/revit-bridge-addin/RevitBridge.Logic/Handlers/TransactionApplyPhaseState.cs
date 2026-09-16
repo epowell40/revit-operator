@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using RevitBridge.Common;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -38,6 +41,44 @@ namespace RevitBridge.Logic.Handlers
         internal TransactionApplyPhase Phase { get; private set; } = TransactionApplyPhase.BeforeAssimilation;
         internal bool IsCommitted => Phase == TransactionApplyPhase.Committed;
         internal string WireName => IsCommitted ? "committed" : "beforeAssimilation";
+
+        internal static object BuildWireReceipt(
+            TransactionActionRunner.TransactionOperationReceipt groupStart,
+            IReadOnlyList<object> actions,
+            TransactionActionRunner.TransactionOperationReceipt assimilate,
+            TransactionActionRunner.TransactionOperationReceipt rollback,
+            string phase, OperatorNativeTransactionReceipt nativeReceipt) => new
+        {
+            status = nativeReceipt.Status,
+            committed = nativeReceipt.CommittedValue,
+            added_element_ids = nativeReceipt.AddedElementIds,
+            modified_element_ids = nativeReceipt.ModifiedElementIds,
+            deleted_element_ids = nativeReceipt.DeletedElementIds,
+            affected_element_ids = nativeReceipt.AffectedElementIds,
+            phase,
+            start = groupStart.ToWireObject(),
+            actions,
+            assimilate = assimilate.ToWireObject(),
+            rollback = rollback.ToWireObject()
+        };
+
+        internal OperatorNativeTransactionReceipt NativeReceipt(
+            TransactionActionRunner.TransactionOperationReceipt groupRollback,
+            TransactionActionRunner.Impact impact,
+            TransactionDiffRecorder.TransactionDiffScopeResult? diff)
+        {
+            // Only the outer group determines persistence. An inner action's
+            // commit/rollback cannot settle the whole group, and later readback
+            // failures must not erase an already observed group commit.
+            if (IsCommitted)
+                return OperatorNativeTransactionReceipt.CommittedChanges(
+                    impact.Added.Concat(diff?.created.Select(x => x.elementId) ?? Array.Empty<long>()),
+                    impact.Modified.Concat(diff?.modified.Select(x => x.elementId) ?? Array.Empty<long>()),
+                    impact.Deleted.Concat(diff?.deleted.Select(x => x.elementId) ?? Array.Empty<long>()));
+            if (groupRollback.VerifiedRolledBack && groupRollback.Status == "RolledBack")
+                return OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>());
+            return OperatorNativeTransactionReceipt.Unknown("unknown");
+        }
 
         internal void ObserveAssimilateReceipt(TransactionActionRunner.TransactionOperationReceipt receipt)
         {

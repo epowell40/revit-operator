@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing.Printing;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Handlers
 {
@@ -48,15 +50,60 @@ namespace RevitBridge.Handlers
             var installedPrinters = GetInstalledPrinters();
             var selectedPrinter = string.IsNullOrWhiteSpace(printerName) ? currentPrinter : printerName;
 
+            // Read-only capability check must precede output-folder creation, driver selection,
+            // PrintManager.Apply, and SubmitPrint. PORTPROMPT ignores Revit's output filename.
+            var preflight = BuildPrinterPreflight(printerName, selectedPrinter, currentPrinter, installedPrinters);
+            if (preflight.available)
+            {
+                try { preflight.destinationPorts = OperatorPrinterDestination.ReadPorts(selectedPrinter); }
+                catch { preflight.destinationPorts = null; }
+                var blockedReason = OperatorPrinterDestination.BlockingReason(preflight.destinationPorts);
+                if (blockedReason != null)
+                {
+                    preflight.available = false;
+                    preflight.failureClass = blockedReason;
+                    preflight.message = blockedReason == "interactive_printer_destination"
+                        ? "This printer requires an interactive output-file dialog and cannot be submitted unattended. No settings or files were changed and no print was submitted. For a PDF deliverable, use /revit/export-pdf with the required output settings; do not claim the printer was used."
+                        : "The printer destination capability could not be read. No settings or files were changed and no print was submitted.";
+                }
+            }
+            if (!preflight.available)
+                return Task.FromResult<object>(new {
+                    status = "PrintFailed", ok = false, dryRun, preflight, message = preflight.message,
+                    printJobs = 0, artifact_receipt = OperatorNativeArtifactReceipt.BlockedPrint(dryRun, preflight.failureClass!)
+                });
+
             var views = ExportPdfHandler.ResolveSelectedViews(doc, p, out var selectionMeta);
             if (views.Count == 0) throw new InvalidOperationException("No views/sheets selected for printing.");
 
-            var preflight = BuildPrinterPreflight(printerName, selectedPrinter, currentPrinter, installedPrinters);
+            var effectiveCopies = p.copies.HasValue ? Math.Max(1, Math.Min(99, p.copies.Value)) : printManager.CopyNumber;
+            var effectiveCollate = OperatorPrintSettingsGuard.EffectiveCollation(p.collate, views.Count, printIndividually, effectiveCopies);
+            var warnings = new List<string>();
+            if (p.collate.HasValue && !effectiveCollate.HasValue)
+                warnings.Add("Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged.");
+            p.collate = effectiveCollate;
+
+            var printToFile = p.printToFile ?? printManager.PrintToFile;
+            string? outputPath = null;
+            if (printToFile)
+            {
+                if (printIndividually && views.Count > 1)
+                    throw new ArgumentException("Individual print-to-file needs distinct output names. Use printIndividually=false and combinedFile=true for one combined file.");
+                if (!printIndividually && views.Count > 1 && p.combinedFile != true)
+                    throw new ArgumentException("Multiple views printed to one file require combinedFile=true.");
+                outputPath = OperatorPrintOutputPath.Resolve(p.printToFileName, p.outputFolder,
+                    new[] { p.baseFileName, p.fileName, views[0].SheetNumber + ".pdf" }.First(name => !string.IsNullOrWhiteSpace(name))!, ExportPdfHandler.ResolvePdfOutputFolder);
+                p.printToFileName = outputPath;
+            }
+            var plannedPaths = outputPath == null ? Array.Empty<string>() : new[] { outputPath };
+            var selectedSheets = views.Select(v => new { viewId = ElementIdCompat.GetValue(v.ViewId), sheetNumber = v.SheetNumber, name = v.Name }).ToArray();
+
+            preflight.outputs = plannedPaths;
             var plan = new
             {
                 printerName = string.IsNullOrWhiteSpace(selectedPrinter) ? null : selectedPrinter,
                 printIndividually,
-                copies = p.copies ?? 1,
+                copies = effectiveCopies,
                 collate = p.collate,
                 reverseOrder = p.reverseOrder,
                 printToFile = p.printToFile,
@@ -76,47 +123,66 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(new
                 {
                     status = "Dry Run",
+                    ok = preflight.available,
                     dryRun = true,
+                    artifact_receipt = outputPath == null ? null : OperatorNativeArtifactReceipt.Preview(plannedPaths, 1, "/revit/print"),
                     selectedCount = views.Count,
+                    selectedSheets,
                     selection = selectionMeta,
+                    warnings,
                     preflight,
                     plan
                 });
             }
 
-            if (!preflight.available)
+            var settings = new PrintSettingsPreservation(doc, !printIndividually, p.collate.HasValue);
+            var capture = outputPath == null ? null : new OperatorNativeArtifactCapture(plannedPaths, 1, "/revit/print");
+            if (outputPath != null) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            var results = new List<PrintResult>();
+            bool restored;
+            IReadOnlyList<string> restorationErrors;
+            try
             {
-                throw new InvalidOperationException(preflight.failureClass + ": " + preflight.message);
-            }
-
-            var warnings = ApplyPrintSettings(printManager, p, selectedPrinter);
-            if (printIndividually)
-            {
-                var results = SubmitIndividualPrints(doc, printManager, views);
-                var failed = results.Where(r => !r.ok).ToList();
-                return Task.FromResult<object>(new
+                if (!string.Equals(currentPrinter, selectedPrinter, StringComparison.OrdinalIgnoreCase))
                 {
-                    status = failed.Count == 0 ? "Success" : "PartialFailure",
-                    dryRun = false,
-                    selectedCount = views.Count,
-                    printerName = selectedPrinter,
-                    printJobs = results.Count,
-                    failedCount = failed.Count,
-                    warnings,
-                    results
-                });
+                    printManager.SelectNewPrintDriver(selectedPrinter);
+                    // Driver selection can replace Revit's underlying PrintManager.
+                    printManager = doc.PrintManager;
+                }
+                warnings.AddRange(ApplyPrintSettings(printManager, p));
+                if (outputPath != null)
+                    OperatorPrintSettingsGuard.ApplyAndValidateOutput(() => printManager.Apply(),
+                        () => doc.PrintManager.PrintToFile, () => doc.PrintManager.PrintToFileName, outputPath,
+                        () => doc.PrintManager.IsVirtual != VirtualPrinterType.None);
+                results = printIndividually ? SubmitIndividualPrints(doc, printManager, views)
+                    : new List<PrintResult> { SubmitSelectedSetPrint(doc, printManager, views) };
+                foreach (var result in results) capture?.RecordNativeExport(result.ok);
             }
-
-            var batchResult = SubmitSelectedSetPrint(doc, printManager, views);
+            catch (Exception ex) { results.Add(PrintResult.Failed(views[0], ex.GetType().Name + ": " + ex.Message)); }
+            finally
+            {
+                try { restored = settings.Restore(out restorationErrors); }
+                catch (Exception ex) { restored = false; restorationErrors = new[] { ex.GetType().Name + ": " + ex.Message }; }
+            }
+            var receipt = capture?.Complete(restored);
+            var failed = results.Count(r => !r.ok);
+            var complete = failed == 0 && restored && (receipt == null || receipt.Status == "complete");
             return Task.FromResult<object>(new
             {
-                status = batchResult.ok ? "Success" : "PrintFailed",
+                status = complete ? "Success" : "PrintFailed",
+                ok = complete,
                 dryRun = false,
                 selectedCount = views.Count,
+                selectedSheets,
                 printerName = selectedPrinter,
-                printJobs = 1,
+                printJobs = results.Count,
+                failedCount = failed,
+                artifact_receipt = receipt,
+                print_settings_restored = restored,
+                print_settings_restoration_errors = restorationErrors,
+                path = outputPath,
                 warnings,
-                result = batchResult
+                results
             });
         }
 
@@ -155,11 +221,13 @@ namespace RevitBridge.Handlers
 
         private sealed class PrinterPreflight
         {
+            public string[] outputs { get; set; } = Array.Empty<string>();
             public bool available { get; set; }
             public string? failureClass { get; set; }
             public string message { get; set; } = "";
             public string? requestedPrinter { get; set; }
             public string? currentPrinter { get; set; }
+            public string? destinationPorts { get; set; }
             public List<string> installedPrinters { get; set; } = new List<string>();
         }
 
@@ -204,19 +272,15 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static List<string> ApplyPrintSettings(PrintManager printManager, Params p, string selectedPrinter)
+        private static List<string> ApplyPrintSettings(PrintManager printManager, Params p)
         {
             var warnings = new List<string>();
-            if (!string.IsNullOrWhiteSpace(p.printerName))
-            {
-                printManager.SelectNewPrintDriver(selectedPrinter);
-            }
-
             if (p.copies.HasValue)
             {
                 try
                 {
-                    printManager.CopyNumber = Math.Max(1, Math.Min(99, p.copies.Value));
+                    var copies = Math.Max(1, Math.Min(99, p.copies.Value));
+                    if (printManager.CopyNumber != copies) printManager.CopyNumber = copies;
                 }
                 catch (Exception ex)
                 {

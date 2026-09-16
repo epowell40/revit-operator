@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { operatorBackendAuthRequestMeta, type OperatorBackendAuthV1 } from "../operator_backend_auth.js";
@@ -7,6 +8,9 @@ import { OperatorBackendAuthLeaseRegistry, type OperatorBackendAuthLease } from 
 import { AssignmentKernelTurnLeaseRegistryV2, type AssignmentKernelTurnLeaseV2 } from "./assignment_kernel_v2_lease.js";
 import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_kernel_v2_factory.js";
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
+import { McpInputValidator } from "./mcp_input_validation.js";
+import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
+import { describeCodeModeImageTool } from "./code_mode_images.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -44,6 +48,8 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "revit_get_context",
   "revit_open_model",
   "revit_list_sheets",
+  "revit_activate_view",
+  "revit_capture_sheet_region",
   "revit_list_schedules",
   "revit_update_schedule_cell",
   "revit_replace_schedule_values",
@@ -62,6 +68,7 @@ export class CodexMcpToolRuntime {
   private starting: Promise<void> | null = null;
   private stderrTail = "";
   private dynamicNamespace: unknown | null = null;
+  private readonly inputValidator = new McpInputValidator();
   private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
   private readonly assignmentKernelV2Leases = new AssignmentKernelTurnLeaseRegistryV2();
   private readonly assignmentKernelV2TurnStops = new Map<string, {
@@ -94,6 +101,7 @@ export class CodexMcpToolRuntime {
     const env = stringEnvironment({
       ...this.opts.spawnEnv,
       OPERATOR_WORKSPACE_ROOT: this.opts.workspaceRoot,
+      OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY: completionOutboxKeyV2(this.opts.workspaceRoot),
       CODEX_HOME: this.opts.codexHome
     });
     const transport = new StdioClientTransport({
@@ -212,6 +220,10 @@ export class CodexMcpToolRuntime {
     if (id) this.assignmentKernelV2TurnStops.delete(id);
   }
 
+  recoverCompletion(lease: AssignmentKernelOperationLeaseV2): unknown | null {
+    return readCompletionOutboxV2(this.opts.workspaceRoot, completionOutboxKeyV2(this.opts.workspaceRoot), lease);
+  }
+
   async callTool(tool: string, args: unknown, binding?: {
     turnId?: unknown;
     sessionId?: unknown;
@@ -251,6 +263,20 @@ export class CodexMcpToolRuntime {
     }
   }
 
+  async validateToolArguments(tool: string, args: unknown): Promise<void> {
+    const namespace = await this.getDynamicToolNamespace();
+    this.inputValidator.validate(tool, args, namespace.tools);
+  }
+
+  async readAttachmentForTurn(args: unknown, binding: { turnId: unknown; sessionId: string }): Promise<unknown> {
+    // Host-owned file reads have no MCP/native dependency, but retain the same
+    // authenticated turn/session lifetime as every other backend capability.
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    const result = await readRegisteredPdfAttachment(binding.sessionId, args);
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    return result;
+  }
+
   async getDynamicToolNamespace(): Promise<any> {
     if (this.dynamicNamespace) return this.dynamicNamespace;
     await this.ensureStarted();
@@ -262,13 +288,13 @@ export class CodexMcpToolRuntime {
       type: "namespace",
       name: "revit_operator",
       description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
-      tools: listed.tools.map(tool => ({
+      tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name).map(tool => ({
         type: "function",
         name: tool.name,
-        description: tool.description ?? "Revit Operator tool",
+        description: describeCodeModeImageTool(tool.name, tool.description ?? "Revit Operator tool"),
         inputSchema: tool.inputSchema,
         deferLoading: !EAGER_OPERATOR_MCP_TOOLS.has(tool.name)
-      }))
+      }))]
     };
     return this.dynamicNamespace;
   }
@@ -279,6 +305,7 @@ export class CodexMcpToolRuntime {
     this.client = null;
     this.transport = null;
     this.dynamicNamespace = null;
+    this.inputValidator.clear();
     this.backendAuthLeases.clear();
     this.assignmentKernelV2Leases.clear();
     this.assignmentKernelV2TurnStops.clear();

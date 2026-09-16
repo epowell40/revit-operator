@@ -1,4 +1,8 @@
+import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
 import { createHash } from "node:crypto";
+import { authorizedArtifactExportPath } from "../artifact_export_intent.js";
+import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
 import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
@@ -34,7 +38,8 @@ import {
   operationTargetSelectorV2,
   verificationCapabilityAdmissionV2
 } from "../verification/verification_capability_admission_v2.js";
-import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
+import { assertEvidenceStoreInputSafe, readAuthoritativeEvidence, readEvidenceRef, storeEvidence } from "../evidence/evidence_store.js";
+import { projectEvidence } from "../evidence/evidence_projection.js";
 import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
@@ -49,6 +54,7 @@ import {
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
+import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
 
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
@@ -101,6 +107,7 @@ export type AssignmentKernelOperationSettlementV2 = Readonly<{
 }>;
 
 export type AssignmentKernelRecoveryRuntimeV2 = Readonly<{
+  recoverCompletion?(lease: AssignmentKernelOperationLeaseV2): unknown | null;
   callTool(tool: string, args: Record<string, unknown>, binding: Readonly<{
     sessionId: string;
     assignmentKernelV2: AssignmentKernelOperationLeaseV2;
@@ -213,7 +220,15 @@ function criterionIdsAdmittedForOperationV2(input: Readonly<{
     : undefined;
   const resultSchemas = anticipatedResultSchemaIds(input.capability_id, input.request_identity);
   return input.criterion_ids.filter((criterionId) => {
-    if (input.snapshot.criteria[criterionId]?.status === "pass") return false;
+    // Generic read truth may already be established while the answer still
+    // needs additional native data. Keep those reads in the same task-evidence
+    // contract; otherwise their results become control evidence and cannot be
+    // delivered. Effect and capability/schema policy checks still apply.
+    const assemblingReadAnswer = input.snapshot.spec.result_delivery_required
+      && !input.snapshot.result_delivery
+      && input.snapshot.spec.requested_effect === "read"
+      && input.operation_effect === "read";
+    if (input.snapshot.criteria[criterionId]?.status === "pass" && !assemblingReadAnswer) return false;
     const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
     const policy = criterion?.evidence_policy;
     if (!policy) return false;
@@ -266,6 +281,14 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
+  if (suggestedEffect === "apply" && requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path === "/revit/export-elements-xlsx"
+      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, "/revit/export-elements-xlsx")) {
+    throw new Error("assignment_kernel_v2_explicit_workbook_export_authority_required");
+  }
+  if (suggestedEffect === "apply" && isExplicitNoWriteRequest(snapshot.spec.source_user_request)
+      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path)) {
+    throw new Error("assignment_kernel_v2_user_no_model_write_limit");
+  }
   const purpose = operationPurpose(input.classified_effect, snapshot);
   if (snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
     throw new Error("assignment_kernel_v2_unknown_effect_requires_reconciliation");
@@ -352,6 +375,12 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   const resolvesGapIds = currentGaps
     .filter((gap) => {
       if (gap.kind === "verification_required") {
+        // Verification may need tool/schema discovery or retrieval of the
+        // retained edit receipt after task criteria already pass. Bind those
+        // read-only helpers to the outstanding gap without granting them
+        // verification authority; only the linked native readback settles it.
+        if (effect === "read" && fulfillmentRole === "supporting_control"
+            && (purpose === "discovery" || purpose === "evidence_read")) return true;
         return purpose === "verification"
           && Boolean(verifies)
           && gap.gap_id === `verification:${verifies!.operation_id}`;
@@ -359,7 +388,10 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
       const generallyRelevant = gap.work_unit_ids.includes(unit.work_unit_id)
         || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
         || (purpose === "reconciliation" && gap.kind === "effect_unknown");
-      if (!generallyRelevant || gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
+      // Exact schema help can belong to discovery while the rejected request
+      // belongs to verification. Its route binding, not work-unit equality,
+      // establishes relevance to this correction gap.
+      if (gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
       const rejected = Object.values(snapshot.operations)
         .find(candidate => candidate.result?.input_schema_gap?.gap_id === gap.gap_id);
       return Boolean(rejected && operationProposalCanResolveInputSchemaGapV2({
@@ -475,7 +507,13 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_child_ordinal_invalid");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
-  const purpose = input.operation_role === "prerequisite" ? "discovery" : operationPurpose(input.classified_effect, snapshot);
+  const fulfillmentRole = input.operation_role === "prerequisite"
+    ? "prerequisite"
+    : input.fulfillment_role ?? "supporting_control";
+  // Documentation/registry children remain supporting reads after an apply.
+  // Their chronology cannot promote them into target-bound verification.
+  const purpose = !fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? "discovery" : operationPurpose(input.classified_effect, snapshot);
   const unit = admittedWorkUnit(snapshot, suggestedEffect, purpose);
   const identity = requestIdentity({
     capability_id: input.capability_id,
@@ -506,9 +544,6 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   // Topology never grants semantic fulfillment. Ordinary children default to
   // supporting control with no criterion eligibility; only the trusted edge
   // may explicitly delegate a parent-approved criterion subset.
-  const fulfillmentRole = input.operation_role === "prerequisite"
-    ? "prerequisite"
-    : input.fulfillment_role ?? "supporting_control";
   const requestedEligible = [...new Set(input.eligible_criterion_ids ?? [])].sort();
   if (!fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole) && requestedEligible.length > 0) {
     throw new Error("assignment_kernel_v2_support_operation_criterion_forbidden");
@@ -637,6 +672,14 @@ function commitInput(
 ): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  if (result.native_artifact_receipt !== undefined) {
+    const raw = envelope.observation.raw_payload;
+    const receipt = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).artifact_receipt : undefined;
+    if (canonicalJsonV2(receipt ?? null) !== canonicalJsonV2(result.native_artifact_receipt)) {
+      throw new Error("assignment_kernel_v2_artifact_receipt_payload_mismatch");
+    }
+  }
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)];
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
@@ -662,11 +705,16 @@ function commitInput(
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
       && deterministicallyTargetBound
-      && postconditionSatisfiedByPayloadV2(
+      && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
+        ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : ["/revit/mep-route-workflow", "/revit/create-duct"].includes(verificationSubject.request_identity?.path ?? "")
+          ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,
-        { capability_id: verificationSubject.capability_id }
-      )
+        { capability_id: verificationSubject.capability_id, path: verificationSubject.request_identity?.path,
+          native_artifact_receipt: verificationSubject.result?.native_artifact_receipt }
+      ))
   );
   if (trustedVerification) {
     if (lease.purpose !== "verification"
@@ -761,7 +809,24 @@ export function commitAssignmentKernelObservationV2(
     const observation = operation.observation_ids.length > 0
       ? snapshot.observations[operation.observation_ids[operation.observation_ids.length - 1]!]
       : undefined;
-    return { snapshot, result: operation.result, observation: observation ?? null, evidence_refs: [], evidence_projections: [] };
+    if (!observation) return { snapshot, result: operation.result, observation: null, evidence_refs: [], evidence_projections: [] };
+    // Native/MCP settlement can precede model delivery. Rehydrate the exact
+    // retained observation so duplicate delivery cannot bypass context budgets.
+    // This reads only: no new evidence, journal event, operation or native call.
+    if (!observation.raw_payload_ref.startsWith("evidence:")) throw new Error("assignment_kernel_v2_retained_evidence_reference_invalid");
+    const ref = readEvidenceRef(observation.raw_payload_ref.slice("evidence:".length));
+    if (ref.source !== `assignment_kernel_v2:${lease.capability_id}`
+      || ref.trust_level !== (operation.result.authority === "native-host" ? "authoritative_native" : "host_observed")) {
+      throw new Error("Evidence retained native provenance mismatch.");
+    }
+    const raw = JSON.parse(readAuthoritativeEvidence(ref, {
+      session_id: lease.binding.session_id, assignment_id: lease.assignment_id,
+      run_id: lease.binding.run_id, generation: lease.binding.generation,
+      attempt_id: lease.operation_id
+    }).toString("utf8"));
+    if (stableHash(raw) !== operation.result.raw_payload_hash) throw new Error("Evidence retained native payload hash mismatch.");
+    return { snapshot, result: operation.result, observation, evidence_refs: [ref],
+      evidence_projections: [projectEvidence(ref, raw, getEvidenceContextBudget().item_bytes)] };
   }
   if (operation.settlement_state !== "retaining_observation" || !operation.observation_commit) {
     throw new Error("assignment_kernel_v2_observation_commit_not_pending");
@@ -856,7 +921,9 @@ export function failAssignmentKernelOperationV2(
     error_code: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
     request_identity: structuredClone(lease.request_identity)
   };
-  recordNativeDispatchIfNeeded(lease, result);
+  // Known dispatch was recorded above (or was already durable). Recording it
+  // again as an MCP dispatch conflicts with that transition and prevents the
+  // unknown-effect result from settling after transport loss.
   appendCurrentAssignmentKernelEventV2({
     goal_id: lease.assignment_id, binding: lease.binding,
     event_id: `operation-result:${result.result_id}`,
@@ -909,7 +976,7 @@ export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
   let snapshot = input.snapshot;
   const now = input.now ?? new Date();
   const transport = (input.transport ?? process.env.OPERATOR_REVIT_TRANSPORT ?? "direct").trim().toLowerCase();
-  for (const operationId of snapshot.in_flight_operation_ids) {
+  for (const operationId of completionRecoveryOrderV2(snapshot)) {
     const operation = snapshot.operations[operationId];
     if (!operation || operation.settlement_state === "settled") continue;
     const lease = leaseFromOperation(operation);
@@ -939,6 +1006,15 @@ export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
       } catch {
         snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id)!;
       }
+      continue;
+    }
+    // This is retained execution truth, not a fresh dispatch. An expired
+    // admission deadline cannot erase an already committed native result.
+    // Invalid records stop recovery; they never fall through to courier replay.
+    const retained = input.runtime.recoverCompletion?.(lease);
+    if (retained) {
+      snapshot = settleAssignmentKernelOperationV2(lease, retained,
+        input.observation_commit_runtime ?? DEFAULT_OBSERVATION_COMMIT_RUNTIME).snapshot;
       continue;
     }
     if (Date.parse(operation.deadline_at) <= now.getTime()) {

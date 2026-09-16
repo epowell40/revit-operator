@@ -74,8 +74,6 @@ namespace RevitBridge.Logic
                 { "/revit/quantify", new QuantifyElementsHandler() },
                 { "/revit/quantify-visualize", new QuantifyVisualizeHandler() },
                 { "/revit/ensure-spaces", new EnsureSpacesHandler() },
-                { "/revit/create-zones", new CreateZonesHandler() },
-                { "/revit/create-zone-visuals", new CreateZoneVisualsHandler() },
                 { "/revit/query-zone-data", new QueryZoneDataHandler() },
                 { "/revit/link-revit", new LinkRevitHandler() },
                 { "/revit/place-families", new PlaceFamiliesHandler() },
@@ -132,11 +130,12 @@ namespace RevitBridge.Logic
 
         public bool CanHandle(string path)
         {
-            return _handlers.ContainsKey(path);
+            return RevitBridge.Common.OperatorSupportedToolInventory.IsSupportedTool("POST", path) && _handlers.ContainsKey(path);
         }
 
         public object Handle(string path, string body, UIApplication app)
         {
+            RevitBridge.Common.OperatorSupportedToolInventory.RequireSupportedTool("POST", path);
             if (_handlers.TryGetValue(path, out var handler))
             {
                 // Synchronous wait

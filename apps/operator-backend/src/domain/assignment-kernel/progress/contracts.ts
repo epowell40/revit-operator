@@ -14,6 +14,7 @@ export const PROGRESS_GAP_V2_SCHEMA = "revit-operator.assignment-progress-gap/v2
 export type ProgressGapKindV2 =
   | "criterion_fact_missing"
   | "criterion_uncertain"
+  | "result_delivery_required"
   | "operation_input_schema_invalid"
   | "operation_result_semantic_invalid"
   | "input_missing"
@@ -43,6 +44,7 @@ export interface AssignmentProgressBudgetV2 {
   max_equivalent_operations: number;
   max_no_progress_epochs: number;
   max_reconciliation_attempts: number;
+  /** Cumulative active execution wall time; durable idle/input waits are excluded. */
   max_wall_clock_ms: number;
   max_total_tokens: number;
 }
@@ -57,6 +59,7 @@ interface ProgressDecisionBaseV2 {
 }
 
 export type ProgressDecisionV2 = ProgressDecisionBaseV2 & (
+  | { decision: "paused" }
   | { decision: "evaluate_criteria"; criterion_ids: readonly CriterionIdV2[]; observation_ids: readonly ObservationIdV2[] }
   | { decision: "request_user_input"; gap_ids: readonly string[]; criterion_ids: readonly CriterionIdV2[] }
   | { decision: "request_user_review"; gap_ids: readonly string[]; work_unit_ids: readonly WorkUnitIdV2[] }
