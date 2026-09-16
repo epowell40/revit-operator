@@ -1077,13 +1077,13 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_manage_work_plan", "Retain the complete multi-part task checklist before model edits. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Complete each item only after all its operations have independent native verification; cite distinct operation IDs. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart.",
+server.tool("operator_manage_work_plan", "Retain the complete multi-part task checklist before model edits. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity reviews. Complete inspections using fresh complete /revit/get-connectors operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart.",
   {
     action: z.enum(["declare", "complete", "status"]),
     start: z.number().int().min(0).max(128).optional(),
     operationStart: z.number().int().min(0).max(100000).optional(),
     assumptionStart: z.number().int().min(0).max(32).optional(),
-    items: z.array(z.object({ itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/), description: z.string().min(1).max(800), sourceBasis: z.string().min(1).max(800) }).strict()).min(1).max(128).optional(),
+    items: z.array(z.object({ itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/), description: z.string().min(1).max(800), sourceBasis: z.string().min(1).max(800), kind: z.enum(["edit", "inspection"]).optional(), dependsOn: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/)).min(1).max(128).optional() }).strict()).min(1).max(128).optional(),
     assumptions: z.array(z.string().min(1).max(800)).max(16).optional(),
     itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/).optional(),
     operationIds: z.array(z.string().min(1).max(240)).min(1).max(128).optional()
@@ -1100,7 +1100,7 @@ server.tool("operator_manage_work_plan", "Retain the complete multi-part task ch
         ...(args.start !== undefined ? { start: args.start } : {}),
         ...(args.operationStart !== undefined ? { operation_start: args.operationStart } : {}),
         ...(args.assumptionStart !== undefined ? { assumption_start: args.assumptionStart } : {}),
-        ...(args.items ? { declaration: { items: args.items.map(item => ({ item_id: item.itemId, description: item.description, source_basis: item.sourceBasis })), assumptions: args.assumptions ?? [] } } : {}),
+        ...(args.items ? { declaration: { items: args.items.map(item => ({ item_id: item.itemId, description: item.description, source_basis: item.sourceBasis, ...(item.kind ? { kind: item.kind } : {}), ...(item.dependsOn ? { depends_on: item.dependsOn } : {}) })), assumptions: args.assumptions ?? [] } } : {}),
         ...(args.itemId ? { item_id: args.itemId, operation_ids: args.operationIds } : {})
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };

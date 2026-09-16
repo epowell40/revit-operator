@@ -45,6 +45,9 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "complete", itemId: "room_a_supply", operationIds: ["native-op-a"] }, _meta })).isError, true);
   assert.deepEqual(requests[1].body.operation_ids, ["native-op-a"]);
   assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "status", start: 8, operationStart: 16, assumptionStart: 2 }, _meta })).isError, true);
+  const qc={itemId:"room_qc",kind:"inspection",dependsOn:["room_a_supply","room_b_supply"],description:"Inspect completed branches",sourceBasis:"Drawing connectivity"};
+  assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"declare",items:[qc]},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.declaration.items[0],{item_id:qc.itemId,kind:qc.kind,depends_on:qc.dependsOn,description:qc.description,source_basis:qc.sourceBasis});
   assert.deepEqual(requests[2].body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id,
     generation: 1, action: "status", start: 8, operation_start: 16, assumption_start: 2 });
 });

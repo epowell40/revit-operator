@@ -1,3 +1,4 @@
+import { drawingWorkGuidance } from "./drawing_work_guidance.js";
 import { AssignmentJournalV2 } from "../domain/assignment-kernel/index.js";
 import { projectWorkPlan } from "../assignments/work_plan_projection.js";
 import type { GoalRecord } from "./service.js";
@@ -25,7 +26,8 @@ export function formatAssignmentKernelV2GoalContext(goal: GoalRecord): string | 
     `generation: ${snapshot.current_binding.generation}`,
     `assignment_version: ${snapshot.assignment_version}`,
     `requested_effect: ${snapshot.spec.requested_effect}`,
-    `durable_work_plan: ${JSON.stringify(projectWorkPlan(snapshot.work_plan) ?? (snapshot.spec.work_plan_required ? "Declare before editing using operator_manage_work_plan." : null))}`,
+    `durable_work_plan: ${JSON.stringify(projectWorkPlan(snapshot.work_plan, undefined, 0, snapshot) ?? (snapshot.spec.work_plan_required ? "Declare before editing using operator_manage_work_plan." : null))}`,
+    drawingWorkGuidance(snapshot.spec.source_user_request, snapshot.spec.work_plan_required === true),
     `source_user_request: ${snapshot.spec.source_user_request}`,
     `outcome: ${snapshot.outcome}`,
     `quiescent: ${snapshot.quiescent}`,

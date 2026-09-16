@@ -1,3 +1,4 @@
+import { drawingWorkGuidance } from "../src/goals/drawing_work_guidance.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { projectWorkPlan, boundedWorkPlanPage } from "../src/assignments/work_plan_projection.js";
@@ -31,4 +32,10 @@ test("large multilingual drawing scope remains fully pageable without overflowin
   }
   assert.deepEqual(assumptions, plan.assumptions);
   assert.deepEqual(boundedWorkPlanPage([], 0, 1000), { items: [], start: 0, total: 0, next_start: null });
+});
+
+test("broad drawing guidance establishes source-detail and batch-verification strategy without burdening simple questions",()=>{
+ const text=drawingWorkGuidance("Reconstruct all HVAC from the PDF",true);
+ assert.match(text,/closer attachment crops/);assert.match(text,/Register source positions/);assert.match(text,/get-parameters.*get-connectors/);assert.match(text,/open ends/i);
+ assert.equal(drawingWorkGuidance("Can you see the model?",false),"");assert.equal(drawingWorkGuidance("Audit every room name",true),"");
 });

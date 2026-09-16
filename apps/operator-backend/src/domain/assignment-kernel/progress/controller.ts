@@ -1,5 +1,5 @@
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
-import { workPlanPendingV2 } from "../work_plan.js";
+import { inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
@@ -114,8 +114,8 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     criterion_ids: snapshot.spec.criteria.filter(c => c.required).map(c => c.criterion_id),
     work_unit_ids: ["work-primary", "work-discovery", "work-evidence"], required_fact_ids: [], current_observation_ids: [],
     reason: snapshot.work_plan
-      ? "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
-        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds. One item cannot complete the entire request."
+      ? "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot,item)).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
+        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds; inspection items need fresh native inspection reads of all dependent edit targets after the latest edit. Declare inspections with kind=inspection and dependsOn naming edit items. Inspection coverage does not certify engineering correctness. One item cannot complete the entire request."
       : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Decompose the full requested area into independently verifiable room/system/branch items, with source basis and explicit assumptions. Include all required work; declare at least two items. Planning cannot authorize extra work or establish native completion."
   });
   if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {

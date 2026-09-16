@@ -698,6 +698,9 @@ namespace RevitBridge.Common.Tests
             var handler = File.ReadAllText(Path.Combine(root, "RevitBridge.Logic", "Handlers", "MEP", "GetConnectorsHandler.cs"));
             Assert.Contains("onlyOpenPhysicalConnectors", handler, StringComparison.Ordinal);
             Assert.Contains("openPhysicalConnectorCount", handler, StringComparison.Ordinal);
+            Assert.Contains("c.IsConnectedTo(r)", handler, StringComparison.Ordinal);
+            Assert.Contains("r.ConnectorType != ConnectorType.Logical", handler, StringComparison.Ordinal);
+            Assert.Contains("connectorIdBasis = hasReferenceConnectorId", handler, StringComparison.Ordinal);
             Assert.Contains("totalScannedConnectorCount", handler, StringComparison.Ordinal);
             Assert.Contains("failedElementCount", handler, StringComparison.Ordinal);
             Assert.Contains("connectorScanTruncatedElementCount", handler, StringComparison.Ordinal);

@@ -285,8 +285,10 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && subject.persistent_effect === "applied"
       && subject.settlement_state === "settled",
     "operation_verification_subject_invalid", "Verification must bind to one settled applied operation.");
-    kernelAssertV2(Boolean(operation.target.target_id)
-      && operationMatchesTargetIdentityV2(subject, [operation.target.target_id!])
+    const verificationTargets = [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    kernelAssertV2(verificationTargets.length > 0
+      && verificationTargets.every(target => operationMatchesTargetIdentityV2(subject, [target]))
       && operation.target.document_fingerprint === subject.target.document_fingerprint,
     "operation_verification_target_mismatch", "Verification must inspect the exact applied target in the same document.");
   } else {
@@ -928,7 +930,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(event.actor === "operator-work-plan", "work_plan_authority_invalid", "Work plans use the trusted assignment boundary.");
         snapshot = { ...snapshot, work_plan: event.event_type === "work_plan_declared"
           ? declareWorkPlanV2(snapshot, event.declaration, event.occurred_at)
-          : completeWorkPlanItemV2(snapshot, event.item_id, event.operation_ids, event.occurred_at) };
+          : completeWorkPlanItemV2(snapshot, event.item_id, event.operation_ids, event.occurred_at, event.inspection) };
         break;
       case "review_requested":
         for (const workUnitId of event.work_unit_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.work_unit_states, workUnitId), "review_work_unit_unknown", "Review cites an unknown work unit.");

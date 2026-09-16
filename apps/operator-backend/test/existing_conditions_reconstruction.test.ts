@@ -1732,3 +1732,22 @@ test("mixed-discipline coverage gives route-only HVAC credit through exact plan 
   assert.equal(mechanical?.route_trace_recall, 1);
   assert.equal(mechanical?.passed, true);
 });
+
+
+test("HVAC-only grading never spends electrical open ports as missing HVAC allowance",()=>{
+  const visible={items:[{id:1,category:"Mechanical Equipment",familyName:"HRU",typeName:"HRU",location:{x:0,y:0,z:10}}]};
+  const connectors:any={status:"Ok",results:[{id:1,ok:true,connectors:[
+    {domain:"DomainHvac",physicalConnectedTo:[{ownerId:2}]},
+    {domain:"DomainElectrical",physicalConnectedTo:[]}
+  ]}]};
+  const normalize=(domains?:string[])=>normalizeExistingConditionsSnapshot(visible,connectors,{selected_element_ids:[1],...(domains?{connector_domains:domains}:{})});
+  assert.equal(normalize().open_connector_count,1);
+  assert.equal(normalize(["DomainHvac"]).open_connector_count,0);
+  connectors.results[0].connectors[0].physicalConnectedTo=[];
+  assert.equal(normalize(["DomainHvac"]).open_connector_count,1);
+  connectors.results[0].connectors.pop();
+  assert.equal(normalize(["DomainHvac"]).open_connector_count,1,"Removing electrical ports cannot hide a missing HVAC connection");
+  delete connectors.results[0].connectors[0].domain;
+  assert.equal(normalize(["DomainHvac"]).native_readback,false,"Unknown domains cannot establish scoped native truth");
+  assert.throws(()=>normalize([]),/connector_domain_scope_invalid/);
+});

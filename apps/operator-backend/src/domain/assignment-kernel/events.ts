@@ -61,7 +61,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
   | { event_type: "result_delivered"; delivery: AssignmentResultDeliveryV2 }
   | { event_type: "work_plan_declared"; declaration: import("./work_plan.js").WorkPlanDeclarationV2 }
-  | { event_type: "work_plan_item_completed"; item_id: string; operation_ids: readonly string[] }
+  | { event_type: "work_plan_item_completed"; item_id: string; operation_ids: readonly string[]; inspection?: import("./work_plan.js").WorkPlanInspectionV2 }
   | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string }
   | { event_type: "review_resolved"; review_id: string; decision: string }
   | { event_type: "reconciliation_recorded"; operation_id: OperationIdV2; resolved_effect: "none" | "applied"; observation_ids: readonly ObservationIdV2[] }

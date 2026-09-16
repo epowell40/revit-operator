@@ -1,3 +1,4 @@
+import { polylineReadbackMatchesV2 } from "./polyline_readback_v2.js";
 import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
 import { connectedDuctReadbackMatchesV2 } from "./connected_duct_readback_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
@@ -91,7 +92,17 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
       const bytes = readAuthoritativeEvidence(ref, { ...snapshot.current_binding, attempt_id: prior.operation_id });
       const parameters = JSON.parse(bytes.toString("utf8"));
       if (payloadDigestV2(parameters).digest !== observation.raw_payload_hash) continue;
-      return openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload);
+      if (openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload)) return true;
+      for (const applyObservationId of subject.observation_ids) {
+        const applyObservation = snapshot.observations[applyObservationId];
+        if (!applyObservation || applyObservation.operation_id !== subject.operation_id || applyObservation.authority !== "native-host"
+            || applyObservation.raw_payload_hash !== applied.raw_payload_hash || !sameAssignmentBindingV2(applyObservation.binding, snapshot.current_binding)) continue;
+        const applyRef = readEvidenceRef(applyObservation.raw_payload_ref.replace(/^evidence:/, ""));
+        if (applyRef.byte_count > 2_000_000) continue;
+        const nativeApply = JSON.parse(readAuthoritativeEvidence(applyRef, { ...snapshot.current_binding, attempt_id: subject.operation_id }).toString("utf8"));
+        if (payloadDigestV2(nativeApply).digest !== applyObservation.raw_payload_hash) continue;
+        if (polylineReadbackMatchesV2(subject.input, nativeApply, parameters, payload)) return true;
+      }
     } catch { /* Missing or corrupt retained evidence cannot verify a route. */ }
   }
   return false;

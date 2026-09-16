@@ -1,3 +1,5 @@
+import { assignmentWorkAllowanceV2 } from "./assignment_work_allowance_v2.js";
+import { retainWorkPlanInspectionV2 } from "./work_plan_inspection.js";
 import { randomUUID } from "node:crypto";
 import { boundedWorkPlanPage, projectWorkPlan } from "./work_plan_projection.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
@@ -18,12 +20,17 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
     appendCurrentAssignmentKernelEventV2({ goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding, event_id: `work-plan:${randomUUID()}`, actor: "operator-work-plan",
       body: input.action === "declare" ? { event_type: "work_plan_declared", declaration: input.declaration! }
-        : { event_type: "work_plan_item_completed", item_id: input.item_id!, operation_ids: input.operation_ids! } });
+        : { event_type: "work_plan_item_completed", item_id: input.item_id!, operation_ids: input.operation_ids!,
+          ...(snapshot.work_plan?.items.find(item => item.item_id === input.item_id)?.kind === "inspection"
+            ? { inspection: retainWorkPlanInspectionV2(snapshot, input.operation_ids!) } : {}) } });
     snapshot = deriveAndSettleAssignmentKernelV2(input.binding, "Declared multi-part task scope updated.");
   } else if (input.action !== "status") throw new Error("work_plan_action_invalid");
   return { ok: true, outcome: snapshot.outcome, work_plan_required: snapshot.spec.work_plan_required === true,
-    work_plan: projectWorkPlan(snapshot.work_plan, input.start, input.assumption_start),
+    work_allowance: { ...assignmentWorkAllowanceV2(snapshot), used_provider_calls: Object.keys(snapshot.provider_calls).length },
+    work_plan: projectWorkPlan(snapshot.work_plan, input.start, input.assumption_start, snapshot),
     interpretation_notice: "Scope descriptions and source basis are assistant interpretations. Item completion binds distinct independently verified operations; it is not independent certification of drawing coverage.",
+    available_inspection_operations: boundedWorkPlanPage(Object.values(snapshot.operations).filter(op => op.requested_effect === "read" && op.result?.authority === "native-host" && op.result.status === "succeeded" && op.request_identity?.path === "/revit/get-connectors")
+      .reverse().map(op => ({ operation_id: op.operation_id, path: op.request_identity?.path, opened_at: op.opened_at })), input.operation_start ?? 0, 1500),
     available_verified_operations: boundedWorkPlanPage(Object.values(snapshot.operations).filter(op => op.requested_effect === "apply"
       && op.persistent_effect === "applied" && appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id))
       .reverse().map(op => ({ operation_id: op.operation_id, path: op.request_identity?.path, opened_at: op.opened_at,

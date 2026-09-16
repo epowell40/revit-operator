@@ -343,9 +343,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                         }
                         doc.Regenerate();
 
-                        if (kind == "conduit" && p.verify && internalConnectionFailures > 0)
+                        if ((kind == "conduit" || kind == "duct") && p.verify && internalConnectionFailures > 0)
                         {
-                            throw new InvalidOperationException($"Conduit route verification failed because {internalConnectionFailures} internal segment connection(s) could not be created.");
+                            throw new InvalidOperationException($"{kind} route verification failed because {internalConnectionFailures} internal segment connection(s) could not be created.");
                         }
                     }
 

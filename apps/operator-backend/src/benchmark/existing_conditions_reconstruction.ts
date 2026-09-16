@@ -256,6 +256,8 @@ export type ExistingConditionsScore = {
 export type ExistingConditionsSnapshotNormalizationOptions = {
   selected_element_ids: number[];
   require_connector_readback?: boolean;
+  /** Evaluator-owned discipline scope; omitted retains the mixed-domain behavior. */
+  connector_domains?: readonly string[];
 };
 
 export const DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY: ExistingConditionsScoringPolicy = {
@@ -521,6 +523,14 @@ export function normalizeExistingConditionsSnapshot(
   connectorsPayload: unknown,
   options: ExistingConditionsSnapshotNormalizationOptions
 ): ExistingConditionsSnapshot {
+  if (options.connector_domains !== undefined && (!Array.isArray(options.connector_domains)
+      || options.connector_domains.length < 1 || options.connector_domains.length > 8
+      || new Set(options.connector_domains).size !== options.connector_domains.length
+      || options.connector_domains.some(domain => typeof domain !== "string" || !/^Domain[A-Za-z]+$/.test(domain)))) {
+    throw new Error("connector_domain_scope_invalid");
+  }
+  const connectorDomains = options.connector_domains ? new Set(options.connector_domains) : null;
+  let domainEvidenceComplete = true;
   const selectedIds = new Set(options.selected_element_ids.filter((id) => Number.isInteger(id) && id > 0));
   const visible = asObject(visibleElementsPayload);
   const normalizedRows = objectRows(visible.items ?? visible.elements)
@@ -539,6 +549,10 @@ export function normalizeExistingConditionsSnapshot(
     if (!ownerKey) continue;
     seenConnectorIds.add(Math.trunc(id));
     for (const connector of objectRows(row.connectors)) {
+      if (connectorDomains) {
+        if (typeof connector.domain !== "string" || !/^Domain[A-Za-z]+$/.test(connector.domain)) domainEvidenceComplete = false;
+        if (!connectorDomains.has(String(connector.domain))) continue;
+      }
       const explicitPhysical = connector.physicalConnectedTo ?? connector.physical_connected_to;
       const refs = explicitPhysical !== undefined
         ? objectRows(explicitPhysical)
@@ -573,7 +587,7 @@ export function normalizeExistingConditionsSnapshot(
       }
     }
   }
-  const nativeReadback = selectedIds.size > 0 &&
+  const nativeReadback = domainEvidenceComplete && selectedIds.size > 0 &&
     normalizedRows.length === selectedIds.size &&
     (options.require_connector_readback === false || seenConnectorIds.size === selectedIds.size);
   return {

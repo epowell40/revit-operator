@@ -133,7 +133,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var physicalRefsOut = new List<object>();
                         if (p.includeAllRefs || p.onlyOpenPhysicalConnectors)
                         {
-                            var seen = new HashSet<long>();
+                            var seen = new HashSet<string>();
                             try
                             {
                                 ConnectorSet? refs = null;
@@ -148,18 +148,31 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             if (o == null) continue;
                                             if (o.Id == null) continue;
                                             if (RevitBridge.Common.ElementIdCompat.GetValue(o.Id) == RevitBridge.Common.ElementIdCompat.GetValue(e.Id)) continue;
-                                            if (!seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(o.Id))) continue;
+                                            var hasReferenceConnectorId = MepSystemUtil.TryGetNativeConnectorId(r, out var referenceConnectorId);
+                                            var referenceKey = ElementIdCompat.GetValue(o.Id) + ":" + (hasReferenceConnectorId ? referenceConnectorId.ToString() : "unknown");
+                                            if (!seen.Add(referenceKey)) continue;
                                             var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
                                             var isMepSystem = o is MEPSystem;
+                                            bool? nativeConnected = null;
+                                            try { nativeConnected = c.IsConnectedTo(r); } catch { }
+                                            var referenceType = TryGetConnectorPropertyValue(r, "ConnectorType");
+                                            var isPhysical = !isMepSystem && nativeConnected == true
+                                                && c.ConnectorType != ConnectorType.Logical && r.ConnectorType != ConnectorType.Logical;
                                             var reference = new
                                             {
                                                 ownerId = RevitBridge.Common.ElementIdCompat.GetValue(o.Id),
                                                 ownerCategory,
                                                 isMepSystem,
-                                                isPhysicalElement = !isMepSystem
+                                                isPhysicalElement = isPhysical,
+                                                connectorId = hasReferenceConnectorId ? (long?)referenceConnectorId : null,
+                                                connectorIdBasis = hasReferenceConnectorId ? "revit_native_connector_id" : "unavailable",
+                                                connectorType = referenceType,
+                                                domain = TryGetConnectorPropertyValue(r, "Domain"),
+                                                origin = TryGetConnectorOrigin(r),
+                                                isConnectedTo = nativeConnected
                                             };
                                             refsOut.Add(reference);
-                                            if (!isMepSystem) physicalRefsOut.Add(reference);
+                                            if (isPhysical) physicalRefsOut.Add(reference);
                                         }
                                         catch
                                         {

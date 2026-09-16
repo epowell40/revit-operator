@@ -138,7 +138,10 @@
     "existing_conditions_reconstruction.test.ts",
     "route_connectivity.test.ts",
     "family_placement_postcondition_v2.test.ts",
-    "work_plan_projection.test.ts"
+    "work_plan_projection.test.ts",
+    "assignment_work_allowance_v2.test.ts",
+    "work_plan_inspection.test.ts",
+    "polyline_duct_postcondition_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2168,6 +2171,42 @@
       "coverage": [
         "backend:evidence_projection.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c43-call-budget-stops-after-two-verified-placements",
+      "coverage": [
+        "backend:assignment_work_allowance_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-inspection-items-cannot-close-without-fabricating-edits",
+      "coverage": [
+        "backend:work_plan_inspection.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "multi-owner-branch-readback-rejected-by-single-target-admission",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "hvac-connectivity-grade-spends-electrical-open-port-allowance",
+      "coverage": [
+        "backend:existing_conditions_reconstruction.test.ts",
+        "backend:route_connectivity.test.ts"
+      ]
+    },
+    {
+      "id": "physical-connection-proof-lacks-native-referenced-port-identity",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "dotnet:OperatorNativeTransportTests"
       ]
     }
   ],

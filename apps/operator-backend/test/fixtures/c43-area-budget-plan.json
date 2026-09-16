@@ -1,0 +1,653 @@
+{
+  "purpose": "Retained C43 whole-area call-limit failure, with deidentified assignment binding and native apply/verification evidence relationships. No geometry or oracle is supplied to the product agent.",
+  "current_binding": {
+    "assignment_id": "c43-area",
+    "session_id": "c43-session",
+    "run_id": "c43-run",
+    "generation": 1,
+    "document_fingerprint": "c43-disposable-document"
+  },
+  "spec": {
+    "requested_effect": "apply",
+    "work_plan_required": true
+  },
+  "work_plan": {
+    "schema": "revit-operator.assignment-work-plan/v2",
+    "items": [
+      {
+        "item_id": "u403-hru-devices",
+        "description": "Place the Unit 403 HRU and bathroom ceiling device(s), matching the record-plan location and loaded comparable families/types.",
+        "source_basis": "M104 page 1, Unit 403 enlarged region: HRU403 in bathroom/service core with a nearby 6-inch ceiling device connection.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u403-upper-branches",
+        "description": "Rebuild Unit 403 upper/core HVAC branches from HRU403, including the two 4-inch branches and the labeled 8-inch run with visible elbows/fittings.",
+        "source_basis": "M104 page 1, Unit 403 enlarged region: two 4-inch branches north of HRU403 and an 8-inch branch around the core.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u403-lower-perimeter",
+        "description": "Rebuild Unit 403 lower/perimeter duct loop and its labeled 8-inch and 4-inch branches, including exterior wall stubs.",
+        "source_basis": "M104 page 1, Unit 403 enlarged region: south/perimeter loop and exterior penetrations/stubs with 8-inch and 4-inch labels.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u403-connectivity-qc",
+        "description": "Verify physical connectivity, sizes, fittings and visual routing for every Unit 403 branch; exclude plumbing-link water-heater vent piping.",
+        "source_basis": "User request plus M104 note identifying water-heater vent duct as plumbing scope.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u407-hru-devices",
+        "description": "Place the Unit 407 HRU and bathroom ceiling device(s), matching the record-plan location and loaded comparable families/types.",
+        "source_basis": "M104 page 1, Unit 407 enlarged region: HRU407 in bathroom/service core with a nearby 6-inch ceiling device connection.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u407-upper-branches",
+        "description": "Rebuild Unit 407 upper/core HVAC branches from HRU407, including two 4-inch branches, labeled 8-inch branches and visible offsets/fittings.",
+        "source_basis": "M104 page 1, Unit 407 enlarged region: two north 4-inch branches and 8-inch core branches.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u407-lower-perimeter",
+        "description": "Rebuild Unit 407 lower/perimeter duct distribution, including the long 8-inch run, 4-inch side branch and exterior wall stubs.",
+        "source_basis": "M104 page 1, Unit 407 enlarged region: long southern 8-inch run, west/east 4-inch branches and exterior stubs.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      },
+      {
+        "item_id": "u407-connectivity-qc",
+        "description": "Verify physical connectivity, sizes, fittings and visual routing for every Unit 407 branch; exclude linked plumbing.",
+        "source_basis": "User request and M104 scope note.",
+        "declared_at": "2026-09-16T14:18:36.980Z",
+        "operation_ids": []
+      }
+    ],
+    "assumptions": [
+      "Do not assign or invent airflow values; leave them unchanged/blank unless inherited from a verified comparable loaded family instance.",
+      "Use nearby comparable L4 HVAC instances to determine unshown elevations and appropriate loaded family/type selections.",
+      "Where no reliable elevation precedent exists, use one stated coordination elevation consistently and report it as an assumption.",
+      "Treat unlabeled round duct segments as matching the connected labeled segment unless a transition is visibly shown.",
+      "Exclude halftone water-heater vent piping and all linked plumbing from edits."
+    ]
+  },
+  "operations": {
+    "opv2_e50c4ee349c03b93af13a04b2588401cb25c2aab5e32904eca4aaf9b3a7474ae": {
+      "operation_id": "opv2_e50c4ee349c03b93af13a04b2588401cb25c2aab5e32904eca4aaf9b3a7474ae",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "apply",
+      "purpose": "work",
+      "persistent_effect": "applied",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:22:45.083Z",
+      "request_identity": {
+        "capability_id": "revit_call_tool",
+        "method": "POST",
+        "path": "/revit/create-family-instance",
+        "request_signature": "0530d1a4db10bf46c30fa460422c1e803c366419de4aafee4840d1de1c89ad21"
+      },
+      "verification_operation_ids": [
+        "opv2_f185f446b81d7feb3b9782b6e3b828aff3e0ac1e41f13b36641f04a228c9b27e"
+      ],
+      "observation_ids": [
+        "obsv2_be4ea9baa1162827a9c22400ff4628cd40c577cc40e5a008b011563e2aeb174d"
+      ],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "native_transaction_state": "committed",
+        "affected_target_identities": [
+          "element_id:101014",
+          "element_id:1321945",
+          "element_id:1411040",
+          "element_id:1542933",
+          "element_id:378358",
+          "element_id:669230"
+        ],
+        "completed_at": "2026-09-16T14:22:48.348Z"
+      },
+      "target": {
+        "document_fingerprint": "c43-disposable-document"
+      }
+    },
+    "opv2_23b32eca498c57f0119f0d27438486f196ccd699f12b25b7b3f4cac80cf15ab2": {
+      "operation_id": "opv2_23b32eca498c57f0119f0d27438486f196ccd699f12b25b7b3f4cac80cf15ab2",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "read",
+      "purpose": "verification",
+      "persistent_effect": "none",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:22:57.266Z",
+      "request_identity": {
+        "capability_id": "revit_get_element_summary",
+        "request_signature": "2b2e5dcb86642f0bbaf1c641ee8e6f12aa7982380e3a01044193540e267e3d9c"
+      },
+      "verification_operation_ids": [],
+      "verification_of_operation_id": "opv2_e50c4ee349c03b93af13a04b2588401cb25c2aab5e32904eca4aaf9b3a7474ae",
+      "observation_ids": [],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "operator-mcp-transport",
+        "status": "completed_without_native_dispatch",
+        "native_transaction_state": "not_applicable",
+        "completed_at": "2026-09-16T14:23:30.705Z"
+      },
+      "target": {
+        "target_id": "id:1542933",
+        "document_fingerprint": "c43-disposable-document",
+        "semantic_scope": {
+          "target_0": "id:1542933",
+          "target_1": "ids:1542933"
+        }
+      }
+    },
+    "opv2_f185f446b81d7feb3b9782b6e3b828aff3e0ac1e41f13b36641f04a228c9b27e": {
+      "operation_id": "opv2_f185f446b81d7feb3b9782b6e3b828aff3e0ac1e41f13b36641f04a228c9b27e",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "read",
+      "purpose": "verification",
+      "persistent_effect": "none",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:22:58.611Z",
+      "request_identity": {
+        "capability_id": "native:POST:/revit/get-element-summary",
+        "method": "POST",
+        "path": "/revit/get-element-summary",
+        "request_signature": "cca2d48c43aed2902e29e8a035ad3e53a62f086fa58f44f5b7cdb96f7fdaf5ba"
+      },
+      "verification_operation_ids": [],
+      "verification_of_operation_id": "opv2_e50c4ee349c03b93af13a04b2588401cb25c2aab5e32904eca4aaf9b3a7474ae",
+      "observation_ids": [
+        "obsv2_16cc8d2b15515d62aa3b3988ea0788e76b7f5e4d5d705e69bae32dfd5321ef73"
+      ],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "native_transaction_state": "not_applicable",
+        "affected_target_identities": [],
+        "completed_at": "2026-09-16T14:23:29.137Z"
+      },
+      "target": {
+        "target_id": "id:1542933",
+        "document_fingerprint": "c43-disposable-document",
+        "semantic_scope": {
+          "target_0": "id:1542933",
+          "target_1": "ids:1542933"
+        }
+      }
+    },
+    "opv2_8b1d793e29374c5ecd50f57cc6ffacad35ee38e88f65cfbdf585c911c1e7d497": {
+      "operation_id": "opv2_8b1d793e29374c5ecd50f57cc6ffacad35ee38e88f65cfbdf585c911c1e7d497",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "apply",
+      "purpose": "work",
+      "persistent_effect": "applied",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:23:38.218Z",
+      "request_identity": {
+        "capability_id": "revit_call_tool",
+        "method": "POST",
+        "path": "/revit/create-family-instance",
+        "request_signature": "27a38cbaafbd64800d2c1e11ba5d7c142b39ba18789560a84e0ffc733fc4f7dc"
+      },
+      "verification_operation_ids": [
+        "opv2_66a2249c53e3fb9345658f40893a657cba09adb1f9da5945df9a30380db1e38f"
+      ],
+      "observation_ids": [
+        "obsv2_b399ac742de3deed3ac04fdfa268a155cd2efbcae175d92fc35ef38d10371f57"
+      ],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "native_transaction_state": "committed",
+        "affected_target_identities": [
+          "element_id:101014",
+          "element_id:1321945",
+          "element_id:1411042",
+          "element_id:1542934",
+          "element_id:378358",
+          "element_id:669230"
+        ],
+        "completed_at": "2026-09-16T14:23:54.024Z"
+      },
+      "target": {
+        "document_fingerprint": "c43-disposable-document"
+      }
+    },
+    "opv2_a396fc0f2ed6bd48a20018cf565b0426689e3eb1a2fa2ebd8dc110849fb7cc43": {
+      "operation_id": "opv2_a396fc0f2ed6bd48a20018cf565b0426689e3eb1a2fa2ebd8dc110849fb7cc43",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "read",
+      "purpose": "verification",
+      "persistent_effect": "none",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:24:00.297Z",
+      "request_identity": {
+        "capability_id": "revit_get_element_summary",
+        "request_signature": "c257e8502aa46ecbadce082f778d55b66d0820cb7d29b744357ea8df1bfa3e4d"
+      },
+      "verification_operation_ids": [],
+      "verification_of_operation_id": "opv2_8b1d793e29374c5ecd50f57cc6ffacad35ee38e88f65cfbdf585c911c1e7d497",
+      "observation_ids": [],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "operator-mcp-transport",
+        "status": "completed_without_native_dispatch",
+        "native_transaction_state": "not_applicable",
+        "completed_at": "2026-09-16T14:24:08.572Z"
+      },
+      "target": {
+        "target_id": "id:1542934",
+        "document_fingerprint": "c43-disposable-document",
+        "semantic_scope": {
+          "target_0": "id:1542934",
+          "target_1": "ids:1542934"
+        }
+      }
+    },
+    "opv2_66a2249c53e3fb9345658f40893a657cba09adb1f9da5945df9a30380db1e38f": {
+      "operation_id": "opv2_66a2249c53e3fb9345658f40893a657cba09adb1f9da5945df9a30380db1e38f",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "requested_effect": "read",
+      "purpose": "verification",
+      "persistent_effect": "none",
+      "settlement_state": "settled",
+      "opened_at": "2026-09-16T14:24:01.662Z",
+      "request_identity": {
+        "capability_id": "native:POST:/revit/get-element-summary",
+        "method": "POST",
+        "path": "/revit/get-element-summary",
+        "request_signature": "6a3fc68615d44f9d118c6b9e716c222cfbf094854fd74353d7e1fb12cbabafee"
+      },
+      "verification_operation_ids": [],
+      "verification_of_operation_id": "opv2_8b1d793e29374c5ecd50f57cc6ffacad35ee38e88f65cfbdf585c911c1e7d497",
+      "observation_ids": [
+        "obsv2_573e919b7d976d0d0e254477dddf426d33b451cc8a379aea566e1618f628015d"
+      ],
+      "result": {
+        "binding": {
+          "assignment_id": "c43-area",
+          "session_id": "c43-session",
+          "run_id": "c43-run",
+          "generation": 1,
+          "document_fingerprint": "c43-disposable-document"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "native_transaction_state": "not_applicable",
+        "affected_target_identities": [],
+        "completed_at": "2026-09-16T14:24:07.128Z"
+      },
+      "target": {
+        "target_id": "id:1542934",
+        "document_fingerprint": "c43-disposable-document",
+        "semantic_scope": {
+          "target_0": "id:1542934",
+          "target_1": "ids:1542934"
+        }
+      }
+    }
+  },
+  "observations": {
+    "obsv2_be4ea9baa1162827a9c22400ff4628cd40c577cc40e5a008b011563e2aeb174d": {
+      "operation_id": "opv2_e50c4ee349c03b93af13a04b2588401cb25c2aab5e32904eca4aaf9b3a7474ae",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "authority": "native-host",
+      "facts": [
+        {
+          "fact_id": "control.result_available",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.domain_succeeded",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.native_call_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.payload_hash",
+          "fact_class": "control",
+          "value": "840deefe77a5e2f77c09420bedce9d62e6606d12104aa6417dbfd3ded446c0c2"
+        },
+        {
+          "fact_id": "task.result_available",
+          "fact_class": "domain",
+          "value": true
+        },
+        {
+          "fact_id": "control.field.status",
+          "fact_class": "control",
+          "value": "Placed"
+        },
+        {
+          "fact_id": "control.field.dry_run",
+          "fact_class": "control",
+          "value": false
+        },
+        {
+          "fact_id": "control.field.count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.id",
+          "fact_class": "control",
+          "value": 1542933
+        },
+        {
+          "fact_id": "control.field.name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.family",
+          "fact_class": "control",
+          "value": "HeatRecoveryUnit"
+        },
+        {
+          "fact_id": "control.field.family_name",
+          "fact_class": "control",
+          "value": "HeatRecoveryUnit"
+        },
+        {
+          "fact_id": "control.field.symbol",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.symbol_name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.type_name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.level_name",
+          "fact_class": "control",
+          "value": "L4"
+        },
+        {
+          "fact_id": "control.field.target_view",
+          "fact_class": "control",
+          "value": null
+        },
+        {
+          "fact_id": "control.field.success",
+          "fact_class": "control",
+          "value": true
+        }
+      ]
+    },
+    "obsv2_16cc8d2b15515d62aa3b3988ea0788e76b7f5e4d5d705e69bae32dfd5321ef73": {
+      "operation_id": "opv2_f185f446b81d7feb3b9782b6e3b828aff3e0ac1e41f13b36641f04a228c9b27e",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "authority": "native-host",
+      "facts": [
+        {
+          "fact_id": "control.result_available",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.domain_succeeded",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.native_call_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.payload_hash",
+          "fact_class": "control",
+          "value": "c8ad82566fe8e7b6f63e010b734fa1983f3da7445ea12cfba682d114bec3e589"
+        },
+        {
+          "fact_id": "verification.postcondition_satisfied",
+          "fact_class": "verification",
+          "value": true
+        }
+      ]
+    },
+    "obsv2_b399ac742de3deed3ac04fdfa268a155cd2efbcae175d92fc35ef38d10371f57": {
+      "operation_id": "opv2_8b1d793e29374c5ecd50f57cc6ffacad35ee38e88f65cfbdf585c911c1e7d497",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "authority": "native-host",
+      "facts": [
+        {
+          "fact_id": "control.result_available",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.domain_succeeded",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.native_call_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.payload_hash",
+          "fact_class": "control",
+          "value": "5276882affe49b26101aa00f7a7a63dd0ea33283897df5006fe765b8509bce67"
+        },
+        {
+          "fact_id": "task.result_available",
+          "fact_class": "domain",
+          "value": true
+        },
+        {
+          "fact_id": "control.field.status",
+          "fact_class": "control",
+          "value": "Placed"
+        },
+        {
+          "fact_id": "control.field.dry_run",
+          "fact_class": "control",
+          "value": false
+        },
+        {
+          "fact_id": "control.field.count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.id",
+          "fact_class": "control",
+          "value": 1542934
+        },
+        {
+          "fact_id": "control.field.name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.family",
+          "fact_class": "control",
+          "value": "HeatRecoveryUnit"
+        },
+        {
+          "fact_id": "control.field.family_name",
+          "fact_class": "control",
+          "value": "HeatRecoveryUnit"
+        },
+        {
+          "fact_id": "control.field.symbol",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.symbol_name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.type_name",
+          "fact_class": "control",
+          "value": "Heat Recovery Unit (HRU)"
+        },
+        {
+          "fact_id": "control.field.level_name",
+          "fact_class": "control",
+          "value": "L4"
+        },
+        {
+          "fact_id": "control.field.target_view",
+          "fact_class": "control",
+          "value": null
+        },
+        {
+          "fact_id": "control.field.success",
+          "fact_class": "control",
+          "value": true
+        }
+      ]
+    },
+    "obsv2_573e919b7d976d0d0e254477dddf426d33b451cc8a379aea566e1618f628015d": {
+      "operation_id": "opv2_66a2249c53e3fb9345658f40893a657cba09adb1f9da5945df9a30380db1e38f",
+      "binding": {
+        "assignment_id": "c43-area",
+        "session_id": "c43-session",
+        "run_id": "c43-run",
+        "generation": 1,
+        "document_fingerprint": "c43-disposable-document"
+      },
+      "authority": "native-host",
+      "facts": [
+        {
+          "fact_id": "control.result_available",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.domain_succeeded",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.native_call_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.payload_hash",
+          "fact_class": "control",
+          "value": "0969cd4e081e859985398c2a8b6c62752d589f110fd70c921234f700a4fcaed1"
+        },
+        {
+          "fact_id": "verification.postcondition_satisfied",
+          "fact_class": "verification",
+          "value": true
+        }
+      ]
+    }
+  },
+  "observed_provider_call_count": 32
+}
