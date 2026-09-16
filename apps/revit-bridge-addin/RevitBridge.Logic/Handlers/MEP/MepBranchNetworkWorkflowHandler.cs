@@ -170,6 +170,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "applyRequested",
                     reason = "One or more accessory families could not be loaded before route geometry was created.",
                     atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     accessoryFamilyLoadResults,
                     warnings = warnings.Distinct().ToList()
                 });
@@ -192,6 +193,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = p.apply ? "applyRequested" : "dryRun",
                     reason = "Main route dry-run failed.",
                     atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -209,6 +211,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "applyRequested",
                     reason = "One or more accessory/damper graph nodes are not safe to apply.",
                     atomicRollbackSucceeded = rolledBack,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -243,6 +246,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "apply",
                     reason = "Main route apply failed.",
                     atomicRollbackSucceeded = rolledBack,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -272,6 +276,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         workflowMode = "apply",
                         reason = $"Branch {i} references mainSegmentIndex {branch.mainSegmentIndex}, but only {mainElementIds.Count} main segment(s) were created.",
                         atomicRollbackSucceeded = rolledBack,
+                        transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                         networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                         accessoryFamilyLoadResults,
                         mainDryRun,
@@ -296,6 +301,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         workflowMode = "apply",
                         reason = $"Branch {i} failed. The complete network transaction group was rolled back.",
                         atomicRollbackSucceeded = rolledBack,
+                        transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                         networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                         accessoryFamilyLoadResults,
                         mainDryRun,
@@ -338,6 +344,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "apply",
                     reason = "Accessory apply failed. The complete network transaction group was rolled back.",
                     atomicRollbackSucceeded = rolledBack,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -380,6 +387,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "apply",
                     reason = "Post-apply semantic verification failed. The complete network transaction group was rolled back.",
                     atomicRollbackSucceeded = rolledBack,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     semanticVerification,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
@@ -418,6 +426,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = "apply",
                     reason = "Revit could not commit the complete network transaction group.",
                     atomicRollbackSucceeded = rolledBack,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     semanticVerification,
                     warnings = warnings.Distinct().ToList()
                 });
@@ -468,6 +477,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     reason = "The network workflow encountered an unexpected error.",
                     error = ex.Message,
                     atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
                     warnings = warnings.Distinct().ToList()
                 });
             }
@@ -893,7 +903,7 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         private static bool RollBackTransactionGroup(TransactionGroup? group)
         {
-            if (group == null) return true;
+            if (group == null) return false; // No observed rollback; never manufacture authority.
             var rolledBack = false;
             try { rolledBack = group.RollBack() == TransactionStatus.RolledBack; } catch { }
             try { group.Dispose(); } catch { }

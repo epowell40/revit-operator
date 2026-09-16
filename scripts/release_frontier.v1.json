@@ -2062,6 +2062,43 @@
         "mcp:lib/genericToolPreflight.test.ts",
         "dotnet:OperatorWorkbookSupplementalTablesTests"
       ]
+    },
+    {
+      "id": "canonical-verified-reconstruction-overwritten-by-legacy-action-list-guard",
+      "coverage": [
+        "backend:codex_partial_verification.test.ts",
+        "backend:brain.test.ts"
+      ]
+    },
+    {
+      "id": "composite-model-observation-alias-rejected-as-unknown-tool",
+      "coverage": [
+        "backend:teammate_loop_runtime.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "atomic-network-rollback-loses-outer-transaction-authority-and-blocks-correction",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:teammate_native_rollback_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "backend-test-fixture-restores-live-workspace-and-pollutes-user-history",
+      "coverage": [
+        "backend:test_runner_isolation.test.ts",
+        "backend:brain.test.ts"
+      ]
+    },
+    {
+      "id": "saved-clarification-resume-hides-stale-browser-recovery-and-loses-task-continuity",
+      "coverage": [
+        "desktop:test/browser_asset_freshness.test.js",
+        "desktop:test/assignment_workspace_v2.test.js",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

@@ -508,6 +508,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "operator_submit_noop_completion") return call("completion_claim");
   if (tool === "operator_submit_read_completion") return call("completion_claim");
   if (tool === "web_fetch_evidence") return call("read");
+  // Exact composite aliases have native read contracts; their names are not HTTP routes.
+  if (tool === "revit_observe_model" || tool === "revit_read_move_targets_certified") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
   }

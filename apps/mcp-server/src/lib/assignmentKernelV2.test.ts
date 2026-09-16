@@ -6,6 +6,32 @@ import fs from "node:fs";
 import os from "node:os";
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
 
+test('atomic branch-network rollback is a failed operation; child commits and rollback prose cannot fabricate persistence', async () => {
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c40-atomic-network-rollback.json',import.meta.url),'utf8'));
+  for(const variant of ['confirmed','missing','failed'] as const){
+    const route='/revit/mep-branch-network-workflow';
+    const body=fixture.input.body;
+    const confirmed=variant==='confirmed';
+    const decorated=await runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST',route,{
+        ...fixture.payload,status:variant==='failed'?'BlockedRollbackFailed':'BlockedRolledBack',atomicRollbackSucceeded:variant!=='failed',
+        ...(variant==='missing'?{}:{transaction:{status:confirmed?'rolled_back':'atomic_group_rollback_unconfirmed',committed:confirmed?false:null,affected_element_ids:[]}}),
+        canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',
+          effect_state:confirmed?'none':'unknown',effect_authority:confirmed?'native_rollback':'native_host',
+          effect_reason:confirmed?'verified_native_rollback':'native_handler_returned_without_authoritative_settlement',request_dispatched:true,affected_target_identities:[]}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool') as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,'failed_after_dispatch');
+    assert.equal(result.persistent_effect,confirmed?'none':'unknown');
+    assert.equal(result.native_transaction_state,confirmed?'rolled_back':'unknown');
+    assert.deepEqual(result.affected_target_identities,[]);
+  }
+});
+
 test("single-duct and route previews preserve rollback authority and typed proof at the MCP boundary", async () => {
   for (const legacy of [false, true]) for (const variant of ["valid", "wrong_size", "missing_receipt"] as const) {
     const f = ductPreviewFixture(legacy);

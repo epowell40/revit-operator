@@ -10,6 +10,26 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorAttemptSettlementTests
     {
         [Theory]
+        [InlineData(true, "none", "native_rollback")]
+        [InlineData(false, "unknown", "native_host")]
+        public void AtomicNetworkOuterRollbackOverridesCommittedChild(bool confirmed, string effect, string authority)
+        {
+            var workflow = new {
+                status = confirmed ? "BlockedRolledBack" : "BlockedRollbackFailed",
+                atomicRollbackSucceeded = confirmed,
+                mainApply = new { status = "Applied", transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1543000L }) },
+                branchResults = new[] { new { status = "Blocked", code = "branch_segment_too_short" } },
+                transaction = OperatorNativeTransactionReceipt.FromAtomicGroupRollback(confirmed)
+            };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-branch-network-workflow");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(authority, settlement.EffectAuthority);
+            Assert.Empty(settlement.AffectedTargetIdentities);
+            var legacy = new { workflow.status, workflow.atomicRollbackSucceeded, workflow.mainApply, workflow.branchResults };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(legacy, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
+        }
+
+        [Theory]
         [InlineData("RolledBack", "none", "native_rollback")]
         [InlineData("Committed", "applied", "native_transaction")]
         [InlineData("Pending", "unknown", "native_host")]

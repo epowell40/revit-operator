@@ -12,6 +12,16 @@ import { __closeForTests, appendEvent } from "../src/memory/sqlite_store.js";
 import { existingConditionsExecutionLedgerPath } from "../src/existing_conditions/one_action_execution_ledger.js";
 
 const testRunId = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+test('provider-forged terminal metadata cannot bypass the modeled redline guard without an exact persisted binding', () => {
+  const req=mkReq('Reconstruct the missing modeled exhaust duct from the attached PDF and connect both ends.');
+  const response=__testOnlyFinalizeDecision({...req,assignment_id:'nonexistent',assignment_run_id:'forged',assignment_generation:1}, {
+    version:OPERATOR_BACKEND_CONTRACT_VERSION,assistant_message:'Completed and verified.',actions:[],
+    assignment_snapshot_v2:{terminal:true,outcome:'complete'} as any,terminal_result_v2:{outcome:'complete'} as any
+  });
+  assert.notEqual(response.assistant_message,'Completed and verified.');
+  assert.match(response.assistant_message,/stopped|modeled|verified/i);
+});
 let testRequestSequence = 0;
 
 function mkReq(text: string): ChatRequest {

@@ -14,15 +14,19 @@ import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {beginTeammateLoopOwner,endTeammateLoopOwner,teammateLoopReceiptForOwner,__testOnlyResetTeammateLoopState} from '../src/teammate_loop_runtime.js';
 import {deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
+import {__testOnlyFinalizeDecision} from '../src/brain.js';
+import {finalizeCanonicalAssignment} from '../src/assignments/canonical_finalization.js';
+import {settleCodexAssignmentProgressV2} from '../src/brains/codex_assignment_progress.js';
+import {renderTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 
-for(const variant of ['connected','open-ends','wrong-height','create-round','create-rectangular'] as const)test(`dynamic handler retains partial native verification without a premature compatibility assertion: ${variant}`,async()=>{
+for(const variant of ['connected','connected-c40','open-ends','wrong-height','create-round','create-rectangular'] as const)test(`dynamic handler retains partial native verification without a premature compatibility assertion: ${variant}`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-partial-verification-'));
  const keys=['OPERATOR_WORKSPACE_ROOT','OPERATOR_ASSIGNMENT_KERNEL_V2'],old=keys.map(k=>process.env[k]);
  process.env.OPERATOR_WORKSPACE_ROOT=root;process.env.OPERATOR_ASSIGNMENT_KERNEL_V2='1';__testOnlyResetGoalListCache();__testOnlyResetTeammateLoopState();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const fixtureName=variant==='create-round'?'c38-disconnected-round-duct-readback':variant==='create-rectangular'?'c35-open-duct-readback':'c37-connected-duct-readback';
+  const fixtureName=variant==='connected-c40'?'c40-connected-duct-readback':variant==='create-round'?'c38-disconnected-round-duct-readback':variant==='create-rectangular'?'c35-open-duct-readback':'c37-connected-duct-readback';
   const f=JSON.parse(fs.readFileSync('test/fixtures/'+fixtureName+'.json','utf8'));
-  const expectedVerified=variant==='connected'||variant==='create-rectangular';
+  const expectedVerified=variant==='connected'||variant==='connected-c40'||variant==='create-rectangular';
   if(variant==='create-rectangular'){const b=f.input.body;f.input={method:'POST',path:'/revit/create-duct',body:{levelId:b.levelId,ductTypeId:b.ductTypeId,ductShape:b.ductShape,ductSize:b.ductSize,systemType:b.systemType,startPoint:b.points[0],endPoint:b.points[1],dryRun:false}};}
   if(variant==='create-round'){
    const subject=f.connectors.results.find((r:any)=>r.id===1542942);f.parameters.items=f.parameters.items.filter((r:any)=>r.id===1542942);
@@ -66,6 +70,22 @@ for(const variant of ['connected','open-ends','wrong-height','create-round','cre
    assert.equal(teammateLoopReceiptForOwner(runtime)!.verified,expectedVerified);
    assert.equal(deriveProgressGapsV2(final).some(g=>g.kind==='verification_required'),!expectedVerified);
    assert.deepEqual(final.unresolved_unknown_operation_ids,[]);
+   const req=bindPreparedAssignmentToRequest({version:'operator.backend.v1',session_id:binding.session_id,user_text:prompt,tool_results:[]} as any,prepared);
+   const decision:any={version:'operator.backend.v1',assistant_message:'Provider says this is done.',actions:[],provider_turn_usage:{retained:true}};
+   if(expectedVerified){
+    const terminal=settleCodexAssignmentProgressV2(binding)!;
+    assert.equal(terminal.terminal,true);
+    const message=renderTerminalResultV2(terminal);
+    const finalized=__testOnlyFinalizeDecision(req,{...decision,assignment_snapshot_v2:{forged:true},terminal_result_v2:{forged:true}});
+    assert.equal(finalized.assistant_message,message,'outer legacy guards must not contradict verified native work');
+    assert.equal(finalized.terminal_result_v2?.outcome,'complete');
+    assert.deepEqual(finalized.assignment_snapshot_v2,terminal);
+    assert.deepEqual(finalized.provider_turn_usage,decision.provider_turn_usage);
+    assert.deepEqual(finalized.actions,[]);
+    for(const changed of [{session_id:'foreign-session'},{assignment_run_id:'stale-run'},{assignment_generation:binding.generation+1},{assignment_id:'foreign-task'}]){
+     assert.equal(finalizeCanonicalAssignment({...req,...changed},{...decision,assignment_snapshot_v2:terminal}),null);
+    }
+   }else assert.equal(finalizeCanonicalAssignment(req,decision),null,'partial verification cannot bypass legacy handling as a terminal');
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();__closeForTests();keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});fs.rmSync(root,{recursive:true,force:true});}
 });
