@@ -1,11 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {nativeViewImageContent,viewFrameImageContent} from "./viewFrameImage.js";
+import {createHash} from "node:crypto";
+import {captureImageContent,nativeViewImageContent,viewFrameImageContent} from "./viewFrameImage.js";
 import {normalizeSpatialObservationV1} from "./spatialObservationV1.js";
 
 const frame=()=>({frameId:"native-frame",viewId:42,path:"artifacts/captures/native-frame.jpg",widthPx:2000,heightPx:1112,
   mapping:{mode:"2d_affine",topLeftXyz:[-10,10,0],topRightXyz:[10,10,0],bottomLeftXyz:[-10,0,0]},
   canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:"/revit/export-view-frame"}});
+
+test("legacy view and one-shot screen captures deliver existing pixels without another capture",()=>{
+  for (const route of ["/revit/export-image","/revit/capture-screenshare"] as const) {
+    const native = {viewId:1420963,viewName:"Cover Sheet",path:"artifacts/captures/Revit - Sheet - M000 - Cover Sheet.jpg",
+      timestamp:"2026-09-17T00:50:04.811Z",captured_at:"2026-09-17T00:50:04.811Z",ok:true,kind:"screenshare",sha256:createHash("sha256").update("pixels").digest("hex"),bytes:6,
+      canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:route}};
+    let reads=0;
+    const reader=(file:string,limit:number)=>{reads++;assert.equal(file,native.path);assert.equal(limit,5*1024*1024);return {ok:true as const,data:"cGl4ZWxz",mimeType:"image/jpeg" as const};};
+    for (const delivered of [captureImageContent(native,route,reader),nativeViewImageContent("POST",route,native,reader)!]) {
+      assert.equal(delivered.content.length,2);
+      assert.deepEqual(delivered.content[1],{type:"image",data:"cGl4ZWxz",mimeType:"image/jpeg"});
+      const metadata=JSON.parse((delivered.content[0] as {text:string}).text);
+      assert.equal(metadata.image_delivery.available,true);assert.deepEqual(metadata.canonical_attempt_settlement,native.canonical_attempt_settlement);
+      assert.equal(metadata.mapping,undefined);
+    }
+    assert.equal(reads,2);
+    if(route === "/revit/capture-screenshare") {
+      const changed=captureImageContent({...native,sha256:"a".repeat(64)},route,reader);
+      assert.equal(changed.content.length,1);assert.match((changed.content[0] as {text:string}).text,/no longer match/);
+    }
+    for (const bad of [{...native,ok:false},{...native,status:"Blocked"},{...native,canonical_attempt_settlement:undefined},
+      {...native,canonical_attempt_settlement:{...native.canonical_attempt_settlement,path:"/revit/find-elements"}},
+      {...native,canonical_attempt_settlement:{...native.canonical_attempt_settlement,effect_state:"unknown"}},
+      {...native,timestamp:"invalid",captured_at:"invalid"}]) {
+      const denied=captureImageContent(bad,route,()=>{throw Error("No file access from a failed capture");});
+      assert.equal(denied.content.length,1);assert.equal(JSON.parse((denied.content[0] as {text:string}).text).image_delivery.available,false);
+    }
+    const missing=captureImageContent(native,route,()=>({ok:false,reason:"image resolves outside the workspace or native capture root"}));
+    assert.equal(missing.content.length,1);assert.match((missing.content[0] as {text:string}).text,/not delivered/);
+  }
+});
 
 test("identical exported pixels retain the same displayed-outline coordinates through frame and inventory consumers",()=>{
   const mapping={mode:"2d_affine",modelFrameSource:"view_outline",frameBasis:"exported_raster",

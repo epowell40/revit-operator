@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+
+test("one-shot capture pixels pass from the actual MCP presenter to Codex in the same result",async()=>{
+  const {captureImageContent}=await import(pathToFileURL(path.resolve("../mcp-server/dist/viewFrameImage.js")).href);
+  for(const route of ["/revit/export-image","/revit/capture-screenshare"]){
+    const raw={viewId:42,viewName:"Mechanical Plan",timestamp:"2026-09-17T00:00:00Z",captured_at:"2026-09-17T00:00:00Z",
+      path:"artifacts/captures/one.jpg",ok:true,kind:"screenshare",sha256:createHash("sha256").update("pixels").digest("hex"),bytes:6,
+      canonical_attempt_settlement:{method:"POST",path:route,effect_state:"none",requested_effect:"read"}};
+    let reads=0;
+    const result=captureImageContent(raw,route,()=>{reads++;return {ok:true,data:"cGl4ZWxz",mimeType:"image/jpeg"};});
+    const delivered=adaptMcpToolCallResultToDynamicResponse(result,{tool:route.endsWith("export-image")?"revit_capture_view":"revit_call_tool",
+      projections:[{schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_capture",media_type:"image/jpeg",byte_count:10} as any],omitted:0});
+    assert.equal(reads,1);
+    assert.deepEqual(delivered.contentItems.filter(x=>x.type==="inputImage"),[{type:"inputImage",imageUrl:"data:image/jpeg;base64,cGl4ZWxz"}]);
+    const missing=captureImageContent({...raw,ok:false},route,()=>{throw Error("No read from failed capture");});
+    assert.equal(adaptMcpToolCallResultToDynamicResponse(missing).contentItems.some(x=>x.type==="inputImage"),false);
+  }
+});
 
 test("post-change route pixels survive bounded evidence projection and are distinct from JSON evidence",()=>{
   const raw={status:"AppliedVisualVerificationReady",image_delivery:{available:true},visualVerification:{capturePath:"artifacts/captures/selection/route.jpg"}};

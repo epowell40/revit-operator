@@ -1,4 +1,5 @@
 import { readSpatialObservationImage, type SpatialObservationImageReader } from "./spatialObservationV1.js";
+import { createHash } from "node:crypto";
 
 const IMAGE_LIMIT_BYTES = 5 * 1024 * 1024;
 type ImageContent = {type:"image";data:string;mimeType:string};
@@ -9,8 +10,37 @@ type NativeImageRoute = "/revit/export-view-frame" | "/revit/export-visible-elem
 export function nativeViewImageContent(method: string, path: string, data: unknown,
   readImage: SpatialObservationImageReader = readSpatialObservationImage): {content:Array<TextContent|ImageContent>} | null {
   if (method === "POST" && path === "/revit/mep-route-workflow") return workflowImageContent(data, readImage);
+  if (method === "POST" && (path === "/revit/export-image" || path === "/revit/capture-screenshare")) return captureImageContent(data, path, readImage);
   if (method !== "POST" || (path !== "/revit/export-view-frame" && path !== "/revit/export-visible-elements")) return null;
   return nativeImageContent(data, path, readImage);
+}
+
+/** A one-shot window capture or native view export already contains the needed
+ * pixels. Deliver them in this result rather than making the agent find a file
+ * reader or capture the same scene again. Neither image has pixel/model mapping. */
+export function captureImageContent(data: unknown, route: "/revit/export-image" | "/revit/capture-screenshare",
+  readImage: SpatialObservationImageReader = readSpatialObservationImage): {content:Array<TextContent|ImageContent>} {
+  const root = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, any> : {};
+  const settlement = root.canonical_attempt_settlement;
+  const successful = root.ok !== false && root.error == null
+    && (root.status == null || /^(?:ok|success|succeeded|complete|completed|captured)$/i.test(String(root.status)));
+  const identity = route === "/revit/export-image"
+    ? Number.isSafeInteger(root.viewId) && root.viewId > 0 && typeof root.timestamp === "string" && Number.isFinite(Date.parse(root.timestamp))
+    : root.ok === true && root.kind === "screenshare" && typeof root.captured_at === "string" && Number.isFinite(Date.parse(root.captured_at))
+      && typeof root.sha256 === "string" && /^[a-f0-9]{64}$/i.test(root.sha256) && Number.isSafeInteger(root.bytes) && root.bytes > 0;
+  const valid = successful && identity && typeof root.path === "string" && root.path.trim().length > 0
+    && settlement?.effect_state === "none" && settlement.requested_effect === "read"
+    && settlement.method === "POST" && settlement.path === route;
+  let pixels = valid ? readImage(root.path, IMAGE_LIMIT_BYTES) : {ok:false as const,reason:"Native capture contract or read settlement is missing or unsuccessful"};
+  if (pixels.ok && route === "/revit/capture-screenshare") {
+    const bytes=Buffer.from(pixels.data,"base64");
+    if (bytes.length !== root.bytes || createHash("sha256").update(bytes).digest("hex") !== root.sha256.toLowerCase())
+      pixels={ok:false,reason:"Capture pixels no longer match the native screenshot receipt"};
+  }
+  const imageDelivery = pixels.ok ? {available:true} : {available:false,reason:pixels.reason,
+    instruction:"The capture pixels were not delivered. Do not claim to have viewed this image. Use a supported capture or attachment reader."};
+  return {content:[{type:"text",text:JSON.stringify({...root,image_delivery:imageDelivery},null,2)},
+    ...(pixels.ok ? [{type:"image" as const,data:pixels.data,mimeType:pixels.mimeType}] : [])]};
 }
 
 function workflowImageContent(data:unknown,readImage:SpatialObservationImageReader):{content:Array<TextContent|ImageContent>} {

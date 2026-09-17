@@ -388,7 +388,7 @@ export function getRecentMessages(sessionId: string, limit: number, requireAvail
 }
 
 export type ConversationDisplay = {
-  source?: "ui_context";
+  source?: "ui_context" | "assistant_intake";
   message_id: string;
   text: string;
   attachments?: Array<{ id: string; name: string }>;
@@ -409,7 +409,7 @@ export function getUiContextConversationHistory(sessionId: string): Conversation
   if (!fs.existsSync(dbFilePath())) return [];
   const d = openDb();
   if (!d) throw new Error("Conversation history is unavailable.");
-  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source')='ui_context' ORDER BY id DESC LIMIT 40").all(sessionId);
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source') IN ('ui_context','assistant_intake') ORDER BY id DESC LIMIT 40").all(sessionId);
   return conversationRows(rows, 8);
 }
 

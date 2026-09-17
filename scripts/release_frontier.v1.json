@@ -144,7 +144,10 @@
     "polyline_duct_postcondition_v2.test.ts",
     "pdf_polygon_landmarks.test.ts",
     "pdf_polygon_landmarks_pdfjs.test.ts",
-    "tool_result_compaction.test.ts"
+    "tool_result_compaction.test.ts",
+    "conversation_intake.test.ts",
+    "conversation_intake_http.test.ts",
+    "conversation_intake_sidecar.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2318,6 +2321,21 @@
         "dotnet:FindElementsGeometryContractTests",
         "mcp:lib/findElementsAgentProjection.test.ts",
         "backend:tool_result_compaction.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-identity-question-routed-through-full-task",
+      "coverage": [
+        "backend:conversation_intake.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts"
+      ]
+    },
+    {
+      "id": "capture-c49-native-export-bytes-not-delivered-to-agent",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
       ]
     }
   ],

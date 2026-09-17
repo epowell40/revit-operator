@@ -20,7 +20,7 @@ import {
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
-import { nativeViewImageContent, viewFrameImageContent } from "./viewFrameImage.js";
+import { captureImageContent, nativeViewImageContent, viewFrameImageContent } from "./viewFrameImage.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -2038,14 +2038,14 @@ server.tool("revit_close_doc", "Close an open family doc session.",
   }
 );
 
-server.tool("revit_capture_view", "Export view as image.", 
+server.tool("revit_capture_view", "Export a Revit view or sheet and return its image directly. Use mapped view-frame export only when pixel-to-model coordinates are needed.",
   { viewId: z.number().optional(), imageSize: z.number().default(2048) }, 
   async ({ viewId, imageSize }) => {
     try {
       const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize }, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return captureImageContent(data, "/revit/export-image");
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 

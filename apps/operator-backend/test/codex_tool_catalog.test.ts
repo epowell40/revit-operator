@@ -29,7 +29,7 @@ test("actual runtime advertisement includes the host PDF reader eagerly even whe
 
 test("actual dynamic namespace advertises the same image display recipe on native image tools without changing other tool contracts", async () => {
   const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: process.cwd(), codexHome: process.cwd(), spawnEnv: {} });
-  const tools = ["revit_call_tool", "revit_export_view_frame", "revit_get_context"].map(name => ({ name, description: "Original contract", inputSchema: { type: "object", additionalProperties: false, properties: {} } }));
+  const tools = ["revit_call_tool", "revit_export_view_frame", "revit_capture_view", "revit_get_context"].map(name => ({ name, description: "Original contract", inputSchema: { type: "object", additionalProperties: false, properties: {} } }));
   (runtime as any).ensureStarted = async () => {};
   (runtime as any).client = { listTools: async () => ({ tools }) };
   const catalog = await runtime.getDynamicToolNamespace();
