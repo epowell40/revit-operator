@@ -460,7 +460,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:ccc553bcbf823574935c41f04ddb80d3bd924e2a08f12c68214c8445a9134499"
+      "sha256": "sha256:ad388099dcdc71ff866458e7bc0af280a2467721fb3737776bf4222a47e1f43b"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -1300,7 +1300,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/conversation_work_profile.ts",
-      "sha256": "sha256:4469f520495e2fe0ab726e351b27d71278669f2222fba6e86ab808eb08813370"
+      "sha256": "sha256:df7c635f635c15f8cd32da88f6af9ee9fb0f955e9153e10d3196656df791dc15"
     },
     {
       "path": "apps/operator-backend/src/brains/direct_revit_bridge.ts",
@@ -2117,7 +2117,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:eb420f8fca72f26f2b2ea07e0ee5e7784892a5e5c4df4375626351309a242798"
+      "sha256": "sha256:b3c623fc237d564fa9718e02d71ec99df398fe50de2300e334fa887d1142782f"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/execution_failure.ts",
@@ -2145,7 +2145,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/result_delivery.ts",
-      "sha256": "sha256:766f5548665d47eea1ccf931e423569f6161addbcf35e91c3603d6142f97a24e"
+      "sha256": "sha256:7c5d741f159476b845fa6be8107b2de2bcfbfb78966960512a71d79467e2534f"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/semantic_admissibility.ts",
@@ -3653,11 +3653,11 @@
     },
     {
       "path": "apps/operator-backend/test/conversation_work_profile.test.ts",
-      "sha256": "sha256:abe494b576e32ac7785bbd13e525463c0565154ec2f9d33e2011d5d52ed4fc4c"
+      "sha256": "sha256:f25c0538a1c57943665092f75b6c273bc0033c4a99993c59764a16fa85d544b1"
     },
     {
       "path": "apps/operator-backend/test/conversational_result_delivery.test.ts",
-      "sha256": "sha256:7857bc6bf45cc337ae43a73387652b9645086bc3151ad2dab4eafc566d2df4a4"
+      "sha256": "sha256:622c7287e75dddf973461efca3af4ddc286ffc006c18f8820150f7ddde504d0c"
     },
     {
       "path": "apps/operator-backend/test/deferred_proposal_admission.test.ts",
@@ -4154,6 +4154,10 @@
     {
       "path": "apps/operator-backend/test/fixtures/commented_pdf.ts",
       "sha256": "sha256:e51400c48a467690ba9f9028e11d8e6b74ffaa0615d4a983e1ffbe9199478287"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/conversation_delivery.v1.json",
+      "sha256": "sha256:3dc94ca28cde8c49f029ab90cdafddee8266a0fb9fddb4129517bdf6dcc19a7a"
     },
     {
       "path": "apps/operator-backend/test/fixtures/conversation_intake_cases.json",
@@ -4729,7 +4733,7 @@
     },
     {
       "path": "apps/operator-backend/test/simple_assistant_presentation.test.ts",
-      "sha256": "sha256:54778ff8d000eab2f6c350695840285a5e91664af2f8b56b25c00e89a36887c2"
+      "sha256": "sha256:f5e95cc0e0a56895e497d4a174d859ecb9130b1aa217bc60b325f6f5a0e5af0f"
     },
     {
       "path": "apps/operator-backend/test/simple_context_question.test.ts",
@@ -7373,7 +7377,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:a8b03b7fca8d3b8f81bb27908f8644ab1be06ba204fb92c62adb140e3b420ca3",
+  "inputs_hash": "sha256:3809fdd11908ef8b338d36b26f45c95b935ec1a903dde0b3a1eb51585b1f314c",
   "result": {
     "passed": true,
     "checks": [

@@ -119,9 +119,9 @@ export function renderAssistantBlocks(container, text, renderInline = appendInli
     if (heading) {
       flush(); list = null;
       if (heading[1].length <= 2) target = container;
-      if (heading[1] === "##" && heading[2].trim() === "Model evidence") {
+      if (heading[1] === "##" && ["Model evidence", "Details"].includes(heading[2].trim())) {
         const details = document.createElement("details"), summary = document.createElement("summary");
-        details.className = "modelEvidence"; summary.textContent = "Model evidence";
+        details.className = "modelEvidence"; summary.textContent = heading[2].trim();
         details.appendChild(summary); container.appendChild(details); target = details;
       } else block(`h${Math.min(heading[1].length + 1, 6)}`, heading[2]);
       continue;

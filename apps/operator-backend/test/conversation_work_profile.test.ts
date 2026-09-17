@@ -20,6 +20,8 @@ test("semantic inspect receipt lowers bounded-question effort without keyword ro
       await routeConversation(req,{interpret:async()=>({value:inspect})});
       const profile=conversationWorkProfile(req);assert.equal(profile.focused,true);assert.equal(profile.settings.reasoning_effort,"low");
       assert.match(profile.instruction,/exact observed scalar facts/);assert.match(profile.instruction,/verification requirements/);
+      assert.match(profile.instruction,/one short sentence/);assert.match(profile.instruction,/material uncertainty/);
+      assert.match(profile.instruction,/requested length and format/);assert.doesNotMatch(profile.instruction,/controls model/);
       for(const extra of [{session_id:"foreign"},{message_id:"other"},{user_text:text+" Then delete the system."},{tool_results:[{}]},{user_attachments:[{}]}])
         assert.equal(conversationWorkProfile({...req,...extra}).focused,false);
       for(const settings of [{speed_mode:false,agent_reasoning_effort:"medium"},{speed_mode:true,agent_reasoning_effort:"high"}])

@@ -3,11 +3,38 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { renderResultDeliveryV2 } from "../src/domain/assignment-kernel/result_delivery.js";
 
 const root = ["../packages/operator-assistant-ui", "../../packages/operator-assistant-ui"].map(p => path.resolve(p))
   .find(p => fs.existsSync(path.join(p, "conversation_ui.mjs")))!;
 const ui = await import(pathToFileURL(path.join(root, "conversation_ui.mjs")).href);
 const intake = await import(pathToFileURL(path.join(root, "composer_intake.mjs")).href);
+
+test("C55 canonical short delivery reaches the actual UI as one answer plus closed supporting details",()=>{
+  const document:any={createTextNode:(text:string)=>({tag:"text",textContent:text}),createElement:(tag:string)=>({tag,children:[] as any[],ownerDocument:document,textContent:"",
+    appendChild(child:any){this.children.push(child);},replaceChildren(){this.children=[];}})};
+  const flatten=(node:any):any[]=>[node,...(node.children??[]).flatMap(flatten)];
+  const fixtures=JSON.parse(fs.readFileSync("test/fixtures/conversation_delivery.v1.json","utf8"));
+  for(const {id,delivery} of fixtures.cases){
+    const container=document.createElement("div");
+    for(let restore=0;restore<2;restore++){
+      ui.renderAssistantBlocks(container,renderResultDeliveryV2(delivery));
+      assert.equal(container.children.filter((n:any)=>n.tag==="details").length,1,id);
+      const details=container.children.at(-1);assert.equal(details.tag,"details");assert.equal(details.open,undefined);
+      assert.equal(details.children[0].textContent,"Details");
+      const visible=container.children.filter((n:any)=>n.tag!=="details");
+      assert.deepEqual(visible.map((n:any)=>n.tag),[id==="resumed-three-bullet-review"?"ul":"p"]);
+      if(id==="resumed-three-bullet-review")assert.equal(visible[0].children.length,3);
+      const detailText=flatten(details).map(n=>n.textContent??"").join(" ");
+      for(const limitation of delivery.assessment.limitations)assert.ok(detailText.includes(limitation));
+      assert.ok(detailText.includes(delivery.items[0].label));
+    }
+  }
+  const container=document.createElement("div");
+  ui.renderAssistantBlocks(container,"Answer.\n\n## Details\n### Scope and limitations\n<img onerror=run()>\n\n### Model evidence\n- value\n\n## Questions\nWhich phase?");
+  assert.deepEqual(container.children.map((n:any)=>n.tag),["p","details","h3","p"]);
+  assert.equal(flatten(container).some(n=>n.tag==="img"),false);
+});
 
 test("composer intake captures file bytes once and blocks duplicate backend or pending sends without blocking computer steering", () => {
   const state: any = { pendingAttachments: [{ filename: "redline.pdf", data_base64: "bytes" }], streaming: false };

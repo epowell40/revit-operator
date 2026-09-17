@@ -2523,6 +2523,22 @@
         "backend:conversation_intake_http.test.ts",
         "mcp:lib/nativeReadEvidence.test.ts"
       ]
+    },
+    {
+      "id": "conversation-c55-factual-answer-echoes-unrequested-subtype-and-scope-caveats",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "backend:conversation_work_profile.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c55-two-low-findings-expand-requested-three-bullets-into-audit",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "backend:conversation_work_profile.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

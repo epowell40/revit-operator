@@ -1122,11 +1122,11 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
       path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
     })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
     assessment: z.object({
-      overview: z.string().min(1).max(1200),
+      overview: z.string().min(1).max(1200).describe("The complete user-facing answer in the requested length and format. Include every conclusion, material uncertainty and limitation needed to interpret it correctly. Usually one sentence for a simple question; do not add audit boilerplate or repeat supporting facts."),
       findings: z.array(z.object({
         priority: z.enum(["high", "medium", "low"]), title: z.string().min(1).max(160), text: z.string().min(1).max(1200),
         evidence_indices: z.array(z.number().int().min(1).max(32)).min(1).max(8)
-      }).strict()).min(1).max(12).describe("At least one evidence-linked finding is required even when overview already contains the full answer. A low-priority finding's supporting explanation is displayed with the evidence."),
+      }).strict()).min(1).max(12).describe("At least one evidence-linked finding is required even when overview already contains the full answer. When all findings are low priority, supporting explanations and scope notes are collapsed in Details. Medium/high concerns remain expanded. Do not downgrade an actionable concern to shorten the answer."),
       limitations: z.array(z.string().min(1).max(800)).max(8),
       questions: z.array(z.string().min(1).max(600)).max(3)
     }).strict().optional().describe("For read-only audits, reviews, comparisons and gap lists, provide a useful assessment in addition to resultItems. Findings are assistant interpretations supported by 1-based evidence_indices into resultItems; they never establish native proof, engineering certification, criterion truth, authorization or supplied user inputs. State unverified limits and ask only the most useful outside-input questions. Select scalar resultItems or small scalar arrays, not whole reports. This structured delivery becomes the final answer; later free text cannot replace it.")

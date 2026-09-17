@@ -22,7 +22,9 @@ export interface AssignmentResultDeliveryV2 {
   assessment?: AssignmentAssessmentV2;
 }
 
-/** Assistant interpretation of cited values; never evaluator authority. */
+/** Assistant interpretation of cited values; never evaluator authority.
+ * The overview is the self-contained user answer, including material uncertainty.
+ * Low-priority supporting findings and scope notes remain available in Details. */
 export interface AssignmentAssessmentV2 {
   overview: string;
   findings: readonly { priority: "high" | "medium" | "low"; title: string; text: string; evidence_indices: readonly number[] }[];
@@ -124,11 +126,15 @@ export function renderResultDeliveryV2(delivery: AssignmentResultDeliveryV2): st
     const priorities = { high: 0, medium: 1, low: 2 };
     const findings = [...a.findings].sort((left, right) => priorities[left.priority] - priorities[right.priority]);
     const evidence = delivery.items.map((item, i) => `- [${i + 1}] ${item.label}${item.presentation_kind === "diagnostic" ? " (failed run)" : ""}: ${Array.isArray(item.value) ? item.value.join(", ") : String(item.value)}`).join("\n");
-    if (findings.length === 1 && findings[0]!.priority === "low") {
-      const finding = findings[0]!;
-      // A short factual answer needs no audit headings or severity badge.
-      return [a.overview, ...a.limitations, ...a.questions, "## Model evidence",
-        ...(finding.text.trim() === a.overview.trim() ? [] : [finding.text]), evidence].join("\n\n");
+    if (findings.every(finding => finding.priority === "low")) {
+      // Supporting-finding cardinality must not turn a requested short answer
+      // into an audit report. Questions remain actionable above the disclosure.
+      // Material concerns (medium/high) take the expanded path below.
+      return [a.overview, ...a.questions, "## Details",
+        ...findings.filter(finding => finding.text.trim() !== a.overview.trim())
+          .map(finding => `${finding.text} ${finding.evidence_indices.map(index => `[${index}]`).join(" ")}`),
+        ...(a.limitations.length ? ["### Scope and limitations", ...a.limitations] : []),
+        "### Model evidence", evidence].join("\n\n");
     }
     return ["## Assessment", a.overview,
       ...findings.map(finding => `### ${finding.priority[0]!.toUpperCase() + finding.priority.slice(1)} priority: ${finding.title}\n${finding.text} ${finding.evidence_indices.map(index => `[${index}]`).join(" ")}`),

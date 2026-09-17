@@ -1,0 +1,241 @@
+{
+  "schema": "revit-operator.conversation-delivery-regressions/v1",
+  "cases": [
+    {
+      "id": "mechanical-model-answer",
+      "prompt": "Is this the mechanical model?",
+      "delivery": {
+        "assessment": {
+          "overview": "Yes—this is a mechanical/HVAC model. Fresh inspection found mechanical equipment, ductwork, and air terminals; this confirms mechanical content, though it does not by itself prove the file is exclusively mechanical or a specific controls subtype.",
+          "findings": [
+            {
+              "priority": "low",
+              "title": "Mechanical content observed",
+              "text": "The inspected model objects include a heat recovery unit, ducts, and air terminals.",
+              "evidence_indices": [
+                1,
+                2,
+                3,
+                4
+              ]
+            }
+          ],
+          "limitations": [
+            "The bounded presence check confirms mechanical/HVAC content but was not intended as a complete project-wide discipline inventory."
+          ],
+          "questions": []
+        },
+        "items": [
+          {
+            "label": "Observed category",
+            "observation_id": "observation-0",
+            "path": [
+              "items",
+              0,
+              "category"
+            ],
+            "value": "Mechanical Equipment",
+            "evidence_ref": "evidence-0",
+            "payload_hash": "hash-0"
+          },
+          {
+            "label": "Observed equipment",
+            "observation_id": "observation-1",
+            "path": [
+              "items",
+              0,
+              "name"
+            ],
+            "value": "Heat Recovery Unit (HRU)",
+            "evidence_ref": "evidence-1",
+            "payload_hash": "hash-1"
+          },
+          {
+            "label": "Observed duct category",
+            "observation_id": "observation-2",
+            "path": [
+              "items",
+              1,
+              "category"
+            ],
+            "value": "Ducts",
+            "evidence_ref": "evidence-2",
+            "payload_hash": "hash-2"
+          },
+          {
+            "label": "Observed air-terminal category",
+            "observation_id": "observation-3",
+            "path": [
+              "items",
+              14,
+              "category"
+            ],
+            "value": "Air Terminals",
+            "evidence_ref": "evidence-3",
+            "payload_hash": "hash-3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "resumed-three-bullet-review",
+      "prompt": "Focus on the mechanical sheets. Keep the eventual answer to three short bullets, and say clearly what you could not verify. When you resume, put the project and level summary first.",
+      "delivery": {
+        "assessment": {
+          "overview": "- **Project and levels:** This is a multi-block, multilevel HVAC/mechanical documentation model. It contains 11 model levels: Parking; L1 split across Blocks 35, 37, and 43; M1; L2–L5; and roof levels R1 and R2.\n- **Disciplines and coverage:** The 17-sheet set is entirely M-series mechanical, with HVAC floor plans and reflected-ceiling plans from Parking through L5 plus Roof; the model also contains a small number of Coordination support views.\n- **Obvious gaps / not verified:** R1 has no corresponding mechanical floor-plan or ceiling-plan view, while the Roof plan sheet uses R2. No section/detail view types appeared in the complete non-template view inventory, and M002 showed only Heat Recovery Unit and Space schedules. I could not verify design completeness, calculations, specifications, other-discipline deliverables, or whether the R1 omission is intentional without reviewing sheet graphics and project requirements.",
+          "findings": [
+            {
+              "priority": "low",
+              "title": "Mechanical set and level coverage",
+              "text": "The complete inventories show a 17-sheet mechanical set, 68 non-template views, 11 levels, three L1 block plans, and the Roof sheet using R2 rather than R1.",
+              "evidence_indices": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ]
+            },
+            {
+              "priority": "low",
+              "title": "Schedule coverage",
+              "text": "The inspected Notes, Symbols & Schedules sheet contains Heat Recovery Unit and Space schedules; broader schedule completeness was not verified.",
+              "evidence_indices": [
+                9,
+                10
+              ]
+            }
+          ],
+          "limitations": [
+            "This was a read-only metadata and placement review; sheet graphics, model geometry, calculations, specifications, and external project requirements were not checked.",
+            "Absence findings are limited to the complete non-template Revit view inventory and the inspected mechanical sheet placements."
+          ],
+          "questions": []
+        },
+        "items": [
+          {
+            "label": "Mechanical sheet count",
+            "observation_id": "observation-0",
+            "path": [
+              "total"
+            ],
+            "value": 17,
+            "evidence_ref": "evidence-0",
+            "payload_hash": "hash-0"
+          },
+          {
+            "label": "Non-template view count",
+            "observation_id": "observation-1",
+            "path": [
+              "key_counts",
+              "count"
+            ],
+            "value": 68,
+            "evidence_ref": "evidence-1",
+            "value_source": "deterministic_projection",
+            "payload_hash": "hash-1"
+          },
+          {
+            "label": "Model level count",
+            "observation_id": "observation-2",
+            "path": [
+              "key_counts",
+              "inventory.total"
+            ],
+            "value": 11,
+            "evidence_ref": "evidence-2",
+            "value_source": "deterministic_projection",
+            "payload_hash": "hash-2"
+          },
+          {
+            "label": "Unrepresented roof level",
+            "observation_id": "observation-3",
+            "path": [
+              "items",
+              8,
+              "name"
+            ],
+            "value": "R1",
+            "evidence_ref": "evidence-3",
+            "payload_hash": "hash-3"
+          },
+          {
+            "label": "Roof sheet placed plan",
+            "observation_id": "observation-4",
+            "path": [
+              "placedViews",
+              0,
+              "name"
+            ],
+            "value": "R2",
+            "evidence_ref": "evidence-4",
+            "payload_hash": "hash-4"
+          },
+          {
+            "label": "L1 block plan 1",
+            "observation_id": "observation-5",
+            "path": [
+              "placedViews",
+              0,
+              "name"
+            ],
+            "value": "L1 - Block 43",
+            "evidence_ref": "evidence-5",
+            "payload_hash": "hash-5"
+          },
+          {
+            "label": "L1 block plan 2",
+            "observation_id": "observation-6",
+            "path": [
+              "placedViews",
+              1,
+              "name"
+            ],
+            "value": "L1 - Block 35",
+            "evidence_ref": "evidence-6",
+            "payload_hash": "hash-6"
+          },
+          {
+            "label": "L1 block plan 3",
+            "observation_id": "observation-7",
+            "path": [
+              "placedViews",
+              2,
+              "name"
+            ],
+            "value": "L1 - Block 37",
+            "evidence_ref": "evidence-7",
+            "payload_hash": "hash-7"
+          },
+          {
+            "label": "M002 equipment schedule",
+            "observation_id": "observation-8",
+            "path": [
+              "placedSchedules",
+              0,
+              "name"
+            ],
+            "value": "Heat Recovery Unit Summary",
+            "evidence_ref": "evidence-8",
+            "payload_hash": "hash-8"
+          },
+          {
+            "label": "M002 space schedule",
+            "observation_id": "observation-9",
+            "path": [
+              "placedSchedules",
+              1,
+              "name"
+            ],
+            "value": "Space Schedule",
+            "evidence_ref": "evidence-9",
+            "payload_hash": "hash-9"
+          }
+        ]
+      }
+    }
+  ]
+}
