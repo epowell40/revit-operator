@@ -24,4 +24,3 @@ test('fresh Windows OS inspection sees a harmless Node listener and rejects its 
     await assert.rejects(inspector.inspect({port,preferredPid:process.pid}),/Expected exactly one listener/);
   }finally{server.close();inspector.close();}
 });
-

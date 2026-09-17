@@ -713,6 +713,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/assignments" ||
     pathname.startsWith("/api/assignments/") ||
     pathname === "/api/tasks" ||
+    pathname === "/api/task-navigation" ||
     pathname.startsWith("/api/tasks/") ||
     pathname === "/api/teach/skills/register" ||
     pathname === "/api/teach/skills/usage" ||

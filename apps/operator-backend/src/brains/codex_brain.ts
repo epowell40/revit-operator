@@ -56,7 +56,8 @@ import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
-import { getRequestOperatorBackendAuth } from "../request_context.js";
+import { getRequestContext, runWithRequestContext, getRequestOperatorBackendAuth } from "../request_context.js";
+import { assignmentDirections, observeSteeringDelivery } from "../assignments/task_steering.js";
 import type { AssignmentKernelTurnLeaseV2, OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
 import { canonicalAssignmentOutcomeForBinding } from "../assignments/outcome_handoff.js";
 import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v2_factory.js";
@@ -86,6 +87,7 @@ export type StreamCallbacks = {
 };
 
 export { getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
+import { registerActiveProviderTurn } from "../codex/active_turns.js";
 
 const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
@@ -105,7 +107,7 @@ export { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_
 export { assertCertifiedMcpServerStatus };
 
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
-  return `${sessionId.trim()}:${messageId.trim()}`;
+  return JSON.stringify([sessionId.trim(), messageId.trim()]);
 }
 
 function requestActiveCodexTurnInterrupt(active: ActiveCodexTurn): Promise<void> {
@@ -561,6 +563,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       ? [{ type: "text", text: text.trim() ? [formatCodexRequestEnvelope(req), `USER:\n${text}`, formatToolResultsForCodex(req.tool_results)].filter(Boolean).join("\n\n") : formatCertifiedCodexContinuation(req), text_elements: [] }]
       : await buildCodexTurnInput(req, (() => {
             const blocks: string[] = [];
+            if (assignmentKernelV2) {
+              const directions = assignmentDirections(assignmentKernelV2.binding).filter(direction => direction.state !== "rejected");
+              if (directions.length) blocks.push("ADDITIONAL USER DIRECTIONS, in order:\n" + JSON.stringify(directions.map(direction => ({ text: direction.text, delivery: direction.state })))
+                + "\nFollow these saved directions even after resuming. Existing native effects remain evidence; inspect them before repeating work. Reconcile the plan and the requested result against the latest direction. A direction does not change this assignment's document or read/write authority. If it requires a different authority or incompatible scope, stop and explain what needs to change.");
+            }
             if (!certifiedDirect && activeGoalBlock) blocks.push(activeGoalBlock);
             if (projectProfileBlock) blocks.push(projectProfileBlock);
             if (requirementsBlock) blocks.push(requirementsBlock);
@@ -653,6 +660,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let providerReceiptRecorder: ReturnType<typeof createAssignmentKernelV2ModelReceiptRecorder> | null = null;
   let reconcileStartedProviderTurn: (() => void) | null = null;
   const earlyTurnNotifications: CodexNotificationEnvelope[] = [];
+  const turnRequestContext = getRequestContext();
+  let providerControlTurnId = "";
   let liveTurnNotificationHandler: ((notification: CodexNotificationEnvelope) => void) | null = null;
   let notificationSource: CodexAppServer | null = null;
   let unsubscribeTurnNotifications: () => void = () => {};
@@ -661,6 +670,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     unsubscribeTurnNotifications();
     notificationSource = activeClient;
     unsubscribeTurnNotifications = activeClient.onNotification(notification => {
+      if (providerControlTurnId) runWithRequestContext(turnRequestContext ?? {}, () =>
+        observeSteeringDelivery(req.session_id, threadId, providerControlTurnId, notification));
       if (liveTurnNotificationHandler) liveTurnNotificationHandler(notification);
       else earlyTurnNotifications.push(notification);
     });
@@ -812,6 +823,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
+  providerControlTurnId = turnId;
   if (!turnId) {
     endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier);
     assignmentTerminalBarrier = null;
@@ -953,12 +965,24 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const priorActiveTurn = activeCodexTurns.get(activeTurnKey);
   if (priorActiveTurn) void requestActiveCodexTurnInterrupt(priorActiveTurn).catch(() => {});
   activeCodexTurns.set(activeTurnKey, activeTurn);
+  const unregisterProviderControls = registerActiveProviderTurn({
+    sessionId: req.session_id, messageId: req.message_id, threadId, turnId,
+    binding: assignmentKernelV2?.binding ?? null,
+    interrupt: () => requestActiveCodexTurnInterrupt(activeTurn),
+    interruptionRequested: () => activeTurn.interruptRequested,
+    steer: (text, commandId) => {
+      if (activeTurn.interruptRequested) return Promise.reject(new Error("This task is pausing. Resume before sending another direction."));
+      return c.steerTurn({ threadId, expectedTurnId: turnId, clientUserMessageId: commandId,
+        input: [{ type: "text", text, text_elements: [] }] });
+    }
+  });
   const forwardExternalAbort = () => {
     void requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
   };
   if (cb.abortSignal?.aborted) forwardExternalAbort();
   else cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   releaseActiveTurnRegistration = () => {
+    unregisterProviderControls();
     cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
     if (activeCodexTurns.get(activeTurnKey) === activeTurn) {
       activeCodexTurns.delete(activeTurnKey);

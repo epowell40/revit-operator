@@ -124,6 +124,12 @@ export function renderResultDeliveryV2(delivery: AssignmentResultDeliveryV2): st
     const priorities = { high: 0, medium: 1, low: 2 };
     const findings = [...a.findings].sort((left, right) => priorities[left.priority] - priorities[right.priority]);
     const evidence = delivery.items.map((item, i) => `- [${i + 1}] ${item.label}${item.presentation_kind === "diagnostic" ? " (failed run)" : ""}: ${Array.isArray(item.value) ? item.value.join(", ") : String(item.value)}`).join("\n");
+    if (findings.length === 1 && findings[0]!.priority === "low") {
+      const finding = findings[0]!;
+      // A short factual answer needs no audit headings or severity badge.
+      return [a.overview, ...(finding.text.trim() === a.overview.trim() ? [] : [finding.text]),
+        ...a.limitations, ...a.questions, "## Model evidence", evidence].join("\n\n");
+    }
     return ["## Assessment", a.overview,
       ...findings.map(finding => `### ${finding.priority[0]!.toUpperCase() + finding.priority.slice(1)} priority: ${finding.title}\n${finding.text} ${finding.evidence_indices.map(index => `[${index}]`).join(" ")}`),
       ...(a.limitations.length ? ["## Not verified", a.limitations.map(text => `- ${text}`).join("\n")] : []),

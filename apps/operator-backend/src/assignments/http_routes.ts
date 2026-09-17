@@ -1,4 +1,7 @@
 import type http from "node:http";
+import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from "../codex/active_turns.js";
+import { assignmentDirections, steerAssignment } from "./task_steering.js";
+import { listTaskNavigationAsync } from "./task_navigation.js";
 import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { recoverRetainedAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
@@ -30,7 +33,7 @@ import {
   settleAssignmentKernelOperationV2
 } from "./assignment_kernel_v2_execution.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
-import { requestMatchesAssignmentPrincipalId } from "../request_context.js";
+import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
@@ -62,8 +65,49 @@ export async function handleAssignmentHttpRoute(
   url: URL,
   authorizeSession: (sessionId: string) => boolean
 ): Promise<boolean> {
+  if (req.method === "GET" && url.pathname === "/api/task-navigation") {
+    if (!getRequestAssignmentPrincipalId()) { writeJson(res, 403, { error: "Task navigation requires an authenticated principal." }); return true; }
+    if (url.searchParams.get("stream") === "1") {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
+      try {
+        let lastSentAt = 0;
+        const result = await listTaskNavigationAsync(Number(url.searchParams.get("limit") ?? 100), page => {
+          if (res.destroyed) return false;
+          if (Date.now() - lastSentAt < 500) return true;
+          lastSentAt = Date.now();
+          res.write(JSON.stringify(page) + "\n"); return true;
+        });
+        if (!res.destroyed) res.end(JSON.stringify(result) + "\n");
+      } catch { if (!res.destroyed) res.end(JSON.stringify({ error: "Task history is temporarily unavailable." }) + "\n"); }
+      return true;
+    }
+    try { writeJson(res, 200, await listTaskNavigationAsync(Number(url.searchParams.get("limit") ?? 100))); }
+    catch { writeJson(res, 503, { error: "Task history is temporarily unavailable." }); }
+    return true;
+  }
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
   if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "POST" && ["/api/assignments/v2/turn-control", "/api/assignments/v2/steer"].includes(url.pathname)) {
+    try {
+      const body = await readJson(req, 24_000) as JsonMap | null;
+      const binding = v2Binding(body);
+      if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      if (url.pathname.endsWith("/steer")) {
+        const receipt = await steerAssignment({ binding, command_id: body?.command_id as string,
+          text: body?.text as string, expected_turn_id: body?.expected_turn_id as string | null });
+        writeJson(res, 200, { ok: true, receipt });
+      } else {
+        const snapshot = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+        if (snapshot.current_binding.run_id !== binding.run_id || snapshot.current_binding.generation !== binding.generation
+          || snapshot.current_binding.session_id !== binding.session_id) throw new Error("The task binding changed.");
+        const turn = activeProviderTurnForBinding(binding);
+        writeJson(res, 200, { ok: true, active_turn: turn ? { turn_id: turn.turnId, message_id: turn.messageId,
+          interruption_requested: turn.interruptionRequested() } : null, directions: assignmentDirections(binding) });
+      }
+    } catch (error) { writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
+    return true;
+  }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/recover-completions") {
     try {
       const body = await readJson(req, 16_000) as JsonMap | null;
@@ -90,7 +134,14 @@ export async function handleAssignmentHttpRoute(
         expected_command_id: body?.expected_command_id as string | null,
         action: body?.action as "pause" | "resume"
       });
-      writeJson(res, 200, { ok: true, assignment_snapshot_v2: snapshot });
+      // Save the native admission fence first. Interrupting the model cannot
+      // undo or erase any Revit call that has already been dispatched.
+      let provider_interrupt: "not_requested" | "accepted" | "no_active_turn" | "unconfirmed" = "not_requested";
+      if (body?.action === "pause") {
+        try { provider_interrupt = await interruptActiveProviderForBinding(binding) ? "accepted" : "no_active_turn"; }
+        catch { provider_interrupt = "unconfirmed"; }
+      }
+      writeJson(res, 200, { ok: true, assignment_snapshot_v2: getAssignmentKernelSnapshotV2(binding.assignment_id) ?? snapshot, provider_interrupt });
     } catch (error) {
       writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) });
     }

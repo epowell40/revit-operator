@@ -69,12 +69,17 @@ input.on("line", line => {
     const resumeStatus = process.env.CODEX_FIXTURE_RESUME_STATUS_PATH
       ? fs.readFileSync(process.env.CODEX_FIXTURE_RESUME_STATUS_PATH, "utf8").trim()
       : process.env.CODEX_FIXTURE_RESUME_ACTIVE === "1" ? "active" : "idle";
-    respond({ thread: { id: threadId, status: { type: resumeStatus } } });
+    respond({ thread: { id: threadId, status: { type: resumeStatus }, turns: JSON.parse(process.env.CODEX_FIXTURE_RESUME_TURNS || "[]") } });
     return;
   }
   if (message.method === "turn/start") {
     const turnId = `turn-fixture-${state.nextTurn++}`;
     saveState(state);
+    if (process.env.CODEX_FIXTURE_COMPLETE_BEFORE_START_ACK === "1") {
+      notify("turn/completed", { threadId: message.params.threadId, turn: { id: turnId, status: "completed", error: null } });
+      respond({ turn: { id: turnId } });
+      return;
+    }
     respond({ turn: { id: turnId } });
     const shouldWaitForInterrupt = JSON.stringify(message.params?.input ?? []).includes("interrupt-me");
     if (shouldWaitForInterrupt) {
@@ -95,6 +100,11 @@ input.on("line", line => {
     const timer = pendingToolTimers.get(turnId);
     if (timer) clearTimeout(timer);
     pendingToolTimers.delete(turnId);
+    if (process.env.CODEX_FIXTURE_INTERRUPT_BEFORE_ACK === "1") {
+      notify("turn/completed", { threadId: message.params.threadId, turn: { id: turnId, status: "interrupted", error: null } });
+      respond({});
+      return;
+    }
     respond({});
     setTimeout(() => notify("turn/completed", {
       threadId: message.params.threadId,

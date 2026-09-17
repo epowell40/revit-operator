@@ -23,7 +23,7 @@ export function createContentVerifiedProjection<T>(
 ): Readonly<{ read: (filePath: string) => T | null; reset: () => void }> {
   const maxEntries = options.maxEntries ?? 64;
   const maxProjectionBytes = options.maxProjectionBytes ?? 32 * 1024 * 1024;
-  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 256
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096
       || !Number.isSafeInteger(maxProjectionBytes) || maxProjectionBytes < 1) {
     throw new Error("content_projection_cache_bounds_invalid");
   }

@@ -23,8 +23,18 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
   private busy=false;
   private completed=0;
   private idleTimer:ReturnType<typeof setTimeout>|undefined;
+  private closing:Promise<void>=Promise.resolve();
 
-  close(){clearTimeout(this.idleTimer);this.client?.stop();this.client=null;this.completed=0;}
+  close(){
+    clearTimeout(this.idleTimer);
+    const client=this.client;this.client=null;this.completed=0;
+    if(client){
+      this.closing=Promise.all([this.closing,client.stopAndWait()]).then(()=>{});
+      // The next admission awaits this same promise. A failed shutdown cannot
+      // silently reopen the state directory while its previous owner survives.
+      void this.closing.catch(()=>{});
+    }
+  }
 
   async interpret(input:IntakeInput,signal:AbortSignal):Promise<{value:unknown;telemetry:Record<string,unknown>;acknowledge?:()=>void}> {
     const model=normalizeModelId(process.env.OPERATOR_INTAKE_MODEL,
@@ -53,6 +63,7 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
       if(this.completed>=32)this.close();
       const workspaceRoot=ensureWorkspaceLayout().root;
       if(this.clientRoot!==workspaceRoot){this.close();this.clientRoot=workspaceRoot;}
+      await this.closing;signal.throwIfAborted();
       const {cwd,codexHome}=prepareCertifiedCodexIsolation({workspaceRoot,
         isolationRoot:path.join(os.tmpdir(),"revit-operator-conversation-intake-v1")});
       const client=this.client??=new CodexAppServer({cwd,codexHome,spawnEnv:{...process.env}});

@@ -149,7 +149,12 @@
     "conversation_intake_http.test.ts",
     "conversation_intake_sidecar.test.ts",
     "windows_listener_inspector.test.ts",
-    "windows_listener_os.test.ts"
+    "windows_listener_os.test.ts",
+    "task_navigation.test.ts",
+    "task_steering.test.ts",
+    "task_ui_contract.test.ts",
+    "conversational_result_delivery.test.ts",
+    "codex_turn_completions.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -189,7 +194,8 @@
     "test/idle_batch_worker.test.js",
     "test/composer_intake.test.js",
     "test/conversation_rendering.test.js",
-    "test/sidecar_revit_listener_identity.test.js"
+    "test/sidecar_revit_listener_identity.test.js",
+    "test/task_navigation.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -2362,6 +2368,75 @@
         "desktop:test/sidecar_secure_integration.test.js",
         "backend:conversation_intake_http.test.ts",
         "backend:conversation_intake_sidecar.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c50-sheet-facts-omit-answer-to-mechanical-model-question",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:task_navigation.test.ts"
+      ]
+    },
+    {
+      "id": "provider-c51-completion-before-interrupt-ack-lost-and-unsupported-polling",
+      "coverage": [
+        "backend:codex_turn_completions.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-old-paused-work-hidden-and-task-switch-loses-draft",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-browser-disconnect-cancels-owned-execution",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "steering-c51-lost-ack-replayed-or-acceptance-claimed-as-delivery",
+      "coverage": [
+        "backend:task_steering.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "steering-c51-pause-misses-random-continuation-turn",
+      "coverage": [
+        "backend:task_steering.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-invalid-historical-journal-blocks-entire-list-and-active-poll",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:content_verified_projection.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-early-pause-targets-previous-completed-assignment",
+      "coverage": [
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:task_steering.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-selected-older-paused-task-resolves-newer-completed-controls",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/assignment_workspace_v2.test.js",
+        "desktop:test/task_navigation.test.js"
       ]
     }
   ],

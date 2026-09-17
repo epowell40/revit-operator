@@ -12,6 +12,8 @@ export const CODEX_LIFECYCLE_TYPE_ROOTS = Object.freeze([
   "v2/TurnStartResponse.ts",
   "v2/TurnInterruptParams.ts",
   "v2/TurnInterruptResponse.ts",
+  "v2/TurnSteerParams.ts",
+  "v2/TurnSteerResponse.ts",
   "v2/TurnCompletedNotification.ts"
 ]);
 

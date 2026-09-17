@@ -185,8 +185,10 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
     ...(effect === "read"
       && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))
-      && criterionSpecs.some(criterion => criterion.semantic_fact_requirements.includes("task.result_available"))
-      ? { result_delivery_required: true } : {}),
+      && (input.goal.work_budget?.response_style === "conversation"
+        || criterionSpecs.some(criterion => criterion.semantic_fact_requirements.includes("task.result_available")))
+      ? { result_delivery_required: true,
+        ...(input.goal.work_budget?.response_style === "conversation" ? { result_assessment_required: true } : {}) } : {}),
     ...(effect === "apply" && requestedWorkbookAssessment(input.goal.objective)
       ? { result_delivery_required: true, result_assessment_required: true } : {}),
     criteria: criterionSpecs,

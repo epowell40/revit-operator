@@ -66,6 +66,7 @@ export function startAutoGoalIfEligible(input: {
       source: input.source,
       source_user_request: decision.objective,
       requested_effect: decision.requestedEffect,
+      response_style: object(context.ui).response_style === "conversation" ? "conversation" : "evidence",
       executor_id: text(revit.courier_executor_id, 180) || null,
       document_fingerprint: text(projectIdentity.fingerprint, 128) || null,
       document_title: text(document.title, 260) || null,
