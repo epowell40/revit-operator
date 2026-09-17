@@ -11,7 +11,7 @@ import { handleConversationIntakeHttp } from "../src/conversation_intake_http.js
 import { __closeForTests, getConversationHistory } from "../src/memory/sqlite_store.js";
 
 const fixture=JSON.parse(fs.readFileSync(path.resolve("test/fixtures/c53_title_inference_failure.json"),"utf8"));
-const named={...fixture.decision,answer:null,question_kind:"ui_identity",identity_fields:["document_title"]};
+const named={...fixture.decision,answer:null,question_kind:"ui_identity",identity_fields:["document_title"],read_evidence:"not_applicable"};
 const body=(message_id:string)=>({version:"operator.backend.v1" as const,session_id:"owned",message_id,user_text:fixture.question,ui_observation:fixture.observation});
 
 test("C53 filename inference is rejected at validation and durable conversation boundaries",async()=>{
@@ -26,7 +26,7 @@ test("C53 filename inference is rejected at validation and durable conversation 
       assert.equal((await routeConversation(body(String(i)),{interpret:async()=>({value:decision})})).route,"task");
     }
     assert.equal(getConversationHistory("owned").length,0,"Do not retain a hedged filename guess as an answer");
-    const inspected={...named,route:"inspect",answer:null,basis:"needs_tools",requested_effect:"read",question_kind:"current_model",identity_fields:[],entire_request_answered:false};
+    const inspected={...named,route:"inspect",answer:null,basis:"needs_tools",requested_effect:"read",question_kind:"current_model",identity_fields:[],read_evidence:"model_content",entire_request_answered:false};
     assert.equal((await routeConversation(body("inspect"),{interpret:async()=>({value:inspected})})).route,"inspect");
     const identity=await routeConversation({...body("name"),user_text:"What is the open file called?"},{interpret:async()=>({value:named})});
     assert.equal(identity.assistant_message,'Open model: "C53 Revit 2027 Controls".');

@@ -487,6 +487,42 @@ function meta(
   };
 }
 
+test("C54 native sheet query supplies complete collection evidence without promoting control or partial pages", async () => {
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c54-sheet-read-failure.json',import.meta.url),'utf8'));
+  for(const variant of ["count","empty","list","partial","tail","wrong_filter","wrong_alias","wrong_request","control","metadata"] as const) {
+    const route=variant==="metadata"?"/revit/context":"/revit/sheets";
+    const body={...fixture.request};
+    const payload={...structuredClone(fixture.response)};
+    if(variant==="empty")Object.assign(payload,{totalSheets:40,totalMatches:0,total:0});
+    if(["list","partial","tail"].includes(variant)) {
+      body.action="list";
+      Object.assign(payload,{action:"list",countOnly:false,returned:2,total:2,totalMatches:2,limit:500,
+        items:[{id:1,sheetNumber:"M101",name:"HVAC L1"},{id:2,sheetNumber:"M102",name:"HVAC L2"}],
+        paging:{offset:0,limit:500,returned:2,hasMore:false,nextOffset:null}});
+      if(variant==="partial")Object.assign(payload,{total:17,totalMatches:17,hasMore:true,nextOffset:2,paging:{...payload.paging,hasMore:true,nextOffset:2}});
+      if(variant==="tail")Object.assign(payload,{offset:15,total:17,totalMatches:17,paging:{...payload.paging,offset:15}});
+    }
+    if(variant==="wrong_filter")payload.sheetNumberPrefix="A";
+    if(variant==="wrong_alias")payload.total=18;
+    if(variant==="wrong_request")body.action="detail";
+    const decorated=await runWithAssignmentKernelV2(meta("read",variant==="control"?"discovery":"work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"read"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,{
+        ...(variant==="metadata"?{document:{title:"Mechanical Controls",projectNumber:"123-M"}}:payload),
+        canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",attempt_id:`c54-${variant}`,
+          requested_effect:"read",effect_state:"none",effect_authority:"native_host",request_dispatched:true}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+    });
+    const facts=decorated.structuredContent.observation.semantic_facts;
+    const complete=facts.find((fact:any)=>fact.fact_id==="collection.complete")?.value===true;
+    assert.equal(complete,["count","empty","list"].includes(variant),variant);
+    if(complete) assert.equal(facts.find((fact:any)=>fact.fact_id==="collection.total")?.value,payload.totalMatches);
+    if(variant==="metadata" || variant==="control")assert.equal(facts.some((fact:any)=>fact.fact_id==="model.content_observed"),false,variant);
+  }
+});
+
 test("quantify result is normalized once into an explicit task-result Observation and inventory facts", async () => {
   const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/quantify" }), async () => {
     const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify");

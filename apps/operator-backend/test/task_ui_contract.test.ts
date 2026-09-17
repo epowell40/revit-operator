@@ -49,6 +49,18 @@ test("an orphaned in-flight task appears under Needs you rather than as a runnin
     title:"Read-only custom diagnostics",state:"unknown",updated_at:"2026-09-14T17:12:15.094Z",summary:"A result needs checking before continuing."}]});
   const groups=groupTasks(rows);assert.deepEqual(groups.map((row:any)=>row.title),["Needs you"]);assert.equal(groups[0].items[0].assignment_id,"unfinished");
 });
+
+test("the opened conversation appears once ahead of old attention items without changing task status",()=>{
+  const tasks=[{task_id:"old",session_id:"old",state:"failed",updated_at:"2026-09-17T10:00:00Z"},
+    {task_id:"current",session_id:"current",state:"complete",updated_at:"2026-09-16T10:00:00Z"},
+    {task_id:"working",session_id:"working",state:"working",updated_at:"2026-09-17T09:00:00Z"}];
+  const before=structuredClone(tasks),groups=groupTasks(tasks,"current");
+  assert.deepEqual(groups.map((group:any)=>group.title),["Current task","Working","Needs you"]);
+  assert.equal(groups[0].items[0].state,"complete");
+  assert.equal(groups.flatMap((group:any)=>group.items).filter((row:any)=>row.session_id==="current").length,1);
+  assert.deepEqual(tasks,before);
+  assert.deepEqual(groupTasks(tasks,"missing").map((group:any)=>group.title),["Working","Needs you","Recent"]);
+});
 test("task drafts and redline attachments remain separate under exact tuple keys",async()=>{
   const records=new Map();const store=createComposerDraftStore({storage:{get:async(k:string)=>records.get(k),put:async(k:string,v:any)=>records.set(k,v),delete:async(k:string)=>records.delete(k)}});
   const a=await taskDraftKey("tab:a","room:1",webcrypto),b=await taskDraftKey("tab:a:room","1",webcrypto);

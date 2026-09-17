@@ -294,6 +294,10 @@ export function latestCommandEvent(sessionId: string, kind: string, commandId: s
 }
 
 export function recentCommandEvents(sessionId: string, kind: string, limit = 64): unknown[] {
+  // Looking for a retained receipt must not create/open an empty database in
+  // a conversation that has never persisted one. A later append still opens
+  // storage normally; no missing-history result is cached.
+  if (!fs.existsSync(dbFilePath())) return [];
   const d = openDb();
   if (!d) throw new Error("Command history is unavailable.");
   return (d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) ORDER BY id DESC LIMIT ?").all(sessionId,kind,Math.max(1,Math.min(256,limit))) as Array<{payload_json: string}>).map(row => JSON.parse(row.payload_json));

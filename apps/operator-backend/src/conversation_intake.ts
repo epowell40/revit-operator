@@ -1,11 +1,12 @@
 import type { ChatRequest } from "./contracts.js";
-import { appendEvent, getConversationHistory, getConversationTurn } from "./memory/sqlite_store.js";
+import { appendEvent, getConversationHistory, getConversationTurn, recentCommandEvents } from "./memory/sqlite_store.js";
 import { appendMessage } from "./session_store.js";
 import { conversationDisplay } from "./conversation_history.js";
 import { createHash } from "node:crypto";
 import { IDENTITY_FIELDS, QUESTION_KINDS, renderIdentityAnswer, type IdentityField } from "./conversation_identity_answer.js";
 
 export type IntakeRoute = "answer" | "inspect" | "task";
+export const READ_EVIDENCE = ["not_applicable", "model_metadata", "model_content", "complete_collection", "other"] as const;
 export type IntakeDecision = {
   route: IntakeRoute;
   answer: string | null;
@@ -16,6 +17,7 @@ export type IntakeDecision = {
   reason: string;
   question_kind: typeof QUESTION_KINDS[number];
   identity_fields: IdentityField[];
+  read_evidence: typeof READ_EVIDENCE[number];
 };
 export type IntakeInput = {
   user_text: string;
@@ -28,21 +30,25 @@ export interface ConversationIntakeInterpreter {
 
 export const INTAKE_SCHEMA = {
   type:"object",additionalProperties:false,
-  required:["route","answer","basis","requested_effect","entire_request_answered","confidence","reason","question_kind","identity_fields"],
+  required:["route","answer","basis","requested_effect","entire_request_answered","confidence","reason","question_kind","identity_fields","read_evidence"],
   properties:{
     route:{type:"string",enum:["answer","inspect","task"]},answer:{type:["string","null"]},
     basis:{type:"string",enum:["conversation","general_knowledge","ui_identity","needs_tools"]},
     requested_effect:{type:"string",enum:["none","read","change"],description:"Additional execution needed: none for an answer from provided information; read for more inspection; change for work that alters state or exports artifacts."},entire_request_answered:{type:"boolean"},
     confidence:{type:"number",minimum:0,maximum:1},reason:{type:"string"},
     question_kind:{type:"string",enum:QUESTION_KINDS},
-    identity_fields:{type:"array",items:{type:"string",enum:IDENTITY_FIELDS},maxItems:5}
+    identity_fields:{type:"array",items:{type:"string",enum:IDENTITY_FIELDS},maxItems:5},
+    read_evidence:{type:"string",enum:READ_EVIDENCE,description:"Evidence needed to establish the requested fact, independently of the wording or document title."}
   }
 } as const;
 
 export const INTAKE_INSTRUCTIONS = `You are the conversational intake agent for Revit Operator. Understand the COMPLETE request in context and either answer it briefly or hand it to the working agent. There are no phrase lists to match.
 Choose answer only when the entire request can be answered reliably from the supplied live UI identity, prior conversation, or stable general knowledge. Write the actual helpful answer in 1-3 concise sentences, in the user's language. An answer is a conversation response, never evidence of completed model work. For answer, requested_effect=none: reading the supplied text and UI labels does not require a new execution operation.
 Choose inspect for a focused question that needs a bounded model read, lookup, image inspection or calculation. If the working agent can obtain the missing facts, hand off to it; saying that you cannot determine the answer is not a completed answer. Choose task for changes, exports, drafting, long/multi-step work, project-wide engineering analyses (even read-only), or resuming unfinished work. For either handoff, set answer=null and entire_request_answered=false; the working agent receives the complete original request, so do not replace it with your summary or ask permission to continue.
+requested_effect describes the operations the user requested, independently of task length. Inspect always uses read. Calculation, analysis and gathering facts remain read even across a whole project; a result in the conversation is not an artifact change. Use change when the request calls for modifying the model or creating/changing an external artifact, including an export. Do not invent an export or model edit to justify change.
 Classify question_kind by what the user wants established, not by whether a filename happens to contain a plausible answer. ui_identity means only literal naming, open-model state or selection count. Any determination about the actual model's discipline, systems, contents, relationships or condition is current_model and requires inspect, even when a title seems to answer it. A filename may be arbitrary or misleading. Hedging a title-based inference does not answer a model-content question. Historical conversation cannot establish current model facts.
+Distinguish a conceptual question about what evidence can prove from a request to verify this model. Explaining whether a label alone is proof, or what evidence would establish a relationship, is general_explanation when no actual verification is requested. Answer that question directly; do not silently turn it into an audit of all model objects. A request to check the actual relationship still needs inspection.
+Classify read_evidence semantically. Use not_applicable for direct answers and changes. For read handoffs: model_metadata means the literal document/project properties themselves are the requested fact; model_content means actual modeled objects, disciplines, systems, relationships or their presence/condition; complete_collection means an exact count or complete enumeration of the requested set (sheets, views, rooms, elements or another collection); other means a visual, external, explanatory or engineering read not covered by those categories. Counting sheets is a collection query, not automatically a whole-model element inventory. A discipline question requires model_content, even if metadata names a discipline. Prefer complete_collection when the answer depends on a full-set total or absence, rather than one positive example. Do not infer this field from isolated words.
 For ui_identity answers, select the exact identity_fields requested and set answer=null. The application renders only those observed values; you cannot supply prose or inferred facts through this route. Select model_open_state alone for an explicitly empty model. Unknown or missing values require inspect. All other question kinds must use identity_fields=[]. General explanations use general_explanation/general_knowledge; discussion of previous messages uses historical_conversation/conversation. Current facts, research, engineering work and actions cannot be answered by this tool-free intake. Unknown UI means the observation did not finish or could not be verified; it does not prove that Revit is disconnected or that no model is open.
 Every clause matters: an identity question plus a request to change, export, check, inspect or continue something must be handed off together. Do not answer one easy clause and silently drop the work. A request phrased as a question can still ask for action. Use recent conversation to resolve follow-ups, but not to grant old tasks new authority. If uncertain, hand off.
 General explanations or rewriting text may be answered directly; professional design decisions, numeric engineering calculations, compliance judgments or fresh internet facts need the working agent and its evidence tools.
@@ -80,7 +86,10 @@ export function validateIntakeDecision(value:unknown):IntakeDecision|null {
     || typeof row.reason !== "string" || !row.reason.trim() || row.reason.length>1000
     || !QUESTION_KINDS.includes(row.question_kind) || !Array.isArray(row.identity_fields)
     || row.identity_fields.length>5 || new Set(row.identity_fields).size!==row.identity_fields.length
-    || row.identity_fields.some((field:unknown)=>!IDENTITY_FIELDS.includes(field as IdentityField))) return null;
+    || row.identity_fields.some((field:unknown)=>!IDENTITY_FIELDS.includes(field as IdentityField))
+    || !READ_EVIDENCE.includes(row.read_evidence)) return null;
+  if ((row.route === "answer" || row.requested_effect !== "read") !== (row.read_evidence === "not_applicable")) return null;
+  if (row.route === "inspect" && row.requested_effect !== "read") return null;
   if (row.route === "answer") {
     if (row.requested_effect !== "none" || !row.entire_request_answered || row.basis === "needs_tools" || row.confidence<0.85
       || !["ui_identity","general_explanation","historical_conversation"].includes(row.question_kind)) return null;
@@ -91,6 +100,19 @@ export function validateIntakeDecision(value:unknown):IntakeDecision|null {
   } else if (row.answer !== null || row.entire_request_answered || row.identity_fields.length) return null;
   if (row.question_kind === "action" && row.route !== "task") return null;
   return row as IntakeDecision;
+}
+
+/** Only the retained decision for this exact authenticated message may shape
+ * its evidence contract. Client-provided route hints and previous turns cannot. */
+export function retainedIntakeDecision(input: {session_id:string;message_id:string;user_text:string}):IntakeDecision|null {
+  if (!input.session_id || !input.message_id || !input.user_text) return null;
+  try {
+    const receipt = recentCommandEvents(input.session_id,"conversation.intake",64)
+      .find((value:any)=>value?.message_id===input.message_id) as any;
+    if (receipt?.accepted!==true || receipt.request_sha256!==createHash("sha256").update(input.user_text).digest("hex")) return null;
+    const decision=validateIntakeDecision(receipt.decision);
+    return decision && decision.confidence>=0.85 ? decision : null;
+  } catch { return null; }
 }
 
 const handoff = {route:"task" as const,assistant_message:null,history_saved:false};

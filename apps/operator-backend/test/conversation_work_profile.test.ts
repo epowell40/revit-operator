@@ -13,7 +13,7 @@ test("semantic inspect receipt lowers bounded-question effort without keyword ro
   try {
     const base:any={version:"operator.backend.v1",session_id:"owned",message_id:"question",user_text:"Is this the mechanical model?",
       context:{ui:{speed_settings:{speed_mode:true,agent_model:"gpt-5.6-sol",agent_reasoning_effort:"medium"}}}};
-    const inspect={route:"inspect",answer:null,question_kind:"current_model",identity_fields:[],basis:"needs_tools",requested_effect:"read",entire_request_answered:false,confidence:0.99,reason:"A bounded contents check is needed."};
+    const inspect={route:"inspect",answer:null,question_kind:"current_model",identity_fields:[],read_evidence:"model_content",basis:"needs_tools",requested_effect:"read",entire_request_answered:false,confidence:0.99,reason:"A bounded contents check is needed."};
     assert.equal(conversationWorkProfile({...base,context:{...base.context,route:"inspect"}}).focused,false);
     for(const [i,text] of [base.user_text,"¿Qué disciplina contiene este modelo?","Can you identify the systems represented here?"].entries()) {
       const req={...base,message_id:String(i),user_text:text};

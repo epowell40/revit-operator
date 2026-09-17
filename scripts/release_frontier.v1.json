@@ -157,7 +157,8 @@
     "codex_turn_completions.test.ts",
     "conversation_work_profile.test.ts",
     "combined_duct_verification_v2.test.ts",
-    "conversation_identity_answer.test.ts"
+    "conversation_identity_answer.test.ts",
+    "conversation_evidence_contract.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -185,7 +186,8 @@
     "workflowImage.test.ts",
     "lib/workPlanStdio.test.ts",
     "lib/familyPlacementSchema.test.ts",
-    "lib/findElementsAgentProjection.test.ts"
+    "lib/findElementsAgentProjection.test.ts",
+    "lib/nativeReadEvidence.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -2502,6 +2504,24 @@
         "backend:conversation_identity_answer.test.ts",
         "backend:conversation_intake_http.test.ts",
         "backend:conversation_intake.test.ts"
+      ]
+    },
+    {
+      "id": "read-c54-sheet-count-native-observation-ineligible-and-legacy-completion-exposed",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/nativeReadEvidence.test.ts"
+      ]
+    },
+    {
+      "id": "read-c54-worker-infers-model-content-from-project-metadata",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:conversation_work_profile.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "mcp:lib/nativeReadEvidence.test.ts"
       ]
     }
   ],

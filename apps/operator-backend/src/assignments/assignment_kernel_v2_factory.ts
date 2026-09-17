@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { requiresDurableWorkPlan } from "./work_plan_intent.js";
+import { retainedIntakeDecision } from "../conversation_intake.js";
 import { requestedWorkbookAssessment } from "../artifact_export_intent.js";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -70,9 +71,22 @@ function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly str
 }
 
 function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
-  const inventoryFacts = inventoryCriterionFacts(goal, facts);
+  const intake = requestedEffect(goal) === "read" ? retainedIntakeDecision({
+    session_id: goal.related_session_id ?? "", message_id: text(goal.work_budget?.conversation_message_id, 200),
+    user_text: goal.objective
+  }) : null;
+  const semanticRead = intake && intake.route !== "answer" && intake.requested_effect === "read" ? intake.read_evidence : null;
+  // A trusted semantic handoff owns the type of read evidence. A word such as
+  // "count" cannot silently replace a sheet query with element inventory.
+  // Explicitly configured inventory contracts and legacy non-intake tasks keep
+  // their existing stricter policy.
+  const inventoryFacts = !semanticRead || facts.some(fact => fact.startsWith("inventory.")) ? inventoryCriterionFacts(goal, facts) : null;
   const successFact = requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available";
-  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? successFact : fact);
+  const requiredFacts = inventoryFacts ?? [...new Set([
+    ...facts.map((fact) => fact === "result.available" ? successFact : fact),
+    ...(semanticRead === "model_content" ? ["model.content_observed"]
+      : semanticRead === "complete_collection" ? ["collection.complete", "collection.total"] : [])
+  ])];
   const inventory = requiredFacts.some((fact) => fact.startsWith("inventory."));
   return {
     semantic_fact_requirements: requiredFacts,
@@ -113,8 +127,7 @@ function criteria(goal: GoalRecord): AssignmentSpecV2["criteria"] {
   if (configured === undefined || configured === null) {
     if (goal.acceptance_criteria.length !== 1) throw new Error("assignment_kernel_v2_criterion_fact_contract_required");
     const requirement = goal.acceptance_criteria[0]!;
-    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal)
-      ?? [requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available"]);
+    const contract = evidencePolicy(goal, [requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available"]);
     return [{
       criterion_id: stableId("criterion", requirement), requirement, required: true,
       ...contract,

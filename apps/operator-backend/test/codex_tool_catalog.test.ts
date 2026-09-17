@@ -14,6 +14,24 @@ import { codexTelemetryThreadKey } from "../src/brains/codex_turn_model_telemetr
 import { codexToolCatalogHash, withCodexCapabilityHandoff } from "../src/brains/codex_tool_catalog.js";
 import { appendEvent, setCodexThreadId, getCodexThreadId, getCodexThreadCapabilities } from "../src/memory/sqlite_store.js";
 
+test("C54 V2 runtime catalog exposes canonical completion and excludes incompatible legacy completion tools",async()=>{
+  const names=["operator_submit_read_completion","operator_submit_noop_completion","operator_evaluate_assignment_criteria","revit_list_sheets"];
+  const tools=names.map(name=>({name,description:name,inputSchema:{type:"object",additionalProperties:false,properties:{}}}));
+  for(const enabled of [true,false]) {
+    const runtime=new CodexMcpToolRuntime({backendCwd:process.cwd(),workspaceRoot:process.cwd(),codexHome:process.cwd(),spawnEnv:{OPERATOR_ASSIGNMENT_KERNEL_V2:enabled?"1":"0"}});
+    (runtime as any).client={listTools:async()=>({tools}),close:async()=>{}};
+    try {
+      const catalog=await runtime.getDynamicToolNamespace();
+      for(const name of names.slice(0,2)) {
+        assert.equal(catalog.tools.some((tool:any)=>tool.name===name),!enabled);
+        if(enabled)await assert.rejects(runtime.validateToolArguments(name,{}));
+      }
+      assert.ok(catalog.tools.some((tool:any)=>tool.name==="operator_evaluate_assignment_criteria"));
+      await runtime.validateToolArguments("revit_list_sheets",{});
+    }finally{runtime.stop();}
+  }
+});
+
 test("actual runtime advertisement includes the host PDF reader eagerly even when MCP omits it", async () => {
   const runtime = new CodexMcpToolRuntime({backendCwd:process.cwd(),workspaceRoot:process.cwd(),codexHome:process.cwd(),spawnEnv:{}});
   (runtime as any).ensureStarted = async () => {};

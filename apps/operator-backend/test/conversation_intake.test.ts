@@ -3,16 +3,34 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { compactUiObservation, mayRouteConversation, routeConversation, validateIntakeDecision, type IntakeInput } from "../src/conversation_intake.js";
+import { compactUiObservation, mayRouteConversation, retainedIntakeDecision, routeConversation, validateIntakeDecision, type IntakeInput } from "../src/conversation_intake.js";
 import { appendMessage, getPinnedGoal } from "../src/session_store.js";
 import { __closeForTests, getConversationHistory } from "../src/memory/sqlite_store.js";
 import { formatUiContextConversationHistory } from "../src/conversation_history.js";
 
 const question="Can you see the open model? Please tell me its name and active view.";
 const ui={ok:true,data:{document:{title:"Snowdon HVAC",path:"PRIVATE-PATH",activeView:{name:"Mechanical L4",type:"FloorPlan"},selection:[1,2]}}};
-const answer={route:"answer",answer:null,basis:"ui_identity",question_kind:"ui_identity",identity_fields:["document_title","active_view_name"],requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
+const answer={route:"answer",answer:null,basis:"ui_identity",question_kind:"ui_identity",identity_fields:["document_title","active_view_name"],read_evidence:"not_applicable",requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
 const expectedAnswer='Open model: "Snowdon HVAC". Active view: "Mechanical L4".';
 const body=(user_text=question,extra={})=>({version:"operator.backend.v1" as const,session_id:"session",message_id:"message",user_text,ui_observation:ui,...extra});
+
+test("a cold receipt lookup does not create a conversation database or hide a subsequently saved decision",async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-cold-intake-")),previous=process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT=root;__closeForTests();
+  const identity={session_id:"session",message_id:"message",user_text:question};
+  try {
+    assert.equal(retainedIntakeDecision(identity),null);
+    assert.equal(fs.existsSync(path.join(root,"db","operator.sqlite")),false);
+    await routeConversation(body(),{interpret:async()=>({value:answer})});
+    assert.deepEqual(retainedIntakeDecision(identity),answer);
+  }finally{
+    __closeForTests();
+    if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;
+    assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("operator-cold-intake-"));
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
 
 test("arbitrary conversational wording reaches semantic intake without a phrase filter",()=>{
   for(const prompt of [question,"Is this the mechanical model?","Am I in the HVAC file or the architectural one?",
@@ -35,7 +53,8 @@ test("a model routing decision cannot authorize writes or claim a partial answer
     {...answer,basis:"needs_tools"},{...answer,confidence:0.4},{...answer,confidence:NaN},{...answer,answer:"Invented content"},
     {...answer,extra:"unreviewed field"},{...answer,answer:"x".repeat(3001)},{...answer,route:"inspect"}])
     assert.equal(validateIntakeDecision(bad),null);
-  assert.ok(validateIntakeDecision({...answer,route:"inspect",question_kind:"current_model",identity_fields:[],requested_effect:"read",basis:"needs_tools",answer:null,entire_request_answered:false}));
+  assert.ok(validateIntakeDecision({...answer,route:"inspect",question_kind:"current_model",identity_fields:[],read_evidence:"model_content",requested_effect:"read",basis:"needs_tools",answer:null,entire_request_answered:false}));
+  for (const requested_effect of ["none","change"]) assert.equal(validateIntakeDecision({...answer,route:"inspect",question_kind:"current_model",identity_fields:[],read_evidence:"not_applicable",requested_effect,basis:"needs_tools",answer:null,entire_request_answered:false}),null);
 });
 
 test("semantic answer is durable historical conversation and never repins a task; handoff preserves every clause",async()=>{

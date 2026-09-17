@@ -17,7 +17,7 @@ test("HTTP intake authorizes before model use, uses full text, persists the answ
     authorized:session=>{if(session!=="owned"){res.writeHead(403).end();return false;}return true;},
     respond:(status,body)=>res.writeHead(status,{"content-type":"application/json"}).end(JSON.stringify(body)),
     interpreter:{interpret:async input=>{calls++;seen.push(input.user_text);return {value:{route:"answer",answer:null,question_kind:"ui_identity",identity_fields:["document_title"],
-      basis:"ui_identity",requested_effect:"none",entire_request_answered:true,confidence:0.99,reason:"Supplied UI identity."}};}}
+      basis:"ui_identity",read_evidence:"not_applicable",requested_effect:"none",entire_request_answered:true,confidence:0.99,reason:"Supplied UI identity."}};}}
   })).listen(0,"127.0.0.1");await once(server,"listening");
   t.after(()=>{server.close();__closeForTests();});
   const url=`http://127.0.0.1:${(server.address() as any).port}`;
@@ -41,7 +41,7 @@ test("HTTP classification persists an exact-message speed profile; foreign and m
     readJson:async request=>{let raw="";for await(const chunk of request)raw+=chunk;return JSON.parse(raw);},
     authorized:session=>{if(session!=="owned"){res.writeHead(403).end();return false;}return true;},
     respond:(status,body)=>res.writeHead(status,{"content-type":"application/json"}).end(JSON.stringify(body)),
-    interpreter:{interpret:async()=>({value:{route:"inspect",answer:null,question_kind:"current_model",identity_fields:[],basis:"needs_tools",requested_effect:"read",entire_request_answered:false,confidence:0.99,reason:"Bounded read."}})}
+    interpreter:{interpret:async()=>({value:{route:"inspect",answer:null,question_kind:"current_model",identity_fields:[],read_evidence:"model_content",basis:"needs_tools",requested_effect:"read",entire_request_answered:false,confidence:0.99,reason:"Bounded read."}})}
   })).listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>{server.close();__closeForTests();});
   const request:any={version:"operator.backend.v1",session_id:"owned",message_id:"new-question",user_text:"What systems are represented?",
     context:{ui:{speed_settings:{speed_mode:true,agent_reasoning_effort:"medium"}}}};

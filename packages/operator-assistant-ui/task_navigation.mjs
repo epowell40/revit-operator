@@ -17,10 +17,11 @@ export function parseTaskNavigation(value) {
   });
 }
 
-export function groupTasks(tasks) {
-  const groups = [{title:'Working',items:[]},{title:'Needs you',items:[]},{title:'Recent',items:[]}];
+export function groupTasks(tasks, selectedSessionId = '') {
+  const groups = [{title:'Current task',items:[]},{title:'Working',items:[]},{title:'Needs you',items:[]},{title:'Recent',items:[]}];
   for (const task of tasks) {
-    const group = ['working','pausing'].includes(task.state) ? 0 : ['paused','needs_input','ready','unknown','failed'].includes(task.state) ? 1 : 2;
+    const group = selectedSessionId && task.session_id === selectedSessionId ? 0
+      : ['working','pausing'].includes(task.state) ? 1 : ['paused','needs_input','ready','unknown','failed'].includes(task.state) ? 2 : 3;
     groups[group].items.push(task);
   }
   for (const group of groups) group.items.sort((a,b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
@@ -74,7 +75,7 @@ export function renderTaskList(container, tasks, selectedSessionId, onOpen) {
   const document = container.ownerDocument;
   container.replaceChildren();
   if (!tasks.length) {const empty=document.createElement('p');empty.className='taskListEmpty';empty.textContent='Your tasks will appear here.';container.append(empty);return;}
-  for (const group of groupTasks(tasks)) {
+  for (const group of groupTasks(tasks, selectedSessionId)) {
     const section=document.createElement('section'), heading=document.createElement('h3');
     heading.textContent=group.title;section.append(heading);
     for(const task of group.items) {

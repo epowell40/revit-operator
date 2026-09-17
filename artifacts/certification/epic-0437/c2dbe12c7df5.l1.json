@@ -35,11 +35,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:91e37c2b44116e617239fa17bdab8fd03bece017c32b239acb8083d72f55439d"
+      "sha256": "sha256:ff665625602ab8c270b1d0676a7cd506084ba0ce403a2d2f0d3f6c8525eb4b12"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:ea0d5ca1560fa344ebfb54b533f5df83854ce68a226e1e0b0e4cd07f69dcab56"
+      "sha256": "sha256:0a5182e7805aea9620a9bc32997616ee4d6b0dbe4c1650be21fdc577c7b649af"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -252,6 +252,14 @@
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.ts",
       "sha256": "sha256:41f912fe12c60f9bcc1661946bc90377573cac8017c645318ce77d38ace9840b"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/nativeReadEvidence.test.ts",
+      "sha256": "sha256:243a0e3db6f633d7a6f7e27fe8dc0a7ca76d9c623ee2ff5947ef53037c4ab9fb"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/nativeReadEvidence.ts",
+      "sha256": "sha256:b291faf78909535bc9dccb93ac29f6c1370454d7a207e4a6e41e6374961cc401"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -628,7 +636,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_factory.ts",
-      "sha256": "sha256:4d718194208df5ed9f028effda89968b817b9ead6f0ea31bbf82e00fe932d38e"
+      "sha256": "sha256:a35c4442f25ab14764fddbc59fdead170c2731a9c5a1560b516924acd4e1129f"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_input_adapter.ts",
@@ -800,7 +808,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_preparation.ts",
-      "sha256": "sha256:7c61e41ddf4c5d85dc4fd19f74ad7d9b50ec0d853faec34e534d7591ffddf7ec"
+      "sha256": "sha256:7518060ceeb0f2e8f4e756a68bc292f06ad4b0b0a836ddbf5846e46f23deb393"
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_settlement.ts",
@@ -1292,7 +1300,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/conversation_work_profile.ts",
-      "sha256": "sha256:2ed469867d16429c05b1ac6d552e6772390d33cc6eda9ac5ddbdef7afc5b0878"
+      "sha256": "sha256:4469f520495e2fe0ab726e351b27d71278669f2222fba6e86ab808eb08813370"
     },
     {
       "path": "apps/operator-backend/src/brains/direct_revit_bridge.ts",
@@ -1873,7 +1881,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
-      "sha256": "sha256:2376d25069a0978a34992a245277acbb9f9aac6a231e52a055f8265883469629"
+      "sha256": "sha256:a43fcb0576a02f53975343dc0a54aa2aa223217b41f1da04fb032e662ad91726"
     },
     {
       "path": "apps/operator-backend/src/codex/operator_backend_auth_lease.ts",
@@ -1917,7 +1925,7 @@
     },
     {
       "path": "apps/operator-backend/src/conversation_intake.ts",
-      "sha256": "sha256:8fb7fb267dc092734aee7e278fef3d6d2297f98f443bc6db4b49c7ffc67c5f87"
+      "sha256": "sha256:b92ef7c5200f47249678cf7a4735917b3dda939e04059a5270800dfdb372dd8b"
     },
     {
       "path": "apps/operator-backend/src/conversation_intake_http.ts",
@@ -2577,7 +2585,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_start.ts",
-      "sha256": "sha256:f965087181e0d7123bae4f76254fb941a92cc94e066ad48a3a39847303b00a54"
+      "sha256": "sha256:2bade5e564e9775386cc843ed96fa44913aa1230f84cbfe79b3d97ca7784a3bb"
     },
     {
       "path": "apps/operator-backend/src/goals/content_verified_projection.ts",
@@ -2693,7 +2701,7 @@
     },
     {
       "path": "apps/operator-backend/src/memory/sqlite_store.ts",
-      "sha256": "sha256:147f91b8b45ca72025630534639b36536eacc6a4fb50a5407ab88b6fd1ceacac"
+      "sha256": "sha256:4a76c258a496f2af1f2c546cac328701d03f08b5c7e51feda4cb6b407f3f293e"
     },
     {
       "path": "apps/operator-backend/src/memory/task_memory_context.ts",
@@ -3581,7 +3589,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_tool_catalog.test.ts",
-      "sha256": "sha256:f61534be1dd2a192dcab21451be008ddfcc78711a40fbfe3f4ddf4b58d8206c8"
+      "sha256": "sha256:f5a6208cf9cf398699603821ee5962f6503435ca7f955c821d038d45fde5eeb6"
     },
     {
       "path": "apps/operator-backend/test/codex_transport_ownership.test.ts",
@@ -3624,16 +3632,20 @@
       "sha256": "sha256:5b4f3a9919f1454209a54465eed8e91548dab6128ac0175bffe7aceff88ecb13"
     },
     {
+      "path": "apps/operator-backend/test/conversation_evidence_contract.test.ts",
+      "sha256": "sha256:eae6fcf520f8ff46826dd1a83125083bd3acdd9e5c09f0988e18aa94e8200670"
+    },
+    {
       "path": "apps/operator-backend/test/conversation_identity_answer.test.ts",
-      "sha256": "sha256:6ee3aed52798dc0309774d812c6f770413cb2d30ea14610fb49e7ccf83d22b83"
+      "sha256": "sha256:a8f59ca81ef2ba4291822b37737998bf5c7b1a8ebc7ea613fe1cc1695d80af76"
     },
     {
       "path": "apps/operator-backend/test/conversation_intake.test.ts",
-      "sha256": "sha256:1b2e6d722b9f2b0edeecb5896b7cb42bb2c42b469361be4e907c74924dedd356"
+      "sha256": "sha256:b11a84eb7aecc0f02e551197eb61648cacf40a6b67d149e50dff125713fa9679"
     },
     {
       "path": "apps/operator-backend/test/conversation_intake_http.test.ts",
-      "sha256": "sha256:5fa0a3ce7b84bb0ddde1a54043115574e2fe007df8b73780cfaf195081ed092b"
+      "sha256": "sha256:46aec0f80abb0c03cfcf61881f118dd674176e80d4bfb06ce756188b41239455"
     },
     {
       "path": "apps/operator-backend/test/conversation_intake_sidecar.test.ts",
@@ -3641,7 +3653,7 @@
     },
     {
       "path": "apps/operator-backend/test/conversation_work_profile.test.ts",
-      "sha256": "sha256:6ff9999e56c92304d9aa0fb23fc53ef823172834d8b5f7d75bef702f0aed143d"
+      "sha256": "sha256:abe494b576e32ac7785bbd13e525463c0565154ec2f9d33e2011d5d52ed4fc4c"
     },
     {
       "path": "apps/operator-backend/test/conversational_result_delivery.test.ts",
@@ -4128,6 +4140,10 @@
       "sha256": "sha256:9dd57fa1aa3cd57bc69ffadf06576658d79cde0ae6e41123e1bd42a8e0503286"
     },
     {
+      "path": "apps/operator-backend/test/fixtures/c54-sheet-read-failure.json",
+      "sha256": "sha256:6517765ce51ae991b740233d80b2e9f771671016887e1681114cbd42995ecc6e"
+    },
+    {
       "path": "apps/operator-backend/test/fixtures/codex_app_server_fixture.js",
       "sha256": "sha256:12875941e7f5da5023fc9c40fe1e98ee779fe6fded68e5c142e97cd554acc9c5"
     },
@@ -4142,6 +4158,10 @@
     {
       "path": "apps/operator-backend/test/fixtures/conversation_intake_cases.json",
       "sha256": "sha256:c9a707ce61063392948a6c8c03f07cf68862a5a86fe5dd65ce9accfd3568e9a0"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/conversation_intake_cases.v2.json",
+      "sha256": "sha256:772a978ab96e3cdb5d64fa22a4bd54878a9854ed2ff476a675faf989874f786c"
     },
     {
       "path": "apps/operator-backend/test/fixtures/direct-c44-external-fitting-contract.json",
@@ -4749,7 +4769,7 @@
     },
     {
       "path": "apps/operator-backend/test/task_ui_contract.test.ts",
-      "sha256": "sha256:745fa36531d8231732f85a9c3ce473530af66c36f11f044c1655b31f003210da"
+      "sha256": "sha256:11ab5dea32a43adbae80f971296443b7739c96505891c5cf2943ffd515754af6"
     },
     {
       "path": "apps/operator-backend/test/team_assistant_live_regressions.test.ts",
@@ -7353,7 +7373,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:d6103579459eebdc89b08aeb4866ca4a4000dfd8e5ac609aaf7e58b3fcdee5d0",
+  "inputs_hash": "sha256:a8b03b7fca8d3b8f81bb27908f8644ab1be06ba204fb92c62adb140e3b420ca3",
   "result": {
     "passed": true,
     "checks": [
