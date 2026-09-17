@@ -29,4 +29,7 @@ test("HTTP intake authorizes before model use, uses full text, persists the answ
   const redline=await(await post({message_id:"two",attachments:[{id:"redline"}]})).json() as any;
   assert.equal(redline.route,"task");assert.equal(calls,1);
   assert.equal((await post({user_text:"Reuse the message id for a different question"})).status,400);assert.equal(calls,1);
+  const unknown=await(await post({message_id:"unknown",ui_observation:{ok:false}})).json() as any;
+  assert.equal(unknown.route,"task");assert.equal(unknown.history_saved,false);
+  assert.equal(getConversationHistory("owned").length,2,"A model's confident UI claim cannot turn a missing HTTP observation into an answer");
 });

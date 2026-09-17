@@ -147,7 +147,9 @@
     "tool_result_compaction.test.ts",
     "conversation_intake.test.ts",
     "conversation_intake_http.test.ts",
-    "conversation_intake_sidecar.test.ts"
+    "conversation_intake_sidecar.test.ts",
+    "windows_listener_inspector.test.ts",
+    "windows_listener_os.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -186,7 +188,8 @@
     "test/browser_asset_freshness.test.js",
     "test/idle_batch_worker.test.js",
     "test/composer_intake.test.js",
-    "test/conversation_rendering.test.js"
+    "test/conversation_rendering.test.js",
+    "test/sidecar_revit_listener_identity.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -2336,6 +2339,29 @@
       "coverage": [
         "mcp:viewFrameImage.test.ts",
         "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-timed-out-ui-observation-claimed-revit-disconnected",
+      "coverage": [
+        "backend:conversation_intake.test.ts",
+        "backend:conversation_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-repeated-os-process-inspection-exceeds-ui-observation-budget",
+      "coverage": [
+        "backend:windows_listener_inspector.test.ts",
+        "backend:windows_listener_os.test.ts",
+        "desktop:test/sidecar_revit_listener_identity.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c50-optional-identity-observation-contaminates-task-completion",
+      "coverage": [
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts"
       ]
     }
   ],

@@ -25,7 +25,7 @@ test("arbitrary conversational wording reaches semantic intake without a phrase 
 test("UI observations provide bounded labels without model files or fabricated geometry",()=>{
   assert.deepEqual(compactUiObservation(ui),{state:"available",document_title:"Snowdon HVAC",active_view_name:"Mechanical L4",active_view_type:"FloorPlan",selected_count:2});
   assert.deepEqual(compactUiObservation({ok:true,data:{document:null}}),{state:"no_open_model"});
-  for(const bad of [null,{ok:false,data:ui.data},{ok:true,data:{}},{ok:true,data:{document:{}}}]) assert.deepEqual(compactUiObservation(bad),{state:"unavailable"});
+  for(const bad of [null,{ok:false,data:ui.data},{ok:true,data:{}},{ok:true,data:{document:{}}}]) assert.deepEqual(compactUiObservation(bad),{state:"unknown"});
 });
 
 test("a model routing decision cannot authorize writes or claim a partial answer is complete",()=>{
@@ -71,4 +71,26 @@ test("timeout and invalid output fall back without recording a late answer; fore
     assert.deepEqual(input.recent_conversation,[]);return{value:{...answer,entire_request_answered:false}};
   }});
   assert.equal(foreign.route,"task");assert.equal(getConversationHistory("foreign").length,0);__closeForTests();
+});
+
+test("a timed-out UI read cannot produce a confident disconnected-model answer; verified empty and general answers still work",async()=>{
+  process.env.OPERATOR_WORKSPACE_ROOT=fs.mkdtempSync(path.join(os.tmpdir(),"operator-intake-unknown-"));__closeForTests();
+  const disconnected={...answer,answer:"I cannot see an open model because Revit is unavailable."};
+  try {
+    for(const [index,observation] of [undefined,{ok:false},{ok:true,data:{}},{ok:true,data:{document:{}}}].entries()) {
+      const result=await routeConversation(body(question,{message_id:`unknown-${index}`,ui_observation:observation}),{
+        interpret:async input=>{assert.equal(input.ui_observation.state,"unknown");return{value:disconnected};}
+      });
+      assert.equal(result.route,"task");assert.equal(result.history_saved,false);
+    }
+    assert.equal(getConversationHistory("session").length,0,"Do not save fabricated connection facts");
+    const empty=await routeConversation(body(question,{message_id:"empty",ui_observation:{ok:true,data:{document:null}}}),{
+      interpret:async()=>({value:{...answer,answer:"Revit is open without a model."}})
+    });
+    assert.equal(empty.route,"answer");
+    const general=await routeConversation(body("What does VAV stand for?",{message_id:"general",ui_observation:{ok:false}}),{
+      interpret:async()=>({value:{...answer,answer:"Variable air volume.",basis:"general_knowledge"}})
+    });
+    assert.equal(general.route,"answer");
+  }finally{__closeForTests();}
 });
