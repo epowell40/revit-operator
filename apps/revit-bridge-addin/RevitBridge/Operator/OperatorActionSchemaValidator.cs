@@ -3690,6 +3690,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "includeCoordinateSystem", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFlexGeometry", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "onlyOpenPhysicalConnectors", out error)) return false;
+                if (!RevitBridge.Common.DuctVerificationInspectionPolicy.TryValidate(obj.Value, out error)) return false;
 
                 if (obj.Value.TryGetProperty("maxConnectorsPerElement", out var mx) && mx.ValueKind != JsonValueKind.Null)
                 {

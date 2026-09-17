@@ -13,6 +13,8 @@ import { __testOnlyResetGoalListCache, getGoalStoragePath } from "../src/goals/s
 import { appendEvent, __closeForTests } from "../src/memory/sqlite_store.js";
 import { runWithRequestContext, createPrincipalBoundSessionId, type RequestPrincipal } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
+import { beginAssignmentKernelTerminalBarrierV2, endAssignmentKernelTerminalBarrierV2 } from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 
 const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") };
 async function workspace(fn: () => Promise<void> | void) {
@@ -40,6 +42,26 @@ function task(session: string) {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "test-model" } } } } })!;
   return prepared.bindingV2!;
 }
+
+test("C51 orphaned native operations are unknown; live ownership changes cached navigation without changing evidence", () => workspace(() => {
+  conversation("lost-worker", "Run the read-only diagnostic program"); const binding = task("lost-worker");
+  for (const id of ["first", "second"]) {
+    const lease = openAssignmentKernelOperationV2({ snapshot: getAssignmentKernelSnapshotV2(binding.assignment_id)!,
+      controller_request_id: id, provider_turn_id: "old-provider", capability_id: "inventory.read", classified_effect: "read", arguments: { id } });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+  }
+  const before = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  assert.equal(before.in_flight_operation_ids.length, 2); assert.equal(before.quiescent, false);
+  const state = () => listTaskNavigation().tasks.find(row => row.session_id === "lost-worker")!.state;
+  assert.equal(state(), "unknown");
+  const wrong = beginAssignmentKernelTerminalBarrierV2({ binding: { ...before.current_binding, generation: before.current_binding.generation + 1 }, barrier_id: "wrong-generation" });
+  try { assert.equal(state(), "unknown"); } finally { endAssignmentKernelTerminalBarrierV2(wrong); }
+  const owner = beginAssignmentKernelTerminalBarrierV2({ binding: before.current_binding, barrier_id: "real-owner" });
+  try { assert.equal(state(), "working"); } finally { endAssignmentKernelTerminalBarrierV2(owner); }
+  assert.equal(state(), "unknown"); assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), before);
+  controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-orphan", expected_command_id: null });
+  assert.equal(state(), "unknown", "an orphaned operation must not claim it is actively finishing");
+}));
 
 test("task navigation retains old paused work beyond recent chat limits and opening never resumes", () => workspace(() => {
   conversation("old-work", "Draft the north wing"); const binding = task("old-work");

@@ -2,6 +2,7 @@ import type { ChatRequest } from "./contracts.js";
 import { appendEvent, getConversationHistory, getConversationTurn } from "./memory/sqlite_store.js";
 import { appendMessage } from "./session_store.js";
 import { conversationDisplay } from "./conversation_history.js";
+import { createHash } from "node:crypto";
 
 export type IntakeRoute = "answer" | "inspect" | "task";
 export type IntakeDecision = {
@@ -110,7 +111,7 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
     // A missing/late read is not evidence of a disconnected or empty model,
     // regardless of the interpreter's confidence or the user's wording.
     const decision=candidate?.route==="answer" && candidate.basis==="ui_identity" && input.ui_observation.state==="unknown" ? null : candidate;
-    if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,elapsed_ms:Date.now()-start,
+    if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:createHash("sha256").update(userText).digest("hex"),elapsed_ms:Date.now()-start,
       decision,telemetry:result.telemetry??null,accepted:decision!==null}))throw Error("Conversation intake receipt could not be saved");
     result.acknowledge?.();
     if (!decision || decision.route!=="answer") return {...handoff,route:decision?.route??"task"};

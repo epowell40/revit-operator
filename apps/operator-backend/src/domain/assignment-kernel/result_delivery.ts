@@ -127,8 +127,8 @@ export function renderResultDeliveryV2(delivery: AssignmentResultDeliveryV2): st
     if (findings.length === 1 && findings[0]!.priority === "low") {
       const finding = findings[0]!;
       // A short factual answer needs no audit headings or severity badge.
-      return [a.overview, ...(finding.text.trim() === a.overview.trim() ? [] : [finding.text]),
-        ...a.limitations, ...a.questions, "## Model evidence", evidence].join("\n\n");
+      return [a.overview, ...a.limitations, ...a.questions, "## Model evidence",
+        ...(finding.text.trim() === a.overview.trim() ? [] : [finding.text]), evidence].join("\n\n");
     }
     return ["## Assessment", a.overview,
       ...findings.map(finding => `### ${finding.priority[0]!.toUpperCase() + finding.priority.slice(1)} priority: ${finding.title}\n${finding.text} ${finding.evidence_indices.map(index => `[${index}]`).join(" ")}`),

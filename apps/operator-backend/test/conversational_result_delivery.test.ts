@@ -17,8 +17,13 @@ test("C50 mechanical model question requires its conclusion, not a list of sheet
     const assessment:any={overview:answer,findings:[{priority:"low",title:"Model discipline",text:answer,evidence_indices:[1,2]}],
       limitations:["This is based on the sheet set; I have not inspected every modeled system."],questions:[]};
     validateResultDeliveryV2(snapshot,{items,assessment});
+    assert.throws(()=>validateResultDeliveryV2(snapshot,{items,assessment:{...assessment,findings:[]}}),/assignment_assessment_invalid/);
     const rendered=renderResultDeliveryV2({items,assessment});
     assert.ok(rendered.startsWith(answer));assert.doesNotMatch(rendered,/## Assessment|Low priority/);assert.match(rendered,/## Model evidence/);
+    const explanation="The M-series sheets and HVAC plan names support this finding.";
+    const concise=renderResultDeliveryV2({items,assessment:{...assessment,findings:[{...assessment.findings[0],text:explanation}]}});
+    assert.equal(concise.split("## Model evidence")[0].includes(explanation),false);
+    assert.ok(concise.includes(explanation),"supporting details remain available in the evidence section");
     assert.throws(()=>validateResultDeliveryV2(snapshot,{items,assessment:{...assessment,findings:[{...assessment.findings[0],evidence_indices:[9]}]}}),/assessment/);
     const gap=deriveProgressGapsV2({...snapshot,unresolved_unknown_operation_ids:[],blocking_child_operation_ids:[],in_flight_operation_ids:[],
       pending_input_variable_ids:[],pending_review_ids:[],input_values:{},criteria:{},work_unit_states:{},provider_calls:{},progress_epochs:[]}).find(gap=>gap.gap_id==="result:delivery");

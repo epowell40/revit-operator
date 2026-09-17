@@ -154,7 +154,9 @@
     "task_steering.test.ts",
     "task_ui_contract.test.ts",
     "conversational_result_delivery.test.ts",
-    "codex_turn_completions.test.ts"
+    "codex_turn_completions.test.ts",
+    "conversation_work_profile.test.ts",
+    "combined_duct_verification_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -252,7 +254,8 @@
     "MepCurveJointPolicyTests",
     "LinkedHostPlacementPolicyTests",
     "FamilyPlacementRecoveryTests",
-    "FindElementsGeometryContractTests"
+    "FindElementsGeometryContractTests",
+    "DuctVerificationInspectionPolicyTests"
   ],
   "failure_families": [
     {
@@ -2437,6 +2440,59 @@
         "backend:task_ui_contract.test.ts",
         "desktop:test/assignment_workspace_v2.test.js",
         "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-orphaned-native-operations-falsely-presented-as-working",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:task_ui_contract.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-sent-first-message-resurrected-in-new-chat-draft",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/composer_intake.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c51-focused-inspection-takes-full-reasoning-and-repeats-evidence",
+      "coverage": [
+        "backend:conversation_work_profile.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversational_result_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c51-resumed-review-submits-overview-with-empty-findings",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "area-c48-wrong-parameter-fields-before-connectors-blocks-independent-route-proof",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:combined_duct_verification_v2.test.ts",
+        "dotnet:DuctVerificationInspectionPolicyTests",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "area-c48-partial-tool-catalog-projection-drops-usable-family-tools",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:bounded_evidence_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-completed-resumed-task-retains-paused-banner",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/conversation_rendering.test.js"
       ]
     }
   ],

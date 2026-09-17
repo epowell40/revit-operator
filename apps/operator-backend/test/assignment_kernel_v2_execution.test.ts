@@ -2866,3 +2866,56 @@ test("C43 broad scope passes the old 32-call boundary; explicit limits and the 6
   }
  });
 });
+
+import { pendingDuctVerificationRequestV2, DUCT_VERIFICATION_PARAMETERS_SCHEMA } from "../src/verification/combined_duct_verification_v2.js";
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+
+test("C48 failed parameter ordering remains unverified; a fresh combined native inspection verifies the same branch", () => workspace(() => {
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c48-polyline-verification-readback.json","utf8"));
+  const targetIds:number[]=f.connectors.results.map((row:any)=>row.id), affected=targetIds.map(id=>"element_id:"+id);
+  const {goal,snapshot}=setup("apply");
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:"c48-retained-route",provider_turn_id:"apply-turn",
+    capability_id:"revit_call_tool",classified_effect:"apply",arguments:f.input,opened_at:"2026-09-17T00:00:00Z"});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const committed=envelope(apply.operation_id,apply.binding,f.apply,"applied");
+  Object.assign(committed.structuredContent.operation_result_v2,{result_schema_id:"operator-native/POST:/revit/mep-route-workflow/v2",
+    affected_target_identities:affected,completed_at:"2026-09-17T00:00:01Z"});
+  settleAssignmentKernelOperationV2(apply,committed);prepareCodexAssignmentProgressV2(apply.binding);
+  const inspect=(name:string,path:string,payload:unknown,second:number,extra={})=>{
+    const time=`2026-09-17T00:00:0${second}Z`;
+    const lease=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,controller_request_id:name,provider_turn_id:"verification-turn",
+      capability_id:"revit_call_tool",classified_effect:"read",target_tokens:targetIds.map(id=>"id:"+id),
+      arguments:{method:"POST",path,body:{elementIds:targetIds,includeAllRefs:true,...extra}},opened_at:time});
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const receipt=envelope(lease.operation_id,lease.binding,payload);
+    Object.assign(receipt.structuredContent.operation_result_v2,{result_schema_id:`operator-native/POST:${path}/v2`,completed_at:time});
+    return settleAssignmentKernelOperationV2(lease,receipt).snapshot;
+  };
+  inspect("wrong-parameters","/revit/get-parameters",f.wrongParameters,2,{names:["Level","System Type","Diameter"]});
+  const graph=inspect("old-connectors","/revit/get-connectors",f.connectors,3);
+  assert(deriveProgressGapsV2(graph).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  const corrected=inspect("corrected-parameters","/revit/get-parameters",f.parameters,4,{names:["System Classification","Reference Level","Width","Height","Diameter"]});
+  assert(deriveProgressGapsV2(corrected).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  const oldRead=Object.values(corrected.operations).find(op=>op.request_identity?.path==="/revit/get-connectors")!.result!;
+  assert.equal(openDuctPostconditionSatisfiedV2(corrected,corrected.operations[apply.operation_id]!,oldRead,f.connectors),false,"do not retroactively qualify the historical read order");
+  const request=pendingDuctVerificationRequestV2(corrected.operations[apply.operation_id]!)!;
+  assert.deepEqual(request.body.elementIds,targetIds);
+  const combined={...f.connectors,verificationParameters:{...f.parameters,schema:DUCT_VERIFICATION_PARAMETERS_SCHEMA,
+    fields:["System Classification","Reference Level","Width","Height","Diameter"]}};
+  const verified=inspect("combined-inspection",request.path,combined,5,request.body);
+  assert(!deriveProgressGapsV2(verified).some(g=>g.gap_id===`verification:${apply.operation_id}`));
+  const read=Object.values(verified.operations).find(op=>(op.input as any)?.body?.includeVerificationParameters===true)!.result!;
+  for(const [label,change] of [
+    ["wrong diameter",(p:any)=>{p.verificationParameters.items.find((x:any)=>x.parameters?.Diameter).parameters.Diameter="100";}],
+    ["wrong level",(p:any)=>{p.verificationParameters.items.find((x:any)=>x.parameters?.["Reference Level"])!.parameters["Reference Level"]="1";}],
+    ["missing fitting",(p:any)=>p.results.pop()],
+    ["truncated graph",(p:any)=>p.connectorScanTruncatedElementCount=1],
+    ["wrong field version",(p:any)=>p.verificationParameters.schema="future"]
+  ] as Array<[string,(p:any)=>void]>){
+    const changed=structuredClone(combined);change(changed);
+    const receipt={...read,raw_payload_hash:payloadDigestV2(changed).digest};
+    assert.equal(openDuctPostconditionSatisfiedV2(verified,verified.operations[apply.operation_id]!,receipt,changed),false,label);
+  }
+  const corrupt={...read,raw_payload_hash:"0".repeat(64)};
+  assert.equal(openDuctPostconditionSatisfiedV2(verified,verified.operations[apply.operation_id]!,corrupt,combined),false);
+}));

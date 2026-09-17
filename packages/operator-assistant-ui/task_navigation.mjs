@@ -32,6 +32,22 @@ export function taskStateLabel(state) {
     complete:'Complete',failed:'Needs attention',unknown:'Result needs checking',loading:'Loading saved status…'}[state] || 'Status unavailable';
 }
 
+/** The opened task's validated publication is fresher than the discovery list.
+ * This affects display only; controls still authorize the exact binding. */
+export function currentTaskState(task, goal, sessionId) {
+  if (!sessionId || goal?._sourceKind !== 'assignment_kernel_v2'
+    || goal?._bindingV2?.session_id !== sessionId) return task?.state;
+  if (goal._projection?.truth?.outcome_uncertain || goal._projection?.truth?.reconciliation_required) return 'unknown';
+  const phase = goal._assignmentPhase;
+  if (['complete','complete_with_issues','verified_noop'].includes(phase)) return 'complete';
+  if (['paused','pausing'].includes(phase)) return phase;
+  if (['awaiting_user_input','awaiting_user_review'].includes(phase)) return 'needs_input';
+  if (['failed','blocked'].includes(phase)) return 'failed';
+  if (phase === 'active' && task?.assignment_id === goal._bindingV2.assignment_id && task?.state === 'paused')
+    return goal._canResume ? 'ready' : 'working';
+  return task?.state;
+}
+
 /** Resolve the exact task selected in history, independent of recent-page
  * limits. The host projector must validate the complete canonical publication;
  * discovery IDs alone never confer control authority. */
@@ -64,7 +80,7 @@ export function renderTaskList(container, tasks, selectedSessionId, onOpen) {
     for(const task of group.items) {
       const button=document.createElement('button');button.type='button';button.className='taskListRow';
       if(task.session_id===selectedSessionId)button.setAttribute('aria-current','page');
-      const title=document.createElement('span');title.className='taskListTitle';title.textContent=task.title;
+      const title=document.createElement('span');title.className='taskListTitle';title.textContent=task.title;title.title=task.title;
       const status=document.createElement('span');status.className='taskListStatus';status.textContent=taskStateLabel(task.state);
       button.append(title,status);button.addEventListener('click',()=>onOpen(task));section.append(button);
     }

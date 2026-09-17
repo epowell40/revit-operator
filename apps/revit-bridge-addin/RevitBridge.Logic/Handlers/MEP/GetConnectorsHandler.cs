@@ -14,6 +14,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public List<long> elementIds { get; set; } = new List<long>();
+            public bool includeVerificationParameters { get; set; } = false;
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
             public bool includeFlexGeometry { get; set; } = true;
@@ -23,6 +24,8 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
+            using (var input = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData))
+                if (!DuctVerificationInspectionPolicy.TryValidate(input.RootElement, out var error)) throw new ArgumentException(error);
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var ids = (p.elementIds ?? new List<long>()).Where(x => x > 0).Distinct().ToList();
             if (ids.Count == 0) throw new ArgumentException("elementIds is required and must be a non-empty array.");
@@ -31,6 +34,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
+            var verificationParameters = p.includeVerificationParameters ? DuctVerificationParameterReadback.Read(doc, ids) : null;
 
             var warnings = new List<string>();
             var results = new List<object>();
@@ -264,21 +268,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                 });
             }
 
-            return Task.FromResult<object>(new
+            var result = new Dictionary<string, object>
             {
-                status = "Ok",
-                requestedCount = ids.Count,
-                scannedElementCount,
-                failedElementCount,
-                matchedElementCount,
-                totalScannedConnectorCount,
-                physicallyConnectedConnectorCount,
-                openPhysicalConnectorCount,
-                connectorScanTruncatedElementCount,
-                filter = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors",
-                results,
-                warnings
-            });
+                ["status"] = "Ok", ["requestedCount"] = ids.Count,
+                ["scannedElementCount"] = scannedElementCount,
+                ["failedElementCount"] = failedElementCount,
+                ["matchedElementCount"] = matchedElementCount,
+                ["totalScannedConnectorCount"] = totalScannedConnectorCount,
+                ["physicallyConnectedConnectorCount"] = physicallyConnectedConnectorCount,
+                ["openPhysicalConnectorCount"] = openPhysicalConnectorCount,
+                ["connectorScanTruncatedElementCount"] = connectorScanTruncatedElementCount,
+                ["results"] = results,
+                ["warnings"] = warnings,
+                ["filter"] = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors"
+            };
+            if (verificationParameters != null) result["verificationParameters"] = verificationParameters;
+            return Task.FromResult<object>(result);
         }
 
         private static long? TryGetPositiveElementId(ElementId? id)

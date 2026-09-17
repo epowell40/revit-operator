@@ -1,3 +1,4 @@
+import { combinedDuctVerificationParametersV2 } from "./combined_duct_verification_v2.js";
 import { polylineReadbackMatchesV2 } from "./polyline_readback_v2.js";
 import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
 import { connectedDuctReadbackMatchesV2 } from "./connected_duct_readback_v2.js";
@@ -72,6 +73,10 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
   // verification contract rather than combining observations across changes.
   if (Object.values(snapshot.operations).some(op => op.operation_id !== subject.operation_id && op.persistent_effect === "applied"
       && op.result && Date.parse(op.result.completed_at) >= Date.parse(applied.completed_at))) return false;
+  if (Object.hasOwn(record(payload), "verificationParameters")) {
+    const parameters = combinedDuctVerificationParametersV2(snapshot, subject, current, payload);
+    return parameters !== null && retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload);
+  }
   const prior = Object.values(snapshot.operations).filter(op => op.verification_of_operation_id === subject.operation_id
     && op.request_identity?.path === "/revit/get-parameters")
     .sort((a,b) => Date.parse(b.opened_at) - Date.parse(a.opened_at))[0];
@@ -92,6 +97,15 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
       const bytes = readAuthoritativeEvidence(ref, { ...snapshot.current_binding, attempt_id: prior.operation_id });
       const parameters = JSON.parse(bytes.toString("utf8"));
       if (payloadDigestV2(parameters).digest !== observation.raw_payload_hash) continue;
+      if (retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload)) return true;
+    } catch { /* Missing or corrupt retained evidence cannot verify a route. */ }
+  }
+  return false;
+}
+
+function retainedDuctReadbackMatchesV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, parameters: unknown, payload: unknown): boolean {
+  const applied = subject.result!;
+  try {
       if (openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload)) return true;
       for (const applyObservationId of subject.observation_ids) {
         const applyObservation = snapshot.observations[applyObservationId];
@@ -103,7 +117,6 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
         if (payloadDigestV2(nativeApply).digest !== applyObservation.raw_payload_hash) continue;
         if (polylineReadbackMatchesV2(subject.input, nativeApply, parameters, payload)) return true;
       }
-    } catch { /* Missing or corrupt retained evidence cannot verify a route. */ }
-  }
+  } catch { /* Retained apply evidence must still bind to this exact operation. */ }
   return false;
 }

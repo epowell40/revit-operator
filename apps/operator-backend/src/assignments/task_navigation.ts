@@ -3,6 +3,7 @@ import { createContentVerifiedProjection } from "../goals/content_verified_proje
 import { getSessionOwner, listConversationNavigation } from "../memory/sqlite_store.js";
 import { getRequestAssignmentPrincipalId, getRequestContext, isSessionIdBoundToPrincipal, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { reduceAssignmentEventsV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
 
 export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "ready" | "complete" | "failed" | "unknown" | "loading";
 export type TaskNavigationEntry = {
@@ -81,7 +82,11 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | undefined, Na
     if (!projection.invalid && (!owns(projection.binding.session_id)
       || !requestMatchesAssignmentPrincipalId(projection.binding.principal_id, undefined, projection.binding.session_id))) continue;
     const sessionId = projection.invalid ? goal.related_session_id! : projection.binding.session_id;
-    const state = projection.invalid ? "unknown" : projection.state;
+    // A durable in-flight receipt can survive a process loss. It is not proof
+    // that a worker still owns execution. Keep this live check outside the
+    // content cache: acquiring/releasing an owner does not rewrite the journal.
+    const state = projection.invalid ? "unknown" : ["working", "pausing"].includes(projection.state)
+      && !assignmentKernelTerminalSettlementDeferredV2(projection.binding) ? "unknown" : projection.state;
     const entry: TaskNavigationEntry = {
       task_id: `session:${sessionId}`, session_id: sessionId, assignment_id: projection.invalid ? goal.id : projection.binding.assignment_id,
       title: titles.get(sessionId) || (projection.invalid ? "Saved task needs checking" : projection.title),

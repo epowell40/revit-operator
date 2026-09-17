@@ -1126,7 +1126,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
       findings: z.array(z.object({
         priority: z.enum(["high", "medium", "low"]), title: z.string().min(1).max(160), text: z.string().min(1).max(1200),
         evidence_indices: z.array(z.number().int().min(1).max(32)).min(1).max(8)
-      }).strict()).min(1).max(12),
+      }).strict()).min(1).max(12).describe("At least one evidence-linked finding is required even when overview already contains the full answer. A low-priority finding's supporting explanation is displayed with the evidence."),
       limitations: z.array(z.string().min(1).max(800)).max(8),
       questions: z.array(z.string().min(1).max(600)).max(3)
     }).strict().optional().describe("For read-only audits, reviews, comparisons and gap lists, provide a useful assessment in addition to resultItems. Findings are assistant interpretations supported by 1-based evidence_indices into resultItems; they never establish native proof, engineering certification, criterion truth, authorization or supplied user inputs. State unverified limits and ask only the most useful outside-input questions. Select scalar resultItems or small scalar arrays, not whole reports. This structured delivery becomes the final answer; later free text cannot replace it.")
@@ -3213,9 +3213,10 @@ server.registerTool(
   async req => runMepConnectorRepair(req, true, true)
 );
 
-server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true to return compact scan totals plus only elements/connectors with no physical connection.",
+server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
   {
     elementIds: z.array(z.number()).min(1).max(5000),
+    includeVerificationParameters: z.boolean().optional(),
     includeAllRefs: z.boolean().optional().default(true),
     includeCoordinateSystem: z.boolean().optional().default(true),
     includeFlexGeometry: z.boolean().optional().default(true),

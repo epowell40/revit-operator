@@ -29,15 +29,16 @@ export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budge
   if (rows.some(value => {
     const tool = record(value);
     return !tool || !["GET", "POST"].includes(String(tool.method)) || typeof tool.path !== "string"
-      || !/^\/revit\/[a-z0-9/-]+$/.test(tool.path) || !Array.isArray(tool.required_fields)
-      || tool.required_fields.some(v => typeof v !== "string");
+      || !/^\/revit\/[a-z0-9/-]+$/.test(tool.path) || (Object.hasOwn(tool, "required_fields")
+        && (!Array.isArray(tool.required_fields) || tool.required_fields.some(v => typeof v !== "string")));
   })) return null;
   const result: ToolDocumentationProjection = { kind: catalog ? "catalog" : "tool", completion_eligible: false,
     tools: [], returned_tools: 0, total_tools: rows.length, omitted_paths: [], complete: false };
   for (let index = 0; index < rows.length; index++) {
     const tool = record(rows[index])!;
     const prefix = catalog ? `payload.matches[${index}]` : "payload";
-    const selected: Record<string, unknown> = { method: tool.method, path: tool.path, required_fields: tool.required_fields };
+    const selected: Record<string, unknown> = { method: tool.method, path: tool.path,
+      ...(Object.hasOwn(tool, "required_fields") ? { required_fields: tool.required_fields } : {}) };
     const omitted: string[] = Object.keys(tool).filter(field => !fields.includes(field)).map(field => `${prefix}.${field}`);
     for (const field of fields.filter(key => !(key in selected))) {
       if (!(field in tool)) { omitted.push(`${prefix}.${field}`); continue; }

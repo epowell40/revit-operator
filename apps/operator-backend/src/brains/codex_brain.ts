@@ -45,6 +45,7 @@ import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./code
 import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement } from "./authoritative_web_evidence.js";
 import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement } from "./revit_turn_evidence.js";
 import { resolveAgentModelSettings } from "../speed_config.js";
+import { conversationWorkProfile } from "./conversation_work_profile.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
 import { createAssignmentKernelV2ModelReceiptRecorder } from "../assignments/assignment_kernel_v2_provider_budget.js";
@@ -443,7 +444,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       })
     : null;
   const threadProfile = Object.freeze(getCodexThreadStartProfileForTest(req));
-  const agentSettings = resolveAgentModelSettings(req.context);
+  const workProfile = conversationWorkProfile(req);
+  const agentSettings = workProfile.settings;
   const instructionBindingStop = (error: CodexInstructionBindingError): ChatResponse => {
     cb.onDone?.(error.message);
     return {
@@ -563,6 +565,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       ? [{ type: "text", text: text.trim() ? [formatCodexRequestEnvelope(req), `USER:\n${text}`, formatToolResultsForCodex(req.tool_results)].filter(Boolean).join("\n\n") : formatCertifiedCodexContinuation(req), text_elements: [] }]
       : await buildCodexTurnInput(req, (() => {
             const blocks: string[] = [];
+            if (workProfile.instruction) blocks.push(workProfile.instruction);
             if (assignmentKernelV2) {
               const directions = assignmentDirections(assignmentKernelV2.binding).filter(direction => direction.state !== "rejected");
               if (directions.length) blocks.push("ADDITIONAL USER DIRECTIONS, in order:\n" + JSON.stringify(directions.map(direction => ({ text: direction.text, delivery: direction.state })))

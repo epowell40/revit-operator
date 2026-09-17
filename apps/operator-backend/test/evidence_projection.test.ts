@@ -648,3 +648,23 @@ test("incoming native results bind canonical Assignment identity, retain images 
   assert.equal(rawReceipt.attachments[0].evidence_id, result.evidence_refs![1]!.evidence_id);
   __clearServerPlannedActionsForTests();
 }));
+
+test("C48 missing required_fields metadata retains all valid catalogue identities without inventing empty requirements", () => withWorkspace(() => {
+  const raw=JSON.parse(fs.readFileSync("test/fixtures/c48-partial-tool-catalog.json","utf8"));
+  const original=JSON.parse(raw.content[0].text);
+  const stored=storeEvidence({scope,source:"assignment_kernel_v2:revit_search_tools",trust_level:"host_observed",raw},8192);
+  const doc=stored.projection.tool_documentation!;
+  assert(doc);assert.equal(doc.total_tools,6);assert.equal(doc.returned_tools,6);assert.equal(doc.complete,false);
+  for(const [index,tool] of original.matches.entries()) {
+    assert.equal(doc.tools[index]!.path,tool.path);
+    if(!Object.hasOwn(tool,"required_fields")){
+      assert.equal(Object.hasOwn(doc.tools[index]!,"required_fields"),false);
+      assert(doc.omitted_paths.includes(`payload.matches[${index}].required_fields`));
+    }
+  }
+  for(const invalid of [null,"none",{},["name",4]]){
+    const payload=structuredClone(original);payload.matches[0].required_fields=invalid;
+    const changed={content:[{type:"text",text:JSON.stringify(payload)}]};
+    assert.equal(storeEvidence({scope,source:"assignment_kernel_v2:revit_search_tools",trust_level:"host_observed",raw:changed},8192).projection.tool_documentation,undefined);
+  }
+}));
