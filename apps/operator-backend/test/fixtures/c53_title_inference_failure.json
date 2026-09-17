@@ -1,0 +1,6 @@
+{
+  "question": "Is this the mechanical model?",
+  "observation": {"ok": true, "data": {"document": {"title": "C53 Revit 2027 Controls", "activeView": {"name": "Cover Sheet", "type": "DrawingSheet"}, "selection": []}}},
+  "decision": {"route": "answer", "answer": "The title “C53 Revit 2027 Controls” suggests this is a controls model, not necessarily the mechanical model.", "basis": "ui_identity", "requested_effect": "none", "entire_request_answered": true, "confidence": 0.96, "reason": "The document title supports a limited discipline inference, but does not verify model contents."},
+  "qualification": "Retained failed C53 live UI decision, September 17 2026. The filename was a controls-test label; the sample had a mechanical sheet set. It is not acceptable to infer model discipline from that filename."
+}

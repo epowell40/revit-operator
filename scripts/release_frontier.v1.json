@@ -156,7 +156,8 @@
     "conversational_result_delivery.test.ts",
     "codex_turn_completions.test.ts",
     "conversation_work_profile.test.ts",
-    "combined_duct_verification_v2.test.ts"
+    "combined_duct_verification_v2.test.ts",
+    "conversation_identity_answer.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2493,6 +2494,14 @@
       "coverage": [
         "backend:task_ui_contract.test.ts",
         "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c53-filename-inference-bypasses-model-inspection",
+      "coverage": [
+        "backend:conversation_identity_answer.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake.test.ts"
       ]
     }
   ],

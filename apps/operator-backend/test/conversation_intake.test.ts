@@ -10,7 +10,8 @@ import { formatUiContextConversationHistory } from "../src/conversation_history.
 
 const question="Can you see the open model? Please tell me its name and active view.";
 const ui={ok:true,data:{document:{title:"Snowdon HVAC",path:"PRIVATE-PATH",activeView:{name:"Mechanical L4",type:"FloorPlan"},selection:[1,2]}}};
-const answer={route:"answer",answer:"Snowdon HVAC is open, with Mechanical L4 active.",basis:"ui_identity",requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
+const answer={route:"answer",answer:null,basis:"ui_identity",question_kind:"ui_identity",identity_fields:["document_title","active_view_name"],requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
+const expectedAnswer='Open model: "Snowdon HVAC". Active view: "Mechanical L4".';
 const body=(user_text=question,extra={})=>({version:"operator.backend.v1" as const,session_id:"session",message_id:"message",user_text,ui_observation:ui,...extra});
 
 test("arbitrary conversational wording reaches semantic intake without a phrase filter",()=>{
@@ -31,10 +32,10 @@ test("UI observations provide bounded labels without model files or fabricated g
 test("a model routing decision cannot authorize writes or claim a partial answer is complete",()=>{
   assert.deepEqual(validateIntakeDecision(answer),answer);
   for(const bad of [{...answer,requested_effect:"change"},{...answer,requested_effect:"read"},{...answer,entire_request_answered:false},
-    {...answer,basis:"needs_tools"},{...answer,confidence:0.4},{...answer,confidence:NaN},{...answer,answer:null},
+    {...answer,basis:"needs_tools"},{...answer,confidence:0.4},{...answer,confidence:NaN},{...answer,answer:"Invented content"},
     {...answer,extra:"unreviewed field"},{...answer,answer:"x".repeat(3001)},{...answer,route:"inspect"}])
     assert.equal(validateIntakeDecision(bad),null);
-  assert.ok(validateIntakeDecision({...answer,route:"inspect",requested_effect:"read",basis:"needs_tools",answer:null,entire_request_answered:false}));
+  assert.ok(validateIntakeDecision({...answer,route:"inspect",question_kind:"current_model",identity_fields:[],requested_effect:"read",basis:"needs_tools",answer:null,entire_request_answered:false}));
 });
 
 test("semantic answer is durable historical conversation and never repins a task; handoff preserves every clause",async()=>{
@@ -45,15 +46,15 @@ test("semantic answer is durable historical conversation and never repins a task
   const interpreter={interpret:async(input:IntakeInput)=>{calls++;assert.equal(input.user_text,question);assert.doesNotMatch(JSON.stringify(input),/PRIVATE-PATH/);return{value:answer};}};
   const first=await routeConversation(body(),interpreter);
   assert.equal(first.route,"answer");assert.equal(first.history_saved,true);assert.equal(getPinnedGoal("session"),pinned);
-  assert.equal(getConversationHistory("session").at(-1)?.text,answer.answer);
+  assert.equal(getConversationHistory("session").at(-1)?.text,expectedAnswer);
   assert.match(formatUiContextConversationHistory("session"),/not current Revit evidence or task completion/);
   __closeForTests();
-  assert.equal((await routeConversation(body(),interpreter)).assistant_message,answer.answer);assert.equal(calls,1);
+  assert.equal((await routeConversation(body(),interpreter)).assistant_message,expectedAnswer);assert.equal(calls,1);
   await assert.rejects(routeConversation(body("Different question"),interpreter),/another question/);
   const mixed="Tell me which model is open, then rename the current view.";
   let original="";
   const handoff=await routeConversation(body(mixed,{message_id:"mixed"}),{interpret:async input=>{
-    original=input.user_text;return{value:{...answer,route:"task",requested_effect:"change",basis:"needs_tools",answer:null,entire_request_answered:false}};
+    original=input.user_text;return{value:{...answer,route:"task",question_kind:"action",identity_fields:[],requested_effect:"change",basis:"needs_tools",answer:null,entire_request_answered:false}};
   }});
   assert.equal(original,mixed);assert.equal(handoff.route,"task");assert.equal(handoff.assistant_message,null);
   assert.equal(getConversationHistory("session").length,2,"Handoff must not append a partial or duplicate user conversation");
@@ -85,11 +86,11 @@ test("a timed-out UI read cannot produce a confident disconnected-model answer; 
     }
     assert.equal(getConversationHistory("session").length,0,"Do not save fabricated connection facts");
     const empty=await routeConversation(body(question,{message_id:"empty",ui_observation:{ok:true,data:{document:null}}}),{
-      interpret:async()=>({value:{...answer,answer:"Revit is open without a model."}})
+      interpret:async()=>({value:{...answer,identity_fields:["model_open_state"]}})
     });
     assert.equal(empty.route,"answer");
     const general=await routeConversation(body("What does VAV stand for?",{message_id:"general",ui_observation:{ok:false}}),{
-      interpret:async()=>({value:{...answer,answer:"Variable air volume.",basis:"general_knowledge"}})
+      interpret:async()=>({value:{...answer,answer:"Variable air volume.",basis:"general_knowledge",question_kind:"general_explanation",identity_fields:[]}})
     });
     assert.equal(general.route,"answer");
   }finally{__closeForTests();}
