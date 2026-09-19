@@ -543,42 +543,9 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static void TryConfigureAnnotationCrop(View view, double marginFt, List<string> warnings)
+        private static void TryConfigureAnnotationCrop(View view, double marginViewFt, List<string> warnings)
         {
-            try
-            {
-                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE);
-                if (parameter != null && !parameter.IsReadOnly && parameter.StorageType == StorageType.Integer)
-                    parameter.Set(1);
-            }
-            catch (Exception ex)
-            {
-                warnings.Add($"Could not activate annotation crop on temporary view: {ex.Message}");
-            }
-
-            object? manager = null;
-            try { manager = view.GetType().GetMethod("GetCropRegionShapeManager", Type.EmptyTypes)?.Invoke(view, null); }
-            catch { manager = null; }
-            if (manager == null) return;
-
-            foreach (var propertyName in new[]
-            {
-                "LeftAnnotationCropOffset",
-                "RightAnnotationCropOffset",
-                "TopAnnotationCropOffset",
-                "BottomAnnotationCropOffset"
-            })
-            {
-                try
-                {
-                    var property = manager.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
-                    if (property != null && property.CanWrite) property.SetValue(manager, marginFt);
-                }
-                catch
-                {
-                    // Best effort: not every supported view exposes writable annotation-crop edges.
-                }
-            }
+            AnnotationCropUtil.TryConfigure(view, marginViewFt, warnings);
         }
 
         private static View CreateTemporaryPlanView(Document doc, ViewPlan source)

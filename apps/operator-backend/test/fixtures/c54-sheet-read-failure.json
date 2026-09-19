@@ -1,0 +1,12 @@
+{
+  "qualification": "C54 first failed installed sheet-count delivery. Native count succeeded; supporting-control admission made it ineligible. Sample-only payload, before canonical settlement metadata.",
+  "question": "Inspect the sheet list and count the mechanical sheets. Reply in one sentence.",
+  "request": {"action":"count","exact":true,"sheetNumberPrefix":"M"},
+  "response": {
+    "action":"count","countOnly":true,"totalSheets":17,"totalMatches":17,"total":17,"returned":0,
+    "query":"","sheetNumberPrefix":"M","exact":true,"offset":0,"limit":0,"defaultLimit":500,"maxLimit":5000,
+    "all":false,"hasMore":false,"nextOffset":null,"totalPages":null,"pageIndex":null,
+    "paging":{"offset":0,"limit":0,"returned":0,"hasMore":false,"nextOffset":null},"items":[],
+    "note":"Count mode returns totals only. Use action:list to fetch sheet rows."
+  }
+}

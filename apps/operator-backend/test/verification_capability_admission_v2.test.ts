@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { operationMatchesTargetIdentityV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
 
 import {
   OPERATION_TARGET_SELECTOR_V2_SCHEMA,
@@ -8,6 +9,23 @@ import {
   verificationCapabilityAdmissionV2,
   verificationCapabilityGuidanceV2
 } from "../src/verification/verification_capability_admission_v2.js";
+
+test("whole-area HRU replay binds summary ids alias to committed native identities without binding view scope", () => {
+  const committed = { target: {}, result: { affected_target_identities: ["element_id:1542933"] } } as any;
+  for (const operation of [{ capability_id: "revit_get_element_summary" },
+    { capability_id: "revit_call_tool", method: "POST", path: "/revit/get-element-summary" }]) {
+    for (const field of ["ids", "elementIds"]) {
+      const selected = operationTargetSelectorV2({ operation, value: { [field]: [1542933], viewId: 1363433 } });
+      assert(selected.principal_target_tokens.includes("id:1542933"));
+      assert(!selected.principal_target_tokens.includes("id:1363433"));
+      assert(operationMatchesTargetIdentityV2(committed, selected.principal_target_tokens));
+    }
+    for (const value of [{ viewId: 1542933 }, { ids: [1542934] }, { ids: [] }, { request: { viewId: 1542933 } }]) {
+      const selected = operationTargetSelectorV2({ operation, value, fallback_target_tokens: ["id:1542933"] });
+      assert(!operationMatchesTargetIdentityV2(committed, selected.principal_target_tokens));
+    }
+  }
+});
 
 test("reviewed TextNote verification requires a result schema that exposes TextNote value", () => {
   const apply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/replace-text-note" };
@@ -20,7 +38,7 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.equal(incapable.reason, "text_note_value_unavailable");
   assert.deepEqual(incapable.required_semantic_outputs, ["text_note.value"]);
   assert.deepEqual(incapable.provided_semantic_outputs,
-    ["element.identity", "element.classification", "element.location"]);
+    ["element.identity", "element.classification", "element.location", "family.placement"]);
 
   const capable = verificationCapabilityAdmissionV2({
     apply,

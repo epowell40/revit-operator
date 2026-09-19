@@ -76,6 +76,11 @@ namespace RevitBridge.Common
         public static OperatorNativeTransactionReceipt RolledBack(IEnumerable<long> affectedElementIds)
             => new OperatorNativeTransactionReceipt("rolled_back", false, Array.Empty<long>(), affectedElementIds);
 
+        // A child transaction may have committed before the outer group was
+        // rolled back. Only the observed outer rollback establishes no effect.
+        public static OperatorNativeTransactionReceipt FromAtomicGroupRollback(bool rollbackConfirmed)
+            => rollbackConfirmed ? RolledBack(Array.Empty<long>()) : Unknown("atomic_group_rollback_unconfirmed");
+
         public static OperatorNativeTransactionReceipt NotStarted(IEnumerable<long>? targetElementIds = null)
             => new OperatorNativeTransactionReceipt("not_started", false, Array.Empty<long>(), targetElementIds);
 

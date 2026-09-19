@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "test_runner_isolation.test.ts",
     "revit_batch_service.test.ts",
     "assignment_status_projection.test.ts",
     "assistant_intake_http.test.ts",
@@ -123,7 +124,42 @@
     "content_verified_projection.test.ts",
     "input_result_freshness.test.ts",
     "assignment_input_result_continuation.test.ts",
-    "open_duct_postcondition_v2.test.ts"
+    "open_duct_postcondition_v2.test.ts",
+    "connected_duct_postcondition_v2.test.ts",
+    "codex_transport_ownership.test.ts",
+    "codex_cold_resume_recovery.test.ts",
+    "evidence_item_projection.test.ts",
+    "skill_guidance_retention.test.ts",
+    "teammate_evidence_paging.test.ts",
+    "codex_partial_verification.test.ts",
+    "memory_task_scope.test.ts",
+    "task_memory_prompt.test.ts",
+    "drawing_observability.test.ts",
+    "existing_conditions_reconstruction.test.ts",
+    "route_connectivity.test.ts",
+    "family_placement_postcondition_v2.test.ts",
+    "work_plan_projection.test.ts",
+    "assignment_work_allowance_v2.test.ts",
+    "work_plan_inspection.test.ts",
+    "polyline_duct_postcondition_v2.test.ts",
+    "pdf_polygon_landmarks.test.ts",
+    "pdf_polygon_landmarks_pdfjs.test.ts",
+    "tool_result_compaction.test.ts",
+    "conversation_intake.test.ts",
+    "conversation_intake_http.test.ts",
+    "conversation_intake_sidecar.test.ts",
+    "windows_listener_inspector.test.ts",
+    "windows_listener_os.test.ts",
+    "task_navigation.test.ts",
+    "task_steering.test.ts",
+    "task_ui_contract.test.ts",
+    "conversational_result_delivery.test.ts",
+    "codex_turn_completions.test.ts",
+    "conversation_work_profile.test.ts",
+    "combined_duct_verification_v2.test.ts",
+    "conversation_identity_answer.test.ts",
+    "conversation_evidence_contract.test.ts",
+    "conversation_intake_recovery.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -147,9 +183,15 @@
     "lib/dynamicAssignmentIntegration.test.ts",
     "lib/generalAgentCapabilityDiscovery.test.ts",
     "viewFrameImage.test.ts",
-    "spatialObservationV1.test.ts"
+    "spatialObservationV1.test.ts",
+    "workflowImage.test.ts",
+    "lib/workPlanStdio.test.ts",
+    "lib/familyPlacementSchema.test.ts",
+    "lib/findElementsAgentProjection.test.ts",
+    "lib/nativeReadEvidence.test.ts"
   ],
   "desktop_tests": [
+    "test/assignment_workspace_v2.test.js",
     "test/assignment_workspace_ux.test.js",
     "test/simple_assistant_ui.test.js",
     "test/sidecar_secure_integration.test.js",
@@ -157,7 +199,9 @@
     "test/browser_asset_freshness.test.js",
     "test/idle_batch_worker.test.js",
     "test/composer_intake.test.js",
-    "test/conversation_rendering.test.js"
+    "test/conversation_rendering.test.js",
+    "test/sidecar_revit_listener_identity.test.js",
+    "test/task_navigation.test.js"
   ],
   "dotnet_test_classes": [
     "OperatorDesktopLaunchPlanTests",
@@ -206,9 +250,25 @@
     "MepRouteSizeInputPolicyTests",
     "OperatorWorkbookSupplementalTablesTests",
     "DraftPointCoordinatePolicyTests",
-    "OperatorWorkbookExportPathTests"
+    "OperatorWorkbookExportPathTests",
+    "TemporaryAnnotationCropTests",
+    "HostedPlacementPreflightTests",
+    "AbsolutePlacementCorrectionTests",
+    "OperatorIdleDiagnosticTests",
+    "MepCurveJointPolicyTests",
+    "LinkedHostPlacementPolicyTests",
+    "FamilyPlacementRecoveryTests",
+    "FindElementsGeometryContractTests",
+    "DuctVerificationInspectionPolicyTests"
   ],
   "failure_families": [
+    {
+      "id": "workstation-provider-settings-leak-into-release-test-processes",
+      "coverage": [
+        "backend:test_runner_isolation.test.ts",
+        "backend:chat_stream_attachment_parity.test.ts"
+      ]
+    },
     {
       "id": "local-checkpoint-ribbon-selects-stale-installed-desktop-launcher",
       "coverage": [
@@ -1881,7 +1941,8 @@
       "id": "saved-answer-refresh-is-superseded-by-status-poll-and-task-does-not-continue",
       "coverage": [
         "backend:assignment_mutation_acknowledgment.test.ts",
-        "backend:assignment_kernel_v2_controls.test.ts"
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "desktop:test/assignment_workspace_v2.test.js"
       ]
     },
     {
@@ -1917,7 +1978,8 @@
       "id": "shared-model-and-current-view-question-falls-through-to-slow-assignment",
       "coverage": [
         "backend:simple_context_question.test.ts",
-        "backend:session_history_recovery.test.ts"
+        "backend:session_history_recovery.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js"
       ]
     },
     {
@@ -1947,6 +2009,560 @@
       "coverage": [
         "mcp:lib/genericToolPreflight.test.ts",
         "dotnet:OperatorWorkbookSupplementalTablesTests"
+      ]
+    },
+    {
+      "id": "connected-round-duct-is-correct-but-open-rectangular-only-verifier-stalls-completion",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "committed-route-workflow-capture-remains-text-only-and-image-retrieval-fails",
+      "coverage": [
+        "mcp:workflowImage.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "old-provider-process-exit-or-late-response-corrupts-replacement-transport",
+      "coverage": [
+        "backend:codex_transport_ownership.test.ts",
+        "backend:codex_cold_resume_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "cold-resume-loses-per-call-events-and-continues-without-durable-conversation-handoff",
+      "coverage": [
+        "backend:codex_cold_resume_recovery.test.ts",
+        "backend:codex_tool_catalog.test.ts"
+      ]
+    },
+    {
+      "id": "large-retained-model-inventory-requires-many-pages-for-unneeded-parameters",
+      "coverage": [
+        "backend:evidence_item_projection.test.ts",
+        "backend:evidence_http_routes.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "successful-retained-evidence-pages-exhaust-eight-read-retry-budget",
+      "coverage": [
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "repository-boilerplate-displaces-company-and-complete-reconstruction-guidance",
+      "coverage": [
+        "backend:skill_guidance_retention.test.ts",
+        "backend:codex_tool_catalog.test.ts"
+      ]
+    },
+    {
+      "id": "distant-annotations-shrink-temporary-route-verification-capture",
+      "coverage": [
+        "dotnet:TemporaryAnnotationCropTests",
+        "mcp:workflowImage.test.ts"
+      ]
+    },
+    {
+      "id": "round-duct-created-with-open-ends-does-not-satisfy-connected-reconstruction",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "premature-compatibility-verification-claim-discards-partial-native-readback",
+      "coverage": [
+        "backend:codex_partial_verification.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:teammate_native_rollback_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "fresh-reconstruction-inherits-another-tasks-applied-change-summary",
+      "coverage": [
+        "backend:memory_task_scope.test.ts",
+        "backend:task_memory_prompt.test.ts"
+      ]
+    },
+    {
+      "id": "changed-evidence-purpose-replays-identical-selection-after-output-truncation",
+      "coverage": [
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:evidence_item_projection.test.ts",
+        "backend:task_memory_prompt.test.ts"
+      ]
+    },
+    {
+      "id": "unfamiliar-workbook-export-guesses-schema-repeatedly-without-contract-read",
+      "coverage": [
+        "backend:task_memory_prompt.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorWorkbookSupplementalTablesTests"
+      ]
+    },
+    {
+      "id": "canonical-verified-reconstruction-overwritten-by-legacy-action-list-guard",
+      "coverage": [
+        "backend:codex_partial_verification.test.ts",
+        "backend:brain.test.ts"
+      ]
+    },
+    {
+      "id": "composite-model-observation-alias-rejected-as-unknown-tool",
+      "coverage": [
+        "backend:teammate_loop_runtime.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "atomic-network-rollback-loses-outer-transaction-authority-and-blocks-correction",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:teammate_native_rollback_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "backend-test-fixture-restores-live-workspace-and-pollutes-user-history",
+      "coverage": [
+        "backend:test_runner_isolation.test.ts",
+        "backend:brain.test.ts"
+      ]
+    },
+    {
+      "id": "saved-clarification-resume-hides-stale-browser-recovery-and-loses-task-continuity",
+      "coverage": [
+        "desktop:test/browser_asset_freshness.test.js",
+        "desktop:test/assignment_workspace_v2.test.js",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "connected-duct-native-name-and-size-aliases-rejected-after-successful-reconstruction",
+      "coverage": [
+        "backend:connected_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "missing-create-similar-host-is-misclassified-as-uncertain-write",
+      "coverage": [
+        "dotnet:HostedPlacementPreflightTests",
+        "dotnet:OperatorAttemptSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "record-drawing-reconstruction-graded-against-unshown-device-properties",
+      "coverage": [
+        "backend:drawing_observability.test.ts",
+        "backend:existing_conditions_reconstruction.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-route-grading-ignores-native-connectivity",
+      "coverage": [
+        "backend:route_connectivity.test.ts",
+        "backend:existing_conditions_reconstruction.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ],
+      "id": "whole-area-created-family-summary-ids-alias-loses-verification-target"
+    },
+    {
+      "coverage": [
+        "dotnet:AbsolutePlacementCorrectionTests",
+        "backend:family_placement_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ],
+      "id": "whole-area-family-placement-adds-level-elevation-and-echoes-requested-position"
+    },
+    {
+      "id": "whole-area-task-cannot-retain-and-independently-close-multiple-branches",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "backend:work_plan_projection.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-tool-documentation-projection-hides-schema-and-wastes-provider-round-trips",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c43-call-budget-stops-after-two-verified-placements",
+      "coverage": [
+        "backend:assignment_work_allowance_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-inspection-items-cannot-close-without-fabricating-edits",
+      "coverage": [
+        "backend:work_plan_inspection.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "multi-owner-branch-readback-rejected-by-single-target-admission",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "hvac-connectivity-grade-spends-electrical-open-port-allowance",
+      "coverage": [
+        "backend:existing_conditions_reconstruction.test.ts",
+        "backend:route_connectivity.test.ts"
+      ]
+    },
+    {
+      "id": "physical-connection-proof-lacks-native-referenced-port-identity",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "dotnet:OperatorNativeTransportTests"
+      ]
+    },
+    {
+      "id": "whole-area-c44-level-name-polyline-has-native-proof-but-cannot-verify",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-large-native-observation-replays-and-expands-history-on-every-call",
+      "coverage": [
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_kernel_v2_store.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-nullable-tool-schema-hides-correctable-nested-limit",
+      "coverage": [
+        "mcp:lib/genericToolPreflight.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-partial-stop-omits-verified-work-and-unfinished-scope",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:codex_partial_verification.test.ts"
+      ]
+    },
+    {
+      "id": "whole-area-c44-native-queue-waits-without-idle-callback-evidence",
+      "coverage": [
+        "dotnet:OperatorIdleDiagnosticTests",
+        "dotnet:OperatorRevitQueueDiagnosticTests"
+      ]
+    },
+    {
+      "id": "direct-room-c44-angular-duct-join-is-physically-connected-without-required-elbow",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "dotnet:MepCurveJointPolicyTests"
+      ]
+    },
+    {
+      "id": "direct-room-c44-linked-ceiling-host-is-not-addressable-through-family-placement",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:LinkedHostPlacementPolicyTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-linked-host-validation-bypassed-by-idempotency",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-face-projection-plans-duplicate-at-existing-position",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-face-hosted-device-misses-requested-schedule-level",
+      "coverage": [
+        "mcp:lib/familyPlacementSchema.test.ts",
+        "dotnet:FamilyPlacementRecoveryTests"
+      ]
+    },
+    {
+      "id": "direct-room-c46-family-placement-has-no-authoritative-transaction-settlement",
+      "coverage": [
+        "dotnet:FamilyPlacementRecoveryTests",
+        "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "area-c47-failed-family-rollback-classified-success-and-blocks-next-edit",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:teammate_canonical_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "area-m104-polyline-grid-bubbles-missing-from-pdf-source-landmarks",
+      "coverage": [
+        "backend:pdf_polygon_landmarks.test.ts",
+        "backend:pdf_polygon_landmarks_pdfjs.test.ts"
+      ]
+    },
+    {
+      "id": "direct-room-grid-native-axis-missing-from-find-elements-geometry",
+      "coverage": [
+        "dotnet:FindElementsGeometryContractTests",
+        "mcp:lib/findElementsAgentProjection.test.ts",
+        "backend:tool_result_compaction.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-identity-question-routed-through-full-task",
+      "coverage": [
+        "backend:conversation_intake.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts"
+      ]
+    },
+    {
+      "id": "capture-c49-native-export-bytes-not-delivered-to-agent",
+      "coverage": [
+        "mcp:viewFrameImage.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-timed-out-ui-observation-claimed-revit-disconnected",
+      "coverage": [
+        "backend:conversation_intake.test.ts",
+        "backend:conversation_intake_http.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c49-repeated-os-process-inspection-exceeds-ui-observation-budget",
+      "coverage": [
+        "backend:windows_listener_inspector.test.ts",
+        "backend:windows_listener_os.test.ts",
+        "desktop:test/sidecar_revit_listener_identity.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c50-optional-identity-observation-contaminates-task-completion",
+      "coverage": [
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c50-sheet-facts-omit-answer-to-mechanical-model-question",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:task_navigation.test.ts"
+      ]
+    },
+    {
+      "id": "provider-c51-completion-before-interrupt-ack-lost-and-unsupported-polling",
+      "coverage": [
+        "backend:codex_turn_completions.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-old-paused-work-hidden-and-task-switch-loses-draft",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-browser-disconnect-cancels-owned-execution",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "steering-c51-lost-ack-replayed-or-acceptance-claimed-as-delivery",
+      "coverage": [
+        "backend:task_steering.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "steering-c51-pause-misses-random-continuation-turn",
+      "coverage": [
+        "backend:task_steering.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-invalid-historical-journal-blocks-entire-list-and-active-poll",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:content_verified_projection.test.ts",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-early-pause-targets-previous-completed-assignment",
+      "coverage": [
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/sidecar_secure_integration.test.js",
+        "backend:task_steering.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-selected-older-paused-task-resolves-newer-completed-controls",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/assignment_workspace_v2.test.js",
+        "desktop:test/task_navigation.test.js"
+      ]
+    },
+    {
+      "id": "tasks-c51-orphaned-native-operations-falsely-presented-as-working",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "backend:task_ui_contract.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-sent-first-message-resurrected-in-new-chat-draft",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/composer_intake.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c51-focused-inspection-takes-full-reasoning-and-repeats-evidence",
+      "coverage": [
+        "backend:conversation_work_profile.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversational_result_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c51-resumed-review-submits-overview-with-empty-findings",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "area-c48-wrong-parameter-fields-before-connectors-blocks-independent-route-proof",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:combined_duct_verification_v2.test.ts",
+        "dotnet:DuctVerificationInspectionPolicyTests",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "area-c48-partial-tool-catalog-projection-drops-usable-family-tools",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "backend:bounded_evidence_delivery.test.ts"
+      ]
+    },
+    {
+      "id": "tasks-c51-completed-resumed-task-retains-paused-banner",
+      "coverage": [
+        "backend:task_ui_contract.test.ts",
+        "desktop:test/conversation_rendering.test.js"
+      ]
+    },
+    {
+      "id": "conversation-c53-filename-inference-bypasses-model-inspection",
+      "coverage": [
+        "backend:conversation_identity_answer.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake.test.ts"
+      ]
+    },
+    {
+      "id": "read-c54-sheet-count-native-observation-ineligible-and-legacy-completion-exposed",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/nativeReadEvidence.test.ts"
+      ]
+    },
+    {
+      "id": "read-c54-worker-infers-model-content-from-project-metadata",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:conversation_work_profile.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "mcp:lib/nativeReadEvidence.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c55-factual-answer-echoes-unrequested-subtype-and-scope-caveats",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "backend:conversation_work_profile.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c55-two-low-findings-expand-requested-three-bullets-into-audit",
+      "coverage": [
+        "backend:conversational_result_delivery.test.ts",
+        "backend:simple_assistant_presentation.test.ts",
+        "backend:conversation_work_profile.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c56-intake-timeout-falls-through-to-wrong-legacy-evidence-contract",
+      "coverage": [
+        "backend:conversation_intake_recovery.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts",
+        "backend:conversation_evidence_contract.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c56-general-review-infers-specialty-from-filename",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c57-complete-view-evidence-is-reread-until-no-progress-blocks-review",
+      "coverage": [
+        "backend:evidence_item_projection.test.ts",
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
       ]
     }
   ],

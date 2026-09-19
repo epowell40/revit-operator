@@ -9,6 +9,36 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorAttemptSettlementTests
     {
+        [Fact]
+        public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
+        {
+            var result = HostedPlacementPreflight.CheckHost(false, "OneLevelBased", 1464223, null)!;
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/create-similar-from-instance");
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            result.Remove("transaction");
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/create-similar-from-instance").EffectState);
+        }
+        [Theory]
+        [InlineData(true, "none", "native_rollback")]
+        [InlineData(false, "unknown", "native_host")]
+        public void AtomicNetworkOuterRollbackOverridesCommittedChild(bool confirmed, string effect, string authority)
+        {
+            var workflow = new {
+                status = confirmed ? "BlockedRolledBack" : "BlockedRollbackFailed",
+                atomicRollbackSucceeded = confirmed,
+                mainApply = new { status = "Applied", transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1543000L }) },
+                branchResults = new[] { new { status = "Blocked", code = "branch_segment_too_short" } },
+                transaction = OperatorNativeTransactionReceipt.FromAtomicGroupRollback(confirmed)
+            };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-branch-network-workflow");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(authority, settlement.EffectAuthority);
+            Assert.Empty(settlement.AffectedTargetIdentities);
+            var legacy = new { workflow.status, workflow.atomicRollbackSucceeded, workflow.mainApply, workflow.branchResults };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(legacy, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
+        }
+
         [Theory]
         [InlineData("RolledBack", "none", "native_rollback")]
         [InlineData("Committed", "applied", "native_transaction")]

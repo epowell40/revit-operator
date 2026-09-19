@@ -60,6 +60,7 @@ export interface AssignmentSpecV2 {
   result_delivery_required?: boolean;
   /** Requested analysis remains a separate obligation after artifact verification. */
   result_assessment_required?: boolean;
+  work_plan_required?: boolean;
   criteria: readonly AssignmentCriterionSpecV2[];
   input_variables: readonly AssignmentInputVariableV2[];
   work_units: readonly AssignmentWorkUnitSpecV2[];

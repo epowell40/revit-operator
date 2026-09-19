@@ -40,6 +40,7 @@ function toolProgressStage(item: any): string | undefined {
     if (typeof path === "string" && /^\/revit\/[a-z][a-z0-9-]{0,100}$/.test(path)) tool = "revit_" + path.slice(7).replace(/-/g, "_");
   }
   if (["operator_evaluate_assignment_criteria"].includes(tool)) return "Checking the result…";
+  if (tool === "operator_manage_work_plan") return "Updating the work checklist…";
   if (["operator_request_assignment_input", "operator_request_clarification", "request_user_input"].includes(tool)) return "Preparing a question…";
   if (tool === "revit_inspect_exported_files") return "Checking the exported file…";
   if (["operator_discover_capabilities", "revit_search_tools", "revit_tool_doc"].includes(tool)) return "Finding the right tool…";

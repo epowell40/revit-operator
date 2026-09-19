@@ -13,12 +13,11 @@ import {
 import {
   emptyAssignmentControlPlane,
   normalizeAssignmentControlPlane,
-  reduceAssignmentControlPlane,
   type AssignmentControlPlaneLog
 } from "../assignments/control_plane.js";
 import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 import type { AssignmentKernelJournalRecordV2 } from "../assignments/assignment_kernel_v2_store.js";
-import { formatAssignmentKernelV2GoalContext } from "./assignment_kernel_v2_prompt.js";
+export { formatActiveGoalContext } from "./active_goal_context.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -261,7 +260,9 @@ function writeJson(filePath: string, value: unknown): void {
   let handle: number | null = null;
   try {
     handle = fs.openSync(tempPath, "wx");
-    fs.writeFileSync(handle, JSON.stringify(value, null, 2) + "\n", "utf8");
+    // Machine-owned journals can contain large native observations. Whitespace
+    // must not multiply their disk/write cost; atomic durability stays identical.
+    fs.writeFileSync(handle, JSON.stringify(value) + "\n", "utf8");
     fs.fsyncSync(handle);
     fs.closeSync(handle);
     handle = null;
@@ -858,6 +859,12 @@ export function listGoalsForSession(sessionId: string): GoalRecord[] {
   return readAllGoals().filter(goal => goal.related_session_id === sessionId);
 }
 
+/** Internal discovery filters owned sessions before any presentation limit.
+ * Callers must still derive task identity/status from the canonical journal. */
+export function listGoalCandidatesForSessions(allowed: (sessionId: string) => boolean): GoalRecord[] {
+  return readAllGoals().filter(goal => Boolean(goal.related_session_id && allowed(goal.related_session_id)));
+}
+
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const goal = getGoal(goalId);
   if (!goal) throw new Error("Goal not found.");
@@ -1145,50 +1152,4 @@ export function markAgentGoalComplete(sessionId: string, evidence?: unknown): Go
   if (evidence !== undefined) appendGoalEvidence(goal.id, { summary: "Completion evidence recorded.", details: asJsonMap(evidence) ?? { evidence } });
   const audited = requestGoalCompletionAudit(goal.id, evidence);
   return completeGoalAfterAudit(audited.id);
-}
-
-export function formatActiveGoalContext(goal: GoalRecord | null): string {
-  if (!goal) return "";
-  const kernelV2 = formatAssignmentKernelV2GoalContext(goal);
-  if (kernelV2 !== null) return kernelV2;
-  if (goal.status !== "active") return "";
-  const control = reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;
-  const recentAttempts = control.attempts.slice(-8).map(attempt =>
-    `- ${attempt.attempt_id} [${attempt.purpose}/${attempt.requested_effect}] ${attempt.action_path} effect=${attempt.effect.state} authority=${attempt.effect.authority} verification=${attempt.verification.state}`);
-  const recentActions = goal.action_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
-  const recentEvidence = goal.evidence_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
-  const recentValidations = goal.validation_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
-  const workItems = (goal.work_items ?? []).filter(item => item.status !== "skipped").slice(-12).map(item => {
-    const dependencies = item.depends_on.length ? ` depends_on=${item.depends_on.join(",")}` : "";
-    const blocker = item.blocker ? ` blocker=${item.blocker}` : "";
-    return `- ${item.id} [${item.status}] ${item.title}${dependencies}${blocker}`;
-  });
-  const assumptions = (goal.assumptions ?? []).filter(item => item.status === "proposed" || item.status === "accepted").slice(-12).map(item => `- ${item.id} [${item.status}] ${item.statement}${item.basis ? ` (basis: ${item.basis})` : ""}`);
-  const resolvedClarifications = control.clarifications.filter(item => item.status === "resolved").slice(-4).map(item =>
-    `- ${item.clarification_id}: ${JSON.stringify(item.supplied_values)}`);
-  return [
-    "ACTIVE GOAL CONTEXT (active_goal_context):",
-    `id: ${goal.id}`,
-    `title: ${goal.title}`,
-    `status: ${goal.status}`,
-    `objective: ${goal.objective}`,
-    `acceptance_criteria:\n${goal.acceptance_criteria.map(c => `- ${c}`).join("\n")}`,
-    goal.non_goals.length > 0 ? `non_goals:\n${goal.non_goals.map(c => `- ${c}`).join("\n")}` : "non_goals: (none)",
-    `current_phase: ${goal.current_phase || "(unset)"}`,
-    `current_step: ${goal.current_step || "(unset)"}`,
-    `progress_summary: ${goal.progress_summary || "(empty)"}`,
-    `blocker: ${goal.blocker || "(none)"}`,
-    `canonical_control_plane: generation=${control.generation} run_id=${control.run_id ?? "(none)"} phase=${control.phase} outcome=${control.outcome_state} terminal=${control.terminal_state}`,
-    `resolved_user_input:\n${resolvedClarifications.length ? resolvedClarifications.join("\n") : "- (none)"}`,
-    `canonical_unknown_attempts: ${control.unresolved_unknown_attempt_ids.join(", ") || "(none)"}`,
-    `canonical_progress_decision: ${control.progress.decision}${control.progress.reason ? ` (${control.progress.reason})` : ""}`,
-    `canonical_recent_attempts:\n${recentAttempts.length ? recentAttempts.join("\n") : "- (none)"}`,
-    `work_items:\n${workItems.length ? workItems.join("\n") : "- (none)"}`,
-    `assumptions:\n${assumptions.length ? assumptions.join("\n") : "- (none)"}`,
-    `recent_action_log:\n${recentActions.length ? recentActions.join("\n") : "- (none)"}`,
-    `recent_evidence_log:\n${recentEvidence.length ? recentEvidence.join("\n") : "- (none)"}`,
-    `recent_validation_log:\n${recentValidations.length ? recentValidations.join("\n") : "- (none)"}`,
-    "Assignment state is owned and automatically journaled by the Revit Operator backend. Do not call Codex create_goal, get_goal, or update_goal tools from this embedded turn.",
-    "Goal Mode instructions: work toward the active goal, avoid repeating completed work, pick the next ready work item whose dependencies are complete, use live Revit evidence, and report completion or a concrete task blocker truthfully."
-  ].join("\n");
 }

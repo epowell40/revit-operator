@@ -555,7 +555,7 @@ test("input stop shows only unanswered questions and never hides an uncertain mo
 
 test("assessment guidance describes remaining obligations without claiming an uncreated artifact exists", () => {
   const snapshot = journal().snapshot();
-  const requested = { ...snapshot, spec: { ...snapshot.spec, result_delivery_required: true, result_assessment_required: true } };
+  const requested = { ...snapshot, spec: { ...snapshot.spec, requested_effect: "apply" as const, result_delivery_required: true, result_assessment_required: true } };
   const guidance = deriveProgressGapsV2(requested).find(g => g.kind === "result_delivery_required")!.reason;
   assert.doesNotMatch(guidance, /The exported file is verified/);
   assert.match(guidance, /If export is still outstanding, complete that work first/);

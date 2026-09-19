@@ -4560,7 +4560,9 @@ namespace RevitBridge.Logic.Handlers
                 : exemplar;
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
             var warnings = new List<string>();
-            if (requestedHost == null) throw new InvalidOperationException("No host element was available for create-similar.");
+            var hostPreflight = HostedPlacementPreflight.CheckHost(requestedHost != null,
+                symbol.Family.FamilyPlacementType.ToString(), p.exemplarElementId, p.hostElementId);
+            if (hostPreflight != null) return Task.FromResult<object>(hostPreflight);
             var host = HostedPlacementUtil.ResolveSupportedPlacementHost(
                 doc,
                 previewView,

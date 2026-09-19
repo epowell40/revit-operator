@@ -105,7 +105,7 @@ export const EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA: "revit-operator.evi
 
 export type EvidenceRetrievalSelectorV1 =
   | Readonly<{ kind: "fields"; fields: readonly string[] }>
-  | Readonly<{ kind: "item_range"; item_range: Readonly<{ path: string; start: number; count: number }> }>
+  | Readonly<{ kind: "item_range"; item_range: Readonly<{ path: string; start: number; count: number; fields?: readonly string[] }> }>
   | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number }> }>
   | Readonly<{ kind: "target_subset"; target_subset: readonly string[] }>
   | Readonly<{ kind: "image"; image: true }>;

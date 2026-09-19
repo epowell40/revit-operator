@@ -1,0 +1,3 @@
+/** Shared by fresh and resumed review instructions. This describes what the
+ * sources can establish; it does not turn assistant prose into native proof. */
+export const CONVERSATION_EVIDENCE_GUIDANCE = "Treat document filenames and titles as literal identifiers. They do not establish building use, engineering discipline, system subtype or completeness. Base those conclusions on inspected project documentation or modeled content, and qualify an inference when those sources do not settle it. Sheet and view metadata describes the documentation; it does not establish an uninspected specialty or system. Do not add a more specific project or system classification than the evidence supports.";

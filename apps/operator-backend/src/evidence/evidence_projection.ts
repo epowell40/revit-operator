@@ -1,4 +1,5 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
+import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
   evidenceTargetIdentityValuesV1,
@@ -258,7 +259,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
       selector_forms: [
         "EXACTLY ONE selector is required",
         "fields",
-        "itemRange",
+        "itemRange (optional fields selects columns per row; row_index, values, missing_fields; complete remains artifact-wide; pagination.source_rows_exhausted=true means no more source rows)",
         "textRange",
         "targetSubset (exact reviewed target identities only)",
         "image",
@@ -271,6 +272,9 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     truncated: extracted.omitted
   } satisfies Omit<EvidenceProjectionV1, "projected_bytes">;
   let candidate: Omit<EvidenceProjectionV1, "projected_bytes"> = base;
+  const documentationBase = { ...base, key_counts: {}, key_facts: {}, target_scope: [], effect_state: null };
+  const documentation = projectToolDocumentation(ref, raw, maxBytes - projectionBytes(documentationBase) - 64);
+  if (documentation) candidate = { ...documentationBase, tool_documentation: documentation, truncated: !documentation.complete };
   while (projectionBytes(candidate) > maxBytes) {
     const facts = Object.entries(candidate.key_facts);
     const counts = Object.entries(candidate.key_counts);

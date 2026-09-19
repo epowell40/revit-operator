@@ -3,6 +3,7 @@ import { createGoal, getCurrentGoalForSession, setAgentGoal, type GoalRecord } f
 import { hasRevitTurnContext } from "../revit_context_policy.js";
 import { isIndependentAssistantTurn } from "./assistant_turn.js";
 import { pauseAutomaticAssignmentForNewRequest } from "../assignments/fresh_request.js";
+import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -17,6 +18,7 @@ function text(value: unknown, max: number): string {
 
 export function startAutoGoalIfEligible(input: {
   session_id: string;
+  message_id?: string;
   user_text: string;
   tool_result_count: number;
   source: string;
@@ -25,11 +27,21 @@ export function startAutoGoalIfEligible(input: {
   on_started?: (goal: GoalRecord, signals: string[]) => void;
 }): GoalRecord | null {
   if (input.tool_result_count > 0) return null;
-  if (isIndependentAssistantTurn({ user_text: input.user_text, context: input.request_context })) {
+  assertConversationIntakeResolved({session_id:input.session_id,message_id:input.message_id??"",user_text:input.user_text});
+  const intake = retainedIntakeDecision({session_id:input.session_id,message_id:input.message_id??"",user_text:input.user_text});
+  const semanticHandoff = intake && intake.route !== "answer";
+  if (!semanticHandoff && isIndependentAssistantTurn({ user_text: input.user_text, context: input.request_context })) {
     // Preserve any existing work; a side question is not a cancellation.
     return null;
   }
   const decision = classifyAutoGoalRequest(input.user_text);
+  if (intake && intake.route !== "answer" && intake.requested_effect === "read") {
+    // An authenticated semantic read narrows admission even when the legacy
+    // English-only fallback treats unfamiliar language as a mutation.
+    decision.requestedEffect = "read";
+    decision.shouldStart = true;
+    decision.signals.push("semantic read handoff");
+  }
   // A Revit conversation is a work surface. Short requests ("What size is
   // this?") need a durable owner before discovery, even without command words.
   // Admission is not write authorization or completion; those stay evidence-bound.
@@ -65,7 +77,9 @@ export function startAutoGoalIfEligible(input: {
       mode: "auto_goal",
       source: input.source,
       source_user_request: decision.objective,
+      ...(input.message_id ? { conversation_message_id: input.message_id } : {}),
       requested_effect: decision.requestedEffect,
+      response_style: object(context.ui).response_style === "conversation" ? "conversation" : "evidence",
       executor_id: text(revit.courier_executor_id, 180) || null,
       document_fingerprint: text(projectIdentity.fingerprint, 128) || null,
       document_title: text(document.title, 260) || null,

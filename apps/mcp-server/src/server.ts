@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isSupportedMcpAlias, requireSupportedToolRoute } from "./lib/supportedToolInventory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import * as fs from "fs";
 import * as path from "path";
@@ -19,7 +20,7 @@ import {
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
-import { nativeViewImageContent, viewFrameImageContent } from "./viewFrameImage.js";
+import { captureImageContent, nativeViewImageContent, viewFrameImageContent } from "./viewFrameImage.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -151,6 +152,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_request_clarification",
   "operator_request_assignment_input",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "operator_record_execution_strategy",
@@ -957,7 +959,7 @@ server.tool("revit_tool_registry", "List/search Revit HTTP primitives from the b
   }
 );
 
-server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence. itemRange.count is 1..256; a page may contain fewer rows to fit its byte budget. Continue from result.pagination.next_start when has_more is true. Projected inventory.* count/fact keys can be retrieved directly, or use projection.key_counts.<key> / projection.key_facts.<key>. missing_fields distinguishes an absent field from an actual null value. For fields, result.selection uses the exact requested path as its key, such as selection['payload.elementIds']; itemRange returns the selected array directly. In Operator code mode, a successful JSON retrieval is one JSON object with optional host model_observation_index metadata; use JSON.parse(String(result)) and retain the parsed selection in the same cell for the next tool. Inspect errors before parsing. Repeating an identical retrieval is not a parsing repair.",
+server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence. itemRange.count is 1..256; a page may contain fewer rows to fit its byte budget. Continue from result.pagination.next_start when has_more is true. Projected inventory.* count/fact keys can be retrieved directly, or use projection.key_counts.<key> / projection.key_facts.<key>. missing_fields distinguishes an absent field from an actual null value. For fields, result.selection uses the exact requested path as its key, such as selection['payload.elementIds']; itemRange returns the selected array directly. In Operator code mode, a successful JSON retrieval is one JSON object with optional host model_observation_index metadata; use JSON.parse(String(result)), then filter/map result.selection in that same cell before printing only needed facts. Projected itemRange rows wrap selected fields in row.values, with row_index and missing_fields. Do not truncate a JSON string and re-fetch the discarded rows; page using next_start instead. Inspect errors before parsing. Repeating an identical retrieval with a different purpose is still a repeat, not a parsing repair.",
   {
     evidenceId: z.string().describe("Named ev1_ evidence identity from a model-facing projection."),
     sessionId: z.string().describe("Current session identity."),
@@ -967,7 +969,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
     fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
-    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).describe("One bounded array page. Mutually exclusive with every other selector.").optional(),
+    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256), fields: z.array(z.string()).min(1).max(64).optional() }).describe("One bounded array page. Optional fields selects columns relative to each row and returns row_index, values keyed by the exact path, and missing_fields; projected pages are always partial. Mutually exclusive with every other selector.").optional(),
     textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
     image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),
@@ -1076,6 +1078,36 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
+server.tool("operator_manage_work_plan", "Retain the complete multi-part task checklist before model edits. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity reviews. Complete inspections using fresh complete /revit/get-connectors operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart.",
+  {
+    action: z.enum(["declare", "complete", "status"]),
+    start: z.number().int().min(0).max(128).optional(),
+    operationStart: z.number().int().min(0).max(100000).optional(),
+    assumptionStart: z.number().int().min(0).max(32).optional(),
+    items: z.array(z.object({ itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/), description: z.string().min(1).max(800), sourceBasis: z.string().min(1).max(800), kind: z.enum(["edit", "inspection"]).optional(), dependsOn: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/)).min(1).max(128).optional() }).strict()).min(1).max(128).optional(),
+    assumptions: z.array(z.string().min(1).max(800)).max(16).optional(),
+    itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/).optional(),
+    operationIds: z.array(z.string().min(1).max(240)).min(1).max(128).optional()
+  }, async args => {
+    try {
+      const binding = currentAssignmentKernelV2Binding();
+      if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      if (args.action === "declare" && (!args.items || args.itemId || args.operationIds)) throw new Error("work_plan_declaration_arguments_invalid");
+      if (args.action === "complete" && (!args.itemId || !args.operationIds || args.items || args.assumptions)) throw new Error("work_plan_completion_arguments_invalid");
+      if (args.action === "status" && (args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("work_plan_status_arguments_invalid");
+      const result = await createOperatorBackendClient().manageAssignmentWorkPlanV2({
+        assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation, session_id: binding.session_id,
+        action: args.action,
+        ...(args.start !== undefined ? { start: args.start } : {}),
+        ...(args.operationStart !== undefined ? { operation_start: args.operationStart } : {}),
+        ...(args.assumptionStart !== undefined ? { assumption_start: args.assumptionStart } : {}),
+        ...(args.items ? { declaration: { items: args.items.map(item => ({ item_id: item.itemId, description: item.description, source_basis: item.sourceBasis, ...(item.kind ? { kind: item.kind } : {}), ...(item.dependsOn ? { depends_on: item.dependsOn } : {}) })), assumptions: args.assumptions ?? [] } } : {}),
+        ...(args.itemId ? { item_id: args.itemId, operation_ids: args.operationIds } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] }; }
+  });
+
 server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status without model-authored pass/fail status. For required read-result delivery, select retained native values with resultItems; those presentation paths never determine criterion truth.",
   {
     claims: z.array(z.object({
@@ -1090,11 +1122,11 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
       path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
     })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
     assessment: z.object({
-      overview: z.string().min(1).max(1200),
+      overview: z.string().min(1).max(1200).describe("The complete user-facing answer in the requested length and format. Include every conclusion, material uncertainty and limitation needed to interpret it correctly. Usually one sentence for a simple question; do not add audit boilerplate or repeat supporting facts."),
       findings: z.array(z.object({
         priority: z.enum(["high", "medium", "low"]), title: z.string().min(1).max(160), text: z.string().min(1).max(1200),
         evidence_indices: z.array(z.number().int().min(1).max(32)).min(1).max(8)
-      }).strict()).min(1).max(12),
+      }).strict()).min(1).max(12).describe("At least one evidence-linked finding is required even when overview already contains the full answer. When all findings are low priority, supporting explanations and scope notes are collapsed in Details. Medium/high concerns remain expanded. Do not downgrade an actionable concern to shorten the answer."),
       limitations: z.array(z.string().min(1).max(800)).max(8),
       questions: z.array(z.string().min(1).max(600)).max(3)
     }).strict().optional().describe("For read-only audits, reviews, comparisons and gap lists, provide a useful assessment in addition to resultItems. Findings are assistant interpretations supported by 1-based evidence_indices into resultItems; they never establish native proof, engineering certification, criterion truth, authorization or supplied user inputs. State unverified limits and ask only the most useful outside-input questions. Select scalar resultItems or small scalar arrays, not whole reports. This structured delivery becomes the final answer; later free text cannot replace it.")
@@ -2006,14 +2038,14 @@ server.tool("revit_close_doc", "Close an open family doc session.",
   }
 );
 
-server.tool("revit_capture_view", "Export view as image.", 
+server.tool("revit_capture_view", "Export a Revit view or sheet and return its image directly. Use mapped view-frame export only when pixel-to-model coordinates are needed.",
   { viewId: z.number().optional(), imageSize: z.number().default(2048) }, 
   async ({ viewId, imageSize }) => {
     try {
       const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize }, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return captureImageContent(data, "/revit/export-image");
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
@@ -3181,9 +3213,10 @@ server.registerTool(
   async req => runMepConnectorRepair(req, true, true)
 );
 
-server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true to return compact scan totals plus only elements/connectors with no physical connection.",
+server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
   {
     elementIds: z.array(z.number()).min(1).max(5000),
+    includeVerificationParameters: z.boolean().optional(),
     includeAllRefs: z.boolean().optional().default(true),
     includeCoordinateSystem: z.boolean().optional().default(true),
     includeFlexGeometry: z.boolean().optional().default(true),
@@ -3483,26 +3516,8 @@ server.tool("revit_create_family_instance", "Place a family instance (e.g. equip
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_place_families", "Batch place family instances with dry-run, idempotency, rotation, and per-instance reporting.",
-  {
-    levelName: z.string(),
-    familyName: z.string().optional(),
-    symbolName: z.string(),
-    instances: z.array(z.object({
-      x: z.number(),
-      y: z.number(),
-      z: z.number(),
-      rotationDegrees: z.number().optional(),
-      hostElementId: z.number().optional(),
-      parameters: z.record(z.string()).optional(),
-    })),
-    dryRun: z.boolean().default(false),
-    idempotency: z.object({
-      enabled: z.boolean().default(true),
-      toleranceFt: z.number().default(0.01),
-    }).default({}),
-    behavior: z.enum(["allOrNothing", "bestEffort"]).default("allOrNothing"),
-  },
+server.tool("revit_place_families", "Batch place family instances with absolute-model coordinates, exact linked face hosting, stable family type IDs, dry-run, idempotency and per-instance reporting. A linked ceiling/wall/floor requires both the link hostElementId and linkedHostElementId. Verify actual host and location; unhosted placement is not a substitute for a requested ceiling host.",
+  familyPlacementToolShape,
   async (args) => {
     try {
       const data = await callRevit("/revit/place-families", "POST", args, {

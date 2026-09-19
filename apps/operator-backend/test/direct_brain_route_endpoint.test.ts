@@ -74,6 +74,7 @@ test("direct provider flag bypasses macro interception for /chat and /chat/strea
       OPERATOR_TOKEN: token,
       OPERATOR_WORKSPACE_ROOT: workspace,
       OPERATOR_MEMORY_AUTO_TURN_NOTES: "0",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0",
       OPERATOR_BRAIN: "gemini",
       OPERATOR_GEMINI_API_KEY: "test-key",
       OPERATOR_GEMINI_AGENT_MODEL: "gemini-test",

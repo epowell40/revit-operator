@@ -77,7 +77,7 @@ namespace RevitBridge.Logic.Handlers
                     if (elem.Location is LocationPoint lp)
                     {
                         var pt = lp.Point;
-                        locationObj = new { type = "point", x = pt.X, y = pt.Y, z = pt.Z };
+                        locationObj = new { type = "point", x = pt.X, y = pt.Y, z = pt.Z, rotationRadians = lp.Rotation };
                     }
                     else if (elem.Location is LocationCurve lc)
                     {
@@ -106,6 +106,10 @@ namespace RevitBridge.Logic.Handlers
                     fullClassName = elem.GetType().FullName,
                     category = elem.Category?.Name,
                     name = elem.Name,
+                    familyName = (elem as FamilyInstance)?.Symbol?.FamilyName,
+                    typeName = (elem as FamilyInstance)?.Symbol?.Name,
+                    levelId = elem.LevelId != ElementId.InvalidElementId ? (long?)ElementIdCompat.GetValue(elem.LevelId) : null,
+                    levelName = (doc.GetElement(elem.LevelId) as Level)?.Name,
                     // Read properties from the requested element, not the
                     // optional view used to evaluate its bounding box. Creation
                     // verification needs the actual scale as well as identity.

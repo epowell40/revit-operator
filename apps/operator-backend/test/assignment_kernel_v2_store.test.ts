@@ -487,7 +487,7 @@ test("content-verified snapshot reads avoid replay while changed bytes and inval
   const stamp = fs.statSync(file);
   const persisted = JSON.parse(bytes);
   persisted.assignment_kernel_v2.events[0].spec.source_user_request = "Return the different inventory.";
-  const changed = JSON.stringify(persisted, null, 2) + "\n";
+  const changed = JSON.stringify(persisted) + "\n";
   assert.equal(Buffer.byteLength(changed), Buffer.byteLength(bytes));
   fs.writeFileSync(file, changed);
   fs.utimesSync(file, stamp.atime, stamp.mtime);
@@ -498,4 +498,28 @@ test("content-verified snapshot reads avoid replay while changed bytes and inval
   fs.utimesSync(file, stamp.atime, stamp.mtime);
   assert.throws(() => getAssignmentKernelSnapshotV2(goal.id), /version/i,
     "Semantic rejection cannot fall back to the valid previous file or prior cached snapshot.");
+}));
+
+
+test('journal append cache rejects same-size timestamp-restored history edits and survives failed atomic commit',()=>workspace(()=>{
+ const {goal,binding}=fixture();
+ const activation=event(goal.id,binding,2,{event_type:'work_unit_state_changed',work_unit_id:'work-result',state:'active',reason:'Start'});
+ const file=path.join(process.env.OPERATOR_WORKSPACE_ROOT!,'artifacts','goals',goal.id,'goal.json');
+ const original=fs.readFileSync(file,'utf8');
+ const rename=fs.renameSync;
+ try{fs.renameSync=((from:any,to:any)=>{if(String(to)===file)throw new Error('injected disk failure');return rename(from,to);}) as typeof fs.renameSync;
+  assert.throws(()=>appendAssignmentKernelEventV2(goal.id,activation),/injected disk failure/);
+ }finally{fs.renameSync=rename;}
+ assert.equal(fs.readFileSync(file,'utf8'),original);
+ assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.assignment_version,1);
+ assert.equal(appendAssignmentKernelEventV2(goal.id,activation).accepted,true);
+ const prior=fs.readFileSync(file,'utf8'),stamp=fs.statSync(file),changed=JSON.parse(prior);
+ changed.assignment_kernel_v2.events[0].spec.source_user_request='Return the different inventory.';
+ const bytes=JSON.stringify(changed)+'\n';assert.equal(Buffer.byteLength(bytes),Buffer.byteLength(prior));
+ fs.writeFileSync(file,bytes);fs.utimesSync(file,stamp.atime,stamp.mtime);
+ const next=event(goal.id,binding,3,{event_type:'work_unit_state_changed',work_unit_id:'work-result',state:'pending',reason:'Continue'});
+ assert.equal(appendAssignmentKernelEventV2(goal.id,next).snapshot.spec.source_user_request,'Return the different inventory.');
+ const retained=JSON.parse(fs.readFileSync(file,'utf8'));retained.assignment_kernel_v2.events[1].assignment_version=9;
+ fs.writeFileSync(file,JSON.stringify(retained));
+ assert.throws(()=>appendAssignmentKernelEventV2(goal.id,event(goal.id,binding,4,{event_type:'work_unit_state_changed',work_unit_id:'work-result',state:'active',reason:'Rejected'})),/version/i);
 }));

@@ -8,7 +8,7 @@ import {
   type ProviderCallV2,
   type ProviderUsageV2
 } from "../domain/assignment-kernel/index.js";
-import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "./model_call_budget.js";
+import { absoluteAssignmentWorkCallLimitV2 } from "./assignment_work_allowance_v2.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import {
   evaluatePendingAssignmentCriteriaV2,
@@ -184,8 +184,9 @@ export function createAssignmentKernelV2ModelReceiptRecorder(input: Readonly<{
 export function settleAssignmentKernelProviderBudgetAtQuiescenceV2(binding: AssignmentBindingV2): AssignmentSnapshotV2 | null {
   let snapshot = getAssignmentKernelSnapshotV2(binding.assignment_id);
   if (!snapshot || snapshot.terminal || !snapshot.quiescent) return snapshot;
+  const limit = absoluteAssignmentWorkCallLimitV2(snapshot);
   if (!snapshot.provider_budget_exhausted
-    && snapshot.provider_call_ids.length < ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT) return snapshot;
+    && snapshot.provider_call_ids.length < limit) return snapshot;
   if (!snapshot.provider_budget_exhausted) {
     snapshot = evaluatePendingAssignmentCriteriaV2({ binding: snapshot.current_binding });
     if (snapshot.terminal) return snapshot;
@@ -198,7 +199,7 @@ export function settleAssignmentKernelProviderBudgetAtQuiescenceV2(binding: Assi
       binding,
       event_id: `provider-budget-exhausted:${binding.run_id}:${binding.generation}`,
       actor: "provider-receipt-observer",
-      body: { event_type: "provider_budget_exhausted", limit: ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT }
+      body: { event_type: "provider_budget_exhausted", limit: limit }
     }).snapshot;
   }
   return deriveAndSettleAssignmentKernelV2({

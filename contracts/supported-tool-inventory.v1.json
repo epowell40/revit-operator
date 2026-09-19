@@ -414,6 +414,7 @@
   "mcp_aliases": [
     "operator_discover_capabilities",
     "operator_evaluate_assignment_criteria",
+    "operator_manage_work_plan",
     "operator_plan_semantic_mep_route",
     "operator_record_execution_strategy",
     "operator_request_assignment_input",

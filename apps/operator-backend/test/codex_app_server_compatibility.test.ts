@@ -1,7 +1,42 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+
+test("one-shot capture pixels pass from the actual MCP presenter to Codex in the same result",async()=>{
+  const {captureImageContent}=await import(pathToFileURL(path.resolve("../mcp-server/dist/viewFrameImage.js")).href);
+  for(const route of ["/revit/export-image","/revit/capture-screenshare"]){
+    const raw={viewId:42,viewName:"Mechanical Plan",timestamp:"2026-09-17T00:00:00Z",captured_at:"2026-09-17T00:00:00Z",
+      path:"artifacts/captures/one.jpg",ok:true,kind:"screenshare",sha256:createHash("sha256").update("pixels").digest("hex"),bytes:6,
+      canonical_attempt_settlement:{method:"POST",path:route,effect_state:"none",requested_effect:"read"}};
+    let reads=0;
+    const result=captureImageContent(raw,route,()=>{reads++;return {ok:true,data:"cGl4ZWxz",mimeType:"image/jpeg"};});
+    const delivered=adaptMcpToolCallResultToDynamicResponse(result,{tool:route.endsWith("export-image")?"revit_capture_view":"revit_call_tool",
+      projections:[{schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_capture",media_type:"image/jpeg",byte_count:10} as any],omitted:0});
+    assert.equal(reads,1);
+    assert.deepEqual(delivered.contentItems.filter(x=>x.type==="inputImage"),[{type:"inputImage",imageUrl:"data:image/jpeg;base64,cGl4ZWxz"}]);
+    const missing=captureImageContent({...raw,ok:false},route,()=>{throw Error("No read from failed capture");});
+    assert.equal(adaptMcpToolCallResultToDynamicResponse(missing).contentItems.some(x=>x.type==="inputImage"),false);
+  }
+});
+
+test("post-change route pixels survive bounded evidence projection and are distinct from JSON evidence",()=>{
+  const raw={status:"AppliedVisualVerificationReady",image_delivery:{available:true},visualVerification:{capturePath:"artifacts/captures/selection/route.jpg"}};
+  const projections=[{schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_route_json",media_type:"application/json",byte_count:9645},
+    {schema:"revit-operator.evidence-projection.v1",evidence_id:"ev1_route_image",media_type:"image/jpeg",byte_count:24}] as any;
+  const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify(raw)},
+    {type:"image",data:"bmF0aXZlLXBvc3QtY2hhbmdl",mimeType:"image/jpeg"}]},{tool:"revit_call_tool",projections,omitted:0});
+  attachDynamicObservationContext(response,"revit_call_tool",JSON.stringify({schema:"revit-operator.model-observation-index/v2",pending_verification:[{operation_id:"route"}]}));
+  assert.equal(response.success,true);
+  assert.deepEqual(response.contentItems.filter(x=>x.type==="inputImage"),[{type:"inputImage",imageUrl:"data:image/jpeg;base64,bmF0aXZlLXBvc3QtY2hhbmdl"}]);
+  const text=response.contentItems.filter(x=>x.type==="inputText").map(x=>x.text).join("\n");
+  assert.match(text,/ev1_route_json/);assert.match(text,/ev1_route_image/);assert.match(text,/pending_verification/);
+  const unavailable=adaptMcpToolCallResultToDynamicResponse({content:[{type:"text",text:JSON.stringify({...raw,image_delivery:{available:false}})}]},
+    {tool:"revit_call_tool",projections:[projections[0]],omitted:0});
+  assert.equal(unavailable.contentItems.some(x=>x.type==="inputImage"),false,"metadata never synthesizes a visual observation");
+});
 
 test("actual dynamic response includes envelope overhead and never restores raw data when every projection is omitted", { concurrency: false }, () => {
   const prior=process.env.OPERATOR_WORKSPACE_ROOT;
@@ -100,6 +135,13 @@ import test from "node:test";
 import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+import { CONVERSATION_EVIDENCE_GUIDANCE } from "../src/conversation_evidence_guidance.js";
+
+test("C56 fresh and resumed workers receive evidence limits independently of focused routing",()=>{
+  assert.ok(getOperatorAgentBaseInstructions().includes(CONVERSATION_EVIDENCE_GUIDANCE));
+  assert.match(CONVERSATION_EVIDENCE_GUIDANCE,/filenames and titles as literal identifiers/);
+  assert.match(CONVERSATION_EVIDENCE_GUIDANCE,/Do not add a more specific project or system classification/);
+});
 
 test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
@@ -527,12 +569,11 @@ test("Codex file delivery instructions match artifact authority and allow suppor
 
 test("Codex instructions reuse known primitives before capability discovery", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /reuse an exact primitive/i);
-  assert.match(instructions, /Call `operator_discover_capabilities` only when/i);
-  assert.match(instructions, /session-cached/i);
-  assert.match(instructions, /document\/model results are never satisfied from that cache/i);
+  assert.match(instructions, /reuse known primitives and schemas/i);
+  assert.match(instructions, /use `operator_discover_capabilities` only when/i);
+  assert.match(instructions, /Discovery metadata is cached and refreshable; model data is not/i);
   assert.match(instructions, /very next Revit action must be a target-bound readback/i);
-  assert.match(instructions, /do not repeat synonymous searches/i);
+  assert.match(instructions, /Never repeat synonymous searches/i);
   assert.match(instructions, /Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount/i);
   assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
 });

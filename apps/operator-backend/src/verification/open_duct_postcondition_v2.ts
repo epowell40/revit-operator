@@ -1,4 +1,7 @@
+import { combinedDuctVerificationParametersV2 } from "./combined_duct_verification_v2.js";
+import { polylineReadbackMatchesV2 } from "./polyline_readback_v2.js";
 import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
+import { connectedDuctReadbackMatchesV2 } from "./connected_duct_readback_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
@@ -14,6 +17,7 @@ const samePoint = (a: unknown, b: number[]): boolean => point(a) && a.every((n, 
  * ends, explicit world coordinates, type, level, size and system. This is a
  * native desired-state check, not visual/redline interpretation certification. */
 export function openDuctReadbackMatchesV2(input: unknown, affected: readonly string[], parameters: unknown, connectors: unknown): boolean {
+  if (connectedDuctReadbackMatchesV2(input, affected, parameters, connectors)) return true;
   const request = record(input), compatibility = request.path === "/revit/create-duct";
   const body = compatibility ? explicitCreateDuctIntentV2(input) : record(request.body);
   if (!body) return false;
@@ -69,6 +73,10 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
   // verification contract rather than combining observations across changes.
   if (Object.values(snapshot.operations).some(op => op.operation_id !== subject.operation_id && op.persistent_effect === "applied"
       && op.result && Date.parse(op.result.completed_at) >= Date.parse(applied.completed_at))) return false;
+  if (Object.hasOwn(record(payload), "verificationParameters")) {
+    const parameters = combinedDuctVerificationParametersV2(snapshot, subject, current, payload);
+    return parameters !== null && retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload);
+  }
   const prior = Object.values(snapshot.operations).filter(op => op.verification_of_operation_id === subject.operation_id
     && op.request_identity?.path === "/revit/get-parameters")
     .sort((a,b) => Date.parse(b.opened_at) - Date.parse(a.opened_at))[0];
@@ -89,8 +97,26 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
       const bytes = readAuthoritativeEvidence(ref, { ...snapshot.current_binding, attempt_id: prior.operation_id });
       const parameters = JSON.parse(bytes.toString("utf8"));
       if (payloadDigestV2(parameters).digest !== observation.raw_payload_hash) continue;
-      return openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload);
+      if (retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload)) return true;
     } catch { /* Missing or corrupt retained evidence cannot verify a route. */ }
   }
+  return false;
+}
+
+function retainedDuctReadbackMatchesV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, parameters: unknown, payload: unknown): boolean {
+  const applied = subject.result!;
+  try {
+      if (openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload)) return true;
+      for (const applyObservationId of subject.observation_ids) {
+        const applyObservation = snapshot.observations[applyObservationId];
+        if (!applyObservation || applyObservation.operation_id !== subject.operation_id || applyObservation.authority !== "native-host"
+            || applyObservation.raw_payload_hash !== applied.raw_payload_hash || !sameAssignmentBindingV2(applyObservation.binding, snapshot.current_binding)) continue;
+        const applyRef = readEvidenceRef(applyObservation.raw_payload_ref.replace(/^evidence:/, ""));
+        if (applyRef.byte_count > 2_000_000) continue;
+        const nativeApply = JSON.parse(readAuthoritativeEvidence(applyRef, { ...snapshot.current_binding, attempt_id: subject.operation_id }).toString("utf8"));
+        if (payloadDigestV2(nativeApply).digest !== applyObservation.raw_payload_hash) continue;
+        if (polylineReadbackMatchesV2(subject.input, nativeApply, parameters, payload)) return true;
+      }
+  } catch { /* Retained apply evidence must still bind to this exact operation. */ }
   return false;
 }

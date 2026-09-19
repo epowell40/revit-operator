@@ -79,6 +79,9 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
     async evaluateAssignmentCriteriaV2(input: unknown): Promise<unknown> {
       return await post(ASSIGNMENT_V2_CRITERIA_PATH, input, "Operator V2 criterion evaluation");
     },
+    async manageAssignmentWorkPlanV2(input: unknown): Promise<unknown> {
+      return await post("/api/assignments/v2/work-plan", input, "Operator task work plan");
+    },
     async requestAssignmentInputV2(input: unknown): Promise<unknown> {
       return await post(ASSIGNMENT_V2_CLARIFICATION_PATH, input, "Operator V2 clarification");
     },

@@ -68,6 +68,8 @@ export type EvidenceProjectionV1 = {
   // Exact small native JSON payload, retained with the same evidence identity.
   // Its presence does not change observation class or prove inventory coverage.
   inline_payload?: unknown;
+  /** Host documentation only: not eligible for task completion or verification. */
+  tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];
@@ -107,7 +109,7 @@ export type EvidenceRetrievalRequest = {
   evidence_id: string;
   scope: EvidenceScope;
   fields?: string[];
-  item_range?: { path: string; start: number; count: number };
+  item_range?: { path: string; start: number; count: number; fields?: string[] };
   text_range?: { start: number; length: number };
   target_subset?: string[];
   image?: true;
@@ -122,7 +124,8 @@ export type EvidenceRetrievalResult = {
   returned_bytes: number;
   complete: boolean;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
-    has_more: boolean; next_start: number | null; byte_limited: boolean };
+    has_more: boolean; next_start: number | null; byte_limited: boolean; requested_rows_complete: boolean;
+    source_rows_exhausted: boolean; fields?: string[]; row_projection?: "selected_fields" };
   missing_fields?: string[];
   selection_origins?: Record<string, "payload" | "deterministic_projection">;
 };

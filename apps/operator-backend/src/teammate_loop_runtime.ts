@@ -10,7 +10,7 @@ import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifac
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
-import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
+import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, recordTeammateEvidenceResult, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
@@ -24,6 +24,7 @@ import {
   verificationObservationPayloadV2
 } from "./teammate_verification_evidence.js";
 import { operationTargetSelectorV2, verificationCapabilityAdmissionForPathsV2 } from "./verification/verification_capability_admission_v2.js";
+import { isRedundantEvidenceItemRange, recordSuccessfulEvidenceItemRange, type SuccessfulEvidenceItemRange } from "./teammate_evidence_range_guard.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -94,6 +95,7 @@ export type TeammateLoopState = {
   verification_evidence_sha256: string | null;
   tool_doc_calls: number;
   documented_tool_routes: Map<string, DocumentedToolRoute>;
+  successful_evidence_item_ranges: SuccessfulEvidenceItemRange[];
   attempt_budget: TeammateLoopAttemptBudget;
   blocked_reason: string | null;
   active_host_version_year: string;
@@ -373,6 +375,7 @@ function actionSignature(path: string, body: unknown): string {
   const normalizedPath = path.trim().toLowerCase().replace(/^\/revit\/transaction-(?:plan|apply)$/, "/revit/transaction").replace(/^revit_transaction_(?:plan|apply)$/, "revit_transaction");
   const source = objectValue(body);
   const ignored = new Set(["apply", "dryRun", "dry_run", "preview", "commit", "execute", "expectedPlanHash", "expected_plan_hash", "confirmationToken", "confirmation_token", "confirm", "confirmed"]);
+  if (normalizedPath === "operator_retrieve_evidence") ignored.add("purpose");
   const envelope = Object.fromEntries(Object.entries(source).filter(([key]) => !ignored.has(key)));
   if (normalizedPath === "/revit/native-api-mutation-ops") {
     const transaction = objectValue(envelope.transaction);
@@ -503,10 +506,13 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // calls Revit nor creates fresh truth or consumes the Revit discovery budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
   if (tool === "operator_request_clarification") return call("interaction");
+  if (tool === "operator_manage_work_plan") return call("interaction");
   if (tool === "operator_request_assignment_input") return call("interaction"); if (tool === "operator_evaluate_assignment_criteria") return call("completion_claim");
   if (tool === "operator_submit_noop_completion") return call("completion_claim");
   if (tool === "operator_submit_read_completion") return call("completion_claim");
   if (tool === "web_fetch_evidence") return call("read");
+  // Exact composite aliases have native read contracts; their names are not HTTP routes.
+  if (tool === "revit_observe_model" || tool === "revit_read_move_targets_certified") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
   }
@@ -626,6 +632,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     verification_evidence_sha256: null,
     tool_doc_calls: 0,
     documented_tool_routes: new Map(),
+    successful_evidence_item_ranges: [],
     attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
     active_host_version_year: activeHostVersionYear(req.context),
@@ -643,6 +650,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
+  if (isRedundantEvidenceItemRange(state.successful_evidence_item_ranges, call)) return "evidence_selection_already_available";
   const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
@@ -815,6 +823,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   if (!pending) return;
   state.pending.delete(actionId);
   if (pending.effect === "discovery" && succeeded) recordSuccessfulTeammateDiscovery(state.attempt_budget, pending.signature);
+  if (pending.effect === "evidence_read") {
+    recordTeammateEvidenceResult(state.attempt_budget, succeeded);
+    if (succeeded) recordSuccessfulEvidenceItemRange(state.successful_evidence_item_ranges, pending, evidence);
+  }
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
     state.successful_preview_operations.add(pending.operation);
@@ -1098,11 +1110,15 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
   const call = classifyDocumentedMcpCall(state, params.tool, params.arguments);
   const reason = gateCall(state, call);
   if (reason) {
-    state.blocked_reason = reason;
+    const recoverableEvidenceRead = reason === "evidence_selection_already_available"
+      || reason === "identical_evidence_retrieval_must_be_corrected";
+    if (!recoverableEvidenceRead) state.blocked_reason = reason;
     const needsInput = reason.startsWith("desired_postcondition_");
-    state.contract.stage = needsInput ? "clarify" : "blocked";
+    if (!recoverableEvidenceRead) state.contract.stage = needsInput ? "clarify" : "blocked";
     const remedy = needsInput
       ? " Grounding reads remain available. Call operator_request_clarification with missingFields=[\"replacement_text\"] and ask for the exact replacement wording; do not preview or apply a guessed value."
+      : recoverableEvidenceRead
+        ? " Use the retained result and continue to the bounded completion. Request pagination.next_start only when pagination.has_more is true."
       : "";
     return { allowed: false, message: `[teammate_loop_blocked] ${reason.replace(/_/g, " ")}.${remedy}`, call, state };
   }

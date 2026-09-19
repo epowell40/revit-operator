@@ -1,3 +1,4 @@
+import { defaultAssignmentWorkBudgetV2 } from "./assignment_work_allowance_v2.js";
 import { buildHostProgressEpochV2 } from "./supporting_discovery_progress.js";
 import { createHash } from "node:crypto";
 import {
@@ -202,12 +203,12 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
   const now = input.now ?? new Date().toISOString();
   let snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
   if (!snapshot) throw new Error("assignment_kernel_v2_not_found");
-  let decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+  let decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now });
   if (snapshot.terminal) return { snapshot, decision };
   if (decision.decision === "evaluate_criteria") {
     snapshot = evaluatePendingAssignmentCriteriaV2({ binding: input.binding, now });
-    if (snapshot.terminal) return { snapshot, decision: decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now }) };
-    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+    if (snapshot.terminal) return { snapshot, decision: decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now }) };
+    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now });
   }
   if (decision.decision === "request_user_input") {
     const variablesWithActiveClarifications = new Set(Object.values(snapshot.clarifications)
@@ -223,7 +224,7 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
       });
       variablesWithActiveClarifications.add(variableId);
     }
-    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now });
   }
   if (decision.decision === "blocked") {
     snapshot = appendCurrentAssignmentKernelEventV2({
@@ -235,10 +236,10 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
       body: { event_type: "progress_blocked", code: decision.reason, gap_ids: decision.gap_ids }
     }).snapshot;
     snapshot = deriveAndSettleAssignmentKernelV2(input.binding, decision.reason);
-    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now });
   } else if (decision.decision === "terminal") {
     snapshot = deriveAndSettleAssignmentKernelV2(input.binding, decision.reason);
-    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now });
   }
   return { snapshot, decision };
 }

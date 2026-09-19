@@ -1,4 +1,6 @@
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
+import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
+import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
 import { createHash } from "node:crypto";
 import { authorizedArtifactExportPath } from "../artifact_export_intent.js";
 import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
@@ -228,7 +230,8 @@ function criterionIdsAdmittedForOperationV2(input: Readonly<{
       && !input.snapshot.result_delivery
       && input.snapshot.spec.requested_effect === "read"
       && input.operation_effect === "read";
-    if (input.snapshot.criteria[criterionId]?.status === "pass" && !assemblingReadAnswer) return false;
+    const continuingPlan = input.operation_effect === "apply" && Boolean(input.snapshot.work_plan) && workPlanPendingV2(input.snapshot);
+    if (input.snapshot.criteria[criterionId]?.status === "pass" && !assemblingReadAnswer && !continuingPlan) return false;
     const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
     const policy = criterion?.evidence_policy;
     if (!policy) return false;
@@ -281,6 +284,8 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
+  if (suggestedEffect === "apply" && snapshot.spec.work_plan_required && !snapshot.work_plan)
+    throw new Error("assignment_kernel_v2_declare_work_plan_before_apply");
   if (suggestedEffect === "apply" && requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path === "/revit/export-elements-xlsx"
       && !authorizedArtifactExportPath(snapshot.spec.source_user_request, "/revit/export-elements-xlsx")) {
     throw new Error("assignment_kernel_v2_explicit_workbook_export_authority_required");
@@ -707,6 +712,8 @@ function commitInput(
       && deterministicallyTargetBound
       && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
         ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/create-family-instance"
+          ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : ["/revit/mep-route-workflow", "/revit/create-duct"].includes(verificationSubject.request_identity?.path ?? "")
           ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : postconditionSatisfiedByPayloadV2(

@@ -61,6 +61,7 @@ namespace RevitBridge.Services
         private readonly Action<string>? _diagnosticSink;
         private OperatorRevitQueueDiagnostic? _diagnosticOwner;
         private readonly OperatorUiWakeScheduler _uiWake;
+        private readonly OperatorIdleDiagnostic _idleDiagnostic = new OperatorIdleDiagnostic();
         private readonly OperatorActiveIdleLease _activeIdleLease = new OperatorActiveIdleLease();
         private int _stopping;
         private long _lastWakeDiagnosticTicks;
@@ -133,7 +134,7 @@ namespace RevitBridge.Services
             item.Diagnostic = diagnostic;
             Volatile.Write(ref _diagnosticOwner, diagnostic);
             _queue.Enqueue(item);
-            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "admitted", diagnostic);
+            WriteQueueWithIdle("admitted", diagnostic);
             if (cancellationToken.CanBeCanceled)
             {
                 // A cancellation that wins before Execute must remove the pending item and
@@ -178,6 +179,14 @@ namespace RevitBridge.Services
         }
 
         internal bool HasPendingWork => Volatile.Read(ref _inFlight) != 0 && !_queue.IsEmpty;
+        internal void RecordIdleEntry(bool uiSender) => _idleDiagnostic.Enter(uiSender, HasPendingWork, HasActiveIdleLease);
+        internal void RecordIdleExit() => _idleDiagnostic.Exit();
+        private void WriteQueueWithIdle(string phase, OperatorRevitQueueDiagnostic? request)
+        {
+            try { OperatorRevitQueueDiagnostic.Write(_diagnosticSink, phase, request, idle: _idleDiagnostic.Describe()); }
+            catch { /* Diagnostics cannot change native execution. */ }
+        }
+
         internal bool HasActiveIdleLease => _activeIdleLease.IsActive;
 
         internal bool ExecutePendingOnIdling(UIApplication app)
@@ -354,7 +363,7 @@ namespace RevitBridge.Services
                 else
                 {
                     item.Diagnostic?.MarkStarted();
-                    OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "started", item.Diagnostic);
+                    WriteQueueWithIdle("started", item.Diagnostic);
                     result = item.Action(app);
                 }
             }
@@ -370,7 +379,7 @@ namespace RevitBridge.Services
                 // Revit actions. A Raise made before this handler returns is safely handled
                 // by ExternalEventRequest.Pending and MaintainRaiseUntilStartedAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
-                OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "released", item.Diagnostic);
+                WriteQueueWithIdle("released", item.Diagnostic);
                 if (Volatile.Read(ref item.ExecutionState) == QueueItem.Started)
                     _activeIdleLease.RecordActivity();
             }

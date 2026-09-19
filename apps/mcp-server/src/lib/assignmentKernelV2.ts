@@ -14,6 +14,7 @@ import {
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { createOperatorBackendClient } from "./operatorBackendClient.js";
 import { previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
+import { nativeReadEvidence } from "./nativeReadEvidence.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -575,7 +576,8 @@ function nativeDomainFailure(payload: unknown): boolean {
   const root = object(payload);
   const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
   return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
-    || status === "partialfailure" || status === "printfailed" || status === "blocked";
+    || status === "failed" || status === "partialfailure" || status === "printfailed" || status === "blocked"
+    || status === "blockedrolledback" || status === "blockedrollbackfailed";
 }
 
 function nativeDomainFailureCode(payload: unknown): string {
@@ -627,6 +629,7 @@ function semanticFacts(
   ];
   if (evidence === "task_result" && domainSucceeded && taskResultAdmitted) {
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
+    if (requestedEffect === "read") facts.push(...nativeReadEvidence(path, requestBody, payload));
   }
   const root = object(payload);
   // The typed adapter owns route recognition; keep admission and published

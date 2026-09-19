@@ -133,6 +133,15 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
         correction_action: "provider_resubmit", expected_constraint: { kind: "schema_alternative", type: keyword, allowed_values: descriptions },
         message: `${field} must satisfy ${keyword === "oneOf" ? "exactly one" : "at least one"} published alternative (${descriptions.join("; ")}); matched ${matches}`
       });
+      // Nullable objects should explain the actual nested error (for example
+      // body.limit > 2000). Only one explicitly typed structural branch may
+      // contribute details; never guess between overlapping object variants.
+      if (matches === 0) {
+        const matchingTypes = alternatives.map((alternative, index) => ({type:record(alternative)!.type,index}))
+          .filter(({type}) => typeof type === 'string' && (type === actualType(value)
+            || type === 'number' && actualType(value) === 'integer'));
+        if (matchingTypes.length === 1) for (const issue of results[matchingTypes[0]!.index]!) pushIssue(violations, issue);
+      }
     }
   }
   const type = typeof schema.type === "string" ? schema.type : "";

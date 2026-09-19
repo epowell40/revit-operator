@@ -79,7 +79,7 @@ function Invoke-Composition([string]$Root, [string]$Label) {
       & npm run build
       if ($LASTEXITCODE -ne 0) { return }
       $compiled = @($manifest.backend_tests | ForEach-Object { Join-Path "dist/test" ([string]$_).Replace(".ts", ".js") })
-      & node --test --test-concurrency=1 @compiled
+      & node scripts/run-tests.mjs @compiled
     } finally { Pop-Location }
   }
 
@@ -141,6 +141,17 @@ function Invoke-Composition([string]$Root, [string]$Label) {
 $repoRoot = (& git rev-parse --show-toplevel | Select-Object -First 1)
 if (-not $repoRoot) { throw "Not inside the Revit Operator repository." }
 $repoRoot = [System.IO.Path]::GetFullPath($repoRoot)
+$certificationRoot = $repoRoot
+if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "apps/operator-backend/src/tools/compile_tool_certification_evidence.ts"))) {
+  $certificationRoot = Join-Path $repoRoot "public"
+}
+$certificationBackend = Resolve-AppRoot $certificationRoot "operator-backend"
+if ($certificationBackend -and (Test-Path -LiteralPath (Join-Path $certificationBackend "src/tools/compile_tool_certification_evidence.ts"))) {
+  Invoke-External "Public source certification freshness" {
+    Push-Location $certificationBackend
+    try { & npm run check:tool-certification-evidence } finally { Pop-Location }
+  }
+}
 Invoke-Composition $repoRoot "Current composition"
 
 $publicRoot = Join-Path $repoRoot "public"

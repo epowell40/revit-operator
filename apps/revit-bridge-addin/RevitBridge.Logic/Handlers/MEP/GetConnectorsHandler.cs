@@ -14,6 +14,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public List<long> elementIds { get; set; } = new List<long>();
+            public bool includeVerificationParameters { get; set; } = false;
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
             public bool includeFlexGeometry { get; set; } = true;
@@ -23,6 +24,8 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
+            using (var input = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData))
+                if (!DuctVerificationInspectionPolicy.TryValidate(input.RootElement, out var error)) throw new ArgumentException(error);
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var ids = (p.elementIds ?? new List<long>()).Where(x => x > 0).Distinct().ToList();
             if (ids.Count == 0) throw new ArgumentException("elementIds is required and must be a non-empty array.");
@@ -31,6 +34,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
+            var verificationParameters = p.includeVerificationParameters ? DuctVerificationParameterReadback.Read(doc, ids) : null;
 
             var warnings = new List<string>();
             var results = new List<object>();
@@ -133,7 +137,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var physicalRefsOut = new List<object>();
                         if (p.includeAllRefs || p.onlyOpenPhysicalConnectors)
                         {
-                            var seen = new HashSet<long>();
+                            var seen = new HashSet<string>();
                             try
                             {
                                 ConnectorSet? refs = null;
@@ -148,18 +152,34 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             if (o == null) continue;
                                             if (o.Id == null) continue;
                                             if (RevitBridge.Common.ElementIdCompat.GetValue(o.Id) == RevitBridge.Common.ElementIdCompat.GetValue(e.Id)) continue;
-                                            if (!seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(o.Id))) continue;
+                                            var hasReferenceConnectorId = MepSystemUtil.TryGetNativeConnectorId(r, out var referenceConnectorId);
+                                            var referenceKey = ElementIdCompat.GetValue(o.Id) + ":" + (hasReferenceConnectorId ? referenceConnectorId.ToString() : "unknown");
+                                            if (!seen.Add(referenceKey)) continue;
                                             var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
                                             var isMepSystem = o is MEPSystem;
+                                            bool? nativeConnected = null;
+                                            try { nativeConnected = c.IsConnectedTo(r); } catch { }
+                                            var referenceType = TryGetConnectorPropertyValue(r, "ConnectorType");
+                                            var isPhysical = !isMepSystem && nativeConnected == true
+                                                && c.ConnectorType != ConnectorType.Logical && r.ConnectorType != ConnectorType.Logical;
                                             var reference = new
                                             {
                                                 ownerId = RevitBridge.Common.ElementIdCompat.GetValue(o.Id),
                                                 ownerCategory,
                                                 isMepSystem,
-                                                isPhysicalElement = !isMepSystem
+                                                isPhysicalElement = isPhysical,
+                                                connectorId = hasReferenceConnectorId ? (long?)referenceConnectorId : null,
+                                                connectorIdBasis = hasReferenceConnectorId ? "revit_native_connector_id" : "unavailable",
+                                                connectorType = referenceType,
+                                                domain = TryGetConnectorPropertyValue(r, "Domain"),
+                                                shape = TryGetConnectorPropertyValue(r, "Shape"),
+                                                size = TryGetConnectorSize(r),
+                                                coordinateSystem = p.includeCoordinateSystem ? TryGetConnectorAxes(r) : null,
+                                                origin = TryGetConnectorOrigin(r),
+                                                isConnectedTo = nativeConnected
                                             };
                                             refsOut.Add(reference);
-                                            if (!isMepSystem) physicalRefsOut.Add(reference);
+                                            if (isPhysical) physicalRefsOut.Add(reference);
                                         }
                                         catch
                                         {
@@ -248,21 +268,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                 });
             }
 
-            return Task.FromResult<object>(new
+            var result = new Dictionary<string, object>
             {
-                status = "Ok",
-                requestedCount = ids.Count,
-                scannedElementCount,
-                failedElementCount,
-                matchedElementCount,
-                totalScannedConnectorCount,
-                physicallyConnectedConnectorCount,
-                openPhysicalConnectorCount,
-                connectorScanTruncatedElementCount,
-                filter = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors",
-                results,
-                warnings
-            });
+                ["status"] = "Ok", ["requestedCount"] = ids.Count,
+                ["scannedElementCount"] = scannedElementCount,
+                ["failedElementCount"] = failedElementCount,
+                ["matchedElementCount"] = matchedElementCount,
+                ["totalScannedConnectorCount"] = totalScannedConnectorCount,
+                ["physicallyConnectedConnectorCount"] = physicallyConnectedConnectorCount,
+                ["openPhysicalConnectorCount"] = openPhysicalConnectorCount,
+                ["connectorScanTruncatedElementCount"] = connectorScanTruncatedElementCount,
+                ["results"] = results,
+                ["warnings"] = warnings,
+                ["filter"] = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors"
+            };
+            if (verificationParameters != null) result["verificationParameters"] = verificationParameters;
+            return Task.FromResult<object>(result);
         }
 
         private static long? TryGetPositiveElementId(ElementId? id)
@@ -274,6 +295,32 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return value > 0 ? value : (long?)null;
             }
             catch { return null; }
+        }
+
+        private static object? TryGetConnectorAxes(Connector connector)
+        {
+            try
+            {
+                var t = connector.CoordinateSystem;
+                return new { origin = new[] { t.Origin.X, t.Origin.Y, t.Origin.Z },
+                    basisX = new[] { t.BasisX.X, t.BasisX.Y, t.BasisX.Z },
+                    basisY = new[] { t.BasisY.X, t.BasisY.Y, t.BasisY.Z },
+                    basisZ = new[] { t.BasisZ.X, t.BasisZ.Y, t.BasisZ.Z } };
+            }
+            catch { return null; }
+        }
+
+        private static object? TryGetConnectorSize(Connector connector)
+        {
+            try
+            {
+                if (connector.Shape == ConnectorProfileType.Round)
+                    return new { kind = "round", radiusFt = connector.Radius, diameterFt = 2 * connector.Radius };
+                if (connector.Shape == ConnectorProfileType.Rectangular || connector.Shape == ConnectorProfileType.Oval)
+                    return new { kind = connector.Shape == ConnectorProfileType.Oval ? "oval" : "rect", widthFt = connector.Width, heightFt = connector.Height };
+            }
+            catch { }
+            return null;
         }
 
         private static object? TryGetConnectorOrigin(Connector connector)

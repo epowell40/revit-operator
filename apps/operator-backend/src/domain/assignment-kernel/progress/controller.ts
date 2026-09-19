@@ -1,4 +1,6 @@
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
+import { CONVERSATION_EVIDENCE_GUIDANCE } from "../../../conversation_evidence_guidance.js";
+import { inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
@@ -108,13 +110,24 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
+  if (workPlanPendingV2(snapshot)) gaps.push({
+    schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "work-plan:scope", kind: "work_plan_required",
+    criterion_ids: snapshot.spec.criteria.filter(c => c.required).map(c => c.criterion_id),
+    work_unit_ids: ["work-primary", "work-discovery", "work-evidence"], required_fact_ids: [], current_observation_ids: [],
+    reason: snapshot.work_plan
+      ? "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot,item)).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
+        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds; inspection items need fresh native inspection reads of all dependent edit targets after the latest edit. Declare inspections with kind=inspection and dependsOn naming edit items. Inspection coverage does not certify engineering correctness. One item cannot complete the entire request."
+      : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Decompose the full requested area into independently verifiable room/system/branch items, with source basis and explicit assumptions. Include all required work; declare at least two items. Planning cannot authorize extra work or establish native completion."
+  });
   if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "result:delivery", kind: "result_delivery_required",
       criterion_ids: snapshot.spec.criteria.filter(criterion => criterion.required).map(criterion => criterion.criterion_id),
       work_unit_ids: ["work-primary", "work-evidence"], required_fact_ids: [],
       current_observation_ids: Object.values(snapshot.observations).filter(observation => observation.evidence_class === "task_result").map(observation => observation.observation_id),
-      reason: (snapshot.spec.result_assessment_required ? "The requested assessment is still owed. If export is still outstanding, complete that work first. Never repeat an export that already has an applied or uncertain effect. After independent verification, select the retained artifact path, record/issue counts and exact-file verification as resultItems; include assessment findings, limitations and the requested decisions/questions. This requirement does not establish that any file has been created or verified. " : "") + "A successful read is not the delivered answer. Address every part of the request. Call operator_evaluate_assignment_criteria with at most 32 concise native resultItems (label, observationId, path). For simple counts, lists or sample reports, omit assessment and include the requested names, values and scope directly in resultItems. For an audit, review, comparison or gap list, also supply assessment: overview, prioritized findings citing 1-based evidence_indices into resultItems, limitations and up to three questions. Put requested answer values in the findings, not only in folded evidence. Assessment is assistant interpretation, not native proof or engineering certification. Select scalars or small scalar arrays, not whole inventories. The terminal answer renders this delivery; later free text cannot replace it. Presentation cannot create semantic facts or passing criteria."
+      reason: snapshot.spec.result_assessment_required && snapshot.spec.requested_effect === "read"
+        ? "Answer the user's actual question in plain language. Native resultItems alone do not answer an interpretive question. Call operator_evaluate_assignment_criteria with a few concise, retained resultItems and assessment: overview (the complete direct answer), findings (the brief explanation, with 1-based evidence_indices), limitations and questions. Follow the requested length and format in overview; include the conclusion, requested values and any essential uncertainty there. Low-priority supporting findings and scope notes render in expandable Details, regardless of finding count. Questions and medium/high concerns remain visible; never downgrade a material concern to shorten the answer. Do not repeat the inventory as the answer or add generic caveats about unrequested work. This presentation does not create native proof or passing criteria. " + CONVERSATION_EVIDENCE_GUIDANCE
+        : (snapshot.spec.result_assessment_required ? "The requested assessment is still owed. If export is still outstanding, complete that work first. Never repeat an export that already has an applied or uncertain effect. After independent verification, select the retained artifact path, record/issue counts and exact-file verification as resultItems; include assessment findings, limitations and the requested decisions/questions. This requirement does not establish that any file has been created or verified. " : "") + "A successful read is not the delivered answer. Address every part of the request. Call operator_evaluate_assignment_criteria with at most 32 concise native resultItems (label, observationId, path). For simple counts, lists or sample reports, omit assessment and include the requested names, values and scope directly in resultItems. For an audit, review, comparison or gap list, also supply assessment: overview, prioritized findings citing 1-based evidence_indices into resultItems, limitations and up to three questions. Put requested answer values in the findings, not only in folded evidence. Assessment is assistant interpretation, not native proof or engineering certification. Select scalars or small scalar arrays, not whole inventories. The terminal answer renders this delivery; later free text cannot replace it. Presentation cannot create semantic facts or passing criteria."
     });
   }
   for (const operation of Object.values(snapshot.operations)) {
@@ -553,6 +566,7 @@ export function buildProgressEpochV2(input: Readonly<{
     stated_gap_ids: input.stated_gap_ids
   })) progressReasons.push("execution_strategy_selected");
   if (canonicalJsonV2(input.before.work_unit_states) !== canonicalJsonV2(input.after.work_unit_states)) progressReasons.push("work_unit_changed");
+  if (canonicalJsonV2(input.before.work_plan ?? null) !== canonicalJsonV2(input.after.work_plan ?? null)) progressReasons.push("work_unit_changed");
   if (input.before.outcome !== input.after.outcome && input.after.outcome !== "active") progressReasons.push("terminal_derived");
   return {
     schema: PROGRESS_EPOCH_V2_SCHEMA,

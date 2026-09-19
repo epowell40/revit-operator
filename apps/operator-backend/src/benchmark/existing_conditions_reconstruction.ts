@@ -16,6 +16,9 @@ import {
   type ExistingConditionsEvaluatorChangeValidationOptions
 } from "../existing_conditions/evaluator_diff.js";
 import type { BoundedMepRegionCoverageReceiptV1 } from "../existing_conditions/mep_region_coverage.js";
+import { routeCoverageMetrics } from "../existing_conditions/route_coverage_metrics.js";
+import { physicalRouteConnectivity, withoutAbstractedRoutes } from "../existing_conditions/route_connectivity.js";
+import { matchObservableElements, observableRelationshipSnapshot, projectDrawingObservableTruth, type DrawingObservabilityPolicyV1 } from "../existing_conditions/drawing_observability.js";
 
 export type ExistingConditionsPoint3 = { x: number; y: number; z: number };
 
@@ -95,6 +98,9 @@ export type ExistingConditionsGroundTruth = {
     dry_run_receipt_sha256: string;
   };
   evaluation_policy?: {
+    drawing_observability?: DrawingObservabilityPolicyV1;
+    require_physical_route_connectivity?: boolean;
+    visible_route_keys?: string[];
     require_evaluator_change_receipt?: boolean;
     /** Controls how much withheld Z may affect a plan-based reconstruction score. */
     elevation_evidence?: "plan_visible" | "project_context" | "not_visible";
@@ -250,6 +256,8 @@ export type ExistingConditionsScore = {
 export type ExistingConditionsSnapshotNormalizationOptions = {
   selected_element_ids: number[];
   require_connector_readback?: boolean;
+  /** Evaluator-owned discipline scope; omitted retains the mixed-domain behavior. */
+  connector_domains?: readonly string[];
 };
 
 export const DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY: ExistingConditionsScoringPolicy = {
@@ -515,6 +523,14 @@ export function normalizeExistingConditionsSnapshot(
   connectorsPayload: unknown,
   options: ExistingConditionsSnapshotNormalizationOptions
 ): ExistingConditionsSnapshot {
+  if (options.connector_domains !== undefined && (!Array.isArray(options.connector_domains)
+      || options.connector_domains.length < 1 || options.connector_domains.length > 8
+      || new Set(options.connector_domains).size !== options.connector_domains.length
+      || options.connector_domains.some(domain => typeof domain !== "string" || !/^Domain[A-Za-z]+$/.test(domain)))) {
+    throw new Error("connector_domain_scope_invalid");
+  }
+  const connectorDomains = options.connector_domains ? new Set(options.connector_domains) : null;
+  let domainEvidenceComplete = true;
   const selectedIds = new Set(options.selected_element_ids.filter((id) => Number.isInteger(id) && id > 0));
   const visible = asObject(visibleElementsPayload);
   const normalizedRows = objectRows(visible.items ?? visible.elements)
@@ -533,6 +549,10 @@ export function normalizeExistingConditionsSnapshot(
     if (!ownerKey) continue;
     seenConnectorIds.add(Math.trunc(id));
     for (const connector of objectRows(row.connectors)) {
+      if (connectorDomains) {
+        if (typeof connector.domain !== "string" || !/^Domain[A-Za-z]+$/.test(connector.domain)) domainEvidenceComplete = false;
+        if (!connectorDomains.has(String(connector.domain))) continue;
+      }
       const explicitPhysical = connector.physicalConnectedTo ?? connector.physical_connected_to;
       const refs = explicitPhysical !== undefined
         ? objectRows(explicitPhysical)
@@ -567,7 +587,7 @@ export function normalizeExistingConditionsSnapshot(
       }
     }
   }
-  const nativeReadback = selectedIds.size > 0 &&
+  const nativeReadback = domainEvidenceComplete && selectedIds.size > 0 &&
     normalizedRows.length === selectedIds.size &&
     (options.require_connector_readback === false || seenConnectorIds.size === selectedIds.size);
   return {
@@ -1581,9 +1601,15 @@ export function scoreExistingConditionsReconstruction(
 ): ExistingConditionsScore {
   const policy = { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY, ...policyOverrides };
   const invalidReasons = validateRun(truth, candidate, authority);
+  const observable = projectDrawingObservableTruth(truth.snapshot, truth.evaluation_policy?.drawing_observability, truth.visible_evidence);
+  invalidReasons.push(...observable.invalidReasons);
+  // Never alter the native snapshots or the candidate receipt's hash binding.
+  truth = { ...truth, snapshot: { ...truth.snapshot, elements: observable.elements } };
   const elevationEvidence = truth.evaluation_policy?.elevation_evidence ?? "plan_visible";
   const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
-  const boundedRouteTruthKeys = new Set(boundedCoverage?.clear_plan_visible_mep_curve_keys ?? []);
+  const boundedRouteTruthKeys = new Set(boundedCoverage?.clear_plan_visible_mep_curve_keys ?? truth.evaluation_policy?.visible_route_keys ?? []);
+  if (truth.evaluation_policy?.visible_route_keys && (boundedCoverage || boundedRouteTruthKeys.size !== truth.evaluation_policy.visible_route_keys.length || !boundedRouteTruthKeys.size || [...boundedRouteTruthKeys].some(key => !truth.snapshot.elements.some(e => e.key === key && e.kind === "mep_curve" && e.endpoints)))) invalidReasons.push("visible_route_keys_invalid");
+  if (truth.evaluation_policy?.require_physical_route_connectivity && !boundedRouteTruthKeys.size) invalidReasons.push("physical_route_scope_missing");
   const truthRouteElements = truth.snapshot.elements.filter((element) => boundedRouteTruthKeys.has(element.key));
   const routeDisciplines = new Set(truthRouteElements.map((element) => normalized(element.discipline)));
   const routeToleranceFt = boundedCoverage?.route_trace_tolerance_ft ?? 0.25;
@@ -1603,12 +1629,12 @@ export function scoreExistingConditionsReconstruction(
     .map((element) => element.key));
   const matchingTruthElements = truth.snapshot.elements.filter((element) => !truthRouteAbstractionKeys.has(element.key));
   const matchingCandidateElements = candidate.snapshot.elements.filter((element) => !candidateRouteAbstractionKeys.has(element.key));
-  const pairs = invalidReasons.length === 0
-    ? globallyMatch(matchingTruthElements, matchingCandidateElements, policy, elevationEvidence)
-    : [];
+  const { requiredTruthElements, requiredPairs, optionalPairs, pairs } = matchObservableElements(
+    matchingTruthElements, matchingCandidateElements, observable.ambiguousKeys,
+    (t, c) => invalidReasons.length === 0 ? globallyMatch(t, c, policy, elevationEvidence) : []);
   const matchedTruth = new Set(pairs.map((pair) => pair.truth_key));
   const matchedCandidate = new Set(pairs.map((pair) => pair.candidate_key));
-  const missedTruthKeys = matchingTruthElements.filter((element) => !matchedTruth.has(element.key)).map((element) => element.key);
+  const missedTruthKeys = requiredTruthElements.filter((element) => !matchedTruth.has(element.key)).map((element) => element.key);
   const falsePositiveKeys = matchingCandidateElements.filter((element) => !matchedCandidate.has(element.key)).map((element) => element.key);
   const architecturalOpeningRoles = new Set(["door", "window"]);
   const missedArchitecturalOpenings = truth.snapshot.elements.filter((element) =>
@@ -1621,20 +1647,21 @@ export function scoreExistingConditionsReconstruction(
   const precision = matchingCandidateElements.length > 0
     ? pairs.length / matchingCandidateElements.length
     : matchingTruthElements.length === 0 ? 1 : 0;
-  const recall = matchingTruthElements.length > 0
-    ? pairs.length / matchingTruthElements.length
-    : matchingCandidateElements.length === 0 ? 1 : 0;
+  const recall = requiredTruthElements.length > 0
+    ? requiredPairs.length / requiredTruthElements.length
+    : matchingCandidateElements.length === 0 || observable.ambiguousKeys.size > 0 ? 1 : 0;
   const disciplineCoverage = parseDisciplineCoverageRequirements(truth).requirements.map((requirement) => {
     const discipline = requirement.discipline;
-    const truthElements = matchingTruthElements.filter((element) => normalized(element.discipline) === normalized(discipline));
+    const truthElements = requiredTruthElements.filter((element) => normalized(element.discipline) === normalized(discipline));
     const candidateElements = matchingCandidateElements.filter((element) => normalized(element.discipline) === normalized(discipline));
     const disciplineTruthRoutes = truthRouteElements.filter((element) => normalized(element.discipline) === normalized(discipline));
     const disciplineCandidateRoutes = candidateRouteElements.filter((element) => normalized(element.discipline) === normalized(discipline));
     const truthKeys = new Set(truthElements.map((element) => element.key));
     const candidateKeys = new Set(candidateElements.map((element) => element.key));
     const matchedCount = pairs.filter((pair) => truthKeys.has(pair.truth_key) && candidateKeys.has(pair.candidate_key)).length;
+    const acceptedOptionalCount = optionalPairs.filter(pair => candidateKeys.has(pair.candidate_key)).length;
     const discretePrecision = candidateElements.length > 0
-      ? matchedCount / candidateElements.length
+      ? (matchedCount + acceptedOptionalCount) / candidateElements.length
       : truthElements.length === 0 ? 1 : 0;
     const discreteRecall = truthElements.length > 0
       ? matchedCount / truthElements.length
@@ -1710,35 +1737,10 @@ export function scoreExistingConditionsReconstruction(
   const routeGeometryPrecisionCoverage = truthRouteElements.length > 0
     ? sampledRouteCoverage(candidateRouteElements, truthRouteElements, routeToleranceFt, routeGeometryCompatible)
     : null;
-  // Directed proximity alone can be gamed by overlapping duplicates because
-  // every duplicate sample is still near the same truth line. Total traced
-  // length provides the missing one-to-one capacity bound while remaining
-  // independent of where Revit chose to split the run.
-  const mepRouteTraceRecall = routeRecallCoverage === null || routePrecisionCoverage === null
-    ? null
-    : Math.min(routeRecallCoverage.ratio, clamp01(routePrecisionCoverage.total_length_ft / routeRecallCoverage.total_length_ft));
-  const mepRouteTracePrecision = routeRecallCoverage === null || routePrecisionCoverage === null
-    ? null
-    : Math.min(routePrecisionCoverage.ratio, clamp01(routeRecallCoverage.total_length_ft / Math.max(routePrecisionCoverage.total_length_ft, Number.EPSILON)));
-  const mepRouteTraceF1 = mepRouteTracePrecision === null || mepRouteTraceRecall === null
-    ? null
-    : f1(mepRouteTracePrecision, mepRouteTraceRecall);
-  const mepRouteGeometryRecall = routeGeometryRecallCoverage === null || routeGeometryPrecisionCoverage === null
-    ? null
-    : Math.min(
-        routeGeometryRecallCoverage.ratio,
-        clamp01(routeGeometryPrecisionCoverage.total_length_ft / routeGeometryRecallCoverage.total_length_ft)
-      );
-  const mepRouteGeometryPrecision = routeGeometryRecallCoverage === null || routeGeometryPrecisionCoverage === null
-    ? null
-    : Math.min(
-        routeGeometryPrecisionCoverage.ratio,
-        clamp01(routeGeometryRecallCoverage.total_length_ft /
-          Math.max(routeGeometryPrecisionCoverage.total_length_ft, Number.EPSILON))
-      );
-  const mepRouteGeometryF1 = mepRouteGeometryPrecision === null || mepRouteGeometryRecall === null
-    ? null
-    : f1(mepRouteGeometryPrecision, mepRouteGeometryRecall);
+  const { recall: mepRouteTraceRecall, precision: mepRouteTracePrecision, f1: mepRouteTraceF1 } =
+    routeCoverageMetrics(routeRecallCoverage, routePrecisionCoverage);
+  const { recall: mepRouteGeometryRecall, precision: mepRouteGeometryPrecision, f1: mepRouteGeometryF1 } =
+    routeCoverageMetrics(routeGeometryRecallCoverage, routeGeometryPrecisionCoverage);
   const elementF1 = f1(precision, recall);
   const routeGeometryMetric = mepRouteGeometryF1 === null ? [] : [mepRouteGeometryF1];
   const strictRouteMetric = mepRouteTraceF1 === null ? [] : [mepRouteTraceF1];
@@ -1747,23 +1749,19 @@ export function scoreExistingConditionsReconstruction(
   const attributes = average([...pairs.map((pair) => pair.attribute_score), ...strictRouteMetric], 0);
   const systems = average([...pairs.map((pair) => pair.system_score), ...strictRouteMetric], 0);
   const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
-  const relationshipTruthSnapshot = truthRouteElements.length > 0 ? {
-    ...truth.snapshot,
-    elements: matchingTruthElements,
-    connections: truth.snapshot.connections.filter((edge) => !truthRouteAbstractionKeys.has(edge.a) && !truthRouteAbstractionKeys.has(edge.b)),
-    open_connector_count: 0
-  } : truth.snapshot;
-  const relationshipCandidateSnapshot = truthRouteElements.length > 0 ? {
-    ...candidate.snapshot,
-    elements: matchingCandidateElements,
-    connections: candidate.snapshot.connections.filter((edge) => !candidateRouteAbstractionKeys.has(edge.a) && !candidateRouteAbstractionKeys.has(edge.b)),
-    open_connector_count: 0
-  } : candidate.snapshot;
-  const connectivity = pairs.length > 0 ? connectivityScore(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs) : 0;
+  const observableRelationshipTruth = observableRelationshipSnapshot(truth.snapshot, observable.ambiguousKeys, matchedTruth);
+  const relationshipTruthSnapshot = truthRouteElements.length > 0
+    ? withoutAbstractedRoutes(observableRelationshipTruth, truthRouteAbstractionKeys) : observableRelationshipTruth;
+  const relationshipCandidateSnapshot = truthRouteElements.length > 0
+    ? withoutAbstractedRoutes(candidate.snapshot, candidateRouteAbstractionKeys) : candidate.snapshot;
+  const routeConnectivityRequired = truth.evaluation_policy?.require_physical_route_connectivity === true;
+  const routeConnectivity = routeConnectivityRequired ? physicalRouteConnectivity(observableRelationshipTruth, candidate.snapshot,
+    boundedRouteTruthKeys, new Set(candidateRouteElements.map(e => e.key)), pairs, routeToleranceFt) : 1;
+  const connectivity = routeConnectivityRequired ? routeConnectivity : pairs.length > 0 ? connectivityScore(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs) : 0;
   const architecturalTopology = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "wall_junction") : 0;
   const hosting = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "host") : 0;
   const electricalCircuits = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "electrical_circuit") : 0;
-  const physicalConnectivityApplicable = hasTruthRelationship(relationshipTruthSnapshot, "physical") || hasTruthRelationship(relationshipCandidateSnapshot, "physical");
+  const physicalConnectivityApplicable = routeConnectivityRequired || hasTruthRelationship(relationshipTruthSnapshot, "physical") || hasTruthRelationship(relationshipCandidateSnapshot, "physical");
   const architecturalTopologyApplicable = hasTruthRelationship(relationshipTruthSnapshot, "wall_junction") || hasTruthRelationship(relationshipCandidateSnapshot, "wall_junction");
   const systemsApplicable = truth.snapshot.elements.some((element) => normalized(element.system_classification) || normalized(element.system_type));
   // Room/space membership is the spatial hard gate. Some linked-face-hosted Revit

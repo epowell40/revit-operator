@@ -4,7 +4,56 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+test("missing create-similar host is correctable only with authoritative not-started receipt", async () => {
+  const route="/revit/create-similar-from-instance",body={exemplarElementId:1464223,placements:[{pointXyz:[-37.2,-2.7,42.32152230971508],label:"HRU403"}],levelName:"L4",dryRun:false};
+  for(const confirmed of [true,false]) {
+    const decorated=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"apply"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,{
+        status:"Blocked",success:false,applied:false,errorCode:"create_similar_host_required",
+        error:"No host element was available for create-similar. No transaction was started.",
+        ...(confirmed?{transaction:{status:"not_started",committed:false,affected_element_ids:[]}}:{}),
+        canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",
+          effect_state:confirmed?"none":"unknown",effect_authority:confirmed?"native_transaction":"native_host",
+          effect_reason:confirmed?"native_transaction_not_started":"native_handler_returned_without_authoritative_settlement",request_dispatched:true}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,"failed_after_dispatch");
+    assert.equal(result.persistent_effect,confirmed?"none":"unknown");
+    assert.equal(result.native_transaction_state,confirmed?"not_started":"unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_id==="task.result_available"&&f.value===true),false);
+  }
+});
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
+
+test('atomic branch-network rollback is a failed operation; child commits and rollback prose cannot fabricate persistence', async () => {
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c40-atomic-network-rollback.json',import.meta.url),'utf8'));
+  for(const variant of ['confirmed','missing','failed'] as const){
+    const route='/revit/mep-branch-network-workflow';
+    const body=fixture.input.body;
+    const confirmed=variant==='confirmed';
+    const decorated=await runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST',route,{
+        ...fixture.payload,status:variant==='failed'?'BlockedRollbackFailed':'BlockedRolledBack',atomicRollbackSucceeded:variant!=='failed',
+        ...(variant==='missing'?{}:{transaction:{status:confirmed?'rolled_back':'atomic_group_rollback_unconfirmed',committed:confirmed?false:null,affected_element_ids:[]}}),
+        canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',
+          effect_state:confirmed?'none':'unknown',effect_authority:confirmed?'native_rollback':'native_host',
+          effect_reason:confirmed?'verified_native_rollback':'native_handler_returned_without_authoritative_settlement',request_dispatched:true,affected_target_identities:[]}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool') as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,'failed_after_dispatch');
+    assert.equal(result.persistent_effect,confirmed?'none':'unknown');
+    assert.equal(result.native_transaction_state,confirmed?'rolled_back':'unknown');
+    assert.deepEqual(result.affected_target_identities,[]);
+  }
+});
 
 test("single-duct and route previews preserve rollback authority and typed proof at the MCP boundary", async () => {
   for (const legacy of [false, true]) for (const variant of ["valid", "wrong_size", "missing_receipt"] as const) {
@@ -437,6 +486,42 @@ function meta(
     }
   };
 }
+
+test("C54 native sheet query supplies complete collection evidence without promoting control or partial pages", async () => {
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c54-sheet-read-failure.json',import.meta.url),'utf8'));
+  for(const variant of ["count","empty","list","partial","tail","wrong_filter","wrong_alias","wrong_request","control","metadata"] as const) {
+    const route=variant==="metadata"?"/revit/context":"/revit/sheets";
+    const body={...fixture.request};
+    const payload={...structuredClone(fixture.response)};
+    if(variant==="empty")Object.assign(payload,{totalSheets:40,totalMatches:0,total:0});
+    if(["list","partial","tail"].includes(variant)) {
+      body.action="list";
+      Object.assign(payload,{action:"list",countOnly:false,returned:2,total:2,totalMatches:2,limit:500,
+        items:[{id:1,sheetNumber:"M101",name:"HVAC L1"},{id:2,sheetNumber:"M102",name:"HVAC L2"}],
+        paging:{offset:0,limit:500,returned:2,hasMore:false,nextOffset:null}});
+      if(variant==="partial")Object.assign(payload,{total:17,totalMatches:17,hasMore:true,nextOffset:2,paging:{...payload.paging,hasMore:true,nextOffset:2}});
+      if(variant==="tail")Object.assign(payload,{offset:15,total:17,totalMatches:17,paging:{...payload.paging,offset:15}});
+    }
+    if(variant==="wrong_filter")payload.sheetNumberPrefix="A";
+    if(variant==="wrong_alias")payload.total=18;
+    if(variant==="wrong_request")body.action="detail";
+    const decorated=await runWithAssignmentKernelV2(meta("read",variant==="control"?"discovery":"work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"read"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,{
+        ...(variant==="metadata"?{document:{title:"Mechanical Controls",projectNumber:"123-M"}}:payload),
+        canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",attempt_id:`c54-${variant}`,
+          requested_effect:"read",effect_state:"none",effect_authority:"native_host",request_dispatched:true}
+      },request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+    });
+    const facts=decorated.structuredContent.observation.semantic_facts;
+    const complete=facts.find((fact:any)=>fact.fact_id==="collection.complete")?.value===true;
+    assert.equal(complete,["count","empty","list"].includes(variant),variant);
+    if(complete) assert.equal(facts.find((fact:any)=>fact.fact_id==="collection.total")?.value,payload.totalMatches);
+    if(variant==="metadata" || variant==="control")assert.equal(facts.some((fact:any)=>fact.fact_id==="model.content_observed"),false,variant);
+  }
+});
 
 test("quantify result is normalized once into an explicit task-result Observation and inventory facts", async () => {
   const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/quantify" }), async () => {
@@ -1738,4 +1823,35 @@ test("visibility settlement distinguishes pretransaction rejection, commit, and 
     assert.equal(result.native_transaction_state, state);
     assert.deepEqual(result.affected_target_identities, effect === "applied" ? ["element_id:1363433"] : []);
   }
+});
+
+
+test('C44 exact inventory preflight carries useful nested constraints through MCP settlement',async()=>{
+ const {preflightKnownGenericToolBody,mcpPreDispatchFailureResult}=await import('./genericToolPreflight.js');
+ const f=JSON.parse(readFileSync('src/lib/fixtures/c44-inventory-limit.json','utf8'));
+ const failure=preflightKnownGenericToolBody(f.contract,f.request.body)!;
+ const decorated:any=await runWithAssignmentKernelV2(meta('read','work',f.request),async()=>
+  decorateAssignmentKernelMcpResultV2(mcpPreDispatchFailureResult(failure),'revit_call_tool'));
+ const result=decorated.structuredContent.operation_result_v2;
+ assert.equal(result.status,'failed_before_dispatch');assert.equal(result.persistent_effect,'none');
+ assert.equal(result.observation_required,false);
+ assert(result.input_schema_gap.issues.some((i:any)=>i.field_path==='body.limit'&&i.expected_constraint.maximum===2000));
+ assert.equal(decorated.structuredContent.observation,undefined);
+});
+
+test('C47 Failed family placement remains a failed operation and preserves independent rollback authority', async () => {
+ const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c47-family-rollback.json',import.meta.url),'utf8'));
+ for(const confirmed of [true,false]) {
+  const {path:route,body}=fixture.input;
+  const decorated:any=await runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+   const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+   await markAssignmentKernelNativeRequestDispatchingV2(request);
+   const payload=structuredClone(fixture.payload); if(!confirmed)delete payload.transaction;
+   await recordAssignmentKernelNativeResultV2('POST',route,{...payload,canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',effect_state:confirmed?'none':'unknown',effect_authority:confirmed?'native_rollback':'native_host',effect_reason:confirmed?'verified_native_rollback':'native_handler_returned_without_authoritative_settlement',request_dispatched:true}},request);
+   return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool');
+  });
+  assert.equal(decorated.structuredContent.operation_result_v2.status,'failed_after_dispatch');
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,confirmed?'none':'unknown');
+  assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state,confirmed?'rolled_back':'unknown');
+ }
 });

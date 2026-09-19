@@ -1649,6 +1649,9 @@ namespace RevitBridge.Operator
                 if (p == "/revit/create-family-instance")
                 {
                     notes.Add("symbolName or typeName is required.");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "x", "y", "z", "spacingX", "spacingY", "spacingZ" } });
+                    notes.Add("For model families, x/y/z are absolute model-space feet, not offsets above the selected level. Native placement corrects and reads back the actual insertion point inside the transaction.");
+                    notes.Add("Verify every created ID with get-element-summary. It reports actual family/type/level and location.rotationRadians; the create response is not an independent verification.");
                     notes.Add("viewId or sheetNumber can target view-specific/sheet annotation placement.");
                     notes.Add("count + spacingX/Y/Z enables repeated placement in one call.");
                 }

@@ -285,6 +285,33 @@ export function appendEvent(sessionId: string, role: string, kind: string, paylo
   return true;
 }
 
+/** A command receipt is looked up by its exact conversation and identity. */
+export function latestCommandEvent(sessionId: string, kind: string, commandId: string): unknown | null {
+  const d = openDb();
+  if (!d) throw new Error("Command history is unavailable.");
+  const row = d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) AND json_extract(payload_json,'$.command_id')=? ORDER BY id DESC LIMIT 1").get(sessionId,kind,commandId);
+  return row ? JSON.parse(row.payload_json) : null;
+}
+
+export function recentCommandEvents(sessionId: string, kind: string, limit = 64): unknown[] {
+  // Looking for a retained receipt must not create/open an empty database in
+  // a conversation that has never persisted one. A later append still opens
+  // storage normally; no missing-history result is cached.
+  if (!fs.existsSync(dbFilePath())) return [];
+  const d = openDb();
+  if (!d) throw new Error("Command history is unavailable.");
+  return (d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) ORDER BY id DESC LIMIT ?").all(sessionId,kind,Math.max(1,Math.min(256,limit))) as Array<{payload_json: string}>).map(row => JSON.parse(row.payload_json));
+}
+
+/** Exact-message admission receipts must survive unrelated conversation turns. */
+export function latestMessageEvent(sessionId: string, kind: string, messageId: string): unknown | null {
+  if (!fs.existsSync(dbFilePath())) return null;
+  const d = openDb();
+  if (!d) throw new Error("Conversation classification history is unavailable.");
+  const row = d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) AND json_extract(payload_json,'$.message_id')=? ORDER BY id DESC LIMIT 1").get(sessionId,kind,messageId);
+  return row ? JSON.parse(row.payload_json) : null;
+}
+
 export function readCodexInstructionTurns(sessionId: string, startedAt = ""): { turns: unknown[]; complete: boolean } {
   const d = openDb();
   if (!d) return { turns: [], complete: false };
@@ -388,13 +415,25 @@ export function getRecentMessages(sessionId: string, limit: number, requireAvail
 }
 
 export type ConversationDisplay = {
-  source?: "ui_context";
+  source?: "ui_context" | "assistant_intake";
   message_id: string;
   text: string;
   attachments?: Array<{ id: string; name: string }>;
 };
 
 export type ConversationEntry = ConversationDisplay & { role: "user" | "assistant"; created_at: string };
+
+/** Navigation exposes explicitly saved display text only, never raw prompts.
+ * Ownership is filtered before the presentation limit, including old work. */
+export function listConversationNavigation(allowed: (sessionId: string) => boolean, limit = 200): Array<{session_id: string; title: string; updated_at: string}> {
+  const d = openDb();
+  if (!d) throw new Error("Conversation history is unavailable.");
+  const rows = d.prepare("SELECT session_id, MAX(id) AS last_id, MAX(ts) AS updated_at FROM events WHERE kind='chat.message' AND json_valid(payload_json) AND json_type(payload_json, '$.display.text')='text' GROUP BY session_id ORDER BY last_id DESC").all();
+  const selected = (rows as Array<{session_id: string; updated_at: string}>).filter(row => typeof row.session_id === "string" && allowed(row.session_id)).slice(0, Math.max(1, Math.min(200, limit)));
+  const first = d.prepare("SELECT json_extract(payload_json, '$.display.text') AS text FROM events WHERE session_id=? AND role='user' AND kind='chat.message' AND json_valid(payload_json) AND json_type(payload_json, '$.display.text')='text' ORDER BY id ASC LIMIT 1");
+  return selected.map(row => ({session_id: row.session_id, updated_at: row.updated_at,
+    title: String(first.get(row.session_id)?.text || "Conversation").replace(/\s+/g, " ").trim().slice(0, 180) || "Conversation"}));
+}
 
 // Only explicitly recorded display text is exposed to the browser. Provider
 // prompts and tool summaries may contain attachment machinery or internal data.
@@ -409,7 +448,7 @@ export function getUiContextConversationHistory(sessionId: string): Conversation
   if (!fs.existsSync(dbFilePath())) return [];
   const d = openDb();
   if (!d) throw new Error("Conversation history is unavailable.");
-  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source')='ui_context' ORDER BY id DESC LIMIT 40").all(sessionId);
+  const rows = d.prepare("SELECT role, ts, payload_json FROM events WHERE session_id=? AND kind='chat.message' AND json_valid(payload_json) AND json_extract(payload_json, '$.display.source') IN ('ui_context','assistant_intake') ORDER BY id DESC LIMIT 40").all(sessionId);
   return conversationRows(rows, 8);
 }
 

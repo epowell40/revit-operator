@@ -149,6 +149,7 @@ test("stream and non-stream chat pass the same canonical attachment context to t
       OPERATOR_BACKEND_PORT: String(port),
       OPERATOR_TOKEN: token,
       OPERATOR_BRAIN: "rule",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "0",
       OPERATOR_MEMORY_AUTO_TURN_NOTES: "0",
       OPERATOR_WORKSPACE_ROOT: workspace
     },

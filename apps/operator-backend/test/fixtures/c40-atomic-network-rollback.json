@@ -1,0 +1,654 @@
+{
+  "provenance": "Autodesk Snowdon sample C40 Unit 404. Original failed atomic network payload: child route committed, branch too short, outer rollback confirmed; original missing top-level transaction receipt retained. Test adds only the repaired receipt.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/mep-branch-network-workflow",
+    "requireKnownPath": true,
+    "body": {
+      "kind": "duct",
+      "mainPoints": [
+        {
+          "xyz": [
+            -30.37919759409582,
+            22.794894518112084,
+            43.16666666667046
+          ]
+        },
+        {
+          "xyz": [
+            -23.87919759409578,
+            22.794894518112084,
+            43.16666666667046
+          ]
+        }
+      ],
+      "branches": [
+        {
+          "name": "Unit 404 return grille connection",
+          "mainSegmentIndex": 0,
+          "connectionMode": "tee",
+          "existingBranchAnchorElementId": 1511849,
+          "branchSize": "8\"",
+          "connectionPoint": {
+            "xyz": [
+              -27.129197594095842,
+              22.794894518112084,
+              43.16666666667046
+            ]
+          },
+          "points": [
+            {
+              "xyz": [
+                -27.129197594095842,
+                22.794894518112084,
+                43.16666666667046
+              ]
+            },
+            {
+              "xyz": [
+                -27.129197594095842,
+                22.951144518112084,
+                43.16666666667049
+              ]
+            }
+          ]
+        }
+      ],
+      "viewId": 1363433,
+      "roomNumber": "404",
+      "levelName": "L4",
+      "levelId": 1362791,
+      "systemType": "Return Air",
+      "ductType": "Tees",
+      "ductSize": "8\"",
+      "mainSegmentSizes": [
+        "8\""
+      ],
+      "sizePolicy": "explicit_required",
+      "elevationPolicy": "explicit_required",
+      "routingMode": "polyline",
+      "apply": true,
+      "verify": true,
+      "visualVerify": true,
+      "visualViewId": 1363433,
+      "imageSize": 1800,
+      "focusPaddingFt": 3
+    }
+  },
+  "payload": {
+    "status": "BlockedRolledBack",
+    "workflowMode": "apply",
+    "reason": "Branch 0 failed. The complete network transaction group was rolled back.",
+    "atomicRollbackSucceeded": true,
+    "networkPlan": {
+      "main": {
+        "points": [
+          {
+            "x": -30.37919759409582,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          },
+          {
+            "x": -23.87919759409578,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          }
+        ],
+        "segmentCount": 1,
+        "totalLengthFt": 6.500000000000043
+      },
+      "branches": [
+        {
+          "index": 0,
+          "name": "Unit 404 return grille connection",
+          "mainSegmentIndex": 0,
+          "connectionMode": "tee",
+          "existingBranchAnchorElementId": 1511849,
+          "requestedSize": "8\"",
+          "segmentSizes": [
+            "8\"",
+            "8\""
+          ],
+          "jointPlan": [
+            {
+              "jointIndex": 0,
+              "expectedFitting": "elbow_or_connect",
+              "reason": "adjacent segment sizes match or are unspecified",
+              "fromSize": "8",
+              "toSize": "8"
+            }
+          ],
+          "points": [
+            {
+              "x": -27.129197594095842,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            {
+              "x": -27.129197594095842,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            {
+              "x": -27.129197594095842,
+              "y": 22.951144518112084,
+              "z": 43.16666666667049
+            }
+          ],
+          "splitPlan": {
+            "applySupported": false,
+            "mode": "tee",
+            "expectedFitting": "tee",
+            "blockCode": "branch_segment_too_short",
+            "blockReason": "First branch segment after snapping to the split point must be at least 0.5 ft long.",
+            "projectedSplitPoint": null,
+            "mainSegments": null,
+            "distanceToMainFt": null,
+            "distanceFromMainStartFt": null,
+            "distanceFromMainEndFt": null
+          }
+        }
+      ],
+      "accessories": []
+    },
+    "accessoryFamilyLoadResults": [],
+    "mainDryRun": {
+      "status": "Dry Run",
+      "transaction": {
+        "status": "rolled_back",
+        "committed": false,
+        "modified_element_ids": [],
+        "affected_element_ids": [
+          1542938
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "dryRun": true,
+      "kind": "duct",
+      "plannedPoints": [
+        {
+          "x": -30.37919759409582,
+          "y": 22.794894518112084,
+          "z": 43.16666666667046
+        },
+        {
+          "x": -23.87919759409578,
+          "y": 22.794894518112084,
+          "z": 43.16666666667046
+        }
+      ],
+      "segmentCount": 1,
+      "totalLengthFt": 6.500000000000043,
+      "selected": {
+        "level": {
+          "id": 1362791,
+          "name": "L4",
+          "elevation": 32.16666666667046
+        },
+        "systemType": {
+          "id": 712042,
+          "name": "Return Air"
+        },
+        "ductType": {
+          "id": 139186,
+          "name": "Tees",
+          "familyName": "Round Duct",
+          "shape": "round"
+        },
+        "pipeType": null,
+        "conduitType": null
+      },
+      "selectedWorkset": null,
+      "chosenSize": {
+        "requested": "8\"",
+        "applied": "8\"",
+        "usedDefault": false,
+        "widthFt": null,
+        "heightFt": null,
+        "diameterFt": 0.6666666666666666
+      },
+      "segmentSizes": [
+        "8\""
+      ],
+      "jointPlan": [],
+      "chosenElevation": {
+        "zFt": 43.16666666667046,
+        "mode": "explicit_points",
+        "confidence": "high",
+        "assumption": "All route points supplied the same explicit Z.",
+        "usedFallback": false
+      },
+      "createdElementIds": [],
+      "createdFittingIds": [],
+      "dryRunElementIds": [
+        1542938
+      ],
+      "dryRunFittingIds": [],
+      "segments": [
+        {
+          "index": 0,
+          "id": 1542938,
+          "start": {
+            "x": -30.37919759409582,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          },
+          "end": {
+            "x": -23.87919759409578,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          },
+          "lengthFt": 6.500000000000043,
+          "requestedSize": "8\"",
+          "chosenSize": {
+            "requested": "8\"",
+            "applied": "8\"",
+            "usedDefault": false,
+            "widthFt": null,
+            "heightFt": null,
+            "diameterFt": 0.6666666666666666
+          },
+          "sizeApplied": {
+            "width": false,
+            "height": false,
+            "diameter": true
+          },
+          "worksetApplied": null,
+          "nativeSizeReadback": {
+            "shape": "round",
+            "widthFt": null,
+            "heightFt": null,
+            "diameterFt": 0.6666666666666666
+          },
+          "nativeGeometryReadback": {
+            "start": {
+              "x": -30.37919759409582,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "end": {
+              "x": -23.87919759409578,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "lengthFt": 6.500000000000043
+          }
+        }
+      ],
+      "createdFittingWorksets": [],
+      "postConnectionGeometryReadback": [
+        {
+          "segmentIndex": 0,
+          "elementId": 1542938,
+          "geometry": {
+            "start": {
+              "x": -30.37919759409582,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "end": {
+              "x": -23.87919759409578,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "lengthFt": 6.500000000000043
+          }
+        }
+      ],
+      "connectionAttempts": [],
+      "internalConnectionsVerified": true,
+      "openConnectorCount": 2,
+      "warnings": [
+        "No ceiling was found overlapping the requested room/space footprint.",
+        "Connector verification found 2 open connector(s) on created route elements."
+      ],
+      "rolledBack": true
+    },
+    "mainApply": {
+      "status": "CreatedWithOpenConnectors",
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          1542941
+        ],
+        "affected_element_ids": [
+          1542941
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "dryRun": false,
+      "kind": "duct",
+      "plannedPoints": [
+        {
+          "x": -30.37919759409582,
+          "y": 22.794894518112084,
+          "z": 43.16666666667046
+        },
+        {
+          "x": -23.87919759409578,
+          "y": 22.794894518112084,
+          "z": 43.16666666667046
+        }
+      ],
+      "segmentCount": 1,
+      "totalLengthFt": 6.500000000000043,
+      "selected": {
+        "level": {
+          "id": 1362791,
+          "name": "L4",
+          "elevation": 32.16666666667046
+        },
+        "systemType": {
+          "id": 712042,
+          "name": "Return Air"
+        },
+        "ductType": {
+          "id": 139186,
+          "name": "Tees",
+          "familyName": "Round Duct",
+          "shape": "round"
+        },
+        "pipeType": null,
+        "conduitType": null
+      },
+      "selectedWorkset": null,
+      "chosenSize": {
+        "requested": "8\"",
+        "applied": "8\"",
+        "usedDefault": false,
+        "widthFt": null,
+        "heightFt": null,
+        "diameterFt": 0.6666666666666666
+      },
+      "segmentSizes": [
+        "8\""
+      ],
+      "jointPlan": [],
+      "chosenElevation": {
+        "zFt": 43.16666666667046,
+        "mode": "explicit_points",
+        "confidence": "high",
+        "assumption": "All route points supplied the same explicit Z.",
+        "usedFallback": false
+      },
+      "createdElementIds": [
+        1542941
+      ],
+      "createdFittingIds": [],
+      "dryRunElementIds": [],
+      "dryRunFittingIds": [],
+      "segments": [
+        {
+          "index": 0,
+          "id": 1542941,
+          "start": {
+            "x": -30.37919759409582,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          },
+          "end": {
+            "x": -23.87919759409578,
+            "y": 22.794894518112084,
+            "z": 43.16666666667046
+          },
+          "lengthFt": 6.500000000000043,
+          "requestedSize": "8\"",
+          "chosenSize": {
+            "requested": "8\"",
+            "applied": "8\"",
+            "usedDefault": false,
+            "widthFt": null,
+            "heightFt": null,
+            "diameterFt": 0.6666666666666666
+          },
+          "sizeApplied": {
+            "width": false,
+            "height": false,
+            "diameter": true
+          },
+          "worksetApplied": null,
+          "nativeSizeReadback": {
+            "shape": "round",
+            "widthFt": null,
+            "heightFt": null,
+            "diameterFt": 0.6666666666666666
+          },
+          "nativeGeometryReadback": {
+            "start": {
+              "x": -30.37919759409582,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "end": {
+              "x": -23.87919759409578,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "lengthFt": 6.500000000000043
+          }
+        }
+      ],
+      "createdFittingWorksets": [],
+      "postConnectionGeometryReadback": [
+        {
+          "segmentIndex": 0,
+          "elementId": 1542941,
+          "geometry": {
+            "start": {
+              "x": -30.37919759409582,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "end": {
+              "x": -23.87919759409578,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "lengthFt": 6.500000000000043
+          }
+        }
+      ],
+      "connectionAttempts": [],
+      "internalConnectionsVerified": true,
+      "openConnectorCount": 2,
+      "warnings": [
+        "No ceiling was found overlapping the requested room/space footprint.",
+        "Connector verification found 2 open connector(s) on created route elements."
+      ],
+      "rolledBack": false
+    },
+    "branchResults": [
+      {
+        "index": 0,
+        "name": "Unit 404 return grille connection",
+        "result": {
+          "status": "Blocked",
+          "dryRun": false,
+          "scaffoldOnly": true,
+          "kind": "duct",
+          "main": {
+            "id": 1542941,
+            "category": "Ducts",
+            "name": "Tees",
+            "connectorCount": 2
+          },
+          "branchPlan": {
+            "points": [
+              {
+                "x": -27.129197594095842,
+                "y": 22.794894518112084,
+                "z": 43.16666666667046
+              },
+              {
+                "x": -27.129197594095842,
+                "y": 22.794894518112084,
+                "z": 43.16666666667046
+              },
+              {
+                "x": -27.129197594095842,
+                "y": 22.951144518112084,
+                "z": 43.16666666667049
+              }
+            ],
+            "segmentCount": 2,
+            "requestedSize": "8\"",
+            "segmentSizes": [
+              "8\"",
+              "8\""
+            ],
+            "requestedSystemType": null,
+            "requestedPipeType": null,
+            "jointPlan": [
+              {
+                "jointIndex": 0,
+                "expectedFitting": "elbow_or_connect",
+                "reason": "adjacent segment sizes match or are unspecified",
+                "fromSize": "8",
+                "toSize": "8"
+              }
+            ],
+            "connectionMode": "tee"
+          },
+          "mainIntersection": {
+            "branchStart": {
+              "x": -27.129197594095842,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "nearestPointOnMain": {
+              "x": -27.129197594095842,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "distanceToMainFt": 0,
+            "curveParameter": 3.2499999999999787,
+            "mainStart": {
+              "x": -30.37919759409582,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            },
+            "mainEnd": {
+              "x": -23.87919759409578,
+              "y": 22.794894518112084,
+              "z": 43.16666666667046
+            }
+          },
+          "splitPlan": {
+            "applySupported": false,
+            "mode": "tee",
+            "expectedFitting": "tee",
+            "blockCode": "branch_segment_too_short",
+            "blockReason": "First branch segment after snapping to the split point must be at least 0.5 ft long.",
+            "projectedSplitPoint": null,
+            "mainSegments": null,
+            "distanceToMainFt": null,
+            "distanceFromMainStartFt": null,
+            "distanceFromMainEndFt": null
+          },
+          "existingConnectorFeasibility": {
+            "nearestOpenConnectorFound": false,
+            "nearestConnectorDistanceFt": null,
+            "nearestConnectorOpen": false
+          },
+          "existingBranchAnchorPlan": {
+            "requested": true,
+            "applySupported": false,
+            "anchorElementId": 1511849,
+            "anchorCategory": null,
+            "mainConnectorDistanceToSplitFt": null,
+            "mainConnector": null,
+            "branchConnector": null,
+            "blockCode": "anchor_geometry_unresolved",
+            "blockReason": "The split point and first downstream branch point are required to orient a retained branch anchor."
+          },
+          "selected": {
+            "type": {
+              "id": 139186,
+              "name": "Tees"
+            },
+            "system": {
+              "id": 712042,
+              "name": "Return Air"
+            },
+            "branchPipeType": null,
+            "branchSystemType": null,
+            "level": {
+              "id": 1362791,
+              "name": "L4",
+              "elevation": 32.16666666667046
+            },
+            "size": "8\"",
+            "segmentSizes": [
+              "8\"",
+              "8\""
+            ],
+            "takeoffRoutingPreference": {
+              "curveKind": "duct",
+              "curveTypeId": 139186,
+              "curveTypeName": "Tees",
+              "ductTypeId": 139186,
+              "ductTypeName": "Tees",
+              "pipeTypeId": null,
+              "pipeTypeName": null,
+              "requestedFamilyName": null,
+              "requestedTypeName": null,
+              "requestedMatched": null,
+              "candidateCount": 2,
+              "candidates": [
+                {
+                  "groupName": "Junctions",
+                  "ruleIndex": 0,
+                  "partId": 697633,
+                  "partName": "Standard",
+                  "categoryName": "Duct Fittings",
+                  "familyName": "Round Tee",
+                  "typeName": "Standard"
+                },
+                {
+                  "groupName": "Junctions",
+                  "ruleIndex": 1,
+                  "partId": 696624,
+                  "partName": "Standard",
+                  "categoryName": "Duct Fittings",
+                  "familyName": "Round Takeoff",
+                  "typeName": "Standard"
+                }
+              ],
+              "explicitTakeoffCandidateCount": 0,
+              "explicitTakeoffCandidates": [],
+              "matchingCandidates": []
+            }
+          },
+          "tapApplyPrecheck": null,
+          "splitMainSegmentIds": [],
+          "splitMainStartSegmentId": null,
+          "splitMainEndSegmentId": null,
+          "createdBranchElementIds": [],
+          "createdFittingIds": [],
+          "connectionAttempts": [],
+          "openConnectorCount": null,
+          "connectedNetworkAudit": null,
+          "focusedCapture": null,
+          "applyStatus": "GuardedScaffoldOnly",
+          "recommendedNextImplementationStep": "The split point and first downstream branch point are required to orient a retained branch anchor.",
+          "warnings": [
+            "No ceiling was found overlapping the requested room/space footprint.",
+            "Recommended elevation is a fallback because no ceiling elevation was available.",
+            "Apply mode is guarded for this case: The split point and first downstream branch point are required to orient a retained branch anchor."
+          ],
+          "rolledBack": false
+        }
+      }
+    ],
+    "warnings": [
+      "No ceiling was found overlapping the requested room/space footprint.",
+      "Recommended elevation is a fallback because room/ceiling context was incomplete.",
+      "Connector verification found 2 open connector(s) on created route elements.",
+      "Recommended elevation is a fallback because no ceiling elevation was available.",
+      "Apply mode is guarded for this case: The split point and first downstream branch point are required to orient a retained branch anchor."
+    ]
+  }
+}

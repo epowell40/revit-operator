@@ -1,0 +1,84 @@
+{
+  "provenance": "Actual C44 whole-area provider call and published documentation. No native mutation occurred.",
+  "request": {
+    "method": "POST",
+    "path": "/revit/export-visible-elements",
+    "requireKnownPath": true,
+    "body": {
+      "viewId": 1363433,
+      "imageSize": 2400,
+      "includeMapping": true,
+      "includeGeometry": true,
+      "categories": [
+        "OST_Walls",
+        "OST_Rooms",
+        "OST_Grids",
+        "OST_Doors",
+        "OST_Windows",
+        "OST_Ceilings"
+      ],
+      "includeLinked": true,
+      "limit": 5000
+    }
+  },
+  "contract": {
+    "method": "POST",
+    "path": "/revit/export-visible-elements",
+    "request_schema": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "viewId": {
+              "type": "integer"
+            },
+            "imageSize": {
+              "type": "integer"
+            },
+            "includeMapping": {
+              "type": "boolean"
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100
+            },
+            "excludeCategories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100
+            },
+            "includeGeometry": {
+              "type": "boolean"
+            },
+            "includeLinked": {
+              "type": "boolean"
+            },
+            "modelBounds": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 6,
+              "maxItems": 6
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000
+            }
+          },
+          "required": []
+        }
+      ]
+    }
+  }
+}

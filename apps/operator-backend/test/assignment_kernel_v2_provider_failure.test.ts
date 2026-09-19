@@ -40,9 +40,13 @@ function workspace(fn: () => void): void {
 async function asyncWorkspace(fn: () => Promise<void>): Promise<void> {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const previousTransport = process.env.OPERATOR_REVIT_TRANSPORT;
+  const previousBrain = process.env.OPERATOR_BRAIN;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-execution-failure-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+  // These fixtures inject the Codex route (or reject before provider startup).
+  // Select it explicitly instead of inheriting a workstation or runner default.
+  process.env.OPERATOR_BRAIN = "codex";
   __testOnlyResetGoalListCache();
   try { await fn(); }
   finally {
@@ -52,6 +56,8 @@ async function asyncWorkspace(fn: () => Promise<void>): Promise<void> {
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
     if (previousTransport === undefined) delete process.env.OPERATOR_REVIT_TRANSPORT;
     else process.env.OPERATOR_REVIT_TRANSPORT = previousTransport;
+    if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN;
+    else process.env.OPERATOR_BRAIN = previousBrain;
     fs.rmSync(root, { recursive: true, force: true });
   }
 }

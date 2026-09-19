@@ -11,6 +11,7 @@ import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment
 import { McpInputValidator } from "./mcp_input_validation.js";
 import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
 import { describeCodeModeImageTool } from "./code_mode_images.js";
+import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/feature_flag.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -42,6 +43,7 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_request_clarification",
   "operator_request_assignment_input",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "revit_ping",
@@ -288,7 +290,9 @@ export class CodexMcpToolRuntime {
       type: "namespace",
       name: "revit_operator",
       description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
-      tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name).map(tool => ({
+      tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name
+        && !(assignmentKernelV2Enabled(this.opts.spawnEnv)
+          && ["operator_submit_read_completion", "operator_submit_noop_completion"].includes(tool.name))).map(tool => ({
         type: "function",
         name: tool.name,
         description: describeCodeModeImageTool(tool.name, tool.description ?? "Revit Operator tool"),

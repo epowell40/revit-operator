@@ -91,113 +91,133 @@ namespace RevitBridge.Handlers
 
             var created = new List<CreatedInstance>();
             var planned = new List<PlannedInstance>();
-            using (var trans = new Transaction(doc, "Create Family Instance"))
+            void CreateRows(ISet<long> nativeCreated)
             {
-                trans.Start();
-                try
+                if (!symbol.IsActive)
                 {
-                    if (!symbol.IsActive)
+                    symbol.Activate();
+                    doc.Regenerate();
+                }
+
+                for (int i = 0; i < requestedCount; i++)
+                {
+                    var point = new XYZ(
+                        p.x + (i * dx),
+                        p.y + (i * dy),
+                        p.z + (i * dz));
+
+                    var instance = CreateInstanceAtPoint(doc, symbol, level, targetView, point);
+                    nativeCreated.Add(RevitBridge.Common.ElementIdCompat.GetValue(instance.Id));
+                    if (Math.Abs(rotationDegrees) > 1e-9)
                     {
-                        symbol.Activate();
-                        doc.Regenerate();
+                        RotateAboutZ(doc, instance.Id, point, rotationDegrees);
                     }
 
-                    for (int i = 0; i < requestedCount; i++)
+                    doc.Regenerate();
+                    var observedPoint = (instance.Location as LocationPoint)?.Point
+                        ?? throw new InvalidOperationException("Created family did not expose a point location; placement cannot be verified.");
+                    // Some level-based native overloads add the level elevation to
+                    // the supplied Z. Our request coordinates are absolute model feet.
+                    // Read the actual insertion and correct it inside the same transaction.
+                    if (targetView == null)
                     {
-                        var point = new XYZ(
-                            p.x + (i * dx),
-                            p.y + (i * dy),
-                            p.z + (i * dz));
-
-                        var instance = CreateInstanceAtPoint(doc, symbol, level, targetView, point);
-                        if (Math.Abs(rotationDegrees) > 1e-9)
+                        var requested = new[] { point.X, point.Y, point.Z };
+                        var actual = new[] { observedPoint.X, observedPoint.Y, observedPoint.Z };
+                        if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested, actual))
                         {
-                            RotateAboutZ(doc, instance.Id, point, rotationDegrees);
-                        }
-
-                        if (dryRun)
-                        {
-                            planned.Add(new PlannedInstance
-                            {
-                                index = i,
-                                x = point.X,
-                                y = point.Y,
-                                z = point.Z,
-                                rotationDegrees = rotationDegrees
-                            });
-                        }
-                        else
-                        {
-                            created.Add(new CreatedInstance
-                            {
-                                index = i,
-                                id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id),
-                                name = instance.Name,
-                                family = instance.Symbol?.FamilyName,
-                                familyName = instance.Symbol?.FamilyName,
-                                symbol = instance.Symbol?.Name,
-                                symbolName = instance.Symbol?.Name,
-                                typeName = instance.Symbol?.Name,
-                                x = point.X,
-                                y = point.Y,
-                                z = point.Z
-                            });
+                            var delta = RevitBridge.Common.AbsolutePlacementCorrection.Delta(requested, actual);
+                            ElementTransformUtils.MoveElement(doc, instance.Id, new XYZ(delta[0], delta[1], delta[2]));
+                            doc.Regenerate();
+                            observedPoint = (instance.Location as LocationPoint)?.Point
+                                ?? throw new InvalidOperationException("Created family location disappeared after placement correction.");
+                            if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested,
+                                new[] { observedPoint.X, observedPoint.Y, observedPoint.Z }))
+                                throw new InvalidOperationException("Native family placement did not reach the requested model-space point.");
                         }
                     }
 
                     if (dryRun)
                     {
-                        trans.RollBack();
-                        return Task.FromResult<object>(new
+                        planned.Add(new PlannedInstance
                         {
-                            status = "Dry Run",
-                            dryRun = true,
-                            requestedCount,
-                            familyName = symbol.FamilyName,
-                            symbolName = symbol.Name,
-                            levelName = level?.Name,
-                            targetView = targetView == null ? null : new
-                            {
-                                id = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id),
-                                name = targetView.Name
-                            },
-                            planned
+                            index = i,
+                            x = observedPoint.X,
+                            y = observedPoint.Y,
+                            z = observedPoint.Z,
+                            rotationDegrees = rotationDegrees
                         });
                     }
+                    else
+                    {
+                        created.Add(new CreatedInstance
+                        {
+                            index = i,
+                            id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id),
+                            name = instance.Name,
+                            family = instance.Symbol?.FamilyName,
+                            familyName = instance.Symbol?.FamilyName,
+                            symbol = instance.Symbol?.Name,
+                            symbolName = instance.Symbol?.Name,
+                            typeName = instance.Symbol?.Name,
+                            x = observedPoint.X,
+                            y = observedPoint.Y,
+                            z = observedPoint.Z
+                        });
+                    }
+                }
 
-                    trans.Commit();
-                }
-                catch
-                {
-                    trans.RollBack();
-                    throw;
-                }
             }
 
-            var first = created.FirstOrDefault();
-            var firstId = first?.id ?? 0;
-            var firstName = first?.name;
-
-            return Task.FromResult<object>(new
+            object? TargetViewPayload() => targetView == null ? null : new
             {
-                status = "Placed",
-                dryRun = false,
-                count = created.Count,
-                id = firstId,
-                name = firstName,
-                family = symbol.FamilyName,
-                familyName = symbol.FamilyName,
-                symbol = symbol.Name,
-                symbolName = symbol.Name,
-                typeName = symbol.Name,
-                levelName = level?.Name,
-                targetView = targetView == null ? null : new
+                id = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id), name = targetView.Name
+            };
+            if (!dryRun)
+            {
+                var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Create Family Instance", nativeCreated =>
                 {
-                    id = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id),
-                    name = targetView.Name
-                },
-                instances = created
-            });
+                    CreateRows(nativeCreated);
+                    doc.Regenerate();
+                    var first = created.FirstOrDefault();
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "Placed", ["dryRun"] = false, ["count"] = created.Count,
+                        ["id"] = first?.id ?? 0, ["name"] = first?.name,
+                        ["family"] = symbol.FamilyName, ["familyName"] = symbol.FamilyName,
+                        ["symbol"] = symbol.Name, ["symbolName"] = symbol.Name, ["typeName"] = symbol.Name,
+                        ["levelName"] = level?.Name, ["targetView"] = TargetViewPayload(), ["instances"] = created
+                    };
+                });
+                return Task.FromResult<object>(result);
+            }
+
+            using (var trans = new Transaction(doc, "Create Family Instance Preview"))
+            {
+                try
+                {
+                    trans.Start();
+                    CreateRows(new HashSet<long>());
+                    var status = trans.RollBack();
+                    return Task.FromResult<object>(new
+                    {
+                        status = status == TransactionStatus.RolledBack ? "Dry Run" : "Blocked",
+                        dryRun = true, requestedCount, familyName = symbol.FamilyName,
+                        symbolName = symbol.Name, levelName = level?.Name, targetView = TargetViewPayload(), planned,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.FromObservedStatus(status.ToString(), Array.Empty<long>())
+                    });
+                }
+                catch (Exception error)
+                {
+                    string status;
+                    try { status = trans.GetStatus() == TransactionStatus.Started ? trans.RollBack().ToString() : trans.GetStatus().ToString(); }
+                    catch { status = "unknown"; }
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Blocked", success = false, error = error.Message,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.FromObservedStatus(status, Array.Empty<long>())
+                    });
+                }
+            }
         }
 
         private static View? ResolveTargetView(Document doc, long? viewId, string? sheetNumber)

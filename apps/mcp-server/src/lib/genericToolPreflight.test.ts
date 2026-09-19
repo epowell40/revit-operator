@@ -492,3 +492,20 @@ test("workbook schema publishes content provenance and complete target coverage 
   assert.match(schema.properties.supplementalTables.description,/each selected elementId exactly once/);
   assert.match(schema.properties.supplementalTables.description,/review row even/);
 });
+
+
+test('C44 nullable inventory body reports the actual limit while retaining parent rejection',()=>{
+ const f=JSON.parse(readFileSync('src/lib/fixtures/c44-inventory-limit.json','utf8'));
+ const failure=preflightKnownGenericToolBody(f.contract,f.request.body)!;
+ assert.equal(failure.request_dispatched,false);
+ assert(failure.validation_issues?.some(i=>i.field_path==='body.limit'&&i.expected_constraint.maximum===2000));
+ assert(failure.validation_issues?.some(i=>i.field_path==='body'&&i.expected_constraint.kind==='schema_alternative'));
+ assert.equal(preflightKnownGenericToolBody(f.contract,{...f.request.body,limit:2000}),null);
+ for(const keyword of ['oneOf','anyOf']){
+  const contract={method:'POST',path:'/revit/example',request_schema:{[keyword]:[{type:'object',required:['a']},{type:'object',required:['b']}]}};
+  const ambiguous=preflightKnownGenericToolBody(contract,{})!;
+  assert.equal(ambiguous.validation_issues?.length,1,'overlapping object branches do not select a preferred correction');
+ }
+ const numeric=preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{oneOf:[{type:'null'},{type:'number',maximum:2}]}},3)!;
+ assert(numeric.validation_issues?.some(i=>i.expected_constraint.maximum===2));
+});

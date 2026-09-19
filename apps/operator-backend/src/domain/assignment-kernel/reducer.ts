@@ -3,6 +3,7 @@ import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
+import { declareWorkPlanV2, completeWorkPlanItemV2 } from "./work_plan.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
 import { kernelAssertV2 } from "./errors.js";
@@ -156,6 +157,8 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 }
 
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
+  kernelAssertV2(operation.requested_effect !== "apply" || !snapshot.spec.work_plan_required || Boolean(snapshot.work_plan),
+    "assignment_kernel_v2_declare_work_plan_before_apply", "Multi-part editing requires a declared scope before native admission.");
   kernelAssertV2(snapshot.execution_control?.state !== "paused" || Boolean(operation.parent_operation_id),
     "assignment_execution_paused", "Paused work cannot admit another root operation; admitted children may settle.");
   kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, operation.binding), "operation_binding_mismatch", "Operation binding is not current.");
@@ -282,8 +285,10 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && subject.persistent_effect === "applied"
       && subject.settlement_state === "settled",
     "operation_verification_subject_invalid", "Verification must bind to one settled applied operation.");
-    kernelAssertV2(Boolean(operation.target.target_id)
-      && operationMatchesTargetIdentityV2(subject, [operation.target.target_id!])
+    const verificationTargets = [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    kernelAssertV2(verificationTargets.length > 0
+      && verificationTargets.every(target => operationMatchesTargetIdentityV2(subject, [target]))
       && operation.target.document_fingerprint === subject.target.document_fingerprint,
     "operation_verification_target_mismatch", "Verification must inspect the exact applied target in the same document.");
   } else {
@@ -920,6 +925,13 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(!snapshot.result_delivery, "assignment_result_delivery_duplicate", "Result delivery is immutable.");
         snapshot = { ...snapshot, result_delivery: structuredClone(event.delivery) };
         break;
+      case "work_plan_declared":
+      case "work_plan_item_completed":
+        kernelAssertV2(event.actor === "operator-work-plan", "work_plan_authority_invalid", "Work plans use the trusted assignment boundary.");
+        snapshot = { ...snapshot, work_plan: event.event_type === "work_plan_declared"
+          ? declareWorkPlanV2(snapshot, event.declaration, event.occurred_at)
+          : completeWorkPlanItemV2(snapshot, event.item_id, event.operation_ids, event.occurred_at, event.inspection) };
+        break;
       case "review_requested":
         for (const workUnitId of event.work_unit_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.work_unit_states, workUnitId), "review_work_unit_unknown", "Review cites an unknown work unit.");
         snapshot = { ...snapshot, pending_review_ids: [...new Set([...snapshot.pending_review_ids, event.review_id])].sort() };
@@ -975,6 +987,23 @@ export class AssignmentJournalV2 {
       this.#byId.set(retained.event_id, retained);
       this.#events.push(retained);
     }
+  }
+
+  /** Isolated continuation of already validated history; never accepts raw state. */
+  fork(): AssignmentJournalV2 {
+    const fork = new AssignmentJournalV2();
+    // Retained events are private and append never modifies them. Public access
+    // always clones; the mutable reducer state and bookkeeping must not alias.
+    for (const event of this.#events) {
+      fork.#events.push(event);
+      fork.#byId.set(event.event_id, event);
+    }
+    fork.#state = {
+      ...this.#state,
+      ...(this.#state.snapshot ? { snapshot: structuredClone(this.#state.snapshot) } : {}),
+      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+    };
+    return fork;
   }
 
   append(event: AssignmentEventV2): AssignmentSnapshotV2 {

@@ -22,6 +22,7 @@ const certifiedPolicyHash = (JSON.parse(fs.readFileSync(certifiedPolicyPath, "ut
 const certifiedSafeNonRevitAliases = [
   "operator_discover_capabilities",
   "operator_evaluate_assignment_criteria",
+  "operator_manage_work_plan",
   "operator_request_assignment_input",
   "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
@@ -223,7 +224,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 92, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 93, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -257,6 +258,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const backendPort = await listen(backend);
   const bridgeRequests: Array<{ method: string; path: string; token: string; grant: string }> = [];
   const connectorRepairBodies: any[] = [];
+  const connectorInspectionBodies: any[] = [];
   const sheetBodies: any[] = [];
   const scheduleBodies: any[] = [];
   const scheduleCellBodies: any[] = [];
@@ -357,6 +359,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       res.end(JSON.stringify({ status: "Dry Run", dryRun: true, applied: false, changedCount: 1 }));
       return;
     }
+    if (requestUrl.pathname === "/revit/get-connectors") {
+      connectorInspectionBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ status: "Ok", verificationParameters: { schema: "revit-operator.duct-verification-parameters/v1", items: [] } }));
+      return;
+    }
     if (requestUrl.pathname === "/revit/repair-mep-connectors") {
       connectorRepairBodies.push(JSON.parse(requestBody || "{}"));
       res.end(JSON.stringify({
@@ -426,7 +433,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 92, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, 93, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
+  assert.equal((connectorSchema.properties?.includeVerificationParameters as any)?.type, "boolean");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
   for (const field of ["ductSize", "width", "height", "diameter", "ductTypeId", "ductShape"])
     assert.ok(ductSchema.properties?.[field], `The executable duct alias must expose ${field}.`);
@@ -455,6 +464,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_record_execution_strategy",
     "operator_request_clarification",
     "operator_evaluate_assignment_criteria",
+    "operator_manage_work_plan",
     "operator_request_assignment_input",
     "operator_retrieve_evidence",
     "operator_submit_noop_completion",
@@ -565,6 +575,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     arguments: { method: "GET", path: "/revit/context", requireKnownPath: true }
   }), "calling a generic bridge read over stdio");
   assert.match((context as any).content[0].text, /L4 - Power/);
+
+  const combinedInspection = await client.callTool({ name: "revit_get_connectors", arguments: { elementIds: [12, 13], includeVerificationParameters: true, maxConnectorsPerElement: 512 } });
+  assert.notEqual(combinedInspection.isError, true);
+  assert.equal(connectorInspectionBodies[0].includeVerificationParameters, true, "typed MCP must forward the combined-read flag rather than stripping it");
+  assert.deepEqual(connectorInspectionBodies[0].elementIds, [12, 13]);
+  assert.equal(connectorInspectionBodies[0].includeAllRefs, true);
+  assert.equal(connectorInspectionBodies[0].includeCoordinateSystem, true);
+  assert.equal(connectorInspectionBodies[0].onlyOpenPhysicalConnectors, false);
+  assert.match((combinedInspection as any).content[0].text, /duct-verification-parameters/);
 
   const observation = await withTimeout(client.callTool({
     name: "revit_observe_model",
@@ -696,7 +715,7 @@ test("compiled MCP preserves native result selections and rejects malformed read
   const reviewed = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems, assessment }, _meta });
   assert.notEqual(reviewed.isError, true); assert.deepEqual((requests[1].body as any).assessment, assessment);
   assert.deepEqual(requests[1].body.result_items, requests[0].body.result_items);
-  for (const invalid of [{ ...assessment, authority: "native-host" }, { ...assessment, questions: ["1", "2", "3", "4"] },
+  for (const invalid of [{ ...assessment, findings: [] }, { ...assessment, authority: "native-host" }, { ...assessment, questions: ["1", "2", "3", "4"] },
     { ...assessment, findings: [{ ...assessment.findings[0], evidence_indices: [0] }] }]) {
     const denied = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems, assessment: invalid }, _meta });
     assert.equal(denied.isError, true);
@@ -829,6 +848,29 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
   }), "retrieving exact target-bound evidence through compiled MCP");
   assert.equal((targetedEvidence as any).isError, undefined, stderr.join(""));
 
+  const projectedRange = { path: "payload.items", start: 17, count: 113, fields: ["elementId", "category", "bounds.min"] };
+  const projectedEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"e".repeat(32)}`, sessionId: "session-a", assignmentId: "assignment-a",
+      runId: "run-a", generation: 1, purpose: "Read selected columns without transferring every parameter.",
+      itemRange: projectedRange, maxBytes: 100000
+    },
+    _meta: authMeta
+  }), "retrieving selected row columns through compiled MCP");
+  assert.equal((projectedEvidence as any).isError, undefined, stderr.join(""));
+  assert.deepEqual(JSON.parse(requests[3]!.body).item_range, projectedRange, "MCP schema must preserve the selected columns");
+  for (const fields of [[], ["elementId", "elementId"], ["bad\npath"]]) {
+    const before = requests.length;
+    const invalid = await withTimeout(client.callTool({
+      name: "operator_retrieve_evidence",
+      arguments: { evidenceId: `ev1_${"e".repeat(32)}`, sessionId: "session-a", purpose: "Reject malformed columns.", itemRange: { ...projectedRange, fields } },
+      _meta: authMeta
+    }), "rejecting malformed projected columns");
+    assert.equal(invalid.isError, true);
+    assert.equal(requests.length, before);
+  }
+
   const requestCountBeforeConflict = requests.length;
   const ambiguousEvidence = await withTimeout(client.callTool({
     name: "operator_retrieve_evidence",
@@ -858,6 +900,7 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
 
   assert.deepEqual(requests.map(request => request.path), [
     "/api/assignments/read-completion-claims",
+    "/evidence/retrieve",
     "/evidence/retrieve",
     "/evidence/retrieve",
     "/tools/mep/semantic-route-plan"

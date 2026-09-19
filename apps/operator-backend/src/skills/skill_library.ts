@@ -96,14 +96,13 @@ function defaultManifestEntries(): SkillManifestEntry[] {
     { path: "prompts/templates/plan_execute_verify.md" },
     { path: "prompts/templates/plan_execute_verify_titleblock.md" },
     { path: "prompts/templates/tool_result_format.md" },
-    { path: "skills/README.md" },
+    { path: "skills/workflows/existing_conditions_reconstruct.md" },
     { path: "skills/INDEX.md" },
     { path: "skills/workflows/mep_resize_scope.md" },
     { path: "skills/workflows/mep_trace_connected_network.md" },
     { path: "skills/runbooks/mep_resize_runbook.md" },
     { path: "skills/workflows/sheet_titleblock_update.md" },
-    { path: "skills/workflows/print_sheet_sets.md" },
-    { path: "docs/PRIMITIVES_VS_SKILLS.md" }
+    { path: "skills/workflows/print_sheet_sets.md" }
   ];
 }
 
@@ -187,44 +186,11 @@ export function getSkillLibraryText(): string {
   const maxFileCharsDefault = parseIntEnv(process.env.OPERATOR_SKILL_LIBRARY_MAX_FILE_CHARS, DEFAULT_MAX_FILE_CHARS, 300, 50000);
   const seenRel = new Set<string>();
 
-  let total = 0;
-  const entries = loadManifestEntries(repoRoot);
-  for (const entry of entries) {
-    if (total >= maxTotalChars) break;
-    const relDisplay = normalizeRelForDisplay(entry.path);
-    if (seenRel.has(relDisplay)) continue;
-    seenRel.add(relDisplay);
-    const relFs = toFsRelative(entry.path);
-    const full = path.join(repoRoot, relFs);
-    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) continue;
-
-    const fileLimit = Math.max(200, Math.min(maxFileCharsDefault, Number.isFinite(entry.max_chars) ? Number(entry.max_chars) : maxFileCharsDefault));
-    const chunk = readTrimmed(full, Math.min(fileLimit, maxTotalChars - total));
-    if (!chunk) continue;
-
-    parts.push(`--- ${relDisplay} ---`);
-    parts.push(chunk);
-    parts.push("");
-    total += chunk.length;
-  }
-
-  if (shouldIncludeLegacySkillDocs()) {
-    for (const rel of legacySkillDocRelPaths()) {
-      if (total >= maxTotalChars) break;
-      const relDisplay = normalizeRelForDisplay(rel);
-      if (seenRel.has(relDisplay)) continue;
-      seenRel.add(relDisplay);
-      const full = path.join(repoRoot, rel);
-      if (!fs.existsSync(full) || !fs.statSync(full).isFile()) continue;
-      const chunk = readTrimmed(full, Math.min(maxFileCharsDefault, maxTotalChars - total));
-      if (!chunk) continue;
-      parts.push(`--- ${relDisplay} ---`);
-      parts.push(chunk);
-      parts.push("");
-      total += chunk.length;
-    }
-  }
-
+  // Reserve only actual local content within the existing content allowance.
+  // Local conventions are appended after repo defaults, not silently starved.
+  const localParts: string[] = [];
+  let localTotal = 0;
+  const localBudget = Math.min(6000, Math.floor(maxTotalChars / 4));
   // Local, user-specific skills (not committed): allow power users to extend behavior without changing global code.
   const localSkillDirs: string[] = [];
   try {
@@ -261,32 +227,75 @@ export function getSkillLibraryText(): string {
 
   const uniqueLocalDirs = [...new Set(localSkillDirs.map(d => path.resolve(d)))];
   for (const d of uniqueLocalDirs) {
-    if (total >= maxTotalChars) break;
+    if (localTotal >= localBudget) break;
     if (!d || !fs.existsSync(d)) continue;
 
     let files: string[] = [];
     try {
       files = fs
         .readdirSync(d)
-        .filter(f => f.toLowerCase().endsWith(".md") || f.toLowerCase().endsWith(".txt"))
+        .filter(f => (f.toLowerCase().endsWith(".md") || f.toLowerCase().endsWith(".txt")) && path.resolve(d, f) !== path.resolve(repoRoot, "skills", "local", "README.md"))
         .sort((a, b) => a.localeCompare(b));
     } catch {
       continue;
     }
 
     for (const f of files) {
-      if (total >= maxTotalChars) break;
+      if (localTotal >= localBudget) break;
       localCount++;
       if (localCount > maxLocalFiles) break;
       const full = path.join(d, f);
-      const chunk = readTrimmed(full, Math.min(localMaxFileChars, maxTotalChars - total));
+      const chunk = readTrimmed(full, Math.min(localMaxFileChars, localBudget - localTotal));
       if (!chunk) continue;
-      parts.push(`--- local-skill ${full} ---`);
+      localParts.push(`--- local-skill ${full} ---`);
+      localParts.push(chunk);
+      localParts.push("");
+      localTotal += chunk.length;
+    }
+  }
+
+  const repoBudget = Math.max(0, maxTotalChars - localTotal);
+  let total = 0;
+
+  const entries = loadManifestEntries(repoRoot);
+  for (const entry of entries) {
+    if (total >= repoBudget) break;
+    const relDisplay = normalizeRelForDisplay(entry.path);
+    if (seenRel.has(relDisplay)) continue;
+    seenRel.add(relDisplay);
+    const relFs = toFsRelative(entry.path);
+    const full = path.join(repoRoot, relFs);
+    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) continue;
+
+    const fileLimit = Math.max(200, Math.min(maxFileCharsDefault, Number.isFinite(entry.max_chars) ? Number(entry.max_chars) : maxFileCharsDefault));
+    const chunk = readTrimmed(full, Math.min(fileLimit, repoBudget - total));
+    if (!chunk) continue;
+
+    parts.push(`--- ${relDisplay} ---`);
+    parts.push(chunk);
+    parts.push("");
+    total += chunk.length;
+  }
+
+  if (shouldIncludeLegacySkillDocs()) {
+    for (const rel of legacySkillDocRelPaths()) {
+      if (total >= repoBudget) break;
+      const relDisplay = normalizeRelForDisplay(rel);
+      if (seenRel.has(relDisplay)) continue;
+      seenRel.add(relDisplay);
+      const full = path.join(repoRoot, rel);
+      if (!fs.existsSync(full) || !fs.statSync(full).isFile()) continue;
+      const chunk = readTrimmed(full, Math.min(maxFileCharsDefault, repoBudget - total));
+      if (!chunk) continue;
+      parts.push(`--- ${relDisplay} ---`);
       parts.push(chunk);
       parts.push("");
       total += chunk.length;
     }
   }
+
+  parts.push(...localParts);
+  total += localTotal;
 
   // Macro skills (Workspace/skills/*.skill.json): include a compact list (not full bodies).
   try {

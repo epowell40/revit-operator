@@ -20,7 +20,7 @@ export function operationTargetIdentityAliasesV2(value: unknown): readonly strin
     const kind = identity.slice(0, separator).replace(/[^a-z0-9]/g, "");
     const identifier = identity.slice(separator + 1);
     if (kind === "artifactpath") aliases.add(`artifact_path:${identifier.replaceAll("\\", "/")}`);
-    if ((kind === "id" || kind.endsWith("id")) && /^\d+$/.test(identifier)) {
+    if ((kind === "id" || kind.endsWith("id") || ["ids", "elementids", "requestedelementids"].includes(kind)) && /^\d+$/.test(identifier)) {
       aliases.add(`id:${identifier}`);
     }
   }

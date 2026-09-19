@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -1382,4 +1383,18 @@ test("pre-compacted omitted counts saturate safely and remain idempotent", () =>
   }, { maxItems: 1 }) as any;
   assert.equal(compacted.itemsOmitted, Number.MAX_SAFE_INTEGER);
   assert.deepEqual(compactVisibleElementsResult(compacted, { maxItems: 1 }), compacted);
+});
+
+test('C48 native grid axes survive projection without inferring axes from presentation bounds',()=>{
+ const fixture=JSON.parse(readFileSync(new URL('../../test/fixtures/c48-grid-curve-replay.json',import.meta.url),'utf8'));
+ const items=fixture.rows.map((r:any)=>({elementId:r.elementId,name:r.label,category:'Grids',builtInCategory:'OST_Grids',geometry:{units:'feet',coordinateSystem:'revit_internal_world',locationCurve:r.expected_curve_summary}}));
+ for(const curved of [false,true]){
+  const input=structuredClone(items); if(curved){input[0].geometry.locationCurve.isStraight=false;input[0].geometry.locationCurve.curveType='Arc';}
+  const result:any=compactFindElementsResultForPrompt({status:'Ok',count:input.length,elementIds:input.map((r:any)=>r.elementId),geometryIncluded:true,itemsComplete:true,truncated:false,items:input});
+  const rows=result.items??result.candidateItems;
+  for(const actual of rows){const expected=input.find((r:any)=>r.elementId===actual.elementId);assert.deepEqual(actual.geometry.locationCurve,expected.geometry.locationCurve);assert.equal(actual.geometry.boundingBox,null);}
+  assert.equal(rows.length,4);
+ }
+ const missing:any=compactFindElementsResultForPrompt({status:'Ok',count:1,elementIds:[1],geometryIncluded:true,itemsComplete:true,items:[{elementId:1,category:'Grids',geometry:null}]});
+ assert.equal(missing.items[0].geometry?.locationCurve,undefined);
 });

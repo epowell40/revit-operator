@@ -42,6 +42,28 @@ function projection(goalId: string) {
   return reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;
 }
 
+test("C46 family placement retains unknown writes until native commit or rollback is supplied", { concurrency: false }, async () => {
+  await workspace(async () => {
+    for (const variant of [
+      { name: "old", effect: "unknown" as const, authority: "native_host" as const, dryRun: false },
+      { name: "commit", effect: "applied" as const, authority: "native_transaction" as const, dryRun: false },
+      { name: "preview", effect: "none" as const, authority: "native_rollback" as const, dryRun: true }
+    ]) {
+      const result = await invokeTyped({
+        sessionId: `c46-family-${variant.name}`, tool: "revit_call_tool", nativePath: "/revit/place-families",
+        args: { method: "POST", path: "/revit/place-families", body: {
+          familySymbolId: 1380250, levelName: "L4", viewId: 1363433, dryRun: variant.dryRun,
+          instances: [{ x: -34.7975, y: -6.688, z: 40.1666666667, coordinateMode: "absolute_model", hostElementId: 1362429, linkedHostElementId: 2095221 }]
+        } }, requestedEffect: "apply", nativeRequestedEffect: variant.dryRun ? "preview" : "apply",
+        resultEffect: variant.effect, resultAuthority: variant.authority
+      });
+      assert.equal(result.current.attempts[0]?.effect.state, variant.effect);
+      assert.equal(result.current.attempts[0]?.effect.authority, variant.authority);
+      assert.equal(result.current.unresolved_unknown_attempt_ids.length, variant.effect === "unknown" ? 1 : 0);
+    }
+  });
+});
+
 function nativeSettlement(input: {
   assignmentId: string;
   runId: string;

@@ -78,3 +78,20 @@ for (const discoveryTool of ["revit_search_tools", "revit_tool_doc", "operator_d
   const oversized = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify({ documentation: "x".repeat(30_000) }) }] }, { tool: discoveryTool, projections: [projection], omitted: 0 });
   assert.equal(JSON.parse((oversized.contentItems[0] as any).text).schema, "revit-operator.model-evidence-envelope.v1");
 }));
+
+test("C48 oversized partial catalogue reaches the working model through projection rather than disappearing into a reference", () => isolated(() => {
+  const raw=JSON.parse(fs.readFileSync("test/fixtures/c48-partial-tool-catalog.json","utf8"));
+  assert.equal(Buffer.byteLength(raw.content[0].text),7299,"exercise the actual oversized delivery path");
+  const stored=storeEvidence({scope,source:"assignment_kernel_v2:revit_search_tools",trust_level:"host_observed",raw});
+  const budget=assembleBoundedEvidenceContext({projections:[stored.projection],...scope});
+  const delivered=adaptMcpToolCallResultToDynamicResponse(raw,{tool:"revit_search_tools",projections:budget.projections,omitted:budget.omitted});
+  const text=delivered.contentItems.filter(item=>item.type==="inputText").map((item:any)=>item.text).join("\n");
+  const envelope=JSON.parse(text);
+  assert.equal(envelope.schema,"revit-operator.model-evidence-envelope.v1");
+  assert.match(text,/\/revit\/place-families/);assert.match(text,/\/revit\/open-family-doc/);
+  const doc=envelope.evidence_projections[0].tool_documentation;
+  assert.equal(doc.returned_tools,6);assert.equal(doc.completion_eligible,false);
+  assert.equal(Object.hasOwn(doc.tools.find((tool:any)=>tool.path==="/revit/place-families"),"required_fields"),false);
+  assert(doc.omitted_paths.some((item:string)=>item.endsWith("required_fields")));
+  assertBoundedModelEvidencePayload([{type:"function_call_output",output:text}]);
+}));

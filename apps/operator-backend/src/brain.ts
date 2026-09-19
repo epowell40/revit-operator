@@ -43,6 +43,7 @@ import { ensureWorkspaceLayout } from "./workspace.js";
 import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
+import { finalizeCanonicalAssignment } from "./assignments/canonical_finalization.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -263,6 +264,8 @@ export function __testOnlyMaybeBuildPersistedExistingConditionsTerminal(
 }
 
 function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
+  const canonical = finalizeCanonicalAssignment(req, decision);
+  if (canonical) return canonical;
   const assistantMessage = (decision.assistant_message ?? "").toString();
   const environmentActions = applyEnvironmentPolicyToActions(Array.isArray(decision.actions) ? decision.actions : []);
   const certified = isCertifiedSidecarRequest(req) ? filterCertifiedSidecarActions(environmentActions) : null;

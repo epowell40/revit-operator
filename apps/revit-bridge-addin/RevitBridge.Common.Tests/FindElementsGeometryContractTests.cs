@@ -8,6 +8,19 @@ namespace RevitBridge.Common.Tests
     public sealed class FindElementsGeometryContractTests
     {
         [Fact]
+        public void GridSummaryUsesNativeAxisIncludingCurvatureInsteadOfPresentationBounds()
+        {
+            var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "FindElementsHandler.cs");
+            AssertOrdered(source,
+                "var curve = e is Grid grid ? grid.Curve : (e.Location as LocationCurve)?.Curve;",
+                "start = XyzPayload(curve.GetEndPoint(0))",
+                "end = XyzPayload(curve.GetEndPoint(1))",
+                "midpoint = XyzPayload(curve.Evaluate(0.5, true))",
+                "curveType = curve.GetType().Name",
+                "isStraight = curve is Line");
+        }
+
+        [Fact]
         public void FindElementsUsesSourceOrOwnerViewWhenModelSpaceGeometryIsUnavailable()
         {
             var source = ReadSharedSource(

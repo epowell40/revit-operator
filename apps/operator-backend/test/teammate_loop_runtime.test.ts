@@ -25,6 +25,32 @@ type AcceptanceCase = {
   expected_effect: "read" | "preview" | "apply";
 };
 
+test("whole-area created HRU summary uses the typed ids selector before MCP alias normalization", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Read the HRU location without changing anything."));
+  try {
+    for (const args of [{ ids: [1542933] }, { ids: [1542933], viewId: 1363433 }]) {
+      const gate = guardTeammateMcpCall(owner, { tool: "revit_get_element_summary", arguments: args });
+      assert.equal(gate.allowed, true);
+      assert(gate.call?.principal_target_tokens.includes("id:1542933"));
+      assert(!gate.call?.principal_target_tokens.includes("id:1363433"));
+    }
+  } finally { endTeammateLoopOwner(lease); }
+});
+
+test('exact composite observation aliases admit reads without inventing routes or permitting lookalike writes', () => {
+  for(const tool of ['revit_observe_model','revit_read_move_targets_certified','revit_observe_model_unchecked','revit_observe_anything']){
+    __testOnlyResetTeammateLoopState();
+    const owner={}; const lease=beginTeammateLoopOwner(owner,request('Read the visible ductwork without changing anything.'));
+    try {
+      const gate=guardTeammateMcpCall(owner,{tool,arguments:{viewId:44,includeGeometry:true,limit:40}});
+      assert.equal(gate.allowed,['revit_observe_model','revit_read_move_targets_certified'].includes(tool),JSON.stringify(gate));
+      if(gate.allowed) assert.equal(gate.call?.effect,'read');
+    }finally{endTeammateLoopOwner(lease);}
+  }
+});
+
 test("inspection of an existing view's name and scale does not authorize creation", () => {
   const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
   assert.equal(classifyAgentTurn(prompt), "inspection");

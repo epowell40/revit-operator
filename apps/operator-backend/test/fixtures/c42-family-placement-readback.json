@@ -1,0 +1,93 @@
+{
+  "note": "Retained C42 failed whole-area HRU placement. Metadata added in corrected synthetic readback tests is not claimed as original native evidence.",
+  "native_apply": {
+    "status": "Placed",
+    "dryRun": false,
+    "count": 1,
+    "id": 1542933,
+    "name": "Heat Recovery Unit (HRU)",
+    "family": "HeatRecoveryUnit",
+    "familyName": "HeatRecoveryUnit",
+    "symbol": "Heat Recovery Unit (HRU)",
+    "symbolName": "Heat Recovery Unit (HRU)",
+    "typeName": "Heat Recovery Unit (HRU)",
+    "levelName": "L4",
+    "targetView": null,
+    "instances": [
+      {
+        "index": 0,
+        "id": 1542933,
+        "name": "Heat Recovery Unit (HRU)",
+        "family": "HeatRecoveryUnit",
+        "familyName": "HeatRecoveryUnit",
+        "symbol": "Heat Recovery Unit (HRU)",
+        "symbolName": "Heat Recovery Unit (HRU)",
+        "typeName": "Heat Recovery Unit (HRU)",
+        "x": -37.78,
+        "y": -5.05,
+        "z": 42.32152230971508
+      }
+    ],
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        101014,
+        378358,
+        669230,
+        1321945
+      ],
+      "affected_element_ids": [
+        101014,
+        378358,
+        669230,
+        1321945,
+        1542933
+      ],
+      "added_element_ids": [
+        1542933
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    }
+  },
+  "actual_summary": [
+    {
+      "id": 1542933,
+      "found": true,
+      "className": "FamilyInstance",
+      "fullClassName": "Autodesk.Revit.DB.FamilyInstance",
+      "category": "Mechanical Equipment",
+      "name": "Heat Recovery Unit (HRU)",
+      "viewType": null,
+      "viewScale": null,
+      "boundingBox": {
+        "min": {
+          "x": -39.44666666666667,
+          "y": -7.395800524934387,
+          "z": 74.48818897638554
+        },
+        "max": {
+          "x": -36.06412073490814,
+          "y": -2.7041994750656118,
+          "z": 75.51181102362965
+        }
+      },
+      "location": {
+        "type": "point",
+        "x": -37.78,
+        "y": -5.05,
+        "z": 74.48818897638554
+      },
+      "viewIdUsed": null
+    }
+  ]
+}

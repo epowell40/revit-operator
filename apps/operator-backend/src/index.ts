@@ -26,6 +26,7 @@ import {
 } from "./memory/sqlite_store.js";
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
 import { assistantContextPolicy } from "./goals/assistant_context_policy.js";
+import { handleConversationIntakeHttp } from "./conversation_intake_http.js";
 import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
@@ -693,6 +694,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/codex/instruction-bindings" ||
     pathname === "/chat/stream" ||
     pathname === "/chat/context-policy" ||
+    pathname === "/chat/intake" ||
     pathname === "/event" ||
     pathname === "/feedback" ||
     pathname === "/config/cloud-upload" ||
@@ -711,6 +713,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/assignments" ||
     pathname.startsWith("/api/assignments/") ||
     pathname === "/api/tasks" ||
+    pathname === "/api/task-navigation" ||
     pathname.startsWith("/api/tasks/") ||
     pathname === "/api/teach/skills/register" ||
     pathname === "/api/teach/skills/usage" ||
@@ -1653,6 +1656,10 @@ const server = http.createServer(async (req, res) => {
       if (!sessionAccessAllowed(res, body.session_id, auth.principal)) return;
       return writeJson(res, 200, assistantContextPolicy(body));
     }
+
+    if (req.method === "POST" && url.pathname === "/chat/intake") return handleConversationIntakeHttp(req,res,{
+      readJson,authorized:sessionId=>sessionAccessAllowed(res,sessionId,auth.principal),respond:(status,body)=>writeJson(res,status,body)
+    });
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/availability") {
       const sessionId = url.searchParams.get("session_id") || "";

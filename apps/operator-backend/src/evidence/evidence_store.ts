@@ -1,3 +1,4 @@
+import { selectEvidenceItemPage } from "./item_page.js";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -445,24 +446,10 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   } else if (selector.kind === "item_range") {
     const array = selectPath(selectable, selector.item_range.path);
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array.");
-    const start = selector.item_range.start;
-    const count = selector.item_range.count;
-    const page: unknown[] = [];
-    let usedBytes = 2; // JSON array brackets, plus commas between rows.
-    for (const item of array.slice(start, start + count)) {
-      const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + (page.length ? 1 : 0);
-      if (usedBytes + itemBytes > maxBytes) {
-        if (page.length === 0) throw new Error(`One evidence row exceeds ${maxBytes}-byte limit. Request focused fields or a larger authorized max_bytes.`);
-        break;
-      }
-      page.push(item); usedBytes += itemBytes;
-    }
-    selection = page;
-    const hasMore = start + page.length < array.length;
-    pagination = { path: selector.item_range.path, start, requested_count: count, returned_count: page.length,
-      total_items: array.length, has_more: hasMore, next_start: hasMore ? start + page.length : null,
-      byte_limited: page.length < Math.min(count, Math.max(0, array.length - start)) };
-    complete = start === 0 && page.length >= array.length;
+    const page = selectEvidenceItemPage(array, selector.item_range, maxBytes, selectPath);
+    selection = page.selection;
+    pagination = page.pagination;
+    complete = page.complete;
   } else if (selector.kind === "fields") {
     const derived = extractDeterministicEvidenceFacts(parsed);
     const projection = { key_counts: derived.counts, key_facts: derived.facts };

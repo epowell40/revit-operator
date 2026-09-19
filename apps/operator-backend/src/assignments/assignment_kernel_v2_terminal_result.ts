@@ -1,3 +1,4 @@
+import {verifiedChangePresentationV2,remainingWorkPresentationV2} from './verified_change_presentation_v2.js';
 import type {
   AssignmentOutcomeV2,
   AssignmentSnapshotV2,
@@ -122,10 +123,13 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     : effects.includes("applied")
       ? " Changes were applied before the task stopped. Check the saved results before retrying."
       : "";
+  const partialSummary = verifiedChangePresentationV2(snapshot) ?? successfulSummary;
+  const remainingSummary = remainingWorkPresentationV2(snapshot);
   const resultSummary = complete
     ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
     : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
-      + (successfulSummary ? `\n\nRetained partial results:\n${successfulSummary}` : "");
+      + (partialSummary ? `\n\n${partialSummary}` : "")
+      + (remainingSummary ? `\n${remainingSummary}` : "");
   return {
     schema: TERMINAL_RESULT_V2_SCHEMA,
     assignment_id: snapshot.current_binding.assignment_id,
