@@ -25,6 +25,8 @@ test("projected native inventory preserves every identity and source bytes insid
  assert.equal(selected.length,113);assert(page.returned_bytes<100000);
  assert.deepEqual(selected.map(x=>x.values.id),rows.map(x=>x.id));assert.deepEqual(selected.map(x=>x.row_index),rows.map(x=>x.id));
  assert.equal(page.complete,false);assert.equal(page.pagination?.has_more,false);
+ assert.equal(page.pagination?.requested_rows_complete,true);
+ assert.equal(page.pagination?.source_rows_exhausted,true);
  assert.equal(page.pagination?.row_projection,"selected_fields");
  assert.equal(readEvidenceRef(stored.ref.evidence_id).content_hash,stored.ref.content_hash);
  assert.deepEqual(readAuthoritativeEvidence(stored.ref,scope),before);
@@ -36,6 +38,8 @@ test("projected pagination accounts for row wrappers and resumes without omissio
  for(let pages=0;pages<10;pages++){
   const page=read({path:"items",start,count:9,fields:["id","name"]},{max_bytes:180});
   assert(page.returned_bytes<=180);assert.equal(page.complete,false);
+  assert.equal(page.pagination?.requested_rows_complete,page.pagination?.byte_limited===false);
+  assert.equal(page.pagination?.source_rows_exhausted,page.pagination?.has_more===false);
   collected.push(...(page.selection as Array<{row_index:number}>).map(x=>x.row_index));
   if(!page.pagination?.has_more)break;
   assert(page.pagination.next_start!>start);start=page.pagination.next_start!;

@@ -57,6 +57,35 @@ test("evidence retry identity preserves selectors, scope and byte budgets while 
  }finally{endTeammateLoopOwner(lease);__closeForTests();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
 
+test("a completed projected cohort rejects the retained C57 subset rereads without blocking completion",()=>{
+ const previous=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-evidence-c57-"));
+ process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetTeammateLoopState();
+ const owner={},scope={session_id:"c57",assignment_id:"assignment",run_id:"run",attempt_id:"views",generation:1};
+ const lease=beginTeammateLoopOwner(owner,{version:"operator.backend.v1",session_id:"c57",message_id:"review",user_text:"Review this model using its sheets, levels and views. Keep this read-only.",context:{}});
+ try{
+  const rows=Array.from({length:68},(_,id)=>({id,name:`View ${id}`,type:id%2?"FloorPlan":"CeilingPlan",discipline:"Mechanical",levelName:`L${id%6}`}));
+  const stored=storeEvidence({scope,source:"native-views",trust_level:"authoritative_native",raw:{payload:{views:rows}}});
+  const fields=["id","name","type","discipline","levelName","isTemplate","isPlacedOnSheet","sheetNumber"];
+  const firstArgs={evidenceId:stored.ref.evidence_id,sessionId:scope.session_id,assignmentId:scope.assignment_id,runId:scope.run_id,generation:1,
+   purpose:"Determine represented view types, disciplines, levels, and obvious documentation gaps",itemRange:{path:"payload.views",start:0,count:100,fields}};
+  const first=guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:firstArgs});
+  assert.equal(first.allowed,true);
+  const result=retrieveEvidence({scope,evidence_id:stored.ref.evidence_id,purpose:firstArgs.purpose,item_range:firstArgs.itemRange,max_bytes:1_048_576});
+  assert.equal(result.pagination?.returned_count,68);assert.equal(result.pagination?.has_more,false);
+  recordTeammateMcpResult(owner,first,{content:[{type:"text",text:JSON.stringify({ok:true,result})}]});
+  for(const count of [10,68,100]){
+   const replay=guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:{...firstArgs,purpose:"Reworded reread",itemRange:{...firstArgs.itemRange,count}}});
+   assert.equal(replay.allowed,false,`covered ${count}-row reread must stop before dispatch`);
+   assert.match(replay.message??"",/evidence selection already available/i);
+   assert.match(replay.message??"",/Use the retained result/);
+   assert.notEqual(replay.state?.contract.stage,"blocked");
+   assert.equal(replay.state?.blocked_reason,null);
+  }
+  assert.equal(guardTeammateMcpCall(owner,{tool:"operator_retrieve_evidence",arguments:{...firstArgs,
+   itemRange:{...firstArgs.itemRange,fields:[...fields,"canBePrinted"]}}}).allowed,true,"a genuinely new column remains admissible");
+ }finally{endTeammateLoopOwner(lease);__closeForTests();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test("host-settled failed reads stop at eight and duplicate result delivery cannot spend the failure budget twice",()=>{
  const previous=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-evidence-failed-pages-"));
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetTeammateLoopState();

@@ -2556,6 +2556,14 @@
         "backend:conversation_evidence_contract.test.ts",
         "backend:codex_app_server_compatibility.test.ts"
       ]
+    },
+    {
+      "id": "conversation-c57-complete-view-evidence-is-reread-until-no-progress-blocks-review",
+      "coverage": [
+        "backend:evidence_item_projection.test.ts",
+        "backend:teammate_evidence_paging.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

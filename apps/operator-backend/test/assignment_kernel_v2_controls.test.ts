@@ -38,6 +38,7 @@ import { CodexMcpToolRuntime } from "../src/codex/mcp_tool_runtime.js";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
 import { attachmentPdf } from "./pdf_attachment.fixtures.js";
 import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
+import { retrieveEvidence, storeEvidence } from "../src/evidence/evidence_store.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -896,6 +897,69 @@ test("paused dynamic calls queue the existing safe provider-stop boundary withou
   const checkpoint = checkpointCodexAssignmentProgressV2({ binding, turn_start: snapshot, receipts: [] })!;
   assert.deepEqual(checkpoint.progress_epochs, [], "intentional pause must not consume the no-progress allowance");
   assert.deepEqual(checkpoint.operations, {});
+}));
+
+test("C57 covered evidence rereads stop before dynamic dispatch or canonical progress", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Review this model using its sheets, levels and views. Tell me what kind of project it is, which disciplines and levels are represented, and any obvious documentation gaps. Keep this read-only.");
+  const scope = { session_id: binding.session_id, assignment_id: binding.assignment_id, run_id: binding.run_id,
+    attempt_id: "views", generation: binding.generation };
+  const rows = Array.from({ length: 68 }, (_, id) => ({ id, name: `View ${id}`, type: id % 2 ? "FloorPlan" : "CeilingPlan",
+    discipline: "Mechanical", levelName: `L${id % 6}`, isTemplate: false, isPlacedOnSheet: id < 17, sheetNumber: id < 17 ? `M${id}` : null }));
+  const stored = storeEvidence({ scope, source: "native-views", trust_level: "authoritative_native", raw: { payload: { views: rows } } });
+  const calls: unknown[] = [];
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (tool: string, args: any, context: any) => {
+      calls.push({ tool, args });
+      const lease = context.assignmentKernelV2;
+      context.onMcpAccepted();
+      const result = retrieveEvidence({ scope, evidence_id: args.evidenceId, purpose: args.purpose,
+        item_range: args.itemRange, max_bytes: args.maxBytes });
+      const payload = { ok: true, result };
+      return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `result:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched",
+          persistent_effect: "none", native_transaction_state: "not_applicable", authority: "operator-evidence-store",
+          result_schema_id: "operator-capability/operator_retrieve_evidence/v2", observation_required: true,
+          raw_payload_hash: payloadDigestV2(payload).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+        observation: { raw_payload: payload, semantic_facts: [{ fact_id: "control.evidence_selection_available", fact_class: "control", value: true,
+          cardinality: "many", identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
+          dimensions: { capability_id: tool, evidence_id: args.evidenceId, selection_path: args.itemRange.path } }],
+          verification_relevance: ["control"] }
+      } };
+    }
+  };
+  const request = bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "Snowdon Towers Sample HVAC", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared);
+  const owner = beginTeammateLoopOwner(runtime, request);
+  const fields = ["id", "name", "type", "discipline", "levelName", "isTemplate", "isPlacedOnSheet", "sheetNumber"];
+  const invoke = (id: string, count: number, purpose: string) => handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call", params: {
+    namespace: "revit_operator", turnId: "c57-review", tool: "operator_retrieve_evidence", arguments: {
+      evidenceId: stored.ref.evidence_id, purpose, itemRange: { path: "payload.views", start: 0, count, fields }, maxBytes: 1_048_576
+    }
+  } } as any) as Promise<any>;
+  try {
+    const first = await invoke("views-all", 100, "Determine represented view types, disciplines, levels, and documentation gaps");
+    assert.equal(first.success, true, JSON.stringify(first));
+    assert.equal(calls.length, 1);
+    const afterFirst = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    const operationIds = Object.keys(afterFirst.operations);
+    assert.equal(operationIds.length, 1);
+    assert.equal(afterFirst.progress_epochs.length, 1);
+    for (const count of [10, 68, 100]) {
+      const before = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+      const replay = await invoke(`views-replay-${count}`, count, `Reworded reread ${count}`);
+      assert.equal(replay.success, false);
+      assert.match(replay.contentItems.map((item: any) => item.text).join("\n"), /evidence selection already available/i);
+      const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+      assert.equal(calls.length, 1, "covered evidence must not reach the MCP runtime");
+      assert.equal(after.assignment_version, before.assignment_version, "covered evidence must not open a canonical operation");
+      assert.deepEqual(Object.keys(after.operations), operationIds);
+      assert.equal(after.progress_epochs.length, 1, "covered evidence must not consume a no-progress epoch");
+      assert.equal(after.terminal, false);
+    }
+  } finally { endTeammateLoopOwner(owner); }
 }));
 
 test("duplicate-view unknown native settlement survives dynamic handoff and prevents false completion or replay", () => workspace(async () => {

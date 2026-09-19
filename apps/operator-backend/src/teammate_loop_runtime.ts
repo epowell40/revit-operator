@@ -24,6 +24,7 @@ import {
   verificationObservationPayloadV2
 } from "./teammate_verification_evidence.js";
 import { operationTargetSelectorV2, verificationCapabilityAdmissionForPathsV2 } from "./verification/verification_capability_admission_v2.js";
+import { isRedundantEvidenceItemRange, recordSuccessfulEvidenceItemRange, type SuccessfulEvidenceItemRange } from "./teammate_evidence_range_guard.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -94,6 +95,7 @@ export type TeammateLoopState = {
   verification_evidence_sha256: string | null;
   tool_doc_calls: number;
   documented_tool_routes: Map<string, DocumentedToolRoute>;
+  successful_evidence_item_ranges: SuccessfulEvidenceItemRange[];
   attempt_budget: TeammateLoopAttemptBudget;
   blocked_reason: string | null;
   active_host_version_year: string;
@@ -630,6 +632,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     verification_evidence_sha256: null,
     tool_doc_calls: 0,
     documented_tool_routes: new Map(),
+    successful_evidence_item_ranges: [],
     attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
     active_host_version_year: activeHostVersionYear(req.context),
@@ -647,6 +650,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
+  if (isRedundantEvidenceItemRange(state.successful_evidence_item_ranges, call)) return "evidence_selection_already_available";
   const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
@@ -819,7 +823,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   if (!pending) return;
   state.pending.delete(actionId);
   if (pending.effect === "discovery" && succeeded) recordSuccessfulTeammateDiscovery(state.attempt_budget, pending.signature);
-  if (pending.effect === "evidence_read") recordTeammateEvidenceResult(state.attempt_budget, succeeded);
+  if (pending.effect === "evidence_read") {
+    recordTeammateEvidenceResult(state.attempt_budget, succeeded);
+    if (succeeded) recordSuccessfulEvidenceItemRange(state.successful_evidence_item_ranges, pending, evidence);
+  }
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
     state.successful_preview_operations.add(pending.operation);
@@ -1103,11 +1110,15 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
   const call = classifyDocumentedMcpCall(state, params.tool, params.arguments);
   const reason = gateCall(state, call);
   if (reason) {
-    state.blocked_reason = reason;
+    const recoverableEvidenceRead = reason === "evidence_selection_already_available"
+      || reason === "identical_evidence_retrieval_must_be_corrected";
+    if (!recoverableEvidenceRead) state.blocked_reason = reason;
     const needsInput = reason.startsWith("desired_postcondition_");
-    state.contract.stage = needsInput ? "clarify" : "blocked";
+    if (!recoverableEvidenceRead) state.contract.stage = needsInput ? "clarify" : "blocked";
     const remedy = needsInput
       ? " Grounding reads remain available. Call operator_request_clarification with missingFields=[\"replacement_text\"] and ask for the exact replacement wording; do not preview or apply a guessed value."
+      : recoverableEvidenceRead
+        ? " Use the retained result and continue to the bounded completion. Request pagination.next_start only when pagination.has_more is true."
       : "";
     return { allowed: false, message: `[teammate_loop_blocked] ${reason.replace(/_/g, " ")}.${remedy}`, call, state };
   }

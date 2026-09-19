@@ -37,6 +37,7 @@ export function selectEvidenceItemPage(
     usedBytes += size;
   }
   const hasMore = range.start + page.length < array.length;
+  const byteLimited = page.length < Math.min(range.count, Math.max(0, array.length - range.start));
   return {
     selection: page,
     complete: !range.fields && range.start === 0 && page.length >= array.length,
@@ -44,7 +45,9 @@ export function selectEvidenceItemPage(
       path: range.path, start: range.start, requested_count: range.count,
       returned_count: page.length, total_items: array.length,
       has_more: hasMore, next_start: hasMore ? range.start + page.length : null,
-      byte_limited: page.length < Math.min(range.count, Math.max(0, array.length - range.start)),
+      byte_limited: byteLimited,
+      requested_rows_complete: !byteLimited,
+      source_rows_exhausted: !hasMore,
       ...(range.fields ? { fields: [...range.fields], row_projection: "selected_fields" as const } : {})
     }
   };

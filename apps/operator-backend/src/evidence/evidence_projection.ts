@@ -259,7 +259,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
       selector_forms: [
         "EXACTLY ONE selector is required",
         "fields",
-        "itemRange (optional fields selects columns per row; row_index, values, missing_fields; complete=false)",
+        "itemRange (optional fields selects columns per row; row_index, values, missing_fields; complete remains artifact-wide; pagination.source_rows_exhausted=true means no more source rows)",
         "textRange",
         "targetSubset (exact reviewed target identities only)",
         "image",
