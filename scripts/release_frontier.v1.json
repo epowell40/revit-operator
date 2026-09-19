@@ -158,7 +158,8 @@
     "conversation_work_profile.test.ts",
     "combined_duct_verification_v2.test.ts",
     "conversation_identity_answer.test.ts",
-    "conversation_evidence_contract.test.ts"
+    "conversation_evidence_contract.test.ts",
+    "conversation_intake_recovery.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -2538,6 +2539,22 @@
         "backend:conversational_result_delivery.test.ts",
         "backend:simple_assistant_presentation.test.ts",
         "backend:conversation_work_profile.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c56-intake-timeout-falls-through-to-wrong-legacy-evidence-contract",
+      "coverage": [
+        "backend:conversation_intake_recovery.test.ts",
+        "backend:conversation_intake_http.test.ts",
+        "backend:conversation_intake_sidecar.test.ts",
+        "backend:conversation_evidence_contract.test.ts"
+      ]
+    },
+    {
+      "id": "conversation-c56-general-review-infers-specialty-from-filename",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
       ]
     }
   ],

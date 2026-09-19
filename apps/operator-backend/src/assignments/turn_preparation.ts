@@ -2,7 +2,7 @@ import type { ToolResult } from "../contracts.js";
 import type { ChatRequest } from "../contracts.js";
 import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
 import { startAutoGoalIfEligible } from "../goals/auto_goal_start.js";
-import { retainedIntakeDecision } from "../conversation_intake.js";
+import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
 import type { GoalRecord } from "../goals/service.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/index.js";
 import { assignmentKernelV2ForBinding, createAssignmentKernelForGoalV2, type AssignmentKernelTurnBindingV2 } from "./assignment_kernel_v2_factory.js";
@@ -85,6 +85,7 @@ export function prepareAssignmentTurn(input: {
     journalAssignmentToolResults(input.sessionId, input.toolResults, `outer_${input.source}_result`);
     return { assignmentId: bound.assignmentId, runId: bound.runId, generation: bound.generation, kernelVersion: 1 };
   }
+  assertConversationIntakeResolved({session_id:input.sessionId,message_id:input.messageId,user_text:input.userText});
   const intake=retainedIntakeDecision({session_id:input.sessionId,message_id:input.messageId,user_text:input.userText});
   if ((!intake || intake.route === "answer")
       && isIndependentAssistantTurn({ user_text: input.userText, context: input.requestContext, tool_results: input.toolResults })) return null;

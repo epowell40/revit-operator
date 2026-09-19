@@ -1,5 +1,5 @@
 import type { ChatRequest } from "./contracts.js";
-import { appendEvent, getConversationHistory, getConversationTurn, recentCommandEvents } from "./memory/sqlite_store.js";
+import { appendEvent, getConversationHistory, getConversationTurn, latestMessageEvent } from "./memory/sqlite_store.js";
 import { appendMessage } from "./session_store.js";
 import { conversationDisplay } from "./conversation_history.js";
 import { createHash } from "node:crypto";
@@ -107,36 +107,64 @@ export function validateIntakeDecision(value:unknown):IntakeDecision|null {
 export function retainedIntakeDecision(input: {session_id:string;message_id:string;user_text:string}):IntakeDecision|null {
   if (!input.session_id || !input.message_id || !input.user_text) return null;
   try {
-    const receipt = recentCommandEvents(input.session_id,"conversation.intake",64)
-      .find((value:any)=>value?.message_id===input.message_id) as any;
+    const receipt = latestMessageEvent(input.session_id,"conversation.intake",input.message_id) as any;
     if (receipt?.accepted!==true || receipt.request_sha256!==createHash("sha256").update(input.user_text).digest("hex")) return null;
     const decision=validateIntakeDecision(receipt.decision);
     return decision && decision.confidence>=0.85 ? decision : null;
   } catch { return null; }
 }
 
-const handoff = {route:"task" as const,assistant_message:null,history_saved:false};
+/** Failed semantic intake cannot silently fall through legacy word-based
+ * admission. Explicit existing-task bindings are checked before this guard. */
+export function assertConversationIntakeResolved(input:{session_id:string;message_id:string;user_text:string}):void {
+  const receipt=latestMessageEvent(input.session_id,"conversation.intake",input.message_id) as any;
+  if (!receipt) return; // Non-conversational clients retain their existing admission contract.
+  if (receipt.request_sha256!==createHash("sha256").update(input.user_text).digest("hex"))
+    throw Error("This message identity already belongs to another question and request classification.");
+  if (!retainedIntakeDecision(input)) throw Error("The request classification is not ready. Please retry the request.");
+}
+
+const handoff = {route:"task" as const,assistant_message:null,history_saved:false,routing_status:"accepted" as const};
+const unavailable = {...handoff,routing_status:"unavailable" as const};
 
 /** Call only after the HTTP boundary has authorized this session. No native
  * operations or Assignment state transitions occur in conversational intake. */
 export async function routeConversation(body:Partial<ChatRequest>&Record<string,unknown>, interpreter:ConversationIntakeInterpreter,
-  options:{signal?:AbortSignal;timeoutMs?:number}={}) {
+  options:{signal?:AbortSignal;timeoutMs?:number;softTimeoutMs?:number}={}) {
   if (body.version!=="operator.backend.v1" || typeof body.session_id!=="string" || !body.session_id.trim() || body.session_id.length>200
     || typeof body.message_id!=="string" || !body.message_id.trim() || body.message_id.length>200) throw Error("A valid conversation and message are required.");
-  if (!mayRouteConversation(body)) return handoff;
+  if (!mayRouteConversation(body)) return {...handoff,routing_status:"not_applicable" as const};
   const sessionId=body.session_id,messageId=body.message_id,userText=body.user_text!;
+  const requestHash=createHash("sha256").update(userText).digest("hex");
+  const priorReceipt=latestMessageEvent(sessionId,"conversation.intake",messageId) as any;
+  if (priorReceipt && priorReceipt.request_sha256!==requestHash)
+    throw Error("This message identity already belongs to another question and request classification.");
   const previous=getConversationTurn(sessionId,messageId);
   if (previous.length) {
     if (previous.find(row=>row.role==="user")?.text!==userText) throw Error("This message id already belongs to another question.");
     const answer=previous.find(row=>row.role==="assistant");
-    if (answer) return {route:"answer" as const,assistant_message:answer.text,history_saved:true,replayed:true};
+    if (answer) return {route:"answer" as const,assistant_message:answer.text,history_saved:true,replayed:true,routing_status:"accepted" as const};
   }
+  const savedDecision=retainedIntakeDecision({session_id:sessionId,message_id:messageId,user_text:userText});
+  if (savedDecision && savedDecision.route!=="answer") return {...handoff,route:savedDecision.route,replayed:true};
+  if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,
+    state:"pending",accepted:false,decision:null}))throw Error("Conversation classification could not be saved.");
   const start=Date.now(),controller=new AbortController();
   const abort=()=>controller.abort(options.signal?.reason);
   if(options.signal?.aborted)abort();
   options.signal?.addEventListener("abort",abort,{once:true});
-  let timer:ReturnType<typeof setTimeout>|undefined;
-  const deadline=new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error("Conversation intake timed out"));},options.timeoutMs??8000);});
+  let timer:ReturnType<typeof setTimeout>|undefined,softTimer:ReturnType<typeof setTimeout>|undefined;
+  let rejectAborted=()=>{};
+  const deadline=new Promise<never>((_,reject)=>{
+    rejectAborted=()=>reject(controller.signal.reason??Error("Conversation intake was interrupted"));
+    controller.signal.addEventListener("abort",rejectAborted,{once:true});
+    timer=setTimeout(()=>controller.abort(Error("Conversation intake timed out")),options.timeoutMs??30_000);
+  });
+  // Eight seconds is a latency target, not permission to invent another task
+  // contract. Keep the same tool-free model attempt alive within a hard bound.
+  softTimer=setTimeout(()=>{
+    try{appendEvent(sessionId,"assistant","conversation.intake.delayed",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start});}catch{}
+  },options.softTimeoutMs??8000);
   try {
     controller.signal.throwIfAborted();
     const input:IntakeInput={user_text:userText,recent_conversation:getConversationHistory(sessionId).slice(-6).map(row=>({role:row.role,text:row.text.slice(0,1500)})),
@@ -148,21 +176,25 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
     // regardless of the interpreter's confidence or the user's wording.
     const identityAnswer=candidate?.route==="answer" && candidate.basis==="ui_identity"
       ? renderIdentityAnswer(input.ui_observation,candidate.identity_fields) : null;
-    const decision=candidate?.route==="answer" && candidate.basis==="ui_identity" && !identityAnswer ? null : candidate;
-    if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:createHash("sha256").update(userText).digest("hex"),elapsed_ms:Date.now()-start,
-      decision,telemetry:result.telemetry??null,accepted:decision!==null}))throw Error("Conversation intake receipt could not be saved");
+    const decision=!candidate || candidate.confidence<0.85
+      || (candidate.route==="answer" && candidate.basis==="ui_identity" && !identityAnswer) ? null : candidate;
+    if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start,
+      state:decision?"accepted":"unavailable",decision,telemetry:result.telemetry??null,accepted:decision!==null}))throw Error("Conversation intake receipt could not be saved");
     result.acknowledge?.();
-    if (!decision || decision.route!=="answer") return {...handoff,route:decision?.route??"task"};
+    if (!decision) return unavailable;
+    if (decision.route!=="answer") return {...handoff,route:decision.route};
     if (!previous.some(row=>row.role==="user")) appendMessage(sessionId,{role:"user",text:userText},
       {display:{...conversationDisplay(messageId,userText),source:"assistant_intake"},pinGoal:false,requirePersistence:true});
     const answer=identityAnswer??decision.answer!.trim();
     appendMessage(sessionId,{role:"assistant",text:`[Historical conversation answer; not current model evidence or task completion.] ${answer}`},
       {display:{...conversationDisplay(messageId,answer),source:"assistant_intake"},pinGoal:false,requirePersistence:true});
-    return {route:"answer" as const,assistant_message:answer,history_saved:true};
+    return {route:"answer" as const,assistant_message:answer,history_saved:true,routing_status:"accepted" as const};
   } catch(error) {
+    try {appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start,
+      state:options.signal?.aborted?"cancelled":"unavailable",accepted:false,decision:null});}catch{}
     if(options.signal?.aborted)throw error;
     try {appendEvent(sessionId,"assistant","conversation.intake.fallback",{message_id:messageId,elapsed_ms:Date.now()-start,
       reason:error instanceof Error?error.message.slice(0,500):"intake_unavailable"});}catch{}
-    return handoff;
-  } finally {clearTimeout(timer);options.signal?.removeEventListener("abort",abort);}
+    return unavailable;
+  } finally {clearTimeout(timer);clearTimeout(softTimer);controller.signal.removeEventListener("abort",rejectAborted);options.signal?.removeEventListener("abort",abort);}
 }

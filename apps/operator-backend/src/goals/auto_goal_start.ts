@@ -3,7 +3,7 @@ import { createGoal, getCurrentGoalForSession, setAgentGoal, type GoalRecord } f
 import { hasRevitTurnContext } from "../revit_context_policy.js";
 import { isIndependentAssistantTurn } from "./assistant_turn.js";
 import { pauseAutomaticAssignmentForNewRequest } from "../assignments/fresh_request.js";
-import { retainedIntakeDecision } from "../conversation_intake.js";
+import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -27,6 +27,7 @@ export function startAutoGoalIfEligible(input: {
   on_started?: (goal: GoalRecord, signals: string[]) => void;
 }): GoalRecord | null {
   if (input.tool_result_count > 0) return null;
+  assertConversationIntakeResolved({session_id:input.session_id,message_id:input.message_id??"",user_text:input.user_text});
   const intake = retainedIntakeDecision({session_id:input.session_id,message_id:input.message_id??"",user_text:input.user_text});
   const semanticHandoff = intake && intake.route !== "answer";
   if (!semanticHandoff && isIndependentAssistantTurn({ user_text: input.user_text, context: input.request_context })) {

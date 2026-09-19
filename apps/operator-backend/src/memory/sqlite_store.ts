@@ -303,6 +303,15 @@ export function recentCommandEvents(sessionId: string, kind: string, limit = 64)
   return (d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) ORDER BY id DESC LIMIT ?").all(sessionId,kind,Math.max(1,Math.min(256,limit))) as Array<{payload_json: string}>).map(row => JSON.parse(row.payload_json));
 }
 
+/** Exact-message admission receipts must survive unrelated conversation turns. */
+export function latestMessageEvent(sessionId: string, kind: string, messageId: string): unknown | null {
+  if (!fs.existsSync(dbFilePath())) return null;
+  const d = openDb();
+  if (!d) throw new Error("Conversation classification history is unavailable.");
+  const row = d.prepare("SELECT payload_json FROM events WHERE session_id=? AND kind=? AND json_valid(payload_json) AND json_extract(payload_json,'$.message_id')=? ORDER BY id DESC LIMIT 1").get(sessionId,kind,messageId);
+  return row ? JSON.parse(row.payload_json) : null;
+}
+
 export function readCodexInstructionTurns(sessionId: string, startedAt = ""): { turns: unknown[]; complete: boolean } {
   const d = openDb();
   if (!d) return { turns: [], complete: false };

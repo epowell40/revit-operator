@@ -135,6 +135,13 @@ import test from "node:test";
 import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+import { CONVERSATION_EVIDENCE_GUIDANCE } from "../src/conversation_evidence_guidance.js";
+
+test("C56 fresh and resumed workers receive evidence limits independently of focused routing",()=>{
+  assert.ok(getOperatorAgentBaseInstructions().includes(CONVERSATION_EVIDENCE_GUIDANCE));
+  assert.match(CONVERSATION_EVIDENCE_GUIDANCE,/filenames and titles as literal identifiers/);
+  assert.match(CONVERSATION_EVIDENCE_GUIDANCE,/Do not add a more specific project or system classification/);
+});
 
 test("navigation guidance verifies active state without promoting control receipts to model evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();

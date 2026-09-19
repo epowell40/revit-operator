@@ -15,6 +15,15 @@ import { evaluateAssignmentObservationCriteriaV2 } from "../src/assignments/assi
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 import { __closeForTests } from "../src/memory/sqlite_store.js";
 import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
+import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
+import { CONVERSATION_EVIDENCE_GUIDANCE } from "../src/conversation_evidence_guidance.js";
+
+test("C56 project review retains evidence limits in the actual pending assessment handoff",()=>isolated(async()=>{
+  const snapshot=await admitted("Review this model using its sheets, levels and views. Tell me what kind of project it is.","other","review-guidance");
+  const gap=deriveProgressGapsV2(snapshot).find(row=>row.kind==="result_delivery_required");
+  assert.ok(gap?.reason.includes(CONVERSATION_EVIDENCE_GUIDANCE));
+  assert.equal(snapshot.terminal,false,"Guidance alone is not a completed inspection");
+}));
 
 async function isolated(run: () => Promise<void>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-read-contract-"));
@@ -30,9 +39,15 @@ async function isolated(run: () => Promise<void>) {
   }
 }
 
-async function admitted(question: string, readEvidence: string, suffix = "one") {
+async function admitted(question: string, readEvidence: string, suffix = "one", recoverTimeout = false) {
   const request = { version: "operator.backend.v1" as const, session_id: `session-${suffix}`, message_id: `message-${suffix}`,
     user_text: question, ui_observation: { ok: true, data: { document: { title: "C53 Revit 2027 Controls" } } } };
+  if(recoverTimeout){
+    const unavailable=await routeConversation(request,{interpret:async()=>new Promise(()=>{})},{timeoutMs:5});
+    assert.equal(unavailable.routing_status,"unavailable");
+    assert.throws(()=>startAutoGoalIfEligible({session_id:request.session_id,message_id:request.message_id,user_text:question,
+      tool_result_count:0,source:"chat",created_by:"test-owner"}),/classification/);
+  }
   await routeConversation(request, { interpret: async () => ({ value: { route: "inspect", answer: null,
     question_kind: "current_model", identity_fields: [], read_evidence: readEvidence, basis: "needs_tools", requested_effect: "read",
     entire_request_answered: false, confidence: 0.99, reason: "Read evidence suited to the requested fact." } }) });
@@ -59,6 +74,24 @@ function observed(snapshot:AssignmentSnapshotV2,route:string,payload:unknown,fac
 }
 
 const resultAvailable:SemanticFactV2={fact_id:"task.result_available",fact_class:"domain",value:true};
+
+test("C56 recovered semantic handoff completes the actual native sheet count through observation and final delivery",()=>isolated(async()=>{
+  for(const [index,total] of [17,0].entries()){
+    const question=index?"Are there any electrical sheets? Check the full sheet set.":"Inspect the sheet list and count the mechanical sheets. Reply in one sentence.";
+    const initial=await admitted(question,"complete_collection",`recovered-${index}`,true);
+    const count=observed(initial,"/revit/sheets",{totalMatches:total,countOnly:true,hasMore:false},[resultAvailable,
+      {fact_id:"collection.complete",fact_class:"domain",value:true},{fact_id:"collection.total",fact_class:"domain",value:total}],index+1,
+      {action:"count",exact:true,sheetNumberPrefix:index?"E":"M"});
+    assert.equal(count.observation!.evidence_class,"task_result");
+    const completed=evaluateAssignmentObservationCriteriaV2({binding:count.snapshot.current_binding,
+      claims:[{criterion_id:initial.spec.criteria[0]!.criterion_id,observation_ids:[count.observation!.observation_id]}],
+      result_items:[{label:"Matching sheets",observation_id:count.observation!.observation_id,path:["totalMatches"]}],
+      assessment:{overview:index?"There are no E-prefix sheets in the model.":"There are 17 mechanical sheets in the model.",
+        findings:[{priority:"low",title:"Complete sheet count",text:"The native sheet counter checked the complete requested set.",evidence_indices:[1]}],limitations:[],questions:[]}});
+    assert.equal(completed.outcome,"complete");assert.equal(completed.terminal,true);
+    assert.equal(completed.result_delivery!.items[0]!.value,total);
+  }
+}));
 
 test("C54 metadata can be retained but cannot pass the actual model-content criterion",()=>isolated(async()=>{
   const initial=await admitted("Is this the mechanical model?","model_content");
