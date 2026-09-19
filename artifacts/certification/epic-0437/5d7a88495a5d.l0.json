@@ -243,7 +243,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:ce54ba7ea94b21d1dd8d2ab4abbd28fe91ab2cf2ac434de0d625d02df1e0837a"
+      "sha256": "sha256:1f1fb700f1f77bad6152dd52cec255b45c0c4fa9a091de902674ad8bfcf2bbf7"
     },
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.fixtures.ts",
@@ -275,11 +275,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/operatorBackendClient.test.ts",
-      "sha256": "sha256:952ff88fd2f0c1d55fbb52c6c7cd7548b4940559972b0b6a2c7036dfeb222260"
+      "sha256": "sha256:19361824edc79eec3b8d35dbd5a8e4c9c6fde340320e8d91f031bae69f7c9e40"
     },
     {
       "path": "apps/mcp-server/src/lib/operatorBackendClient.ts",
-      "sha256": "sha256:f5573852fa12647cb15980448ec058c8d937c4e33341e1978c7d386ea51f6799"
+      "sha256": "sha256:c6e9312f2a557e239ce37cf378d1e08dde4b5f2329c07be14e2e9766e557d343"
     },
     {
       "path": "apps/mcp-server/src/lib/payloadDigestV2.test.ts",
@@ -351,7 +351,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
-      "sha256": "sha256:34860724cce4e21c3729c553f295a34110caa3ef7e473cf1156832902396b1f5"
+      "sha256": "sha256:aff4d38a62fa3bf692cbac22d18019f5ef9f79585c4cf793d85a54907426a5ee"
     },
     {
       "path": "apps/mcp-server/src/lib/textMatch.test.ts",
@@ -460,7 +460,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:ad388099dcdc71ff866458e7bc0af280a2467721fb3737776bf4222a47e1f43b"
+      "sha256": "sha256:f778b3dd89af575f52754ec453fc6dd37b1250823f75405097859cf908fa53df"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -529,6 +529,22 @@
     {
       "path": "apps/mcp-server/src/spatialObservationV1.ts",
       "sha256": "sha256:f449d6724391fff85dcb6f9b434e9a10862cf84b3cd217a2bdafd714c0dd7328"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsInterpretationTool.test.ts",
+      "sha256": "sha256:874ab510665adfc1a37167da72db0bfa703f617647e1bfd22d5627112f6f9a9b"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsInterpretationTool.ts",
+      "sha256": "sha256:c4fae96030cb289a41070632574e9d9bdbef3107ba6186944214ac8ce0eff005"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsRegistrationTool.test.ts",
+      "sha256": "sha256:280b11333fe468d8373c24578dd8ec4a3b6ccbf5ab51605b4ef2a3f5652f199e"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsRegistrationTool.ts",
+      "sha256": "sha256:2dbf63c62be841d8613ae64b142ac32831b946fafaf1f5cddbc67c70b000067e"
     },
     {
       "path": "apps/mcp-server/src/tools/semanticMepRouteTool.test.ts",
@@ -1380,7 +1396,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/supported_tool_inventory.ts",
-      "sha256": "sha256:34860724cce4e21c3729c553f295a34110caa3ef7e473cf1156832902396b1f5"
+      "sha256": "sha256:aff4d38a62fa3bf692cbac22d18019f5ef9f79585c4cf793d85a54907426a5ee"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -2432,6 +2448,10 @@
       "sha256": "sha256:5bb136c9314c6c4ca7ce9f4a1d369fc8905bd08939296a296d863de8abcf4bb4"
     },
     {
+      "path": "apps/operator-backend/src/existing_conditions/registered_structured_interpretation.ts",
+      "sha256": "sha256:7b09872382c64b41933ffaa2ccd2151de34f1c599013b1c71f79efc8816dd85c"
+    },
+    {
       "path": "apps/operator-backend/src/existing_conditions/registration.ts",
       "sha256": "sha256:4bd63bd4ace6bc0605b0614d061b2bed2c9b99b14e70b45c0aa6447ce990a492"
     },
@@ -2530,6 +2550,14 @@
     {
       "path": "apps/operator-backend/src/existing_conditions/staged_repair_ledger.ts",
       "sha256": "sha256:ec46648349a625167f57737d71d47f688dff88615801473ab48dac2b86a7d3db"
+    },
+    {
+      "path": "apps/operator-backend/src/existing_conditions/structured_interpretation_http.ts",
+      "sha256": "sha256:86769fed109d77f0fac7e1555601bb59603d779d8f8437116f687021bd75d26e"
+    },
+    {
+      "path": "apps/operator-backend/src/existing_conditions/structured_interpretation_tool.ts",
+      "sha256": "sha256:7e5b7a268667e8fd0643e86cddf6dae9b82877a541e536c7cdf5bdf0e0834b5a"
     },
     {
       "path": "apps/operator-backend/src/feedback/dev_autofix.ts",
@@ -2653,7 +2681,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:030a15982505f7c8018a66570634cff13a705e1bf5439ebf3499f3ee63c30757"
+      "sha256": "sha256:cb918e30f7c5b993a80b0f8d4189740bf717f4bcbd3dbfda62865f2893f0008b"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -3177,11 +3205,15 @@
     },
     {
       "path": "apps/operator-backend/src/vision/gemini_existing_conditions_sheet.ts",
-      "sha256": "sha256:8884d623a6b7de86e4102c4e8cb020ad6ce40a8b66bea809e22a5620968d3deb"
+      "sha256": "sha256:fef46b0a9c4aaff244197508613ef9f4de91f98f237c5151fef822726e2aa75a"
     },
     {
       "path": "apps/operator-backend/src/vision/gemini_redline_package.ts",
       "sha256": "sha256:ff030e39daecfc2fbf55b1be7d9f781651e5edabae5200ea47625bca0fdb69ea"
+    },
+    {
+      "path": "apps/operator-backend/src/vision/structured_existing_conditions_interpretation.ts",
+      "sha256": "sha256:7a12c9acb6014871e73e8681240e27c9c6550373df4a95b86e7db8586e82b974"
     },
     {
       "path": "apps/operator-backend/src/web_research/evidence.ts",
@@ -4269,7 +4301,7 @@
     },
     {
       "path": "apps/operator-backend/test/gemini_existing_conditions_sheet.test.ts",
-      "sha256": "sha256:32291754598f7ce8f06dd57b8d6ff6606faafa1d7eb9c1d851f876c464a4dd7c"
+      "sha256": "sha256:e8cba8e36f6be3ba97e0dca4326d74798bb3e7eb8c597fe12c251c606ccd2e7e"
     },
     {
       "path": "apps/operator-backend/test/gemini_redline_package.test.ts",
@@ -4604,6 +4636,10 @@
       "sha256": "sha256:1e6583b14192cbeaf0472b66c67848c99e10ef8c9ce7069790976d364adbc7e1"
     },
     {
+      "path": "apps/operator-backend/test/registered_structured_interpretation.test.ts",
+      "sha256": "sha256:2453f5344a744fd4de03169442aa1491ac5dd939d7609eabf78bbc1e872a9e53"
+    },
+    {
       "path": "apps/operator-backend/test/requirements_parallel_planning.test.ts",
       "sha256": "sha256:6f01b95555cdbc93930ffc64a70d45ebce1b9b4095064a3d0bbf01db6c541a74"
     },
@@ -4768,8 +4804,16 @@
       "sha256": "sha256:0bc6b6c0b633d2f5c9de5761ab624cf84d8c66aaf99113d701d4060fd23f5921"
     },
     {
+      "path": "apps/operator-backend/test/structured_existing_conditions_interpretation.test.ts",
+      "sha256": "sha256:88822ba8264d1be401d591d2dc0a3e25ed49a4e1e6357d98ce7060c004a5f50f"
+    },
+    {
+      "path": "apps/operator-backend/test/structured_interpretation_tool.test.ts",
+      "sha256": "sha256:e509b5e693b5ec32ae17c25a13abdc1aabf9c0fa2adf565220cfb132afabcbf5"
+    },
+    {
       "path": "apps/operator-backend/test/supported_tool_inventory.test.ts",
-      "sha256": "sha256:a353142cc99b4591791fc825c5636294cbaabc4b57092bffc90623df166cbe96"
+      "sha256": "sha256:4cb9ab8219a7ebdadbe3b2651778a1ac0556906adbfc70ff61561016d9f04e64"
     },
     {
       "path": "apps/operator-backend/test/task_memory_prompt.test.ts",
@@ -5850,7 +5894,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorSupportedToolInventory.cs",
-      "sha256": "sha256:3c5d0cd52ae8d84311e49c088ae2a1f610c73513ab1e1f1a95906bc00305a775"
+      "sha256": "sha256:c6a753a76541c61df7aec9939ecc52bd0b62f29620d993d801ac8e70302d739f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs",
@@ -7389,7 +7433,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:80ae35dc9523b567fc1a40abed7b2fcac5ee91715e2dcf6f95261c720234fecc",
+  "inputs_hash": "sha256:b85bf5423992e216620f0399e9900bc37ed2118735373f09097c957508c9eaf8",
   "result": {
     "passed": true,
     "checks": [

@@ -159,7 +159,10 @@
     "combined_duct_verification_v2.test.ts",
     "conversation_identity_answer.test.ts",
     "conversation_evidence_contract.test.ts",
-    "conversation_intake_recovery.test.ts"
+    "conversation_intake_recovery.test.ts",
+    "structured_existing_conditions_interpretation.test.ts",
+    "structured_interpretation_tool.test.ts",
+    "registered_structured_interpretation.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -188,7 +191,10 @@
     "lib/workPlanStdio.test.ts",
     "lib/familyPlacementSchema.test.ts",
     "lib/findElementsAgentProjection.test.ts",
-    "lib/nativeReadEvidence.test.ts"
+    "lib/nativeReadEvidence.test.ts",
+    "tools/existingConditionsInterpretationTool.test.ts",
+    "tools/existingConditionsRegistrationTool.test.ts",
+    "lib/operatorBackendClient.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -2563,6 +2569,23 @@
         "backend:evidence_item_projection.test.ts",
         "backend:teammate_evidence_paging.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-provider-geometry-is-not-bound-to-exact-pdf-and-raster",
+      "coverage": [
+        "backend:structured_existing_conditions_interpretation.test.ts",
+        "backend:structured_interpretation_tool.test.ts",
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:lib/operatorBackendClient.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-untrusted-or-poor-fit-frame-reaches-model-space",
+      "coverage": [
+        "backend:registered_structured_interpretation.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts",
+        "mcp:lib/operatorBackendClient.test.ts"
       ]
     }
   ],

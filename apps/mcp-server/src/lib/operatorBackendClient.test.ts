@@ -4,6 +4,8 @@ import {
   ASSIGNMENT_CLARIFICATION_PATH,
   createOperatorBackendClient,
   EVIDENCE_RETRIEVE_PATH,
+  EXISTING_CONDITIONS_INTERPRETATION_PATH,
+  EXISTING_CONDITIONS_REGISTRATION_PATH,
   NOOP_COMPLETION_CLAIM_PATH,
   READ_COMPLETION_CLAIM_PATH,
   SEMANTIC_MEP_ROUTE_PLAN_PATH
@@ -46,6 +48,42 @@ test("semantic MEP backend client uses only the fixed authenticated planner path
     level_name: "L4",
     tool_results: []
   });
+});
+
+test("existing-conditions interpretation client uses only the fixed authenticated validation path", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createOperatorBackendClient({
+    baseUrl: "http://self-hosted.example:7007/",
+    token: "operator-test-token",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, native_write_allowed: false }), { status: 200 });
+    }
+  });
+  const request = { schema_version: 1, session_id: "session-a", response: { schema_version: 1 } };
+  await client.validateExistingConditionsInterpretation(request);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, `http://self-hosted.example:7007${EXISTING_CONDITIONS_INTERPRETATION_PATH}`);
+  assert.equal(new Headers(calls[0]?.init?.headers).get("x-operator-token"), "operator-test-token");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), request);
+});
+
+test("existing-conditions registration client uses only the fixed authenticated registration path", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createOperatorBackendClient({
+    baseUrl: "http://self-hosted.example:7007/",
+    token: "operator-test-token",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ native_write_allowed: false, registration: { verified: true } }), { status: 200 });
+    }
+  });
+  const request = { schema_version: 1, interpretation_evidence_id: `ev1_${"a".repeat(32)}`, controls: [] };
+  await client.registerExistingConditionsInterpretation(request);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, `http://self-hosted.example:7007${EXISTING_CONDITIONS_REGISTRATION_PATH}`);
+  assert.equal(new Headers(calls[0]?.init?.headers).get("x-operator-token"), "operator-test-token");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), request);
 });
 
 test("evidence backend client uses the fixed authenticated focused-retrieval path", async () => {
