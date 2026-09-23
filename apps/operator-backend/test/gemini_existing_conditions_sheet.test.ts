@@ -58,6 +58,27 @@ test("strict Gemini sheet output normalizes into provider-neutral pixel observat
   assert.deepEqual(result.open_questions, ["Route elevation is not visible."]);
 });
 
+test("Gemini whole-sheet context orients one regional detail without duplicating context geometry", () => {
+  const scopedRequest: GeminiExistingConditionsSheetRequestV1 = {
+    ...request(),
+    views: [
+      { view_key: "sheet", image_path: "sheet.png", analysis_role: "sheet_context", discipline_hint: "mechanical" },
+      { view_key: "main", image_path: "detail.png", analysis_role: "region_detail", page_region: { min_u: 0.2, min_v: 0.3, max_u: 0.6, max_v: 0.8 }, parent_context_view_key: "sheet", discipline_hint: "mechanical" }
+    ]
+  };
+  const scopedRaw = raw();
+  scopedRaw.view_keys = ["sheet", "main"];
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: scopedRequest, raw: scopedRaw });
+  assert.deepEqual(result.interpretation.view_keys, ["main"]);
+
+  scopedRaw.source_marks[0]!.source_view_key = "sheet";
+  scopedRaw.primitives[0]!.source_view_key = "sheet";
+  assert.throws(
+    () => normalizeGeminiExistingConditionsSheetResponseV1({ request: scopedRequest, raw: scopedRaw }),
+    /gemini_sheet_mark_requires_region_detail:mark-1/
+  );
+});
+
 test("provider-local endpoint keys are deterministically namespaced by primitive", () => {
   const localKeys = raw();
   localKeys.primitives[0]!.endpoints[0]!.endpoint_key = "ep_1";

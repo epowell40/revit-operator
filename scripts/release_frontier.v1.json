@@ -29,6 +29,7 @@
     "assignment_async_settlement_barrier.test.ts",
     "assignment_kernel_v2.test.ts",
     "assignment_kernel_v2_architecture.test.ts",
+    "chat_execution_failure_diagnostic.test.ts",
     "assignment_kernel_v2_benchmark_consumers.test.ts",
     "assignment_kernel_v2_candidate3_semantic_replay.test.ts",
     "assignment_kernel_v2_execution.test.ts",
@@ -159,7 +160,10 @@
     "combined_duct_verification_v2.test.ts",
     "conversation_identity_answer.test.ts",
     "conversation_evidence_contract.test.ts",
-    "conversation_intake_recovery.test.ts"
+    "conversation_intake_recovery.test.ts",
+    "structured_existing_conditions_interpretation.test.ts",
+    "structured_interpretation_tool.test.ts",
+    "registered_structured_interpretation.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -188,7 +192,10 @@
     "lib/workPlanStdio.test.ts",
     "lib/familyPlacementSchema.test.ts",
     "lib/findElementsAgentProjection.test.ts",
-    "lib/nativeReadEvidence.test.ts"
+    "lib/nativeReadEvidence.test.ts",
+    "tools/existingConditionsInterpretationTool.test.ts",
+    "tools/existingConditionsRegistrationTool.test.ts",
+    "lib/operatorBackendClient.test.ts"
   ],
   "desktop_tests": [
     "test/assignment_workspace_v2.test.js",
@@ -2563,6 +2570,82 @@
         "backend:evidence_item_projection.test.ts",
         "backend:teammate_evidence_paging.test.ts",
         "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-provider-geometry-is-not-bound-to-exact-pdf-and-raster",
+      "coverage": [
+        "backend:structured_existing_conditions_interpretation.test.ts",
+        "backend:structured_interpretation_tool.test.ts",
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:lib/operatorBackendClient.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-untrusted-or-poor-fit-frame-reaches-model-space",
+      "coverage": [
+        "backend:registered_structured_interpretation.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts",
+        "mcp:lib/operatorBackendClient.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-provider-failure-loses-original-diagnostic",
+      "coverage": [
+        "backend:assignment_kernel_v2_architecture.test.ts",
+        "backend:chat_execution_failure_diagnostic.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-published-tuple-schema-blocks-codex-thread-start",
+      "coverage": [
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-read-only-tool-blocked-as-unknown-revit-contract",
+      "coverage": [
+        "backend:teammate_loop_runtime.test.ts",
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-read-only-qualification-misclassified-as-model-apply",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-nested-native-frame-rejected-and-evidence-id-used-as-observation",
+      "coverage": [
+        "backend:registered_structured_interpretation.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-retained-interpretation-discarded-as-no-progress",
+      "coverage": [
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-registration-fit-failure-loses-measured-residual-in-handoff",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "backend:registered_structured_interpretation.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-normalized-pdf-page-aspect-rejected-as-landmark-outlier",
+      "coverage": [
+        "backend:structured_interpretation_tool.test.ts",
+        "backend:registered_structured_interpretation.test.ts"
       ]
     }
   ],

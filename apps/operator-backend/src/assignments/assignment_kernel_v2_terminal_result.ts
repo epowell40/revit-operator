@@ -85,6 +85,28 @@ function generalDomainSummary(facts: readonly SemanticFactV2[]): string | null {
   }).join("\n");
 }
 
+function rejectedRegistrationSummary(snapshot: AssignmentSnapshotV2): string | null {
+  const attempts = Object.values(snapshot.operations)
+    .filter(operation => operation.capability_id === "operator_register_existing_conditions_interpretation"
+      && operation.result?.status === "failed_before_dispatch"
+      && operation.result.persistent_effect === "none"
+      && operation.result.binding.assignment_id === snapshot.current_binding.assignment_id
+      && operation.result.binding.generation === snapshot.current_binding.generation)
+    .flatMap(operation => {
+      const match = operation.result?.error_code?.match(
+        /^existing_conditions_registration_residual_exceeds_limit:rms=(\d+(?:\.\d+)?):max=(\d+(?:\.\d+)?)$/
+      );
+      if (!match) return [];
+      const rms = Number(match[1]);
+      const maximum = Number(match[2]);
+      return Number.isFinite(rms) && Number.isFinite(maximum) ? [{ rms, maximum }] : [];
+    })
+    .sort((a, b) => a.rms - b.rms || a.maximum - b.maximum);
+  if (attempts.length === 0) return null;
+  const best = attempts[0]!;
+  return `Registration did not pass the requested landmark tolerance. Best measured fit: ${best.rms.toFixed(2)} ft RMS, ${best.maximum.toFixed(2)} ft maximum. The interpretation remains read-only and unregistered.`;
+}
+
 /**
  * Derives a product-facing, read-only terminal handoff from canonical V2
  * truth. It never appends lifecycle events and never treats control or
@@ -125,9 +147,11 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
       : "";
   const partialSummary = verifiedChangePresentationV2(snapshot) ?? successfulSummary;
   const remainingSummary = remainingWorkPresentationV2(snapshot);
+  const registrationFailure = !complete ? rejectedRegistrationSummary(snapshot) : null;
   const resultSummary = complete
     ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
     : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
+      + (registrationFailure ? `\n\n${registrationFailure}` : "")
       + (partialSummary ? `\n\n${partialSummary}` : "")
       + (remainingSummary ? `\n${remainingSummary}` : "");
   return {

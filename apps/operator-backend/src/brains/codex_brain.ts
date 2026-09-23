@@ -5,6 +5,7 @@ import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent, setCodexThreadId } from "../memory/sqlite_store.js";
+import { recordProviderStartFailureDiagnostic } from "../assignments/chat_execution_failure_diagnostic.js";
 import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { buildCodexTurnInput } from "./codex_turn_input.js";
@@ -760,6 +761,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       endRequirementsPlanningLease(requirementsLease);
       requirementsLease = null;
       if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);
+      recordProviderStartFailureDiagnostic({
+        session_id: req.session_id, message_id: req.message_id, error
+      }, (sessionId, payload) => appendEvent(sessionId, "assistant", "codex.provider.start.error", payload));
       return stopBeforeProvider(
         "The provider connection could not be initialized. I stopped before planning or any Revit tool action.",
         `provider-start:${req.message_id}`,

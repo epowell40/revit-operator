@@ -209,7 +209,7 @@ function modelToSource(
   const dx = model.x - registration.translation_ft.x;
   const dy = model.y - registration.translation_ft.y;
   return {
-    x: (cos * dx + sin * dy) / registration.scale,
+    x: (cos * dx + sin * dy) / registration.scale / (registration.source_coordinate_scale_x ?? 1),
     y: (-sin * dx + cos * dy) / registration.scale
   };
 }

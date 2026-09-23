@@ -7,6 +7,8 @@ import {
 } from "./operatorBackendAuth.js";
 
 export const SEMANTIC_MEP_ROUTE_PLAN_PATH = "/tools/mep/semantic-route-plan";
+export const EXISTING_CONDITIONS_INTERPRETATION_PATH = "/tools/existing-conditions/validate-interpretation";
+export const EXISTING_CONDITIONS_REGISTRATION_PATH = "/tools/existing-conditions/register-interpretation";
 export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
 export const READ_COMPLETION_CLAIM_PATH = "/api/assignments/read-completion-claims";
 export const ASSIGNMENT_CLARIFICATION_PATH = "/api/assignments/clarifications";
@@ -108,6 +110,12 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
           ...(input.levelName === undefined ? {} : { level_name: input.levelName }),
           ...(input.toolResults === undefined ? {} : { tool_results: input.toolResults })
         }, "Operator backend");
+    },
+    async validateExistingConditionsInterpretation(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_INTERPRETATION_PATH, input, "Existing-conditions interpretation validator");
+    },
+    async registerExistingConditionsInterpretation(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_REGISTRATION_PATH, input, "Existing-conditions registration validator");
     }
   };
 }

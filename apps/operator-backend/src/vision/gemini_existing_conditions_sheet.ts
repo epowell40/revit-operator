@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type {
-  SheetPixelInterpretationInputV1,
-  SheetPixelPrimitiveV1
-} from "../existing_conditions/sheet_pixel_interpretation.js";
-import type { SheetTopologyClaimV1, SheetTopologySourceMarkV1 } from "../existing_conditions/sheet_topology_compiler.js";
+import type { SheetPixelInterpretationInputV1 } from "../existing_conditions/sheet_pixel_interpretation.js";
+import {
+  STRUCTURED_EXISTING_CONDITIONS_INTERPRETATION_SCHEMA_V1,
+  normalizeStructuredExistingConditionsInterpretationV1,
+  type StructuredExistingConditionsInterpretationRequestV1
+} from "./structured_existing_conditions_interpretation.js";
 
 export type GeminiExistingConditionsSheetRequestV1 = {
   schema_version: 1;
@@ -14,6 +15,9 @@ export type GeminiExistingConditionsSheetRequestV1 = {
   views: Array<{
     view_key: string;
     image_path: string;
+    analysis_role?: "sheet_context" | "region_detail";
+    page_region?: { min_u: number; min_v: number; max_u: number; max_v: number };
+    parent_context_view_key?: string;
     sheet_hint?: string;
     discipline_hint?: "architectural" | "mechanical" | "plumbing" | "electrical";
   }>;
@@ -59,132 +63,7 @@ export type GeminiExistingConditionsRawResponseCaptureV1 = {
   provider_usage_metadata?: unknown;
 };
 
-type RawGeminiSheetResponse = {
-  schema_version: number;
-  package_id: string;
-  coordinate_space: string;
-  view_keys: string[];
-  source_marks: Array<{
-    source_mark_id: string;
-    source_view_key: string;
-    disposition_status: "candidate" | "unresolved";
-    primitive_ids: string[];
-    reason: string;
-  }>;
-  primitives: Array<{
-    primitive_id: string;
-    source_view_key: string;
-    source_mark_ids: string[];
-    kind: SheetPixelPrimitiveV1["kind"];
-    points: Array<{ u: number; v: number }>;
-    endpoints: Array<{
-      endpoint_key: string;
-      point: { u: number; v: number };
-      outward_direction_uv: [number, number];
-      boundary: "internal" | "view_boundary" | "sheet_continuation";
-      continuation_key: string;
-      continuation_kind: "none" | "same_level_run" | "vertical_riser";
-    }>;
-    claims: Array<{
-      attribute: "system" | "size" | "type" | "family" | "host" | "elevation" | "vertical_extent";
-      value: string;
-      confidence: number;
-      basis: SheetTopologyClaimV1["basis"];
-    }>;
-    confidence: SheetPixelPrimitiveV1["confidence"];
-  }>;
-  open_questions: string[];
-};
-
-export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = {
-  type: "object",
-  required: ["schema_version", "package_id", "coordinate_space", "view_keys", "source_marks", "primitives", "open_questions"],
-  properties: {
-    schema_version: { type: "integer", minimum: 1, maximum: 1 },
-    package_id: { type: "string" },
-    coordinate_space: { type: "string", enum: ["normalized_uv_top_left"] },
-    view_keys: { type: "array", items: { type: "string" } },
-    source_marks: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["source_mark_id", "source_view_key", "disposition_status", "primitive_ids", "reason"],
-        properties: {
-          source_mark_id: { type: "string" },
-          source_view_key: { type: "string" },
-          disposition_status: { type: "string", enum: ["candidate", "unresolved"] },
-          primitive_ids: { type: "array", items: { type: "string" } },
-          reason: { type: "string" }
-        }
-      }
-    },
-    primitives: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["primitive_id", "source_view_key", "source_mark_ids", "kind", "points", "endpoints", "claims", "confidence"],
-        properties: {
-          primitive_id: { type: "string" },
-          source_view_key: { type: "string" },
-          source_mark_ids: { type: "array", items: { type: "string" } },
-          kind: { type: "string", enum: ["wall_segment", "route_segment", "opening", "point_symbol", "annotation"] },
-          points: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "object",
-              required: ["u", "v"],
-              properties: { u: { type: "number", minimum: 0, maximum: 1 }, v: { type: "number", minimum: 0, maximum: 1 } }
-            }
-          },
-          endpoints: {
-            type: "array",
-            items: {
-              type: "object",
-              required: ["endpoint_key", "point", "outward_direction_uv", "boundary", "continuation_key", "continuation_kind"],
-              properties: {
-                endpoint_key: { type: "string" },
-                point: {
-                  type: "object",
-                  required: ["u", "v"],
-                  properties: { u: { type: "number", minimum: 0, maximum: 1 }, v: { type: "number", minimum: 0, maximum: 1 } }
-                },
-                outward_direction_uv: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
-                boundary: { type: "string", enum: ["internal", "view_boundary", "sheet_continuation"] },
-                continuation_key: { type: "string" },
-                continuation_kind: { type: "string", enum: ["none", "same_level_run", "vertical_riser"] }
-              }
-            }
-          },
-          claims: {
-            type: "array",
-            items: {
-              type: "object",
-              required: ["attribute", "value", "confidence", "basis"],
-              properties: {
-                attribute: { type: "string", enum: ["system", "size", "type", "family", "host", "elevation", "vertical_extent"] },
-                value: { type: "string" },
-                confidence: { type: "number", minimum: 0, maximum: 1 },
-                basis: { type: "string", enum: ["legible_source_evidence", "approved_project_mapping", "provider_hypothesis", "unresolved"] }
-              }
-            }
-          },
-          confidence: {
-            type: "object",
-            required: ["geometry", "classification", "topology", "visibility"],
-            properties: {
-              geometry: { type: "number", minimum: 0, maximum: 1 },
-              classification: { type: "number", minimum: 0, maximum: 1 },
-              topology: { type: "number", minimum: 0, maximum: 1 },
-              visibility: { type: "number", minimum: 0, maximum: 1 }
-            }
-          }
-        }
-      }
-    },
-    open_questions: { type: "array", items: { type: "string" } }
-  }
-} as const;
+export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = STRUCTURED_EXISTING_CONDITIONS_INTERPRETATION_SCHEMA_V1;
 
 function clean(value: unknown): string {
   return String(value ?? "").trim();
@@ -194,16 +73,6 @@ function requiredText(value: unknown, label: string): string {
   const result = clean(value);
   if (!result) throw new Error(`${label}_is_required`);
   return result;
-}
-
-function unit(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${label}_must_be_between_zero_and_one`);
-  return value;
-}
-
-function qualifiedEndpointKey(primitiveId: string, endpointKey: unknown, label: string): string {
-  const local = requiredText(endpointKey, label);
-  return local.startsWith(`${primitiveId}:`) ? local : `${primitiveId}:${local}`;
 }
 
 function sha256Buffer(value: Buffer): string {
@@ -229,6 +98,8 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     "Return every in-scope visible source mark exactly once as candidate or unresolved. Never silently omit a mark.",
     "Before finalizing, scan each supplied view systematically from top-left to bottom-right and account for every in-scope line, symbol, fitting glyph, label, leader, and boundary continuation that can affect the objective.",
     "Use normalized top-left UV coordinates within each supplied view. Do not emit model coordinates or Revit IDs.",
+    "Images labeled sheet_context establish orientation, legends, symbols, and scope only. Do not emit source marks or primitives from a sheet_context image; emit geometry only from region_detail images.",
+    "When a region_detail declares a page_region and parent_context_view_key, use the parent full sheet to understand the crop, but keep returned UV coordinates local to the regional image.",
     "Preserve long-run continuity: give matching continuation_key values only when two crop/sheet boundary endpoints visibly represent the same run.",
     "Set continuation_kind to same_level_run for an ordinary continuation. Use vertical_riser only when reciprocal, directly legible above/below/next-level source evidence is visibly bound to the exact endpoint pair; the deterministic host will still require its own hash-bound evidence receipt.",
     "Do not infer system, size, type, family, host, elevation, or wall height from graphical proximity. Use legible_source_evidence only for visible text/geometry and provider_hypothesis or unresolved otherwise.",
@@ -245,7 +116,14 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     "Supplied views:"
   ];
   for (const view of request.views) {
-    lines.push(JSON.stringify({ view_key: view.view_key, sheet_hint: view.sheet_hint ?? "", discipline_hint: view.discipline_hint ?? "" }));
+    lines.push(JSON.stringify({
+      view_key: view.view_key,
+      analysis_role: view.analysis_role ?? "region_detail",
+      page_region: view.page_region ?? { min_u: 0, min_v: 0, max_u: 1, max_v: 1 },
+      parent_context_view_key: view.parent_context_view_key ?? "",
+      sheet_hint: view.sheet_hint ?? "",
+      discipline_hint: view.discipline_hint ?? ""
+    }));
   }
   return lines.join("\n");
 }
@@ -262,169 +140,41 @@ function repairPrompt(error: string): string {
   ].join("\n");
 }
 
-function claimMap(entries: RawGeminiSheetResponse["primitives"][number]["claims"], primitiveId: string): SheetPixelPrimitiveV1["claims"] {
-  const result: NonNullable<SheetPixelPrimitiveV1["claims"]> = {};
-  for (const [index, entry] of entries.entries()) {
-    const attribute = entry.attribute;
-    if (!["system", "size", "type", "family", "host", "elevation", "vertical_extent"].includes(attribute)) throw new Error(`gemini_sheet_claim_attribute_invalid:${primitiveId}:${index}`);
-    if (result[attribute]) throw new Error(`gemini_sheet_claim_attribute_duplicate:${primitiveId}:${attribute}`);
-    result[attribute] = {
-      value: requiredText(entry.value, `gemini_sheet_claim_${primitiveId}_${attribute}_value`),
-      confidence: unit(entry.confidence, `gemini_sheet_claim_${primitiveId}_${attribute}_confidence`),
-      basis: entry.basis
-    };
-  }
-  return result;
-}
-
 export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
   request: GeminiExistingConditionsSheetRequestV1;
   raw: unknown;
 }): { interpretation: SheetPixelInterpretationInputV1; open_questions: string[] } {
-  if (!args.raw || typeof args.raw !== "object" || Array.isArray(args.raw)) throw new Error("gemini_sheet_response_must_be_object");
-  const raw = args.raw as RawGeminiSheetResponse;
-  if (raw.schema_version !== 1) throw new Error("gemini_sheet_response_requires_schema_v1");
-  if (clean(raw.package_id) !== clean(args.request.package_id)) throw new Error("gemini_sheet_response_package_mismatch");
-  if (raw.coordinate_space !== "normalized_uv_top_left") throw new Error("gemini_sheet_response_coordinate_space_invalid");
-  const requestedViewKeys = args.request.views.map(view => clean(view.view_key));
-  if (!Array.isArray(raw.view_keys) || raw.view_keys.length !== requestedViewKeys.length || raw.view_keys.some(key => !requestedViewKeys.includes(clean(key)))) {
-    throw new Error("gemini_sheet_response_view_keys_mismatch");
-  }
-  const allowedViewKeys = new Set(requestedViewKeys);
-  const maximumMarks = args.request.maximum_source_marks ?? 500;
-  const maximumPrimitives = args.request.maximum_primitives ?? 500;
-  if (!Array.isArray(raw.source_marks) || raw.source_marks.length === 0 || raw.source_marks.length > maximumMarks) throw new Error("gemini_sheet_response_source_mark_count_invalid");
-  if (!Array.isArray(raw.primitives) || raw.primitives.length > maximumPrimitives) throw new Error("gemini_sheet_response_primitive_count_invalid");
-
-  const sourceMarks: SheetTopologySourceMarkV1[] = raw.source_marks.map((mark, index) => {
-    const markId = requiredText(mark.source_mark_id, `gemini_sheet_mark_${index}_id`);
-    const viewKey = requiredText(mark.source_view_key, `gemini_sheet_mark_${markId}_view_key`);
-    if (!allowedViewKeys.has(viewKey)) throw new Error(`gemini_sheet_mark_unknown_view:${markId}`);
-    if (mark.disposition_status === "candidate") {
-      if (!Array.isArray(mark.primitive_ids) || mark.primitive_ids.length === 0) throw new Error(`gemini_sheet_candidate_mark_requires_primitive:${markId}`);
-      return { source_mark_id: markId, source_view_key: viewKey, disposition: { status: "candidate", primitive_ids: mark.primitive_ids.map(value => requiredText(value, `gemini_sheet_mark_${markId}_primitive_id`)) } };
-    }
-    if (mark.disposition_status !== "unresolved") throw new Error(`gemini_sheet_mark_disposition_invalid:${markId}`);
-    return { source_mark_id: markId, source_view_key: viewKey, disposition: { status: "unresolved", reason: requiredText(mark.reason, `gemini_sheet_mark_${markId}_reason`) } };
+  const suppliedContext = args.request.views.some(view => view.analysis_role === "sheet_context");
+  const syntheticContextKey = "__gemini_context__";
+  const views: StructuredExistingConditionsInterpretationRequestV1["views"] = args.request.views.map(view => ({
+    view_key: view.view_key, analysis_role: view.analysis_role ?? "region_detail",
+    source_artifact_sha256: "0".repeat(64), source_page: 1, image_sha256: "0".repeat(64),
+    page_region: view.analysis_role === "sheet_context" ? { min_u: 0, min_v: 0, max_u: 1, max_v: 1 } : view.page_region ?? { min_u: 0, min_v: 0, max_u: 1, max_v: 1 },
+    ...((view.analysis_role ?? "region_detail") === "region_detail" ? { parent_context_view_key: view.parent_context_view_key ?? syntheticContextKey } : {}),
+    ...(view.sheet_hint ? { sheet_hint: view.sheet_hint } : {}),
+    ...(view.discipline_hint ? { discipline_hint: view.discipline_hint } : {})
+  }));
+  if (!suppliedContext) views.unshift({
+    view_key: syntheticContextKey, analysis_role: "sheet_context", source_artifact_sha256: "0".repeat(64),
+    source_page: 1, image_sha256: "0".repeat(64), page_region: { min_u: 0, min_v: 0, max_u: 1, max_v: 1 }
   });
-
-  const normalizationQuestions: string[] = [];
-  const primitives: SheetPixelPrimitiveV1[] = raw.primitives.map((primitive, index) => {
-    const primitiveId = requiredText(primitive.primitive_id, `gemini_sheet_primitive_${index}_id`);
-    const viewKey = requiredText(primitive.source_view_key, `gemini_sheet_primitive_${primitiveId}_view_key`);
-    if (!allowedViewKeys.has(viewKey)) throw new Error(`gemini_sheet_primitive_unknown_view:${primitiveId}`);
-    if (!Array.isArray(primitive.points) || primitive.points.length === 0) throw new Error(`gemini_sheet_primitive_points_required:${primitiveId}`);
-    const points = primitive.points.map((point, pointIndex) => ({
-      u: unit(point.u, `gemini_sheet_primitive_${primitiveId}_point_${pointIndex}_u`),
-      v: unit(point.v, `gemini_sheet_primitive_${primitiveId}_point_${pointIndex}_v`)
-    }));
-    const endpoints = (primitive.endpoints ?? []).map((endpoint, endpointIndex) => ({
-      endpoint_key: qualifiedEndpointKey(primitiveId, endpoint.endpoint_key, `gemini_sheet_primitive_${primitiveId}_endpoint_${endpointIndex}_key`),
-      point: {
-        u: unit(endpoint.point?.u, `gemini_sheet_endpoint_${primitiveId}_${endpointIndex}_u`),
-        v: unit(endpoint.point?.v, `gemini_sheet_endpoint_${primitiveId}_${endpointIndex}_v`)
-      },
-      outward_direction_uv: endpoint.outward_direction_uv,
-      boundary: endpoint.boundary,
-      ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {}),
-      ...(endpoint.continuation_kind !== "none" ? { continuation_kind: endpoint.continuation_kind } : {})
-    }));
-    if (new Set(endpoints.map(endpoint => endpoint.endpoint_key)).size !== endpoints.length) {
-      throw new Error(`gemini_sheet_primitive_duplicate_endpoint_key:${primitiveId}`);
-    }
-    if (endpoints.length > 0 && !["route_segment", "wall_segment"].includes(primitive.kind)) {
-      throw new Error(`gemini_sheet_non_linear_primitive_cannot_have_endpoints:${primitiveId}`);
-    }
-    const claims = claimMap(primitive.claims ?? [], primitiveId) ?? {};
-    let classificationConfidence = unit(primitive.confidence?.classification, `gemini_sheet_primitive_${primitiveId}_classification_confidence`);
-    if (primitive.kind === "point_symbol") {
-      for (const attribute of ["family", "type", "host"] as const) {
-        const materialClaim = claims[attribute];
-        if (!materialClaim || materialClaim.basis !== "legible_source_evidence") continue;
-        claims[attribute] = {
-          ...materialClaim,
-          confidence: Math.min(materialClaim.confidence, 0.5),
-          basis: "provider_hypothesis"
-        };
-        classificationConfidence = Math.min(classificationConfidence, 0.5);
-        normalizationQuestions.push(`Point symbol ${primitiveId} ${attribute} is graphical-only and requires a legible annotation or approved project mapping.`);
-      }
-      const materialClaims = (["family", "type", "host"] as const).map(attribute => claims[attribute]);
-      if (materialClaims.some(materialClaim => !materialClaim || materialClaim.basis === "provider_hypothesis" || materialClaim.basis === "unresolved")) {
-        classificationConfidence = Math.min(classificationConfidence, 0.5);
-        normalizationQuestions.push(`Point symbol ${primitiveId} classification remains provisional until family, type, and host are source-grounded or project-mapped.`);
-      }
-    }
+  const source = args.raw && typeof args.raw === "object" && !Array.isArray(args.raw) ? args.raw as Record<string, unknown> : null;
+  const raw = source ? { ...source, view_keys: [...(suppliedContext ? [] : [syntheticContextKey]), ...(Array.isArray(source.view_keys) ? source.view_keys : [])] } : args.raw;
+  try {
+    const normalized = normalizeStructuredExistingConditionsInterpretationV1({
+      request: { schema_version: 1, package_id: args.request.package_id, objective: args.request.objective, views,
+        ...(args.request.maximum_source_marks === undefined ? {} : { maximum_source_marks: args.request.maximum_source_marks }),
+        ...(args.request.maximum_primitives === undefined ? {} : { maximum_primitives: args.request.maximum_primitives }) },
+      raw
+    });
     return {
-      primitive_id: primitiveId,
-      source_view_key: viewKey,
-      source_mark_ids: primitive.source_mark_ids.map(value => requiredText(value, `gemini_sheet_primitive_${primitiveId}_source_mark`)),
-      kind: primitive.kind,
-      points,
-      endpoints,
-      claims,
-      confidence: {
-        geometry: unit(primitive.confidence?.geometry, `gemini_sheet_primitive_${primitiveId}_geometry_confidence`),
-        classification: classificationConfidence,
-        topology: unit(primitive.confidence?.topology, `gemini_sheet_primitive_${primitiveId}_topology_confidence`),
-        visibility: unit(primitive.confidence?.visibility, `gemini_sheet_primitive_${primitiveId}_visibility_confidence`)
-      }
+      interpretation: { ...normalized.interpretation, view_keys: args.request.views.filter(view => view.analysis_role !== "sheet_context").map(view => view.view_key) },
+      open_questions: normalized.open_questions
     };
-  });
-
-  const marksById = new Map<string, SheetTopologySourceMarkV1>();
-  for (const mark of sourceMarks) {
-    if (marksById.has(mark.source_mark_id)) throw new Error(`gemini_sheet_duplicate_source_mark:${mark.source_mark_id}`);
-    marksById.set(mark.source_mark_id, mark);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(message.replaceAll("structured_sheet", "gemini_sheet"));
   }
-  const primitivesById = new Map<string, SheetPixelPrimitiveV1>();
-  for (const primitive of primitives) {
-    if (primitivesById.has(primitive.primitive_id)) throw new Error(`gemini_sheet_duplicate_primitive:${primitive.primitive_id}`);
-    primitivesById.set(primitive.primitive_id, primitive);
-  }
-  for (const mark of sourceMarks) {
-    if (mark.disposition.status !== "candidate") continue;
-    for (const primitiveId of mark.disposition.primitive_ids) {
-      const primitive = primitivesById.get(primitiveId);
-      if (!primitive) throw new Error(`gemini_sheet_mark_unknown_primitive:${mark.source_mark_id}:${primitiveId}`);
-      if (primitive.source_view_key !== mark.source_view_key) throw new Error(`gemini_sheet_mark_primitive_view_mismatch:${mark.source_mark_id}:${primitiveId}`);
-      if (!primitive.source_mark_ids.includes(mark.source_mark_id)) {
-        primitive.source_mark_ids.push(mark.source_mark_id);
-        normalizationQuestions.push(`Normalized reciprocal source-mark linkage ${mark.source_mark_id} -> ${primitiveId}.`);
-      }
-    }
-  }
-  for (const primitive of primitives) {
-    for (const markId of primitive.source_mark_ids) {
-      const mark = marksById.get(markId);
-      if (!mark) throw new Error(`gemini_sheet_primitive_unknown_source_mark:${primitive.primitive_id}:${markId}`);
-      if (mark.source_view_key !== primitive.source_view_key) throw new Error(`gemini_sheet_primitive_source_mark_view_mismatch:${primitive.primitive_id}:${markId}`);
-      if (mark.disposition.status !== "candidate") throw new Error(`gemini_sheet_primitive_cites_unresolved_source_mark:${primitive.primitive_id}:${markId}`);
-      if (!mark.disposition.primitive_ids.includes(primitive.primitive_id)) {
-        mark.disposition.primitive_ids.push(primitive.primitive_id);
-        normalizationQuestions.push(`Normalized reciprocal primitive-mark linkage ${primitive.primitive_id} -> ${markId}.`);
-      }
-    }
-  }
-  for (const mark of sourceMarks) {
-    if (mark.disposition.status === "candidate") mark.disposition.primitive_ids = [...new Set(mark.disposition.primitive_ids)].sort();
-  }
-  for (const primitive of primitives) primitive.source_mark_ids = [...new Set(primitive.source_mark_ids)].sort();
-
-  return {
-    interpretation: {
-      schema_version: 1,
-      package_id: args.request.package_id,
-      coordinate_space: "normalized_uv_top_left",
-      view_keys: requestedViewKeys,
-      source_marks: sourceMarks,
-      primitives
-    },
-    open_questions: [...new Set([
-      ...(Array.isArray(raw.open_questions) ? raw.open_questions.map(value => clean(value)).filter(Boolean) : []),
-      ...normalizationQuestions
-    ])].slice(0, 200)
-  };
 }
 
 function apiKey(): string {

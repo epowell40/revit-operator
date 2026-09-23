@@ -298,6 +298,38 @@ test("shared control-evidence contract separates control roles, durable producer
   assert.deepEqual(assignmentKernelControlEvidenceFactsV2("untrusted_tool", semanticPayload), []);
 });
 
+test("C59 source binding and registration create distinct, repeat-stable control knowledge only from retained receipts", () => {
+  const evidence = { evidence_id: `ev1_${"a".repeat(32)}`, content_hash: `sha256:${"b".repeat(64)}`, trust_level: "host_observed", verification_relevance: "supporting" };
+  const interpretation = {
+    schema_version: 1, source_binding_sha256: "c".repeat(64), interpretation_sha256: "d".repeat(64),
+    native_write_allowed: false, evidence_ref: evidence
+  };
+  const registration = {
+    schema_version: 1, interpretation_evidence_id: evidence.evidence_id,
+    frame_observation_id: `obsv2_${"e".repeat(64)}`, native_write_allowed: false,
+    registration: { verified: true, rms_error_ft: 0.1, max_error_ft: 0.2 }, evidence_ref: evidence
+  };
+  for (const [tool, payload, factId] of [
+    ["operator_validate_existing_conditions_interpretation", interpretation, "control.existing_conditions_interpretation_available"],
+    ["operator_register_existing_conditions_interpretation", registration, "control.existing_conditions_registration_available"]
+  ] as const) {
+    assert.equal(isAssignmentKernelDurableControlEvidenceProducerV2(tool), true);
+    const facts = assignmentKernelControlEvidenceFactsV2(tool, payload);
+    assert.equal(facts.length, 1);
+    assert.equal(facts[0]?.fact_id, factId);
+    assert.equal(facts[0]?.fact_class, "control");
+    assert.deepEqual(assignmentKernelControlEvidenceFactsV2(tool, structuredClone(payload)), facts);
+    assert.deepEqual(assignmentKernelControlEvidenceFactsV2(tool, { ...payload, native_write_allowed: true }), []);
+    assert.deepEqual(assignmentKernelControlEvidenceFactsV2(tool, { ...payload, evidence_ref: { ...evidence, trust_level: "provider" } }), []);
+  }
+  assert.deepEqual(assignmentKernelControlEvidenceFactsV2("operator_register_existing_conditions_interpretation", {
+    ...registration, registration: { ...registration.registration, verified: false }
+  }), []);
+  assert.deepEqual(assignmentKernelControlEvidenceFactsV2("operator_validate_existing_conditions_interpretation", {
+    ...interpretation, interpretation_sha256: "not-a-hash"
+  }), []);
+});
+
 test("Candidate 55 focused evidence selections create stable controller knowledge without domain authority", () => {
   const payload = {
     ok: true,

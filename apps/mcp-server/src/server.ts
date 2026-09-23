@@ -43,6 +43,8 @@ import { ensureWorkspaceLayout } from "./lib/workspace.js";
 import { fetchWebEvidenceToWorkspace, getWebResearchPolicyFromEnv } from "./lib/webResearch.js";
 import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/textMatch.js";
 import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
+import { registerExistingConditionsInterpretationTool } from "./tools/existingConditionsInterpretationTool.js";
+import { registerExistingConditionsRegistrationTool } from "./tools/existingConditionsRegistrationTool.js";
 import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
 import {
   genericToolRegistryLookupFailure,
@@ -146,6 +148,8 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "check_photometrics",
   "fire_damper_audit",
   "operator_plan_semantic_mep_route",
+  "operator_register_existing_conditions_interpretation",
+  "operator_validate_existing_conditions_interpretation",
   "operator_runtime_probe",
   "operator_discover_capabilities",
   "operator_retrieve_evidence",
@@ -251,6 +255,12 @@ function registerAuditedZodTool(name: string, description: string, inputSchema: 
 }
 
 registerSemanticMepRouteTool((name, description, inputSchema, handler) =>
+  registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
+);
+registerExistingConditionsInterpretationTool((name, description, inputSchema, handler) =>
+  registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
+);
+registerExistingConditionsRegistrationTool((name, description, inputSchema, handler) =>
   registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
 );
 

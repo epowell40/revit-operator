@@ -51,6 +51,26 @@ test('exact composite observation aliases admit reads without inventing routes o
   }
 });
 
+test("registered PDF interpretation and frame registration are read-only teammate actions", () => {
+  for (const tool of ["operator_validate_existing_conditions_interpretation", "operator_register_existing_conditions_interpretation"]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Interpret and register this PDF against the open model without changing anything."));
+    try {
+      const gate = guardTeammateMcpCall(owner, { tool, arguments: { packageId: "m104-l4", response: {} } });
+      assert.equal(gate.allowed, true, `${tool}: ${gate.message}`);
+      assert.equal(gate.call?.effect, "read");
+    } finally { endTeammateLoopOwner(lease); }
+  }
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Interpret the PDF without changing anything."));
+  try {
+    const unknown = guardTeammateMcpCall(owner, { tool: "operator_apply_existing_conditions_interpretation", arguments: {} });
+    assert.equal(unknown.allowed, false);
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test("inspection of an existing view's name and scale does not authorize creation", () => {
   const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
   assert.equal(classifyAgentTurn(prompt), "inspection");
@@ -2752,6 +2772,18 @@ test("continuation identity, transaction binding, and expected-value verificatio
     result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }] }
   }]), response([], "Verified."));
   assert.equal(wrongValue.teammate_loop_receipt?.verified, false);
+});
+
+test("leading read-only qualification keeps PDF registration as inspection", () => {
+  for (const prompt of [
+    "Read-only qualification. Interpret the attached PDF, validate source marks, and register three matching landmarks to the model. Do not modify Revit.",
+    "Read-only validation: inspect the PDF and register its native view-frame evidence."
+  ]) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "inspection", prompt);
+    assert.equal(contract.no_write, true, prompt);
+    assert.equal(contract.write_authorized, false, prompt);
+  }
 });
 test("visibility MCP host guard verifies only successful independent scale readback from the affected view", () => {
   for (const variant of ["exact", "wrong_view", "wrong_scale", "echo", "failed"] as const) {

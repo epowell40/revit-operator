@@ -52,6 +52,9 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
   // A leading, sentence-level READ-ONLY declaration is an authoritative turn
   // contract even when a long planning request later names future edits.
   if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
+  // Qualification is a read-only activity even when its evidence workflow
+  // names registration tools; registration itself grants no model-write scope.
+  if (/^\s*read[ -]?only\s+(?:qualification|validation|test|testing)\s*[.!:;-]/i.test(text)) return true;
   return /^\s*read[ -]?only\b[^.!?\n]{0,160}\b(?:investigation|inspection|analysis|discovery|audit|review|plan|planning|report)\b[^.!?\n]{0,80}\bonly\b\s*[.!:;-]/i.test(text);
 }
 

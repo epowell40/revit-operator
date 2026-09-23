@@ -274,6 +274,16 @@ test("every V2 provider exit records canonical failure or returns already-earned
     "stream cancellation must settle the exact V2 binding");
   assert.ok((route.match(/handleChatExecutionFailureBoundaryV2\(\{/g) ?? []).length >= 3,
     "streaming and non-streaming provider failures must share one V2 settlement boundary");
+  const streamingErrorAt = route.indexOf('recordChatExecutionFailureDiagnostic({\n          session_id: parsed.session_id, message_id: parsed.message_id, error: err, stream: true');
+  const streamingRecoveryAt = route.indexOf("handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding", streamingErrorAt);
+  assert.ok(streamingErrorAt >= 0 && streamingRecoveryAt > streamingErrorAt,
+    "streaming failures must persist the original provider diagnostic before terminal recovery can return");
+  const jsonErrorAt = route.indexOf('recordChatExecutionFailureDiagnostic({\n          session_id: parsed.session_id, message_id: parsed.message_id, error: err, stream: false', streamingRecoveryAt);
+  const jsonRecoveryAt = route.indexOf("const terminalRecovery = handleChatExecutionFailureBoundaryV2", jsonErrorAt);
+  assert.ok(jsonErrorAt > streamingRecoveryAt && jsonRecoveryAt > jsonErrorAt,
+    "JSON failures must persist the original provider diagnostic before terminal recovery can return");
+  assert.ok((route.match(/capture_bundle:.*captureBackendErrorBundle\(sessionId, messageId, error, \{ stream \}\)/g) ?? []).length >= 2,
+    "both delivery boundaries must retain issue-bundle capture for recovered V2 provider failures");
   assert.match(boundary, /terminal[\s\S]*renderTerminalResultV2[\s\S]*deriveTerminalResultV2/,
     "an already-complete Assignment must return its terminal result instead of an infrastructure error");
   assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
@@ -284,7 +294,12 @@ test("every V2 provider exit records canonical failure or returns already-earned
     "canonical progress must admit reasoning before any provider connection or thread bootstrap");
   assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
     "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
-  assert.ok((brain.match(/endRequirementsPlanningLease\(requirementsLease\);[\s\S]{0,120}requirementsLease = null;[\s\S]{0,240}return stopBeforeProvider/g) ?? []).length >= 2,
+  const startDiagnosticAt = brain.indexOf('recordProviderStartFailureDiagnostic({');
+  const startSettlementAt = brain.indexOf('return stopBeforeProvider(', startDiagnosticAt);
+  assert.ok(startDiagnosticAt >= 0 && startSettlementAt > startDiagnosticAt,
+    "provider startup must persist its original exception before the brain settles V2");
+  assert.match(brain, /"codex\.provider\.start\.error"/, "startup failures need a durable diagnostic event");
+  assert.ok((brain.match(/endRequirementsPlanningLease\(requirementsLease\);[\s\S]{0,120}requirementsLease = null;[\s\S]{0,480}return stopBeforeProvider/g) ?? []).length >= 2,
     "pre-provider runtime exits must release durable-requirements planning leases");
   assert.ok((router.match(/requestHasExactAssignmentKernelV2Binding\(req\)/g) ?? []).length >= 2,
     "streaming and non-streaming V2 requests must bypass every legacy deterministic shortcut");

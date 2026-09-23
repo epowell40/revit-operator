@@ -1553,6 +1553,57 @@ test("retained evidence retrieval settles as a non-native read and records one s
   assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
 });
 
+test("C59 interpretation and registration receipts retain distinct control observations without task-result authority", async () => {
+  const evidence = { evidence_id: `ev1_${"a".repeat(32)}`, content_hash: `sha256:${"b".repeat(64)}`, trust_level: "host_observed", verification_relevance: "supporting" };
+  for (const [tool, payload, factId] of [
+    ["operator_validate_existing_conditions_interpretation", {
+      schema_version: 1, source_binding_sha256: "c".repeat(64), interpretation_sha256: "d".repeat(64),
+      native_write_allowed: false, evidence_ref: evidence
+    }, "control.existing_conditions_interpretation_available"],
+    ["operator_register_existing_conditions_interpretation", {
+      schema_version: 1, interpretation_evidence_id: evidence.evidence_id,
+      frame_observation_id: `obsv2_${"e".repeat(64)}`, native_write_allowed: false,
+      registration: { verified: true, rms_error_ft: 0.1, max_error_ft: 0.2 }, evidence_ref: evidence
+    }, "control.existing_conditions_registration_available"]
+  ] as const) {
+    const operationMeta = meta("read", "discovery") as any;
+    operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = tool;
+    operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = { capability_id: tool, request_signature: `c59-${tool}` };
+    const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+      decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, tool) as any);
+    assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
+    assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
+    assert.equal(decorated.structuredContent.observation.evidence_class, "control");
+    assert.deepEqual(decorated.structuredContent.observation.semantic_facts.filter((fact: any) => fact.fact_id === factId).length, 1);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
+  }
+});
+
+test("C59 rejected landmark fit retains bounded measured residuals in canonical operation result", async () => {
+  const operationMeta = meta("read", "discovery") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "operator_register_existing_conditions_interpretation";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "operator_register_existing_conditions_interpretation", request_signature: "c59-rejected-fit"
+  };
+  const rawResult = { isError: true, content: [{ type: "text", text:
+    'Existing-conditions registration validator responded with status 400: {"ok":false,"error":"existing_conditions_registration_residual_exceeds_limit:rms=1.1866190083854595:max=1.7827596133477037"}' }] };
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+    decorateAssignmentKernelMcpResultV2(rawResult, "operator_register_existing_conditions_interpretation") as any);
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "failed_before_dispatch");
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
+  assert.equal(decorated.structuredContent.operation_result_v2.error_code,
+    "existing_conditions_registration_residual_exceeds_limit:rms=1.1866190083854595:max=1.7827596133477037");
+  assert.equal(decorated.structuredContent.observation, undefined);
+  const unrelatedMeta = meta("read", "discovery") as any;
+  unrelatedMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "operator_read_attachment";
+  unrelatedMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "operator_read_attachment", request_signature: "c59-unrelated-error"
+  };
+  const unrelated = await runWithAssignmentKernelV2(unrelatedMeta, async () =>
+    decorateAssignmentKernelMcpResultV2(rawResult, "operator_read_attachment") as any);
+  assert.equal(unrelated.structuredContent.operation_result_v2.error_code, "mcp_tool_failed");
+});
+
 test("Candidate 50 tool search retains exact control knowledge without acquiring task eligibility", async () => {
   const operationMeta = meta("read", "discovery") as any;
   operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "revit_search_tools";

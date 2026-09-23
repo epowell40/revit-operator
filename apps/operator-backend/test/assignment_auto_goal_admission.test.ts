@@ -72,6 +72,8 @@ for (const [effect, prompt, facts] of [
   ["apply", "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.", ["task.result_available"]],
   ["read", "Review the Heat Recovery Unit Summary schedule in the open model. Tell me how many equipment rows it contains, identify rows with missing Space Number or Space Name, and give me a brief prioritized assessment of what needs attention. Distinguish an actual blank schedule field from information a tool could not read. Do not change the model.", ["task.result_available"]],
   ["read", "Count the rows in the equipment schedule and identify blank fields. Do not change the model.", ["task.result_available"]],
+  ["read", "Read-only qualification. The attached PDF is the M104 existing-conditions source for Level 4. Do not modify Revit. Interpret the whole sheet, validate its geometry, and register it to the open model only if three landmarks match. Report native_write_allowed:false.", ["task.result_available"]],
+  ["read", "Read-only validation: inspect the attached PDF and the Level 4 plan in the open Revit model. Register matching source landmarks as evidence and report ambiguity.", ["task.result_available"]],
   ["read", "Audit all air terminals and count the missing airflow values. Give me a prioritized gap list. Do not change the model.", ["task.result_available"]],
   ["read", "Is Revit connected?", ["task.result_available"]],
   ["read", "Are these ducts connected?", ["task.result_available"]],
