@@ -9,7 +9,7 @@ import {
 
 const input = {
   interpretationEvidenceId: `ev1_${"a".repeat(32)}`,
-  frameObservationId: "observation-frame-1",
+  frameObservationId: `obsv2_${"f".repeat(64)}`,
   controls: [
     { controlId: "northwest", sourcePageUv: { u: 0.1, v: 0.1 }, candidateViewUv: { u: 0.2, v: 0.2 } },
     { controlId: "northeast", sourcePageUv: { u: 0.9, v: 0.1 }, candidateViewUv: { u: 0.8, v: 0.2 } },
@@ -45,6 +45,7 @@ test("registration input rejects paths, writes, and fewer than three controls", 
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, filePath: "C:/secret.pdf" }).success, false);
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, apply: true }).success, false);
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, controls: input.controls.slice(0, 2) }).success, false);
+  assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, frameObservationId: `ev1_${"f".repeat(32)}` }).success, false);
 });
 
 test("registration tool exposes one explicitly read-only MCP surface", () => {
@@ -53,5 +54,6 @@ test("registration tool exposes one explicitly read-only MCP surface", () => {
   assert.equal(registration.name, "operator_register_existing_conditions_interpretation");
   assert.match(registration.description, /read-only/i);
   assert.match(registration.description, /never creates or changes Revit elements/i);
+  assert.match(registration.description, /model-observation-index/i);
   assert.equal(registration.schema, existingConditionsRegistrationInputSchema);
 });

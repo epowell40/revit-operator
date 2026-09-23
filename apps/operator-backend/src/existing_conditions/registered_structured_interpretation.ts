@@ -93,14 +93,18 @@ function tuple3(value: unknown, label: string): [number, number, number] {
 
 function frameCandidate(value: unknown): CandidateVisibleFrameMapping | null {
   const row = object(value);
+  const mapping = object(row.mapping);
+  const hasMapping = Object.keys(mapping).length > 0;
+  if (hasMapping && (mapping.mode !== "2d_affine" || mapping.modelUnits !== "feet")) return null;
   const frameId = clean(row.frameId ?? row.frame_id);
   const viewId = row.viewId ?? row.view_id;
-  const width = row.widthPx ?? row.width_px;
-  const height = row.heightPx ?? row.height_px;
-  const topLeft = row.topLeftXyz ?? row.top_left_xyz;
-  const topRight = row.topRightXyz ?? row.top_right_xyz;
-  const bottomLeft = row.bottomLeftXyz ?? row.bottom_left_xyz;
-  const level = row.targetLevelElevationFt ?? row.target_level_elevation_ft ?? 0;
+  const width = row.widthPx ?? row.width_px ?? mapping.rasterWidthPx;
+  const height = row.heightPx ?? row.height_px ?? mapping.rasterHeightPx;
+  if (hasMapping && (width !== mapping.rasterWidthPx || height !== mapping.rasterHeightPx)) return null;
+  const topLeft = row.topLeftXyz ?? row.top_left_xyz ?? mapping.topLeftXyz;
+  const topRight = row.topRightXyz ?? row.top_right_xyz ?? mapping.topRightXyz;
+  const bottomLeft = row.bottomLeftXyz ?? row.bottom_left_xyz ?? mapping.bottomLeftXyz;
+  const level = row.targetLevelElevationFt ?? row.target_level_elevation_ft ?? object(row.targetLevel).elevationFt ?? (hasMapping ? undefined : 0);
   if (!frameId || !Number.isSafeInteger(viewId) || viewId <= 0 || !Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0 || !Array.isArray(topLeft) || !Array.isArray(topRight) || !Array.isArray(bottomLeft)) return null;
   return { frame_id: frameId, view_id: viewId, width_px: width, height_px: height, top_left_xyz: tuple3(topLeft, "trusted_frame_top_left"), top_right_xyz: tuple3(topRight, "trusted_frame_top_right"), bottom_left_xyz: tuple3(bottomLeft, "trusted_frame_bottom_left"), target_level_elevation_ft: finite(level, "trusted_frame_target_level_elevation_ft") };
 }
@@ -109,7 +113,7 @@ function extractTrustedFrame(payload: unknown): CandidateVisibleFrameMapping {
   const root = object(payload);
   const candidates = [root, object(root.raw_payload), object(root.payload), object(root.native_result), object(root.result), object(root.data), object(object(root.observation).raw_payload), object(object(root.structuredContent).observation).raw_payload];
   const frames = candidates.map(frameCandidate).filter((value): value is CandidateVisibleFrameMapping => value !== null);
-  const unique = new Map(frames.map(frame => [`${frame.frame_id}:${frame.view_id}:${frame.width_px}:${frame.height_px}`, frame]));
+  const unique = new Map(frames.map(frame => [JSON.stringify(frame), frame]));
   if (unique.size !== 1) throw new Error("existing_conditions_registration_trusted_frame_missing_or_ambiguous");
   return [...unique.values()][0]!;
 }
@@ -168,8 +172,18 @@ export function registerStructuredExistingConditionsInterpretationV1(
     return id;
   });
   if (new Set(ids).size !== ids.length) throw new Error("existing_conditions_registration_control_ids_must_be_unique");
+  const sourceViews = interpretation.payload.receipt?.views;
+  if (!Array.isArray(sourceViews) || sourceViews.length === 0) throw new Error("existing_conditions_registration_page_geometry_missing");
+  const aspects = sourceViews.map(view => {
+    const geometry = view.page_geometry;
+    const width = geometry?.width_points, height = geometry?.height_points;
+    if (typeof width !== "number" || !Number.isFinite(width) || width <= 0 || typeof height !== "number" || !Number.isFinite(height) || height <= 0) throw new Error("existing_conditions_registration_page_geometry_invalid");
+    return width / height;
+  });
+  const pageAspect = aspects[0]!;
+  if (aspects.some(aspect => Math.abs(aspect / pageAspect - 1) > 1e-6)) throw new Error("existing_conditions_registration_page_aspects_inconsistent");
   const controls = input.controls.map((control, index) => ({
-    source: { x: unit(control.source_page_uv?.u, `existing_conditions_registration_control_${index}_source_u`), y: unit(control.source_page_uv?.v, `existing_conditions_registration_control_${index}_source_v`) },
+    source: { x: unit(control.source_page_uv?.u, `existing_conditions_registration_control_${index}_source_u`) * pageAspect, y: unit(control.source_page_uv?.v, `existing_conditions_registration_control_${index}_source_v`) },
     model: viewUvToModel(frameObservation.frame, control.candidate_view_uv, `existing_conditions_registration_control_${index}_candidate`)
   }));
   for (const [name, value] of [["max_rms_error_ft", input.max_rms_error_ft], ["max_point_error_ft", input.max_point_error_ft]] as const) {
@@ -177,14 +191,40 @@ export function registerStructuredExistingConditionsInterpretationV1(
       throw new Error(`existing_conditions_registration_${name}_must_be_positive_and_at_most_100`);
     }
   }
-  const registration = solveExistingConditionsRegistration({
+  const registration = { ...solveExistingConditionsRegistration({
     source_evidence_sha256: interpretation.ref.content_hash.replace(/^sha256:/, ""),
     control_points: controls,
     ...(input.allow_reflection === undefined ? {} : { allow_reflection: input.allow_reflection }),
     ...(input.max_rms_error_ft === undefined ? {} : { max_rms_error_ft: input.max_rms_error_ft }),
     ...(input.max_point_error_ft === undefined ? {} : { max_point_error_ft: input.max_point_error_ft })
-  });
-  if (!registration.verified) throw new Error(`existing_conditions_registration_residual_exceeds_limit:rms=${registration.rms_error_ft}:max=${registration.maximum_error_ft}`);
+  }), source_coordinate_scale_x: pageAspect };
+  if (!registration.verified) {
+    const controlResiduals = controls.map((control, index) => {
+      const mapped = transformExistingConditionsPlanPoint(registration, { x: control.source.x / pageAspect, y: control.source.y });
+      const label = /^[A-Za-z0-9_-]{1,50}$/.test(ids[index] ?? "") ? ids[index] : `control_${index}`;
+      return `${label}:${Math.hypot(mapped.x - control.model.x, mapped.y - control.model.y).toFixed(3)}`;
+    });
+    const leaveOneOut = controls.length >= 4 ? controls.flatMap((_, excludedIndex) => {
+      try {
+        const candidate = solveExistingConditionsRegistration({
+          source_evidence_sha256: interpretation.ref.content_hash.replace(/^sha256:/, ""),
+          control_points: controls.filter((_, index) => index !== excludedIndex),
+          ...(input.allow_reflection === undefined ? {} : { allow_reflection: input.allow_reflection }),
+          ...(input.max_rms_error_ft === undefined ? {} : { max_rms_error_ft: input.max_rms_error_ft }),
+          ...(input.max_point_error_ft === undefined ? {} : { max_point_error_ft: input.max_point_error_ft })
+        });
+        return candidate.verified ? [{ excludedIndex, candidate }] : [];
+      } catch {
+        return [];
+      }
+    }).sort((a, b) => a.candidate.rms_error_ft - b.candidate.rms_error_ft
+      || a.candidate.maximum_error_ft - b.candidate.maximum_error_ft) : [];
+    const best = leaveOneOut[0];
+    const suggestion = best
+      ? `:best_leave_one_out=${/^[A-Za-z0-9_-]{1,50}$/.test(ids[best.excludedIndex] ?? "") ? ids[best.excludedIndex] : `control_${best.excludedIndex}`}:rms=${Number(best.candidate.rms_error_ft.toFixed(3))}:max=${Number(best.candidate.maximum_error_ft.toFixed(3))}`
+      : "";
+    throw new Error(`existing_conditions_registration_residual_exceeds_limit:rms=${registration.rms_error_ft}:max=${registration.maximum_error_ft}:controls=${controlResiduals.join(",")}${suggestion}`);
+  }
   const pagePrimitives = interpretation.payload.receipt?.page_primitives;
   if (!Array.isArray(pagePrimitives)) throw new Error("existing_conditions_registration_page_primitives_missing");
   return {

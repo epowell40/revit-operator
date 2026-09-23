@@ -340,6 +340,23 @@ test("incomplete terminal handoffs disclose applied effects without claiming ver
   }
 }));
 
+test("C59 blocked registration reports measured fit failure without claiming registration", () => workspace(() => {
+  const {goal}=setup("read");
+  const stopped=structuredClone(settleRead(goal.id).settled.snapshot);
+  stopped.terminal=true;stopped.outcome="blocked";stopped.terminal_reason="no_progress_budget_exhausted";
+  stopped.progress_blocker={code:"no_progress_budget_exhausted",gap_ids:["result:delivery"],recorded_at:new Date().toISOString()};
+  const operation=Object.values(stopped.operations)[0]!;
+  operation.capability_id="operator_register_existing_conditions_interpretation";
+  operation.result!.status="failed_before_dispatch";
+  operation.result!.persistent_effect="none";
+  operation.result!.error_code="existing_conditions_registration_residual_exceeds_limit:rms=1.1866190083854595:max=1.7827596133477037";
+  const message=renderTerminalResultV2(stopped);
+  assert.match(message,/registration did not pass/i);
+  assert.match(message,/1\.19 ft RMS/);
+  assert.match(message,/1\.78 ft maximum/);
+  assert.doesNotMatch(message,/registration verified/i);
+}));
+
 test("provider failure cannot replace task success derived while terminal handoff was deferred", () => workspace(() => {
   const { goal, binding } = setup();
   const barrier = beginAssignmentKernelTerminalBarrierV2({ binding, barrier_id: "provider-request:terminal-handoff" });

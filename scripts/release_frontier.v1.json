@@ -29,6 +29,7 @@
     "assignment_async_settlement_barrier.test.ts",
     "assignment_kernel_v2.test.ts",
     "assignment_kernel_v2_architecture.test.ts",
+    "chat_execution_failure_diagnostic.test.ts",
     "assignment_kernel_v2_benchmark_consumers.test.ts",
     "assignment_kernel_v2_candidate3_semantic_replay.test.ts",
     "assignment_kernel_v2_execution.test.ts",
@@ -2586,6 +2587,65 @@
         "backend:registered_structured_interpretation.test.ts",
         "mcp:tools/existingConditionsRegistrationTool.test.ts",
         "mcp:lib/operatorBackendClient.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-provider-failure-loses-original-diagnostic",
+      "coverage": [
+        "backend:assignment_kernel_v2_architecture.test.ts",
+        "backend:chat_execution_failure_diagnostic.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-published-tuple-schema-blocks-codex-thread-start",
+      "coverage": [
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-read-only-tool-blocked-as-unknown-revit-contract",
+      "coverage": [
+        "backend:teammate_loop_runtime.test.ts",
+        "mcp:tools/existingConditionsInterpretationTool.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-read-only-qualification-misclassified-as-model-apply",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-nested-native-frame-rejected-and-evidence-id-used-as-observation",
+      "coverage": [
+        "backend:registered_structured_interpretation.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-retained-interpretation-discarded-as-no-progress",
+      "coverage": [
+        "backend:assignment_kernel_v2_session_index_contract.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-registration-fit-failure-loses-measured-residual-in-handoff",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2_lifecycle.test.ts",
+        "backend:registered_structured_interpretation.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c59-normalized-pdf-page-aspect-rejected-as-landmark-outlier",
+      "coverage": [
+        "backend:structured_interpretation_tool.test.ts",
+        "backend:registered_structured_interpretation.test.ts"
       ]
     }
   ],

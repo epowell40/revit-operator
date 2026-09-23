@@ -81,6 +81,20 @@ function imageSha256(content: Content[], viewKey: string): string {
   if (bytes.length === 0) throw new Error(`existing_conditions_interpretation_render_empty:${viewKey}`);
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
+function trustedPageGeometry(content: Content[], viewKey: string, attachmentId: string, page: number, sourceHash: string) {
+  const candidates = content.filter((item): item is Extract<Content, { type: "text" }> => item.type === "text").flatMap(item => {
+    try {
+      const value = JSON.parse(item.text);
+      return value?.attachment_id === attachmentId && value?.page === page && value?.sha256 === sourceHash && value?.page_geometry ? [value.page_geometry] : [];
+    } catch { return []; }
+  });
+  if (candidates.length !== 1) throw new Error(`existing_conditions_interpretation_page_geometry_missing_or_ambiguous:${viewKey}`);
+  const geometry = candidates[0];
+  if (!geometry || typeof geometry.width_points !== "number" || !Number.isFinite(geometry.width_points) || geometry.width_points <= 0
+      || typeof geometry.height_points !== "number" || !Number.isFinite(geometry.height_points) || geometry.height_points <= 0
+      || !Number.isFinite(geometry.rotation_degrees)) throw new Error(`existing_conditions_interpretation_page_geometry_invalid:${viewKey}`);
+  return { width_points: geometry.width_points as number, height_points: geometry.height_points as number, rotation_degrees: geometry.rotation_degrees as number };
+}
 
 export async function validateExistingConditionsStructuredInterpretationV1(
   input: ExistingConditionsStructuredInterpretationToolInputV1,
@@ -129,6 +143,7 @@ export async function validateExistingConditionsStructuredInterpretationV1(
   for (const { view, viewKey, attachmentId, sourceHash, region } of checkedViews) {
     const rendered = await renderAttachment(sessionId, { attachment_id: attachmentId, pages: [view.page], ...(view.analysis_role === "region_detail" ? { region } : {}) });
     const rasterHash = imageSha256(rendered.content, viewKey);
+    const pageGeometry = trustedPageGeometry(rendered.content, viewKey, attachmentId, view.page, sourceHash);
     sourceViews.push({ view_key: viewKey, attachment_id: attachmentId, page: view.page, source_artifact_sha256: sourceHash, image_sha256: rasterHash });
     boundViews.push({
       view_key: viewKey,
@@ -136,6 +151,7 @@ export async function validateExistingConditionsStructuredInterpretationV1(
       source_artifact_sha256: sourceHash,
       source_page: view.page,
       image_sha256: rasterHash,
+      page_geometry: pageGeometry,
       page_region: region,
       ...(view.parent_context_view_key ? { parent_context_view_key: view.parent_context_view_key } : {}),
       ...(view.sheet_hint ? { sheet_hint: view.sheet_hint } : {}),

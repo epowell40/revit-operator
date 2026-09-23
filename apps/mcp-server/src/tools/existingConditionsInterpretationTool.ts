@@ -6,7 +6,7 @@ const pointSchema = z.object({ u: z.number().min(0).max(1), v: z.number().min(0)
 const regionSchema = z.object({ min_u: z.number().min(0).max(1), min_v: z.number().min(0).max(1), max_u: z.number().min(0).max(1), max_v: z.number().min(0).max(1) }).strict();
 const endpointSchema = z.object({
   endpoint_key: z.string().min(1).max(160), point: pointSchema,
-  outward_direction_uv: z.tuple([z.number().finite(), z.number().finite()]),
+  outward_direction_uv: z.array(z.number().finite()).length(2),
   boundary: z.enum(["internal", "view_boundary", "sheet_continuation"]),
   continuation_key: z.string().max(160),
   continuation_kind: z.enum(["none", "same_level_run", "vertical_riser"])

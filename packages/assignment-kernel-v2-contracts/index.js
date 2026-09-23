@@ -339,6 +339,16 @@ const CONTROL_CAPABILITY_DEFINITIONS_V2 = Object.freeze({
     durable_result_evidence: true,
     collection_fields: Object.freeze([])
   }),
+  operator_validate_existing_conditions_interpretation: Object.freeze({
+    capability_id: "operator_validate_existing_conditions_interpretation",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
+  operator_register_existing_conditions_interpretation: Object.freeze({
+    capability_id: "operator_register_existing_conditions_interpretation",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
   revit_search_tools: Object.freeze({
     capability_id: "revit_search_tools",
     durable_result_evidence: true,
@@ -423,6 +433,29 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
   const definition = assignmentKernelControlCapabilityV2(capabilityId);
   if (!definition?.durable_result_evidence) return [];
   const payload = record(value) ?? {};
+  if (definition.capability_id === "operator_validate_existing_conditions_interpretation"
+      || definition.capability_id === "operator_register_existing_conditions_interpretation") {
+    const evidence = record(payload.evidence_ref);
+    const evidenceId = boundedControlText(evidence?.evidence_id, 80);
+    const contentHash = boundedControlText(evidence?.content_hash, 80);
+    if (payload.schema_version !== 1 || payload.native_write_allowed !== false
+        || evidence?.trust_level !== "host_observed"
+        || !/^ev1_[A-Za-z0-9_-]{32}$/.test(evidenceId)
+        || !/^sha256:[a-f0-9]{64}$/.test(contentHash)) return [];
+    const dimensions = { capability_id: definition.capability_id, content_hash: contentHash };
+    if (definition.capability_id === "operator_validate_existing_conditions_interpretation") {
+      if (!/^[a-f0-9]{64}$/.test(boundedControlText(payload.source_binding_sha256, 80))
+          || !/^[a-f0-9]{64}$/.test(boundedControlText(payload.interpretation_sha256, 80))) return [];
+      return [{ fact_id: "control.existing_conditions_interpretation_available", fact_class: "control",
+        value: true, cardinality: "many", identity_dimensions: Object.keys(dimensions).sort(), dimensions }];
+    }
+    const registration = record(payload.registration);
+    if (registration?.verified !== true
+        || !/^ev1_[A-Za-z0-9_-]{32}$/.test(boundedControlText(payload.interpretation_evidence_id, 80))
+        || !/^obsv2_[a-f0-9]{64}$/.test(boundedControlText(payload.frame_observation_id, 80))) return [];
+    return [{ fact_id: "control.existing_conditions_registration_available", fact_class: "control",
+      value: true, cardinality: "many", identity_dimensions: Object.keys(dimensions).sort(), dimensions }];
+  }
   const status = boundedControlText(payload.status, 80) || "completed";
   const evidenceResult = definition.capability_id === "operator_retrieve_evidence"
     ? record(payload.result) ?? payload

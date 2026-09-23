@@ -887,6 +887,20 @@ function transportOnlyResult(
     ? payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload")
     : undefined;
   const failure = object(object(payload).structuredContent ?? object(payload).structured_content);
+  const failureContent = object(payload).content;
+  const registrationFailureText = context.capability_id === "operator_register_existing_conditions_interpretation"
+    && failed && Array.isArray(failureContent)
+    ? failureContent.map((item: unknown) => text(object(item).text)).join(" ")
+    : "";
+  const registrationResidual = registrationFailureText.match(
+    /existing_conditions_registration_residual_exceeds_limit:rms=(\d+(?:\.\d+)?):max=(\d+(?:\.\d+)?)/
+  );
+  const registrationErrorCode = registrationResidual
+    && Number.isFinite(Number(registrationResidual[1]))
+    && Number.isFinite(Number(registrationResidual[2]))
+    && Number(registrationResidual[1]) <= 1000
+    && Number(registrationResidual[2]) <= 1000
+    ? registrationResidual[0] : undefined;
   const validationIssues = Array.isArray(failure.validation_issues)
     ? failure.validation_issues.map(candidate => object(candidate)).filter(candidate =>
       text(candidate.field_path) && text(candidate.expected_type) && text(candidate.actual_type))
@@ -941,7 +955,7 @@ function transportOnlyResult(
     } : {}),
     request_identity: context.request_identity,
     completed_at: new Date().toISOString(),
-    ...(failed ? { error_code: "mcp_tool_failed" } : {}),
+    ...(failed ? { error_code: registrationErrorCode ?? "mcp_tool_failed" } : {}),
     ...(inputSchemaGap ? { input_schema_gap: inputSchemaGap } : {})
   };
 }

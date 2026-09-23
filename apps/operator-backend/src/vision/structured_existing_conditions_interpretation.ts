@@ -21,6 +21,7 @@ export type ExistingConditionsInterpretationViewV1 = {
   source_artifact_sha256: string;
   source_page: number;
   image_sha256: string;
+  page_geometry?: { width_points: number; height_points: number; rotation_degrees: number };
   page_region: ExistingConditionsInterpretationRegionV1;
   parent_context_view_key?: string;
   sheet_hint?: string;

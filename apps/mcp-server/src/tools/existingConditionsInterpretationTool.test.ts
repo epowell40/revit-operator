@@ -6,6 +6,7 @@ import {
   registerExistingConditionsInterpretationTool
 } from "./existingConditionsInterpretationTool.js";
 import { ASSIGNMENT_KERNEL_V2_BINDING_META_KEY, runWithAssignmentKernelV2 } from "../lib/assignmentKernelV2.js";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 
 const input = {
   packageId: "floor-4-east",
@@ -55,4 +56,15 @@ test("tool registers a single explicitly read-only MCP surface", () => {
   assert.match(registration.description, /read-only/i);
   assert.match(registration.description, /never creates or changes Revit elements/i);
   assert.equal(registration.schema, existingConditionsInterpretationInputSchema);
+});
+
+test("published tool schema uses homogeneous array items accepted by Codex dynamic tools", () => {
+  const schema = toJsonSchemaCompat(existingConditionsInterpretationInputSchema, {
+    strictUnions: true, pipeStrategy: "input"
+  }) as any;
+  const direction = schema.properties.response.properties.primitives.items.properties.endpoints.items.properties.outward_direction_uv;
+  assert.equal(direction.type, "array");
+  assert.equal(direction.minItems, 2);
+  assert.equal(direction.maxItems, 2);
+  assert.equal(direction.items.type, "number");
 });

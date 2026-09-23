@@ -315,11 +315,11 @@ function modelToSource(
   const dy = model.y - registration.translation_ft.y;
   return registration.reflection_applied === true
     ? {
-        x: (cos * dx + sin * dy) / registration.scale,
+        x: (cos * dx + sin * dy) / registration.scale / (registration.source_coordinate_scale_x ?? 1),
         y: (sin * dx - cos * dy) / registration.scale
       }
     : {
-        x: (cos * dx + sin * dy) / registration.scale,
+        x: (cos * dx + sin * dy) / registration.scale / (registration.source_coordinate_scale_x ?? 1),
         y: (-sin * dx + cos * dy) / registration.scale
       };
 }

@@ -178,6 +178,7 @@ import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.j
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
+import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
 import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
@@ -2455,24 +2456,16 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const message = err instanceof Error ? err.message : "Unknown error";
+        const message = recordChatExecutionFailureDiagnostic({
+          session_id: parsed.session_id, message_id: parsed.message_id, error: err, stream: true
+        }, {
+          append_event: (sessionId, payload) => { appendEvent(sessionId, "assistant", "backend.error", payload); },
+          capture_bundle: (sessionId, messageId, error, stream) => captureBackendErrorBundle(sessionId, messageId, error, { stream }),
+          log_error: payload => log("chat.error", payload)
+        });
         if (handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding, message_id: parsed.message_id, error: err,
           deliver_terminal: response => { send("assistant.done", { text: response.assistant_message });
             send("actions", { actions: [], ok: true }); send("done", {}); } }).response) return;
-        try {
-          appendEvent(parsed.session_id as any, "assistant", "backend.error", {
-            message_id: parsed.message_id,
-            message,
-            ...(err instanceof Error && typeof err.stack === "string" ? { stack: err.stack } : {})
-          });
-        } catch {
-          // ignore
-        }
-        try {
-          captureBackendErrorBundle(parsed.session_id as any, parsed.message_id as any, err, { stream: true });
-        } catch {
-          // ignore
-        }
         try {
           send("error", { error: message });
           send("done", {});
@@ -2770,7 +2763,13 @@ const server = http.createServer(async (req, res) => {
         if (consumeRestartRequested()) setTimeout(() => scheduleBackendRestart(), 250);
         return resp;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
+        const message = recordChatExecutionFailureDiagnostic({
+          session_id: parsed.session_id, message_id: parsed.message_id, error: err, stream: false
+        }, {
+          append_event: (sessionId, payload) => { appendEvent(sessionId, "assistant", "backend.error", payload); },
+          capture_bundle: (sessionId, messageId, error, stream) => captureBackendErrorBundle(sessionId, messageId, error, { stream }),
+          log_error: payload => log("chat.error", payload)
+        });
         if (assignmentBinding?.kernelVersion === 1) {
           settleAssignmentProviderFailure(
             parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
@@ -2780,20 +2779,6 @@ const server = http.createServer(async (req, res) => {
         const terminalRecovery = handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding,
           message_id: parsed.message_id, error: err }).response;
         if (terminalRecovery) return writeJson(res, 200, terminalRecovery);
-        try {
-          appendEvent(parsed.session_id, "assistant", "backend.error", {
-            message_id: parsed.message_id,
-            message,
-            ...(err instanceof Error && typeof err.stack === "string" ? { stack: err.stack } : {})
-          });
-        } catch {
-          // ignore
-        }
-        try {
-          captureBackendErrorBundle(parsed.session_id, parsed.message_id, err, { stream: false });
-        } catch {
-          // ignore
-        }
         try {
           persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
           setStepStopReason(parsed.session_id, parsed.message_id, "ERROR");
@@ -2805,7 +2790,6 @@ const server = http.createServer(async (req, res) => {
         } catch {
           // ignore
         }
-        log("chat.error", { session_id: parsed.session_id, message_id: parsed.message_id, error: message });
         return writeJson(res, 500, { error: message });
       }
     }

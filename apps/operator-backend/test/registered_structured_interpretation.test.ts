@@ -34,7 +34,8 @@ const interpretation = {
     open_questions: ["Duct size is not legible."],
     receipt: {
       schema_version: 1, package_id: "floor-4-east", source_binding_sha256: "c".repeat(64), interpretation_sha256: "d".repeat(64), native_write_allowed: false,
-      views: [],
+      views: [{ view_key: "detail", source_artifact_sha256: "e".repeat(64), source_page: 4,
+        page_geometry: { width_points: 100, height_points: 100, rotation_degrees: 0 } }],
       page_primitives: [{
         primitive_id: "duct-1", source_view_key: "detail", source_artifact_sha256: "e".repeat(64), source_page: 4,
         points: [{ u: 0.2, v: 0.3 }, { u: 0.8, v: 0.3 }],
@@ -79,6 +80,62 @@ test("registration fails closed when reflection is not explicitly allowed", () =
   );
 });
 
+test("C59 rejected fit identifies each measured control so a mismatched landmark can be corrected", () => {
+  const controls = input.controls.map(control => control.control_id === "south"
+    ? { ...control, candidate_view_uv: { u: 0.1, v: 0.9 } } : control);
+  assert.throws(
+    () => registerStructuredExistingConditionsInterpretationV1({ ...input, controls }, { read_interpretation: () => interpretation, read_frame: () => frame }),
+    /existing_conditions_registration_residual_exceeds_limit:rms=[0-9.]+:max=[0-9.]+:controls=origin:[0-9.]+,east:[0-9.]+,south:[0-9.]+/
+  );
+});
+
+test("C59 four-landmark rejection identifies a verifiable leave-one-out candidate without accepting it", () => {
+  const controls = [
+    { control_id: "origin", source_page_uv: { u: 0, v: 0 }, candidate_view_uv: { u: 0.1, v: 0.1 } },
+    { control_id: "east", source_page_uv: { u: 1, v: 0 }, candidate_view_uv: { u: 1, v: 0 } },
+    { control_id: "south", source_page_uv: { u: 0, v: 1 }, candidate_view_uv: { u: 0, v: 1 } },
+    { control_id: "southeast", source_page_uv: { u: 1, v: 1 }, candidate_view_uv: { u: 1, v: 1 } }
+  ];
+  assert.throws(
+    () => registerStructuredExistingConditionsInterpretationV1({ ...input, controls }, { read_interpretation: () => interpretation, read_frame: () => frame }),
+    /best_leave_one_out=origin:rms=0:max=0/
+  );
+});
+
+test("C59 installed M104 four-control fit uses the trusted PDF page aspect", () => {
+  const liveFrame = { ...frame, frame: { ...frame.frame,
+    top_left_xyz: [-123.30115740624503, 71.48585540021631, 32.16666666666667] as [number, number, number],
+    top_right_xyz: [89.81093477418699, 71.48585540021631, 32.16666666666667] as [number, number, number],
+    bottom_left_xyz: [-123.30115740624503, -47.01832591228737, 32.16666666666667] as [number, number, number]
+  } };
+  const controls = [
+    { control_id: "grid_4_E", source_page_uv: { u: 0.30060945725206994, v: 0.47512243055555553 }, candidate_view_uv: { u: 0.34747515567323783, v: 0.74661213018553 } },
+    { control_id: "grid_6_D", source_page_uv: { u: 0.45783904716556884, v: 0.567830763888889 }, candidate_view_uv: { u: 0.5953885086546447, v: 0.5588550421775954 } },
+    { control_id: "grid_8_B", source_page_uv: { u: 0.5699333253974552, v: 0.700816875 }, candidate_view_uv: { u: 0.7721343060483283, v: 0.2895255863459825 } },
+    { control_id: "grid_7_C", source_page_uv: { u: 0.5183501177155252, v: 0.6374488194444445 }, candidate_view_uv: { u: 0.6907999568052172, v: 0.4178614236547769 } }
+  ];
+  const source = structuredClone(interpretation);
+  source.payload.receipt.views[0].page_geometry = { width_points: 3024.24, height_points: 2160, rotation_degrees: 0 };
+  const result = registerStructuredExistingConditionsInterpretationV1({ ...input, controls, max_rms_error_ft: 0.5, max_point_error_ft: 1 },
+    { read_interpretation: () => source, read_frame: () => liveFrame });
+  assert.equal(result.registration.verified, true);
+  assert.ok(result.registration.rms_error_ft < 0.001);
+  assert.equal(result.registration.source_coordinate_scale_x, 3024.24 / 2160);
+  assert.equal(result.native_write_allowed, false);
+});
+
+test("C59 registration rejects absent and inconsistent trusted page geometry", () => {
+  const absent = structuredClone(interpretation);
+  absent.payload.receipt.views = [];
+  assert.throws(() => registerStructuredExistingConditionsInterpretationV1(input,
+    { read_interpretation: () => absent, read_frame: () => frame }), /existing_conditions_registration_page_geometry_missing/);
+  const inconsistent = structuredClone(interpretation);
+  inconsistent.payload.receipt.views.push({ ...inconsistent.payload.receipt.views[0], view_key: "sheet",
+    page_geometry: { width_points: 200, height_points: 100, rotation_degrees: 0 } });
+  assert.throws(() => registerStructuredExistingConditionsInterpretationV1(input,
+    { read_interpretation: () => inconsistent, read_frame: () => frame }), /existing_conditions_registration_page_aspects_inconsistent/);
+});
+
 test("registration rejects degenerate source controls before producing model geometry", () => {
   const controls = input.controls.map((control, index) => ({ ...control, source_page_uv: { u: index / 2, v: index / 2 } }));
   assert.throws(
@@ -119,8 +176,11 @@ test("default registration reads the exact native frame observation and source-b
     });
     const nativeFrame = {
       frameId: "frame-retained-1", viewId: 44, widthPx: 1000, heightPx: 1000,
-      topLeftXyz: [0, 0, 10], topRightXyz: [100, 0, 10], bottomLeftXyz: [0, -100, 10],
-      targetLevelElevationFt: 0
+      targetLevel: { id: 99, name: "L4", elevationFt: 10 },
+      mapping: {
+        mode: "2d_affine", topLeftXyz: [0, 0, 10], topRightXyz: [100, 0, 10], bottomLeftXyz: [0, -100, 10],
+        rasterWidthPx: 1000, rasterHeightPx: 1000, modelUnits: "feet"
+      }
     };
     const lease = openAssignmentKernelOperationV2({
       snapshot: initialSnapshot,

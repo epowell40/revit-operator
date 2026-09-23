@@ -1072,6 +1072,42 @@ function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: 
   return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
 }
 
+test("C59 retained interpretation and registration advance the open result gap once each", () => {
+  const evidence = { evidence_id: `ev1_${"a".repeat(32)}`, content_hash: `sha256:${"b".repeat(64)}`, trust_level: "host_observed" };
+  const interpretation = { schema_version: 1, source_binding_sha256: "c".repeat(64),
+    interpretation_sha256: "d".repeat(64), native_write_allowed: false, evidence_ref: evidence };
+  const registration = { schema_version: 1, interpretation_evidence_id: evidence.evidence_id,
+    frame_observation_id: `obsv2_${"e".repeat(64)}`, registration: { verified: true },
+    native_write_allowed: false, evidence_ref: { ...evidence, content_hash: `sha256:${"f".repeat(64)}` } };
+  let before = journal().snapshot();
+  const step = (id: string, tool: string, payload: unknown, expected: boolean) => {
+    const obs: ObservationV2 = { ...observation(id, `obs-${id}`),
+      authority: "operator-mcp-transport", result_schema_id: `operator-capability/${tool}/v2`,
+      facts: assignmentKernelControlEvidenceFactsV2(tool, payload),
+      verification_relevance: ["control"], fulfillment_role: "supporting_control",
+      evidence_class: "control", capability_id: tool, eligible_criterion_ids: [] };
+    const op: OperationV2 = { ...operation(id), capability_id: tool, purpose: "work",
+      fulfillment_role: "supporting_control", delegation_authority_id: undefined,
+      advances_criterion_ids: [], eligible_criterion_ids: [], resolves_gap_ids: ["result:delivery"],
+      dispatch_state: "dispatched", dispatch_authority: "mcp", settlement_state: "settled",
+      observation_ids: [obs.observation_id], result: { ...result(id), authority: obs.authority,
+        result_schema_id: obs.result_schema_id }, settled_at: "2026-08-26T20:00:05.000Z" };
+    const after = { ...before, operations: { ...before.operations, [id]: op },
+      observations: { ...before.observations, [obs.observation_id]: obs },
+      observation_versions: { ...before.observation_versions, [obs.observation_id]: 2 },
+      in_flight_operation_ids: [], quiescent: true };
+    const epoch = buildProgressEpochV2({ before, after, stated_gap_ids: ["result:delivery"],
+      admitted_operation_ids: [id], recorded_at: "2026-08-26T20:00:06.000Z" });
+    assert.equal(epoch.genuine_progress, expected, id);
+    assert.equal(obs.facts.every(fact => fact.fact_class === "control"), true);
+    before = { ...after, progress_epochs: [...before.progress_epochs, epoch] };
+  };
+  step("interpretation", "operator_validate_existing_conditions_interpretation", interpretation, true);
+  step("interpretation-repeat", "operator_validate_existing_conditions_interpretation", interpretation, false);
+  step("registration", "operator_register_existing_conditions_interpretation", registration, true);
+  step("registration-repeat", "operator_register_existing_conditions_interpretation", registration, false);
+});
+
 test("seven retained room pages progress through the real store and controller but overlapping rereads stop", { concurrency: false }, () => {
   const prior = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-page-progress-"));

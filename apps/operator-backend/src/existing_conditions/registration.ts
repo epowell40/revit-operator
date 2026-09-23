@@ -22,6 +22,8 @@ export type ExistingConditionsRegistrationReceipt = {
   source_evidence_sha256: string;
   control_point_count: number;
   scale: number;
+  /** Host-verified source page width/height applied to normalized page U before similarity fitting. */
+  source_coordinate_scale_x?: number;
   rotation_degrees: number;
   reflection_applied?: boolean;
   translation_ft: ExistingConditionsPlanPoint;
@@ -181,6 +183,9 @@ export function transformExistingConditionsPlanPoint(
   source: ExistingConditionsPlanPoint
 ): ExistingConditionsPlanPoint {
   const value = point(source, "source_point");
+  const sourceScaleX = receipt.source_coordinate_scale_x ?? 1;
+  if (!Number.isFinite(sourceScaleX) || sourceScaleX <= 0) throw new Error("registration_source_coordinate_scale_x_invalid");
+  value.x *= sourceScaleX;
   const radians = receipt.rotation_degrees * Math.PI / 180;
   const a = receipt.scale * Math.cos(radians);
   const b = receipt.scale * Math.sin(radians);

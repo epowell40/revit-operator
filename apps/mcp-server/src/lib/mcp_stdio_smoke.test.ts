@@ -482,6 +482,12 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
+  const interpretationSchema = tools.tools.find(tool => tool.name === "operator_validate_existing_conditions_interpretation")!.inputSchema as any;
+  const directionSchema = interpretationSchema.properties.response.properties.primitives.items.properties.endpoints.items.properties.outward_direction_uv;
+  assert.equal(directionSchema.type, "array");
+  assert.equal(directionSchema.minItems, 2);
+  assert.equal(directionSchema.maxItems, 2);
+  assert.equal(directionSchema.items.type, "number", "MCP transport must not publish tuple items that Codex rejects at thread start");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const retrievalTool = tools.tools.find(tool => tool.name === "operator_retrieve_evidence")!;
   assert.match(retrievalTool.description!, /pagination.next_start/);

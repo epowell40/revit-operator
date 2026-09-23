@@ -6,7 +6,7 @@ const uvSchema = z.object({ u: z.number().min(0).max(1), v: z.number().min(0).ma
 
 export const existingConditionsRegistrationInputSchema = z.object({
   interpretationEvidenceId: z.string().regex(/^ev1_[A-Za-z0-9_-]{32}$/),
-  frameObservationId: z.string().min(1).max(240),
+  frameObservationId: z.string().regex(/^obsv2_[a-f0-9]{64}$/),
   controls: z.array(z.object({
     controlId: z.string().min(1).max(160),
     sourcePageUv: uvSchema,
@@ -56,7 +56,7 @@ export function registerExistingConditionsRegistrationTool(
 ): unknown {
   return registerTool(
     "operator_register_existing_conditions_interpretation",
-    "Register source-bound existing-conditions geometry to an authoritative Revit view frame using 3 to 12 matching landmarks. Reports measured residuals and fails closed when the fit is outside the requested limits. Read-only: it never creates or changes Revit elements.",
+    "Register source-bound existing-conditions geometry to an authoritative Revit view frame using 3 to 12 matching landmarks. frameObservationId must be the obsv2_ observation_id in the model-observation-index returned by revit_call_tool POST /revit/export-view-frame, never an ev1_ evidence_id. Reports measured residuals and fails closed when the fit is outside the requested limits. Read-only: it never creates or changes Revit elements.",
     existingConditionsRegistrationInputSchema,
     input => handleExistingConditionsRegistration(input, registrar)
   );
