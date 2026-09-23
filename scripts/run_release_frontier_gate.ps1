@@ -10,9 +10,15 @@ $ErrorActionPreference = "Stop"
 function Invoke-External([string]$Name, [scriptblock]$Action) {
   Write-Host ""
   Write-Host "== $Name =="
-  $global:LASTEXITCODE = 0
-  & $Action
-  if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE" }
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    $global:LASTEXITCODE = 0
+    & $Action
+    if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE" }
+  } finally {
+    $timer.Stop()
+    Write-Host ('FRONTIER_TIMING name="{0}" elapsed_seconds={1:N1}' -f $Name, $timer.Elapsed.TotalSeconds)
+  }
 }
 
 function Resolve-AppRoot([string]$Root, [string]$Name) {
@@ -79,7 +85,7 @@ function Invoke-Composition([string]$Root, [string]$Label) {
       & npm run build
       if ($LASTEXITCODE -ne 0) { return }
       $compiled = @($manifest.backend_tests | ForEach-Object { Join-Path "dist/test" ([string]$_).Replace(".ts", ".js") })
-      & node scripts/run-tests.mjs @compiled
+      & node scripts/run-tests.mjs --jobs=4 @compiled
     } finally { Pop-Location }
   }
 
