@@ -32,9 +32,24 @@ const interpretation = {
   ref: { evidence_id: input.interpretation_evidence_id, content_hash: `sha256:${"b".repeat(64)}` },
   payload: {
     open_questions: ["Duct size is not legible."],
+    interpretation: {
+      schema_version: 1, package_id: "floor-4-east", coordinate_space: "normalized_uv_top_left", view_keys: ["detail"],
+      source_marks: [{ source_mark_id: "mark-1", source_view_key: "detail", disposition: { status: "candidate", primitive_ids: ["duct-1"] } },
+        { source_mark_id: "mark-2", source_view_key: "detail", disposition: { status: "unresolved", reason: "Symbol is illegible." } }],
+      primitives: [{ primitive_id: "duct-1", source_view_key: "detail", source_mark_ids: ["mark-1"], kind: "route_segment",
+        points: [{ u: 0.2, v: 0.3 }, { u: 0.8, v: 0.3 }],
+        endpoints: [
+          { endpoint_key: "duct-1:start", point: { u: 0.2, v: 0.3 }, outward_direction_uv: [-1, 0], boundary: "sheet_continuation", continuation_key: "west-run", continuation_kind: "same_level_run" },
+          { endpoint_key: "duct-1:end", point: { u: 0.8, v: 0.3 }, outward_direction_uv: [1, 0], boundary: "internal" }
+        ],
+        claims: { system: { value: "Supply Air", confidence: 0.6, basis: "provider_hypothesis" }, size: { value: "unknown", confidence: 0, basis: "unresolved" } },
+        confidence: { geometry: 0.95, classification: 0.8, topology: 0.7, visibility: 0.9 }
+      }]
+    },
     receipt: {
       schema_version: 1, package_id: "floor-4-east", source_binding_sha256: "c".repeat(64), interpretation_sha256: "d".repeat(64), native_write_allowed: false,
       views: [{ view_key: "detail", source_artifact_sha256: "e".repeat(64), source_page: 4,
+        local_to_page_uv: { u_offset: 0, v_offset: 0, u_scale: 1, v_scale: 1 },
         page_geometry: { width_points: 100, height_points: 100, rotation_degrees: 0 } }],
       page_primitives: [{
         primitive_id: "duct-1", source_view_key: "detail", source_artifact_sha256: "e".repeat(64), source_page: 4,
@@ -64,6 +79,16 @@ test("source page geometry registers through an authoritative candidate frame wi
   assert.equal(points.length, 2);
   assert.ok(Math.abs(points[0]!.x - 20) < 1e-10 && Math.abs(points[0]!.y + 30) < 1e-10);
   assert.ok(Math.abs(points[1]!.x - 80) < 1e-10 && Math.abs(points[1]!.y + 30) < 1e-10);
+  assert.equal(result.package_id, "floor-4-east");
+  assert.equal(result.native_view_id, 44);
+  assert.deepEqual(result.source_marks.map(mark => [mark.source_mark_id, mark.disposition.status]), [["mark-1", "candidate"], ["mark-2", "unresolved"]]);
+  assert.equal(result.registered_primitives[0]?.kind, "route_segment");
+  assert.deepEqual(result.registered_primitives[0]?.source_mark_ids, ["mark-1"]);
+  assert.equal(result.registered_primitives[0]?.claims?.size?.basis, "unresolved");
+  assert.equal(result.registered_primitives[0]?.claims?.system?.basis, "provider_hypothesis");
+  assert.equal(result.registered_primitives[0]?.model_endpoints[0]?.boundary, "sheet_continuation");
+  assert.equal(result.registered_primitives[0]?.model_endpoints[0]?.continuation_key, "west-run");
+  assert.ok(Math.abs(result.registered_primitives[0]!.model_endpoints[0]!.outward_direction_xy[0] + 1) < 1e-10);
   assert.deepEqual(result.open_questions, ["Duct size is not legible."]);
   const summary = summarizeRegisteredStructuredExistingConditionsInterpretationV1(result, {
     evidence_id: `ev1_${"c".repeat(32)}`, content_hash: `sha256:${"d".repeat(64)}`,
@@ -71,6 +96,17 @@ test("source page geometry registers through an authoritative candidate frame wi
   });
   assert.equal(summary.registered_primitive_count, 1);
   assert.equal("registered_primitives" in summary, false, "the immediate tool reply must not duplicate retained model geometry");
+});
+
+test("registration rejects missing source meaning instead of publishing geometry-only drafting input", () => {
+  const missing = structuredClone(interpretation);
+  delete missing.payload.interpretation;
+  assert.throws(() => registerStructuredExistingConditionsInterpretationV1(input,
+    { read_interpretation: () => missing, read_frame: () => frame }), /existing_conditions_registration_source_semantics_missing/);
+  const mismatched = structuredClone(interpretation);
+  mismatched.payload.interpretation.primitives[0].primitive_id = "different-duct";
+  assert.throws(() => registerStructuredExistingConditionsInterpretationV1(input,
+    { read_interpretation: () => mismatched, read_frame: () => frame }), /existing_conditions_registration_primitive_semantics_mismatch/);
 });
 
 test("registration fails closed when reflection is not explicitly allowed", () => {

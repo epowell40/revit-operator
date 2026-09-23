@@ -39,6 +39,29 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(legacy, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
         }
 
+        [Fact]
+        public void AtomicNetworkCommitNeedsTopLevelTransactionReceipt()
+        {
+            var createdIds = new[] { 1542939L, 1542942L, 1542945L };
+            var workflow = new
+            {
+                status = "AppliedNetworkVerified",
+                workflowMode = "apply",
+                atomicCommitSucceeded = true,
+                created = new { allModelIds = createdIds },
+                transaction = OperatorNativeTransactionReceipt.Committed(createdIds)
+            };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-branch-network-workflow");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            foreach (var id in createdIds)
+                Assert.Contains($"element_id:{id}", settlement.AffectedTargetIdentities);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                workflow.status, workflow.workflowMode, workflow.atomicCommitSucceeded, workflow.created
+            }, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
+        }
+
         [Theory]
         [InlineData("RolledBack", "none", "native_rollback")]
         [InlineData("Committed", "applied", "native_transaction")]

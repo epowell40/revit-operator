@@ -9,12 +9,15 @@ import {
   type ExistingConditionsRegistrationReceipt
 } from "./registration.js";
 import type { StructuredExistingConditionsInterpretationReceiptV1 } from "../vision/structured_existing_conditions_interpretation.js";
+import type { SheetPixelInterpretationInputV1, SheetPixelPrimitiveV1 } from "./sheet_pixel_interpretation.js";
+import type { SheetTopologySourceMarkV1 } from "./sheet_topology_compiler.js";
 
 type Binding = { session_id: string; assignment_id: string; run_id: string; generation: number };
 type InterpretationEvidence = {
   ref: EvidenceRefV1;
   payload: {
     receipt: StructuredExistingConditionsInterpretationReceiptV1;
+    interpretation: SheetPixelInterpretationInputV1;
     open_questions?: string[];
   };
 };
@@ -40,16 +43,30 @@ export type RegisteredStructuredExistingConditionsInterpretationV1 = {
   frame_observation_id: string;
   frame_operation_id: string;
   frame_evidence_id: string;
+  package_id: string;
+  native_view_id: number;
   registration: ExistingConditionsRegistrationReceipt;
   native_write_allowed: false;
   open_questions: string[];
+  source_marks: SheetTopologySourceMarkV1[];
   registered_primitives: Array<{
     primitive_id: string;
     source_view_key: string;
+    source_mark_ids: string[];
+    kind: SheetPixelPrimitiveV1["kind"];
+    claims: SheetPixelPrimitiveV1["claims"];
+    confidence: SheetPixelPrimitiveV1["confidence"];
     source_artifact_sha256: string;
     source_page: number;
     model_points: ExistingConditionsPlanPoint[];
-    model_endpoints: Array<{ endpoint_key: string; point: ExistingConditionsPlanPoint }>;
+    model_endpoints: Array<{
+      endpoint_key: string;
+      point: ExistingConditionsPlanPoint;
+      outward_direction_xy: [number, number];
+      boundary: "internal" | "view_boundary" | "sheet_continuation";
+      continuation_key?: string;
+      continuation_kind?: "same_level_run" | "vertical_riser";
+    }>;
   }>;
 };
 
@@ -68,6 +85,8 @@ export function summarizeRegisteredStructuredExistingConditionsInterpretationV1(
     frame_observation_id: result.frame_observation_id,
     frame_operation_id: result.frame_operation_id,
     frame_evidence_id: result.frame_evidence_id,
+    package_id: result.package_id,
+    native_view_id: result.native_view_id,
     registration: result.registration,
     native_write_allowed: false,
     registered_primitive_count: result.registered_primitives.length,
@@ -227,22 +246,62 @@ export function registerStructuredExistingConditionsInterpretationV1(
   }
   const pagePrimitives = interpretation.payload.receipt?.page_primitives;
   if (!Array.isArray(pagePrimitives)) throw new Error("existing_conditions_registration_page_primitives_missing");
+  const source = interpretation.payload.interpretation;
+  if (source?.schema_version !== 1 || source.package_id !== interpretation.payload.receipt.package_id || !Array.isArray(source.primitives) || !Array.isArray(source.source_marks)) throw new Error("existing_conditions_registration_source_semantics_missing");
+  const sourceById = new Map(source.primitives.map(primitive => [primitive.primitive_id, primitive]));
+  if (sourceById.size !== source.primitives.length || sourceById.size !== pagePrimitives.length) throw new Error("existing_conditions_registration_source_primitive_set_mismatch");
+  const boundViewByKey = new Map(sourceViews.map(view => [view.view_key, view]));
+  const registeredPrimitives = pagePrimitives.map(primitive => {
+    const semantic = sourceById.get(primitive.primitive_id);
+    const view = boundViewByKey.get(primitive.source_view_key);
+    if (!semantic || !view || semantic.source_view_key !== primitive.source_view_key || semantic.points.length !== primitive.points.length || (semantic.endpoints ?? []).length !== primitive.endpoints.length) throw new Error(`existing_conditions_registration_primitive_semantics_mismatch:${primitive.primitive_id}`);
+    const endpointsByKey = new Map((semantic.endpoints ?? []).map(endpoint => [endpoint.endpoint_key, endpoint]));
+    if (endpointsByKey.size !== primitive.endpoints.length) throw new Error(`existing_conditions_registration_endpoint_semantics_mismatch:${primitive.primitive_id}`);
+    const scale = view.local_to_page_uv;
+    if (!scale || !Number.isFinite(scale.u_scale) || !Number.isFinite(scale.v_scale) || scale.u_scale <= 0 || scale.v_scale <= 0) throw new Error(`existing_conditions_registration_view_scale_missing:${primitive.source_view_key}`);
+    return {
+      primitive_id: primitive.primitive_id,
+      source_view_key: primitive.source_view_key,
+      source_mark_ids: [...semantic.source_mark_ids],
+      kind: semantic.kind,
+      claims: semantic.claims,
+      confidence: semantic.confidence,
+      source_artifact_sha256: primitive.source_artifact_sha256,
+      source_page: primitive.source_page,
+      model_points: primitive.points.map(point => transformExistingConditionsPlanPoint(registration, { x: point.u, y: point.v })),
+      model_endpoints: primitive.endpoints.map(endpoint => {
+        const meaning = endpointsByKey.get(endpoint.endpoint_key);
+        if (!meaning) throw new Error(`existing_conditions_registration_endpoint_semantics_mismatch:${primitive.primitive_id}:${endpoint.endpoint_key}`);
+        const point = transformExistingConditionsPlanPoint(registration, { x: endpoint.point.u, y: endpoint.point.v });
+        const offset = transformExistingConditionsPlanPoint(registration, {
+          x: endpoint.point.u + meaning.outward_direction_uv[0] * scale.u_scale,
+          y: endpoint.point.v + meaning.outward_direction_uv[1] * scale.v_scale
+        });
+        const length = Math.hypot(offset.x - point.x, offset.y - point.y);
+        if (!Number.isFinite(length) || length < 1e-9) throw new Error(`existing_conditions_registration_endpoint_direction_invalid:${primitive.primitive_id}:${endpoint.endpoint_key}`);
+        return {
+          endpoint_key: endpoint.endpoint_key,
+          point,
+          outward_direction_xy: [(offset.x - point.x) / length, (offset.y - point.y) / length] as [number, number],
+          boundary: meaning.boundary,
+          ...(meaning.continuation_key ? { continuation_key: meaning.continuation_key } : {}),
+          ...(meaning.continuation_kind ? { continuation_kind: meaning.continuation_kind } : {})
+        };
+      })
+    };
+  });
   return {
     schema_version: 1,
     interpretation_evidence_id: interpretation.ref.evidence_id,
     frame_observation_id: frameObservationId,
     frame_operation_id: frameObservation.operation_id,
     frame_evidence_id: frameObservation.evidence_id,
+    package_id: source.package_id,
+    native_view_id: frameObservation.frame.view_id,
     registration,
     native_write_allowed: false,
     open_questions: Array.isArray(interpretation.payload.open_questions) ? interpretation.payload.open_questions.map(String).slice(0, 200) : [],
-    registered_primitives: pagePrimitives.map(primitive => ({
-      primitive_id: primitive.primitive_id,
-      source_view_key: primitive.source_view_key,
-      source_artifact_sha256: primitive.source_artifact_sha256,
-      source_page: primitive.source_page,
-      model_points: primitive.points.map(point => transformExistingConditionsPlanPoint(registration, { x: point.u, y: point.v })),
-      model_endpoints: primitive.endpoints.map(endpoint => ({ endpoint_key: endpoint.endpoint_key, point: transformExistingConditionsPlanPoint(registration, { x: endpoint.point.u, y: endpoint.point.v }) }))
-    }))
+    source_marks: source.source_marks,
+    registered_primitives: registeredPrimitives
   };
 }

@@ -441,6 +441,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         : "AppliedNetworkVisualVerificationIncomplete",
                 workflowMode = "apply",
                 atomicCommitSucceeded = true,
+                transaction = OperatorNativeTransactionReceipt.Committed(allModelIds.Concat(deletedAccessoryIds).Distinct().ToList()),
                 semanticVerification,
                 executionOrder = BuildExecutionOrder(p.branches.Count, accessoryPlans.Count, applied: true, visualAttempted),
                 networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
