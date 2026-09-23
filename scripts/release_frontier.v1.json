@@ -218,6 +218,7 @@
     "OperatorPrintSettingsGuardTests",
     "OperatorNativeArtifactReceiptTests",
     "OperatorAttemptSettlementTests",
+    "MepRouteEndpointContractTests",
     "OperatorNativeTransactionExecutionTests",
     "OperatorRevitQueueDiagnosticTests",
     "OperatorApprovalPolicyTests",
@@ -2646,6 +2647,13 @@
       "coverage": [
         "backend:structured_interpretation_tool.test.ts",
         "backend:registered_structured_interpretation.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-one-sided-continuation-cannot-require-exact-existing-owner",
+      "coverage": [
+        "backend:polyline_duct_postcondition_v2.test.ts",
+        "dotnet:MepRouteEndpointContractTests"
       ]
     }
   ],

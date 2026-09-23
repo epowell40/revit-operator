@@ -5,7 +5,7 @@ const row=(v:unknown):Row=>v&&typeof v==='object'&&!Array.isArray(v)?v as Row:{}
 const id=(v:any)=>Number.isSafeInteger(v)&&v>0;
 const near=(a:any,b:number)=>(typeof a==='number'||typeof a==='string'&&a.trim()!=='')&&Number.isFinite(Number(a))&&Math.abs(Number(a)-b)<=1e-6;
 const sameIds=(a:any,b:number[])=>Array.isArray(a)&&a.length===b.length&&a.every(id)&&new Set(a).size===a.length&&a.every(x=>b.includes(x));
-const allowed=new Set(['kind','viewId','roomNumber','frameId','levelId','levelName','systemType','ductTypeId','ductType','ductShape','ductSize','diameter','segmentSizes','sizePolicy','elevationPolicy','routingMode','points','connectSegments','connectToExisting','requireExistingEndpointConnections','externalConnectionToleranceFt','verify','apply','visualVerify','visualViewId','imageSize','focusPaddingFt']);
+const allowed=new Set(['kind','viewId','roomNumber','frameId','levelId','levelName','systemType','ductTypeId','ductType','ductShape','ductSize','diameter','segmentSizes','sizePolicy','elevationPolicy','routingMode','points','connectSegments','connectToExisting','requireExistingEndpointConnections','requiredExistingEndpoint','expectedExistingStartOwnerId','expectedExistingEndOwnerId','externalConnectionToleranceFt','verify','apply','visualVerify','visualViewId','imageSize','focusPaddingFt']);
 export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,parameters:unknown,connectors:unknown):boolean{
  const request=row(input),b=row(request.body),apply=row(row(nativeApply).applyResult??nativeApply);
  if(request.path!=='/revit/mep-route-workflow'||b.kind!=='duct'||b.apply!==true||b.verify===false
@@ -17,6 +17,14 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
   ||(b.ductTypeId===undefined?typeof b.ductType!=='string'||!b.ductType.trim():!id(b.ductTypeId))
   ||Object.keys(b).some(k=>!allowed.has(k))||!Array.isArray(b.points)||b.points.length<2||b.points.length>65
   ||!['round','rectangular'].includes(b.ductShape))return false;
+ const requiredEndpoint=b.requiredExistingEndpoint;
+ if(requiredEndpoint!==undefined&&(!['start','end','both'].includes(requiredEndpoint)||!b.connectToExisting
+  ||b.requireExistingEndpointConnections&&requiredEndpoint!=='both'
+  ||(requiredEndpoint==='start'||requiredEndpoint==='both')&&!id(b.expectedExistingStartOwnerId)
+  ||(requiredEndpoint==='end'||requiredEndpoint==='both')&&!id(b.expectedExistingEndOwnerId)
+  ||requiredEndpoint==='start'&&b.expectedExistingEndOwnerId!==undefined
+  ||requiredEndpoint==='end'&&b.expectedExistingStartOwnerId!==undefined)
+  ||requiredEndpoint===undefined&&(b.expectedExistingStartOwnerId!==undefined||b.expectedExistingEndOwnerId!==undefined))return false;
  const points=b.points.map((p:Row)=>{p=row(p);return Object.keys(p).length===1&&Array.isArray(p.xyz)&&p.xyz.length===3&&p.xyz.every(Number.isFinite)?p.xyz:null;});
  if(points.some((p:unknown)=>!p)||points.length>2&&!b.connectSegments)return false;
  const system=({'Supply Air':'SupplyAir','Return Air':'ReturnAir','Exhaust Air':'ExhaustAir'} as Row)[b.systemType];
@@ -57,5 +65,6 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
  if(p.items.some((x:Row)=>x.error))return false;
  return polylinePhysicalProof({points:points as number[][],segmentIds,fittingIds,system,rows:c.results,
   profiles:profiles.map(p=>p!.diameter_ft!==null?{shape:'round',diameter:p!.diameter_ft}:{shape:'rectangular',width:p!.width_ft,height:p!.height_ft}),
-  endpointPolicy:b.requireExistingEndpointConnections?'existing_required':b.connectToExisting?'existing_optional':'open'});
+  endpointPolicy:requiredEndpoint==='start'?'existing_start_required':requiredEndpoint==='end'?'existing_end_required':b.requireExistingEndpointConnections||requiredEndpoint==='both'?'existing_required':b.connectToExisting?'existing_optional':'open',
+  expectedStartOwnerId:b.expectedExistingStartOwnerId,expectedEndOwnerId:b.expectedExistingEndOwnerId});
 }

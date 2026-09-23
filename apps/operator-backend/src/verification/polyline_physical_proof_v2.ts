@@ -36,13 +36,15 @@ function size(c:Row,profile:Row) {
 }
 /** Every segment and internal joint is proved. External references are allowed
  * only at the two explicit route endpoints. No fit/route can be silently lost. */
-export function polylinePhysicalProof({ points, segmentIds, fittingIds, profiles, system, endpointPolicy, rows }: {points:number[][];segmentIds:number[];fittingIds:number[];profiles:Row[];system:string;endpointPolicy:string;rows:Row[]}):boolean {
+export function polylinePhysicalProof({ points, segmentIds, fittingIds, profiles, system, endpointPolicy, expectedStartOwnerId, expectedEndOwnerId, rows }: {points:number[][];segmentIds:number[];fittingIds:number[];profiles:Row[];system:string;endpointPolicy:string;expectedStartOwnerId?:number;expectedEndOwnerId?:number;rows:Row[]}):boolean {
   if(!Array.isArray(points)||points.length<2||points.length>65||!points.every(point)
     ||!Array.isArray(segmentIds)||segmentIds.length!==points.length-1||!Array.isArray(profiles)||profiles.length!==segmentIds.length
     ||!Array.isArray(fittingIds)||fittingIds.length>segmentIds.length+1||![...segmentIds,...fittingIds].every(id)
     ||new Set([...segmentIds,...fittingIds]).size!==segmentIds.length+fittingIds.length
     ||!Array.isArray(rows)||rows.length!==segmentIds.length+fittingIds.length
-    ||!['open','existing_required','existing_optional'].includes(endpointPolicy))return false;
+    ||!['open','existing_required','existing_optional','existing_start_required','existing_end_required'].includes(endpointPolicy)
+    ||(endpointPolicy==='existing_start_required'&&!id(expectedStartOwnerId))
+    ||(endpointPolicy==='existing_end_required'&&!id(expectedEndOwnerId)))return false;
   const all=new Map(rows.map(r=>[r.id,r]));
   if(all.size!==rows.length||[...segmentIds,...fittingIds].some(id=>!all.has(id)))return false;
   for(const r of rows) {
@@ -82,12 +84,15 @@ export function polylinePhysicalProof({ points, segmentIds, fittingIds, profiles
     if(!from||!to||from===to||!size(from,profiles[i])||!size(to,profiles[i+1]))return false;
     used.add(fid);
   }
-  for(const [owner,c,p,profile] of ([[segmentIds[0],ordered[0][0],points[0],profiles[0]],[segmentIds.at(-1),ordered.at(-1)![1],points.at(-1),profiles.at(-1)]] as [number,Row,number[],Row][])) {
+  for(const [endpointIndex,[owner,c,p,profile]] of ([[segmentIds[0],ordered[0][0],points[0],profiles[0]],[segmentIds.at(-1),ordered.at(-1)![1],points.at(-1),profiles.at(-1)]] as [number,Row,number[],Row][]).entries()) {
+    const required=endpointPolicy==='existing_required'||endpointPolicy==='existing_start_required'&&endpointIndex===0||endpointPolicy==='existing_end_required'&&endpointIndex===1;
+    const mustRemainOpen=endpointPolicy==='open'||endpointPolicy==='existing_start_required'&&endpointIndex===1||endpointPolicy==='existing_end_required'&&endpointIndex===0;
+    const expectedOwnerId=endpointIndex===0?expectedStartOwnerId:expectedEndOwnerId;
     let external=refs(c)!;
     let terminal=c;
     const fid=external[0]?.ownerId;
     if(fittingIds.includes(fid)&&!used.has(fid)) {
-      if(endpointPolicy==='open')return false;
+      if(mustRemainOpen)return false;
       const fit=all.get(fid)!;
       const inside=fit.connectors.find((f:Row)=>paired(owner,c,fid,f));
       const outside=fit.connectors.find((f:Row)=>f!==inside);
@@ -102,7 +107,8 @@ export function polylinePhysicalProof({ points, segmentIds, fittingIds, profiles
     // independently read peer axis/size for external rigid-duct connections.
     if(external[0]?.ownerCategory==='OST_DuctCurves'
       &&(!opposing(terminal.coordinateSystem?.basisZ,external[0].coordinateSystem?.basisZ)||!size(external[0],profile)))return false;
-    if(endpointPolicy==='open'&&external.length!==0||endpointPolicy==='existing_required'&&external.length!==1)return false;
+    if(mustRemainOpen&&external.length!==0||required&&external.length!==1
+      ||expectedOwnerId!==undefined&&(external.length!==1||external[0].ownerId!==expectedOwnerId))return false;
   }
   return used.size===fittingIds.length;
 }

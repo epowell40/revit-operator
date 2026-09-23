@@ -40,6 +40,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool connectSegments { get; set; } = true;
             public bool connectToExisting { get; set; } = false;
             public bool requireExistingEndpointConnections { get; set; } = false;
+            public string? requiredExistingEndpoint { get; set; }
+            public long? expectedExistingStartOwnerId { get; set; }
+            public long? expectedExistingEndOwnerId { get; set; }
             public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public double? defaultOffsetFt { get; set; }
@@ -317,6 +320,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             connectSegments = p.connectSegments,
             connectToExisting = p.connectToExisting,
             requireExistingEndpointConnections = p.requireExistingEndpointConnections,
+            requiredExistingEndpoint = p.requiredExistingEndpoint,
+            expectedExistingStartOwnerId = p.expectedExistingStartOwnerId,
+            expectedExistingEndOwnerId = p.expectedExistingEndOwnerId,
             externalConnectionToleranceFt = p.externalConnectionToleranceFt,
             verify = p.verify,
             dryRun = dryRun,

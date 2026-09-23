@@ -757,12 +757,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             Connector source,
             ISet<long> excludedOwnerIds,
             double maxDistanceFt,
-            out double distanceFt)
+            out double distanceFt,
+            long? expectedOwnerId = null)
         {
             Connector? best = null;
             distanceFt = double.MaxValue;
             var bestOwnerId = long.MaxValue;
-            foreach (var element in new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements())
+            IEnumerable<Element> candidates = expectedOwnerId.HasValue
+                ? new[] { doc.GetElement(ElementIdCompat.Create(expectedOwnerId.Value)) }.OfType<Element>()
+                : new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements();
+            foreach (var element in candidates)
             {
                 if (element == null || element is MEPSystem) continue;
                 var ownerId = ElementIdCompat.GetValue(element.Id);
