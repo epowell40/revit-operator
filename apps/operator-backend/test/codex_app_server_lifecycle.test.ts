@@ -33,6 +33,20 @@ function createClient(root: string, statePath: string, tracePath: string, extraE
   });
 }
 
+test("matching provider notifications keep an active turn alive through completion", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-progress-completion-"));
+  const client = createClient(root, path.join(root, "state.json"), path.join(root, "trace.jsonl"), { CODEX_FIXTURE_PROGRESS_TURN: "1" });
+  try {
+    await client.ensureStarted();
+    const thread = await client.startThread({ cwd: root, sandbox: "read-only", approvalPolicy: "never" });
+    const turn = await client.startTurn({ threadId: thread.thread.id, input: [{ type: "text", text: "progress", text_elements: [] }] });
+    assert.deepEqual(await client.waitForTurnCompleted({ threadId: thread.thread.id, turnId: turn.turn.id, timeoutMs: 100, maxWallMs: 300 }), { status: "completed", interrupted: false });
+  } finally {
+    await client.stopAndWait();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server lifecycle initializes once, resumes persisted threads, and interrupts before later tools", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-app-server-lifecycle-"));
   const statePath = path.join(root, "state.json");

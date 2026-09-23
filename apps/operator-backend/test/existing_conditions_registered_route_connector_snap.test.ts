@@ -358,3 +358,98 @@ test("rejects staged snap actions that differ beyond dryRun", () => {
     /staged_actions_diverge/
   );
 });
+
+test("a registered PDF duct with one surviving anchor stages an exact one-sided continuation", () => {
+  const input = {
+    ...candidate(),
+    required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`,
+    deferred_far_end_reason: "Continue the visible main in the next bounded chunk"
+  };
+  const registered = {
+    schema_version: 1,
+    native_write_allowed: false,
+    package_id: input.package_id,
+    native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{
+      primitive_id: input.primitive_id,
+      source_mark_ids: ["mark-1"],
+      kind: "route_segment",
+      model_points: input.points,
+      model_endpoints: [
+        { endpoint_key: "a", point: input.points[0], boundary: "internal", outward_direction_xy: [-1, 0] },
+        { endpoint_key: "b", point: input.points[1], boundary: "sheet_continuation", continuation_key: "next-main", outward_direction_xy: [1, 0] }
+      ]
+    }]
+  };
+  const readback = connectorReadback();
+  readback.results.pop();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  });
+  assert.equal(receipt.status, "ready");
+  assert.deepEqual(receipt.endpoint_snaps.map(snap => snap.endpoint), ["start"]);
+  assert.equal(receipt.apply_action?.body.requiredExistingEndpoint, "start");
+  assert.equal(receipt.apply_action?.body.expectedExistingStartOwnerId, 101);
+  assert.equal(receipt.apply_action?.body.requireExistingEndpointConnections, false);
+  assert.equal(receipt.far_end_obligation?.source_endpoint_key, "b");
+  assert.equal(receipt.far_end_obligation?.boundary, "sheet_continuation");
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.endpoint_key, "registered-route:route-1:b");
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.output, "route_end");
+  assert.deepEqual(workflow.operations[0]?.continuation_endpoints?.[0]?.direction_xyz, [1, 0, 0]);
+});
+
+test("one-sided PDF continuation rejects altered geometry and missing registration evidence", () => {
+  const input = { ...candidate(), required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Continue later" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id, native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["mark-1"],
+      kind: "route_segment", model_points: [{ x: 10.1, y: 20.1 }, { x: 16, y: 20.1 }],
+      model_endpoints: [{ endpoint_key: "a", point: input.points[0], boundary: "internal" },
+        { endpoint_key: "b", point: { x: 16, y: 20.1 }, boundary: "internal" }] }] };
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(), registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  }), /registered_route_snap_source_geometry_mismatch/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback()
+  }), /registered_route_snap_authoritative_registration_required/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(), registered_interpretation: registered as any,
+    registered_interpretation_sha256: "f".repeat(64)
+  }), /registered_route_snap_registration_hash_mismatch/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(),
+    registered_interpretation: { ...registered, registration: { verified: true, source_evidence_sha256: "f".repeat(64) } } as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  }), /registered_route_snap_registration_identity_mismatch/);
+});
+
+test("a source-bound end anchor declares the exact owner and leaves the source start open", () => {
+  const input = { ...candidate(), required_existing_endpoint: "end" as const,
+    registration_evidence_id: `ev1_${"e".repeat(32)}`, deferred_far_end_reason: "Main continues west" };
+  const registered = { schema_version: 1, native_write_allowed: false,
+    package_id: input.package_id, native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["mark-1"],
+      kind: "route_segment", model_points: input.points,
+      model_endpoints: [{ endpoint_key: "west", point: input.points[0], boundary: "view_boundary", outward_direction_xy: [-1, 0] },
+        { endpoint_key: "east", point: input.points[1], boundary: "internal", outward_direction_xy: [1, 0] }] }] };
+  const readback = connectorReadback();
+  readback.results.shift();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 });
+  assert.equal(receipt.status, "ready");
+  assert.deepEqual(receipt.endpoint_snaps.map(snap => snap.endpoint), ["end"]);
+  assert.equal(receipt.apply_action?.body.expectedExistingEndOwnerId, 202);
+  assert.equal(receipt.apply_action?.body.requiredExistingEndpoint, "end");
+  assert.equal(receipt.far_end_obligation?.source_endpoint_key, "west");
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.output, "route_start");
+});

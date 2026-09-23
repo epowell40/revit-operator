@@ -52,6 +52,7 @@
     "candidate52_v2_session_receipt_authority.test.ts",
     "candidate53_v2_native_evidence_authority.test.ts",
     "codex_app_server_compatibility.test.ts",
+    "codex_timeout_policy.test.ts",
     "dynamic_runtime_orchestration.test.ts",
     "direct_revit_execution_authorization.test.ts",
     "endpoint_mutability.test.ts",
@@ -110,6 +111,10 @@
     "bounded_evidence_delivery.test.ts",
     "brain.test.ts",
     "existing_conditions_source_disposition_ledger.test.ts",
+    "existing_conditions_registered_route_connector_snap.test.ts",
+    "existing_conditions_registered_route_evidence.test.ts",
+    "existing_conditions_registered_route_connector_observation.test.ts",
+    "existing_conditions_registered_route_plan_http.test.ts",
     "execution_strategy.test.ts",
     "result_projection_delivery.test.ts",
     "tool_progress_delivery.test.ts",
@@ -195,6 +200,7 @@
     "lib/nativeReadEvidence.test.ts",
     "tools/existingConditionsInterpretationTool.test.ts",
     "tools/existingConditionsRegistrationTool.test.ts",
+    "tools/existingConditionsDuctContinuationTool.test.ts",
     "lib/operatorBackendClient.test.ts"
   ],
   "desktop_tests": [
@@ -2654,6 +2660,65 @@
       "coverage": [
         "backend:polyline_duct_postcondition_v2.test.ts",
         "dotnet:MepRouteEndpointContractTests"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-one-sided-snap-accepts-unbound-source-coordinates",
+      "coverage": [
+        "backend:existing_conditions_registered_route_connector_snap.test.ts",
+        "backend:existing_conditions_registered_route_evidence.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-source-bound-planner-unavailable-to-canonical-codex",
+      "coverage": [
+        "backend:existing_conditions_registered_route_connector_observation.test.ts",
+        "backend:existing_conditions_registered_route_plan_http.test.ts",
+        "mcp:tools/existingConditionsDuctContinuationTool.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-active-codex-turn-killed-by-fixed-fifteen-minute-timeout",
+      "coverage": [
+        "backend:codex_turn_completions.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts",
+        "backend:codex_timeout_policy.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-read-only-domain-qualified-registration-admitted-as-model-write",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-visible-grid-export-omits-native-axis-and-stalls-registration",
+      "coverage": [
+        "dotnet:FindElementsGeometryContractTests",
+        "backend:tool_result_compaction.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-coherent-inverted-pdf-control-fit-disagrees-with-native-grid-intersections",
+      "coverage": [
+        "backend:registered_structured_interpretation.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-native-grid-tool-schema-rejected-before-provider-start",
+      "coverage": [
+        "mcp:lib/mcp_stdio_smoke.test.ts",
+        "mcp:tools/existingConditionsRegistrationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-source-mark-correction-stops-before-third-attempt",
+      "coverage": [
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "mcp:tools/existingConditionsInterpretationTool.test.ts"
       ]
     }
   ],

@@ -54,7 +54,7 @@ export function hasAuthoritativeLeadingNoWriteFraming(text: string): boolean {
   if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
   // Qualification is a read-only activity even when its evidence workflow
   // names registration tools; registration itself grants no model-write scope.
-  if (/^\s*read[ -]?only\s+(?:qualification|validation|test|testing)\s*[.!:;-]/i.test(text)) return true;
+  if (/^\s*read[ -]?only\s+(?:(?:[a-z][a-z0-9-]*\s+){0,5})(?:qualification|validation|test|testing|registration|interpretation|inspection|audit)\s*[.!:;-]/i.test(text)) return true;
   return /^\s*read[ -]?only\b[^.!?\n]{0,160}\b(?:investigation|inspection|analysis|discovery|audit|review|plan|planning|report)\b[^.!?\n]{0,80}\bonly\b\s*[.!:;-]/i.test(text);
 }
 

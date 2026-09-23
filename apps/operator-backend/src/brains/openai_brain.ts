@@ -115,6 +115,8 @@ import {
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1
 } from "../existing_conditions/registered_route_connector_snap.js";
+import type { RegisteredStructuredExistingConditionsInterpretationV1 } from "../existing_conditions/registered_structured_interpretation.js";
+import { loadRegisteredRouteSourceEvidenceV1 } from "../existing_conditions/registered_route_evidence.js";
 import {
   DEFAULT_REGISTERED_ROUTE_FRONTIER_POLICY_V1,
   discoverRegisteredRouteFrontierV1,
@@ -2859,8 +2861,28 @@ async function registerExistingConditionsRouteSnapForSession(args: {
     throw new Error("registered_route_snap_requires_matching_live_connector_result");
   }
   const candidate = candidateValue as RegisteredRouteSnapCandidateV1;
+  let registeredInterpretation: RegisteredStructuredExistingConditionsInterpretationV1 | undefined;
+  let registeredInterpretationSha256: string | undefined;
+  if (candidate.required_existing_endpoint !== undefined) {
+    const evidenceId = String(candidate.registration_evidence_id ?? "").trim();
+    const assignmentId = String(args.req.assignment_id ?? "").trim();
+    const runId = String(args.req.assignment_run_id ?? "").trim();
+    const generation = args.req.assignment_generation;
+    const source = loadRegisteredRouteSourceEvidenceV1({
+      session_id: args.req.session_id,
+      assignment_id: assignmentId,
+      run_id: runId,
+      generation: generation ?? 0
+    }, evidenceId);
+    registeredInterpretation = source.interpretation;
+    registeredInterpretationSha256 = source.sha256;
+  }
   const receipt = planRegisteredRouteConnectorSnapV1(candidate, {
-    native_connector_readback: connectorResult.result_json
+    native_connector_readback: connectorResult.result_json,
+    ...(registeredInterpretation ? {
+      registered_interpretation: registeredInterpretation,
+      registered_interpretation_sha256: registeredInterpretationSha256
+    } : {})
   });
   if (receipt.status !== "ready") {
     throw new Error(`registered_route_snap_deferred:${receipt.blockers.join(",")}`);
@@ -18173,7 +18195,7 @@ function defaultSystemPrompt(): string {
     "- After a registered source-only topology check, emit register_existing_conditions_source_disposition with one source_disposition_json object to persist either accepted_source_observation/source_supported or an explicit abstention and exact next repair. It never authorizes a native write; keep actions empty and do not convert an abstention into geometry.",
     "- When source registration establishes route XY but size, system, elevation, or native type remains unresolved, first scan the bounded retained MEP graph and call /revit/get-connectors with includeAllRefs=true for the nearby fittings plus their adjacent route elements. Then emit register_existing_conditions_route_frontier as a top-level workbench_actions item with candidate_json set to the source-only candidate JSON string and connector_tool_action_id set to that exact completed connector action ID. It is not a native endpoint: never search for it with /revit/tool-search or /revit/tool-doc. The deterministic host requires two unique open, correctly facing connectors plus agreement on domain, shape, size, system, elevation, adjacent native route type, and phase. Contextual source labels that disagree are recorded as provisional native overrides; a high-confidence exact source conflict or any native ambiguity defers the action.",
     "- Exact frontier workbench shape: workbench_actions:[{type:\"register_existing_conditions_route_frontier\",candidate_json:\"<source-only JSON string>\",connector_tool_action_id:\"<completed get-connectors action_id>\"}]. Keep native actions empty for that response.",
-    "- After a fully resolved registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. The deterministic host will reject fabricated, occupied, ambiguous, wrong-domain, wrong-size, wrong-system, wrong-direction, or over-tolerance endpoints and will register only one staged dry-run; do not author a monolithic replacement graph.",
+    "- After a fully resolved registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. For a one-sided duct continuation, candidate_json must include required_existing_endpoint:'start' or 'end', the exact host-observed registration_evidence_id, and a concrete deferred_far_end_reason; its points must exactly match that registered source primitive. The host retrieves the registration under the active Assignment binding and requires the declared native anchor while leaving the opposite end open. A plausible coordinate list is not source evidence. Plan only one bounded chunk, never a monolithic replacement graph.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",
     "- /revit/export-view-frame does not support DrawingSheet or ThreeD views. For sheet/titleblock targets, pivot to /revit/find-elements on sheetNumber (+ includeSheetElements; add sheetRegions when available) and then /revit/get-element-summary.",

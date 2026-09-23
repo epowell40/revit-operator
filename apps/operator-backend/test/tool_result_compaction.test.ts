@@ -1398,3 +1398,15 @@ test('C48 native grid axes survive projection without inferring axes from presen
  const missing:any=compactFindElementsResultForPrompt({status:'Ok',count:1,elementIds:[1],geometryIncluded:true,itemsComplete:true,items:[{elementId:1,category:'Grids',geometry:null}]});
  assert.equal(missing.items[0].geometry?.locationCurve,undefined);
 });
+
+test("visible grid axes retain model and PDF-frame endpoints through result compaction", () => {
+  const point = (x: number, y: number) => ({ model: { x, y, z: 36 }, image: { x: x * 10, y: y * 10, normalizedX: x / 100, normalizedY: y / 100, insideFrame: true } });
+  const native = { frameId: "l4-grid-frame", count: 1, items: [{ elementId: 1363063, category: "Grids", name: "4",
+    anchor: point(40, 50), bboxModel: { min: { x: 39, y: 2, z: 36 }, max: { x: 41, y: 95, z: 36 } },
+    geometry: { kind: "curve", lengthFt: 93, start: point(40, 2), end: point(40, 95), midpoint: point(40, 48.5) } }] };
+  const compacted = compactVisibleElementsResult(native, { maxItems: 1 }) as any;
+  assert.equal(compacted.itemsSampled[0]?.geometry?.kind, "curve");
+  assert.equal(compacted.itemsSampled[0]?.geometry?.start?.model?.y, 2);
+  assert.equal(compacted.itemsSampled[0]?.geometry?.end?.image?.normalizedY, 0.95);
+  assert.deepEqual(compactVisibleElementsResult(compacted, { maxItems: 1 }), compacted);
+});

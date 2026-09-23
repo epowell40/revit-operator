@@ -2777,7 +2777,8 @@ test("continuation identity, transaction binding, and expected-value verificatio
 test("leading read-only qualification keeps PDF registration as inspection", () => {
   for (const prompt of [
     "Read-only qualification. Interpret the attached PDF, validate source marks, and register three matching landmarks to the model. Do not modify Revit.",
-    "Read-only validation: inspect the PDF and register its native view-frame evidence."
+    "Read-only validation: inspect the PDF and register its native view-frame evidence.",
+    "Read-only existing-conditions qualification. Inspect the PDF, register three landmarks, and report its evidence ID. Do not create, delete, or alter Revit elements."
   ]) {
     const contract = buildTeammateTurnContract(request(prompt));
     assert.equal(contract.turn_kind, "inspection", prompt);

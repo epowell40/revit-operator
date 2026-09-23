@@ -55,6 +55,9 @@ test("tool registers a single explicitly read-only MCP surface", () => {
   assert.equal(registration.name, "operator_validate_existing_conditions_interpretation");
   assert.match(registration.description, /read-only/i);
   assert.match(registration.description, /never creates or changes Revit elements/i);
+  assert.match(registration.description, /region_detail viewKey, not the sheet_context/);
+  assert.match(registration.description, /visible mark cited by a primitive must have disposition_status candidate/);
+  assert.match(registration.description, /annotation may represent a legible note while its implied route/);
   assert.equal(registration.schema, existingConditionsInterpretationInputSchema);
 });
 

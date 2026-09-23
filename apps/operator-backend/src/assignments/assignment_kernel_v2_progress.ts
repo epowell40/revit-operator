@@ -36,7 +36,9 @@ export const DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2: AssignmentProgressBudgetV2 =
   max_provider_calls: 32,
   max_operations: 128,
   max_equivalent_operations: 1,
-  max_no_progress_epochs: 2,
+  // Structured PDF interpretation can require more than one distinct schema
+  // correction. Equivalent-operation and absolute-call limits still stop loops.
+  max_no_progress_epochs: 4,
   max_reconciliation_attempts: 2,
   max_wall_clock_ms: 30 * 60_000,
   max_total_tokens: 4_000_000

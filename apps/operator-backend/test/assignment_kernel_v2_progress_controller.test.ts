@@ -512,6 +512,30 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("ordinary long-running work permits three distinct correction epochs but stops at four", () => {
+  const j = journal();
+  let before = j.snapshot();
+  assert.equal(DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs, 4);
+  for (let index = 0; index < 4; index += 1) {
+    j.append(event(j, {
+      event_type: "provider_call_recorded",
+      call_id: `pdf-correction-${index}`,
+      provider: "openai",
+      model: "model",
+      reasoning_effort: "medium",
+      success: true
+    }));
+    const after = j.snapshot();
+    const epoch = buildProgressEpochV2({ before, after, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: `2026-08-26T20:00:0${index + 2}.000Z` });
+    assert.equal(epoch.genuine_progress, false);
+    j.append(event(j, { event_type: "progress_epoch_recorded", epoch }));
+    before = j.snapshot();
+    const decision = decideAssignmentProgressV2({ snapshot: before, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now: "2026-08-26T20:00:10.000Z" });
+    if (index < 3) assert.equal(decision.decision, "admit_reasoning_turn");
+    else assert.equal(decision.reason, "no_progress_budget_exhausted");
+  }
+});
+
 test("unknown mutation suppresses provider success even after dispatch settlement", () => {
   const j = journal();
   const snapshot = { ...j.snapshot(), unresolved_unknown_operation_ids: ["duplicate-view"] };

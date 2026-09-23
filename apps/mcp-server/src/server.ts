@@ -45,6 +45,7 @@ import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/te
 import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
 import { registerExistingConditionsInterpretationTool } from "./tools/existingConditionsInterpretationTool.js";
 import { registerExistingConditionsRegistrationTool } from "./tools/existingConditionsRegistrationTool.js";
+import { registerExistingConditionsDuctContinuationTool } from "./tools/existingConditionsDuctContinuationTool.js";
 import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
 import {
   genericToolRegistryLookupFailure,
@@ -149,6 +150,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "fire_damper_audit",
   "operator_plan_semantic_mep_route",
   "operator_register_existing_conditions_interpretation",
+  "operator_plan_existing_conditions_duct_continuation",
   "operator_validate_existing_conditions_interpretation",
   "operator_runtime_probe",
   "operator_discover_capabilities",
@@ -261,6 +263,9 @@ registerExistingConditionsInterpretationTool((name, description, inputSchema, ha
   registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
 );
 registerExistingConditionsRegistrationTool((name, description, inputSchema, handler) =>
+  registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
+);
+registerExistingConditionsDuctContinuationTool((name, description, inputSchema, handler) =>
   registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
 );
 

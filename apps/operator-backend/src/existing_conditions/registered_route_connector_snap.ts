@@ -6,6 +6,7 @@ import {
   type RouteProfileDimensionsV1
 } from "./route_profile.js";
 import type { SheetTopologyPoint } from "./sheet_topology_compiler.js";
+import type { RegisteredStructuredExistingConditionsInterpretationV1 } from "./registered_structured_interpretation.js";
 
 export type RegisteredRouteSnapCandidateV1 = {
   schema_version: 1;
@@ -26,10 +27,15 @@ export type RegisteredRouteSnapCandidateV1 = {
   registration_context_id?: string;
   shape: "round" | "rectangular" | "oval";
   size: string;
+  required_existing_endpoint?: "start" | "end";
+  registration_evidence_id?: string;
+  deferred_far_end_reason?: string;
 };
 
 export type RegisteredRouteSnapContextV1 = {
   native_connector_readback: unknown;
+  registered_interpretation?: RegisteredStructuredExistingConditionsInterpretationV1;
+  registered_interpretation_sha256?: string;
   policy?: Partial<RegisteredRouteSnapPolicyV1>;
 };
 
@@ -92,6 +98,13 @@ export type RegisteredRouteSnapReceiptV1 = {
   status: "ready" | "deferred";
   blockers: string[];
   endpoint_snaps: RegisteredRouteEndpointSnapV1[];
+  far_end_obligation?: {
+    source_endpoint_key: string;
+    boundary: "internal" | "view_boundary" | "sheet_continuation";
+    continuation_key?: string;
+    outward_direction_xy: [number, number];
+    reason: string;
+  };
   snapped_points: Array<{ x: number; y: number; z: number }>;
   action_mode: "create_mep_route" | "pipe_between_existing_connectors";
   dry_run_action: null | { method: "POST"; path: "/revit/create-mep-route" | "/revit/create-pipe-between-connectors"; body: Record<string, unknown> };
@@ -227,6 +240,78 @@ function connectorKey(value: NativeConnector): string {
   return `${value.owner_element_id}:${value.connector_id ?? `index-${value.connector_index}`}`;
 }
 
+function sourceBoundFarEnd(
+  candidate: RegisteredRouteSnapCandidateV1,
+  context: RegisteredRouteSnapContextV1
+): RegisteredRouteSnapReceiptV1["far_end_obligation"] {
+  const required = candidate.required_existing_endpoint;
+  if (required === undefined) return undefined;
+  if (candidate.kind !== "duct" || (required !== "start" && required !== "end")) {
+    throw new Error("registered_route_snap_one_sided_duct_endpoint_invalid");
+  }
+  if (!/^ev1_[A-Za-z0-9_-]{32}$/.test(clean(candidate.registration_evidence_id))) {
+    throw new Error("registered_route_snap_registration_evidence_id_required");
+  }
+  const registered = context.registered_interpretation;
+  if (!registered || !context.registered_interpretation_sha256) {
+    throw new Error("registered_route_snap_authoritative_registration_required");
+  }
+  if (sha256(context.registered_interpretation_sha256, "registered_route_snap_authoritative_registration_hash")
+      !== sha256(candidate.registration_receipt_sha256, "registered_route_snap_registration_receipt")) {
+    throw new Error("registered_route_snap_registration_hash_mismatch");
+  }
+  if (registered.schema_version !== 1 || registered.native_write_allowed !== false
+      || registered.registration?.verified !== true
+      || registered.package_id !== candidate.package_id || registered.native_view_id !== candidate.view_id
+      || registered.registration.source_evidence_sha256 !== candidate.source_interpretation_sha256) {
+    throw new Error("registered_route_snap_registration_identity_mismatch");
+  }
+  const matches = registered.registered_primitives.filter(value => value.primitive_id === candidate.primitive_id);
+  if (matches.length !== 1 || matches[0]!.kind !== "route_segment" || matches[0]!.source_mark_ids.length === 0) {
+    throw new Error("registered_route_snap_source_primitive_missing_or_ambiguous");
+  }
+  const source = matches[0]!;
+  if (source.model_points.length !== candidate.points.length || source.model_endpoints.length !== 2
+      || source.model_points.some((point, index) => {
+        const proposed = candidate.points[index];
+        return !proposed || Math.hypot(point.x - proposed.x, point.y - proposed.y) > 1e-6;
+      })) {
+    throw new Error("registered_route_snap_source_geometry_mismatch");
+  }
+  for (const endpointIndex of [0, source.model_points.length - 1]) {
+    const point = source.model_points[endpointIndex]!;
+    const matches = source.model_endpoints.filter(endpoint =>
+      Math.hypot(endpoint.point.x - point.x, endpoint.point.y - point.y) <= 1e-6
+    );
+    if (matches.length !== 1 || !clean(matches[0]!.endpoint_key)) {
+      throw new Error("registered_route_snap_source_endpoints_missing_or_ambiguous");
+    }
+  }
+  const farIndex = required === "start" ? source.model_points.length - 1 : 0;
+  const farPoint = source.model_points[farIndex]!;
+  const far = source.model_endpoints.filter(endpoint =>
+    Math.hypot(endpoint.point.x - farPoint.x, endpoint.point.y - farPoint.y) <= 1e-6
+  );
+  if (far.length !== 1 || !clean(far[0]!.endpoint_key)) {
+    throw new Error("registered_route_snap_far_source_endpoint_missing_or_ambiguous");
+  }
+  const reason = clean(candidate.deferred_far_end_reason);
+  if (!reason || reason.length > 240) throw new Error("registered_route_snap_far_end_obligation_required");
+  const direction = far[0]!.outward_direction_xy;
+  if (!Array.isArray(direction) || direction.length !== 2
+      || !direction.every(value => typeof value === "number" && Number.isFinite(value))
+      || Math.abs(Math.hypot(...direction) - 1) > 0.01) {
+    throw new Error("registered_route_snap_far_source_direction_invalid");
+  }
+  return {
+    source_endpoint_key: far[0]!.endpoint_key,
+    boundary: far[0]!.boundary,
+    ...(far[0]!.continuation_key ? { continuation_key: far[0]!.continuation_key } : {}),
+    outward_direction_xy: far[0]!.outward_direction_xy,
+    reason
+  };
+}
+
 function exactPipeBridgeService(systemType: string): "domestic_cold_water" | "domestic_hot_water" | "sanitary" | "vent" | null {
   const value = normalized(systemType);
   if (value.includes("domestic cold water")) return "domestic_cold_water";
@@ -255,6 +340,7 @@ export function planRegisteredRouteConnectorSnapV1(
   if (candidate.kind !== "duct" && candidate.shape !== "round") throw new Error("registered_route_snap_profile_not_supported_for_kind");
   if (!parseRouteProfileSizeV1(candidate.shape, candidate.size)) throw new Error("registered_route_snap_size_does_not_match_profile");
   const elevation = finite(candidate.elevation_z_ft, "registered_route_snap_elevation_z_ft");
+  const farEndObligation = sourceBoundFarEnd(candidate, context);
   const policy: RegisteredRouteSnapPolicyV1 = {
     maximum_endpoint_snap_ft: positive(context.policy?.maximum_endpoint_snap_ft ?? DEFAULT_REGISTERED_ROUTE_SNAP_POLICY_V1.maximum_endpoint_snap_ft, "maximum_endpoint_snap_ft"),
     minimum_ambiguity_margin_ft: positive(context.policy?.minimum_ambiguity_margin_ft ?? DEFAULT_REGISTERED_ROUTE_SNAP_POLICY_V1.minimum_ambiguity_margin_ft, "minimum_ambiguity_margin_ft"),
@@ -272,7 +358,10 @@ export function planRegisteredRouteConnectorSnapV1(
   const selected: RegisteredRouteEndpointSnapV1[] = [];
   const selectedKeys = new Set<string>();
 
-  for (const endpoint of ["start", "end"] as const) {
+  const requiredEndpoints = candidate.required_existing_endpoint
+    ? [candidate.required_existing_endpoint]
+    : ["start", "end"] as const;
+  for (const endpoint of requiredEndpoints) {
     const registered = endpoint === "start" ? registeredPoints[0]! : registeredPoints[registeredPoints.length - 1]!;
     const expectedDirection = routeDirection(registeredPoints, endpoint);
     const ranked = connectors.flatMap(connector => {
@@ -324,7 +413,7 @@ export function planRegisteredRouteConnectorSnapV1(
   for (const snap of selected) {
     snappedPoints[snap.endpoint === "start" ? 0 : snappedPoints.length - 1] = snap.snapped_point;
   }
-  const ready = blockers.length === 0 && selected.length === 2;
+  const ready = blockers.length === 0 && selected.length === requiredEndpoints.length;
   const baseBody: Record<string, unknown> = {
     kind: candidate.kind,
     points: snappedPoints,
@@ -336,7 +425,11 @@ export function planRegisteredRouteConnectorSnapV1(
     routingMode: "polyline",
     connectSegments: true,
     connectToExisting: true,
-    requireExistingEndpointConnections: true,
+    requireExistingEndpointConnections: !candidate.required_existing_endpoint,
+    ...(candidate.required_existing_endpoint ? {
+      requiredExistingEndpoint: candidate.required_existing_endpoint,
+      [candidate.required_existing_endpoint === "start" ? "expectedExistingStartOwnerId" : "expectedExistingEndOwnerId"]: selected[0]?.owner_element_id
+    } : {}),
     externalConnectionToleranceFt: policy.final_connection_tolerance_ft,
     verify: true,
     ...(candidate.kind === "duct" ? {
@@ -400,16 +493,17 @@ export function planRegisteredRouteConnectorSnapV1(
     status: ready ? "ready" : "deferred",
     blockers,
     endpoint_snaps: selected,
+    ...(farEndObligation ? { far_end_obligation: farEndObligation } : {}),
     snapped_points: snappedPoints,
     action_mode: actionMode,
     dry_run_action: ready ? action(true) : null,
     apply_action: ready ? action(false) : null,
     acceptance_requirements: [
       "dry_run_status_created_and_connected_or_dry_run",
-      "dry_run_open_connector_count_zero",
+      candidate.required_existing_endpoint ? "dry_run_opposite_route_end_remains_open" : "dry_run_open_connector_count_zero",
       "apply_created_element_ids_nonempty",
       "native_size_shape_system_and_geometry_readback_match",
-      "each_created_endpoint_has_one_physical_external_connection",
+      candidate.required_existing_endpoint ? "declared_endpoint_connects_to_exact_existing_owner" : "each_created_endpoint_has_one_physical_external_connection",
       "focused_visual_overlay_matches_registered_source"
     ]
   };
@@ -452,6 +546,20 @@ export function buildRegisteredRouteSnapStagedWorkflowV1(
     ? 1
     : Math.max(1, (pointCount - 1) + Math.max(0, pointCount - 2));
   const actionKey = `registered-route:${clean(candidate.primitive_id).replace(/[^a-zA-Z0-9._:-]+/g, "-")}`;
+  const far = receipt.far_end_obligation;
+  const farPoint = far
+    ? receipt.snapped_points[candidate.required_existing_endpoint === "start" ? pointCount - 1 : 0]
+    : undefined;
+  const continuationEndpoints = far && farPoint ? [{
+    endpoint_key: `${actionKey}:${far.source_endpoint_key}`,
+    output: candidate.required_existing_endpoint === "start" ? "route_end" as const : "route_start" as const,
+    model_point: farPoint,
+    direction_xyz: [far.outward_direction_xy[0], far.outward_direction_xy[1], 0] as [number, number, number],
+    source_observation_ids: [candidate.primitive_id],
+    system_classification: candidate.system_type,
+    size: candidate.size,
+    state: "unresolved_continuation" as const
+  }] : undefined;
   return {
     inputFingerprintSha256: receipt.input_fingerprint_sha256,
     provisionalObservationIds: [clean(candidate.primitive_id)],
@@ -465,7 +573,8 @@ export function buildRegisteredRouteSnapStagedWorkflowV1(
       >,
       expected_created_min: 1,
       expected_created_max: expectedCreatedMaximum,
-      execution_mode: "single_action"
+      execution_mode: "single_action",
+      ...(continuationEndpoints ? { continuation_endpoints: continuationEndpoints } : {})
     }],
     dryRun: true,
     verify: true,

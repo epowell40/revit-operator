@@ -10,10 +10,11 @@ import {
 const input = {
   interpretationEvidenceId: `ev1_${"a".repeat(32)}`,
   frameObservationId: `obsv2_${"f".repeat(64)}`,
+  landmarkObservationId: `obsv2_${"e".repeat(64)}`,
   controls: [
-    { controlId: "northwest", sourcePageUv: { u: 0.1, v: 0.1 }, candidateViewUv: { u: 0.2, v: 0.2 } },
-    { controlId: "northeast", sourcePageUv: { u: 0.9, v: 0.1 }, candidateViewUv: { u: 0.8, v: 0.2 } },
-    { controlId: "southwest", sourcePageUv: { u: 0.1, v: 0.9 }, candidateViewUv: { u: 0.2, v: 0.8 } }
+    { controlId: "northwest", sourcePageUv: { u: 0.1, v: 0.1 }, candidateViewUv: { u: 0.2, v: 0.2 }, nativeGridElementIds: [101, 201] as [number, number] },
+    { controlId: "northeast", sourcePageUv: { u: 0.9, v: 0.1 }, candidateViewUv: { u: 0.8, v: 0.2 }, nativeGridElementIds: [102, 201] as [number, number] },
+    { controlId: "southwest", sourcePageUv: { u: 0.1, v: 0.9 }, candidateViewUv: { u: 0.2, v: 0.8 }, nativeGridElementIds: [101, 202] as [number, number] }
   ],
   allowReflection: false,
   maxRmsErrorFt: 0.25,
@@ -36,8 +37,9 @@ test("existing-conditions registration requires the trusted task binding and for
   assert.equal(received.assignment_run_id, "run-1");
   assert.equal(received.assignment_generation, 3);
   assert.equal(received.session_id, "session-1");
+  assert.equal(received.landmark_observation_id, input.landmarkObservationId);
   assert.equal(received.controls.length, 3);
-  assert.deepEqual(received.controls[0], { control_id: "northwest", source_page_uv: { u: 0.1, v: 0.1 }, candidate_view_uv: { u: 0.2, v: 0.2 } });
+  assert.deepEqual(received.controls[0], { control_id: "northwest", source_page_uv: { u: 0.1, v: 0.1 }, candidate_view_uv: { u: 0.2, v: 0.2 }, native_grid_element_ids: [101, 201] });
   assert.deepEqual(JSON.parse(result.content[0]!.text), { native_write_allowed: false, registration: { verified: true } });
 });
 
@@ -46,6 +48,10 @@ test("registration input rejects paths, writes, and fewer than three controls", 
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, apply: true }).success, false);
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, controls: input.controls.slice(0, 2) }).success, false);
   assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, frameObservationId: `ev1_${"f".repeat(32)}` }).success, false);
+  assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, landmarkObservationId: `ev1_${"e".repeat(32)}` }).success, false);
+  assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, controls: input.controls.map(({ nativeGridElementIds, ...control }) => control) }).success, false);
+  assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, controls: [{ ...input.controls[0], nativeGridElementIds: [101] }, ...input.controls.slice(1)] }).success, false);
+  assert.equal(existingConditionsRegistrationInputSchema.safeParse({ ...input, controls: [{ ...input.controls[0], nativeGridElementIds: [101, 201, 301] }, ...input.controls.slice(1)] }).success, false);
 });
 
 test("registration tool exposes one explicitly read-only MCP surface", () => {

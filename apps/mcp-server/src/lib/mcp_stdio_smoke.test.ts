@@ -25,6 +25,7 @@ const certifiedSafeNonRevitAliases = [
   "operator_manage_work_plan",
   "operator_request_assignment_input",
   "operator_plan_semantic_mep_route",
+  "operator_plan_existing_conditions_duct_continuation",
   "operator_register_existing_conditions_interpretation",
   "operator_record_execution_strategy",
   "operator_request_clarification",
@@ -226,7 +227,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 95, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 96, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -435,7 +436,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 95, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, 96, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
   const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
   assert.equal((connectorSchema.properties?.includeVerificationParameters as any)?.type, "boolean");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
@@ -488,6 +489,12 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(directionSchema.minItems, 2);
   assert.equal(directionSchema.maxItems, 2);
   assert.equal(directionSchema.items.type, "number", "MCP transport must not publish tuple items that Codex rejects at thread start");
+  const registrationSchema = tools.tools.find(tool => tool.name === "operator_register_existing_conditions_interpretation")!.inputSchema as any;
+  const gridIdsSchema = registrationSchema.properties.controls.items.properties.nativeGridElementIds;
+  assert.equal(gridIdsSchema.type, "array");
+  assert.equal(gridIdsSchema.minItems, 2);
+  assert.equal(gridIdsSchema.maxItems, 2);
+  assert.equal(gridIdsSchema.items.type, "integer", "The actual MCP tools/list schema must be accepted by Codex dynamic tools");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const retrievalTool = tools.tools.find(tool => tool.name === "operator_retrieve_evidence")!;
   assert.match(retrievalTool.description!, /pagination.next_start/);

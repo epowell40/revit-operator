@@ -1,4 +1,4 @@
-export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 15 * 60_000;
+export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 30 * 60_000;
 
 export function resolveCodexTurnTimeoutMs(rawValue: string | undefined): number {
   const raw = Number.parseInt(rawValue ?? `${DEFAULT_CODEX_TURN_TIMEOUT_MS}`, 10);

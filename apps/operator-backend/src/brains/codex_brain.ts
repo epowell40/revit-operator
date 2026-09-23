@@ -1016,7 +1016,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       return await activeClient.waitForTurnCompleted({
         threadId,
         turnId,
-        timeoutMs: codexTurnTimeoutMs(),
+        timeoutMs: Math.min(codexTurnTimeoutMs(), 10 * 60_000),
+        maxWallMs: codexTurnTimeoutMs(),
         abortSignal: activeTurnAbort.signal
       });
     });

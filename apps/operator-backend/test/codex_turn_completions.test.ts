@@ -2,6 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CodexTurnCompletions } from '../src/codex/turn_completions.js';
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+test('same-turn provider progress extends inactivity wait without escaping the wall limit', async () => {
+  const turns = new CodexTurnCompletions();
+  const active = turns.wait({threadId:'thread',turnId:'active',timeoutMs:100,maxWallMs:300});
+  await delay(70);
+  turns.observeProgress('thread','active');
+  await delay(70);
+  turns.observe('thread','active','completed');
+  assert.equal((await active).status,'completed');
+
+  const bounded = turns.wait({threadId:'thread',turnId:'bounded',timeoutMs:100,maxWallMs:55});
+  const rejected = assert.rejects(bounded, /maximum duration/);
+  await delay(30);
+  turns.observeProgress('thread','bounded');
+  await rejected;
+});
+
+test('progress for another turn cannot extend an idle completion wait', async () => {
+  const turns = new CodexTurnCompletions();
+  const idle = turns.wait({threadId:'thread',turnId:'idle',timeoutMs:55,maxWallMs:200});
+  const rejected = assert.rejects(idle, /inactivity/);
+  await delay(30);
+  turns.observeProgress('thread','other');
+  await rejected;
+});
+
 test('fast interrupt completion before acknowledgement remains observable to later waiters', async () => {
   const turns = new CodexTurnCompletions();
   turns.observe('thread', 'turn', 'interrupted');

@@ -7,10 +7,12 @@ const uvSchema = z.object({ u: z.number().min(0).max(1), v: z.number().min(0).ma
 export const existingConditionsRegistrationInputSchema = z.object({
   interpretationEvidenceId: z.string().regex(/^ev1_[A-Za-z0-9_-]{32}$/),
   frameObservationId: z.string().regex(/^obsv2_[a-f0-9]{64}$/),
+  landmarkObservationId: z.string().regex(/^obsv2_[a-f0-9]{64}$/),
   controls: z.array(z.object({
     controlId: z.string().min(1).max(160),
     sourcePageUv: uvSchema,
-    candidateViewUv: uvSchema
+    candidateViewUv: uvSchema,
+    nativeGridElementIds: z.array(z.number().int().positive()).length(2)
   }).strict()).min(3).max(12),
   allowReflection: z.boolean().optional(),
   maxRmsErrorFt: z.number().finite().positive().max(100).optional(),
@@ -35,10 +37,12 @@ export async function handleExistingConditionsRegistration(
       session_id: binding.session_id,
       interpretation_evidence_id: input.interpretationEvidenceId,
       frame_observation_id: input.frameObservationId,
+      landmark_observation_id: input.landmarkObservationId,
       controls: input.controls.map(control => ({
         control_id: control.controlId,
         source_page_uv: control.sourcePageUv,
-        candidate_view_uv: control.candidateViewUv
+        candidate_view_uv: control.candidateViewUv,
+        native_grid_element_ids: [control.nativeGridElementIds[0]!, control.nativeGridElementIds[1]!]
       })),
       ...(input.allowReflection === undefined ? {} : { allow_reflection: input.allowReflection }),
       ...(input.maxRmsErrorFt === undefined ? {} : { max_rms_error_ft: input.maxRmsErrorFt }),
@@ -56,7 +60,7 @@ export function registerExistingConditionsRegistrationTool(
 ): unknown {
   return registerTool(
     "operator_register_existing_conditions_interpretation",
-    "Register source-bound existing-conditions geometry to an authoritative Revit view frame using 3 to 12 matching landmarks. frameObservationId must be the obsv2_ observation_id in the model-observation-index returned by revit_call_tool POST /revit/export-view-frame, never an ev1_ evidence_id. Reports measured residuals and fails closed when the fit is outside the requested limits. Read-only: it never creates or changes Revit elements.",
+    "Register source-bound existing-conditions geometry using 3 to 12 visually matched native grid intersections. frameObservationId is the obsv2_ observation_id from POST /revit/export-view-frame; landmarkObservationId is the obsv2_ observation_id from POST /revit/export-visible-elements with includeGeometry true and host grids included. Each control names the two native grid element IDs at its intersection; candidateViewUv must agree with that native intersection within 0.25 ft. For a mirrored PDF orientation set allowReflection true; do not invert native view coordinates to force a fit. Both observations must be in the model-observation-index, never ev1_ evidence IDs. Reports measured residuals and fails closed outside requested limits. Read-only: it never creates or changes Revit elements.",
     existingConditionsRegistrationInputSchema,
     input => handleExistingConditionsRegistration(input, registrar)
   );

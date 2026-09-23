@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { registerStructuredExistingConditionsInterpretationV1, summarizeRegisteredStructuredExistingConditionsInterpretationV1 } from "../src/existing_conditions/registered_structured_interpretation.js";
+import { registerStructuredExistingConditionsInterpretationV1 as registerNative, summarizeRegisteredStructuredExistingConditionsInterpretationV1 } from "../src/existing_conditions/registered_structured_interpretation.js";
 import { createGoal } from "../src/goals/service.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, markAssignmentKernelOperationDispatchStartedV2, openAssignmentKernelOperationV2, settleAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2, type OperationResultV2 } from "../src/domain/assignment-kernel/index.js";
 import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { nativeGridAxes } from "../src/existing_conditions/native_grid_landmarks.js";
 
 const binding = { session_id: "session-1", assignment_id: "assignment-1", run_id: "run-1", generation: 1 };
 const input = {
@@ -65,10 +66,70 @@ const frame = {
   operation_id: "operation-frame-1", evidence_id: `ev1_${"f".repeat(32)}`
 };
 
+// Synthetic landmarks keep the older geometry tests focused on their own boundary.
+// The C60 cases below use fixed native axes so a flipped candidate cannot rewrite truth.
+function registerStructuredExistingConditionsInterpretationV1(value: any, dependencies: any = {}) {
+  const selectedFrame = (dependencies.read_frame?.(binding, value.frame_observation_id) ?? frame).frame;
+  const axes = value.controls.flatMap((control: any, index: number) => {
+    const p = control.candidate_view_uv;
+    const x = selectedFrame.top_left_xyz[0] + p.u * (selectedFrame.top_right_xyz[0] - selectedFrame.top_left_xyz[0]) + p.v * (selectedFrame.bottom_left_xyz[0] - selectedFrame.top_left_xyz[0]);
+    const y = selectedFrame.top_left_xyz[1] + p.u * (selectedFrame.top_right_xyz[1] - selectedFrame.top_left_xyz[1]) + p.v * (selectedFrame.bottom_left_xyz[1] - selectedFrame.top_left_xyz[1]);
+    return [{ element_id: 1000 + index * 2, name: `X${index}`, start: { x, y: y - 100 }, end: { x, y: y + 100 } },
+      { element_id: 1001 + index * 2, name: `Y${index}`, start: { x: x - 100, y }, end: { x: x + 100, y } }];
+  });
+  return registerNative({ ...value, landmark_observation_id: "observation-landmark-1",
+    controls: value.controls.map((control: any, index: number) => ({ ...control, native_grid_element_ids: [1000 + index * 2, 1001 + index * 2] })) },
+  { ...dependencies, read_landmarks: () => ({ frame: selectedFrame, axes, operation_id: "operation-landmark-1", evidence_id: `ev1_${"1".repeat(32)}` }) });
+}
+
+test("C60 exact failed r3 inverted PDF fit is rejected against native grid axes; true reflection fits", () => {
+  const liveFrame = { ...frame, frame: { ...frame.frame,
+    view_id: 1363433,
+    top_left_xyz: [-123.3697818177457, 71.48585540021631, 32.16666666666667] as [number, number, number],
+    top_right_xyz: [89.87955918568767, 71.48585540021631, 32.16666666666667] as [number, number, number],
+    bottom_left_xyz: [-123.3697818177457, -47.01832591228737, 32.16666666666667] as [number, number, number]
+  } };
+  const horizontal = (elementId: number, name: string, y: number) => ({ elementId, name, sourceScopedId: `host:${elementId}`, categoryToken: "OST_Grids", geometry: { kind: "curve", isStraight: true,
+    start: { model: { x: -115, y, z: 32 } }, end: { model: { x: 78, y, z: 32 } } } });
+  const vertical = (elementId: number, name: string, x: number) => ({ elementId, name, sourceScopedId: `host:${elementId}`, categoryToken: "OST_Grids", geometry: { kind: "curve", isStraight: true,
+    start: { model: { x, y: -31, z: 32 } }, end: { model: { x, y: 49, z: 32 } } } });
+  const axes = nativeGridAxes({ items: [horizontal(1363058, "E", 41.45833333333327), horizontal(1363059, "D", 19.208333333333286),
+    horizontal(1363060, "C", 2.4999999999992135), horizontal(1363061, "A", -27.541666666667446), horizontal(1363062, "B", -12.70833333333412),
+    vertical(1363063, "4", -49.24999999999976), vertical(1363064, "5", -20.24999999999977),
+    vertical(1363065, "6", 3.5833333333335653), vertical(1363066, "8", 41.25000000000024)] });
+  const landmarks = { frame: liveFrame.frame, axes, operation_id: "native-visible-r3", evidence_id: `ev1_${"2".repeat(32)}` };
+  const controls = [
+    ["grid_4_E", 0.30060945725206994, 0.47512243055555553, 0.34757332176962086, 0.25338786981447003, 1363063, 1363058],
+    ["grid_5_D", 0.38691213660291507, 0.567830763888889, 0.4835643633528775, 0.4411449578224046, 1363064, 1363059],
+    ["grid_6_C", 0.45783904716556884, 0.6374488194444445, 0.5953271159184276, 0.5821385763452231, 1363065, 1363060],
+    ["grid_8_B", 0.5699333253974552, 0.700816875, 0.7719591584346117, 0.7104744136540175, 1363066, 1363062],
+    ["grid_4_A", 0.30060945725206994, 0.7626224236111111, 0.34757332176962086, 0.8356458056593072, 1363063, 1363061]
+  ] as const;
+  const nativeControls = controls.map(([control_id, su, sv, u, v, xId, yId]) => ({ control_id, source_page_uv: { u: su, v: sv },
+    candidate_view_uv: { u, v }, native_grid_element_ids: [xId, yId] as [number, number] }));
+  const source = structuredClone(interpretation);
+  source.payload.receipt.views[0].page_geometry = { width_points: 3024.24, height_points: 2160, rotation_degrees: 0 };
+  const deps = { read_interpretation: () => source, read_frame: () => liveFrame, read_landmarks: () => landmarks };
+  const liveInput = { ...input, landmark_observation_id: "native-visible-r3", controls: nativeControls,
+    allow_reflection: true, max_rms_error_ft: 0.5, max_point_error_ft: 1 };
+  const accepted = registerNative(liveInput, deps);
+  assert.equal(accepted.registration.verified, true);
+  assert.equal(accepted.registration.reflection_applied, true);
+  assert.ok(accepted.registration.rms_error_ft < 0.001);
+  assert.throws(() => registerNative({ ...liveInput, allow_reflection: false, controls: nativeControls.map(control => ({ ...control,
+    candidate_view_uv: { u: control.candidate_view_uv.u, v: 1 - control.candidate_view_uv.v } })) }, deps),
+    /candidate_disagrees_with_native_grids/);
+  assert.throws(() => registerNative({ ...liveInput, controls: nativeControls.map(control => ({ ...control,
+    native_grid_element_ids: [999999, control.native_grid_element_ids[1]] as [number, number] })) }, deps),
+    /native_grid_missing_or_ambiguous/);
+  assert.throws(() => registerNative(liveInput, { ...deps, read_landmarks: () => ({ ...landmarks, frame: { ...landmarks.frame, view_id: 99 } }) }),
+    /landmark_frame_mismatch/);
+});
+
 test("source page geometry registers through an authoritative candidate frame with measured residuals", () => {
   const result = registerStructuredExistingConditionsInterpretationV1(input, {
-    read_interpretation: actual => { assert.deepEqual(actual, binding); return interpretation; },
-    read_frame: actual => { assert.deepEqual(actual, binding); return frame; }
+    read_interpretation: (actual: unknown) => { assert.deepEqual(actual, binding); return interpretation; },
+    read_frame: (actual: unknown) => { assert.deepEqual(actual, binding); return frame; }
   });
 
   assert.equal(result.registration.verified, true);
@@ -246,6 +307,12 @@ test("default registration reads the exact native frame observation and source-b
       request_identity: lease.request_identity,
       completed_at: "2026-09-19T14:00:00.000Z"
     };
+    const gridLease = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!, controller_request_id: "export-registration-grids",
+      provider_turn_id: "registration-test-turn", capability_id: "revit_call_tool", classified_effect: "read",
+      arguments: { method: "POST", path: "/revit/export-visible-elements", body: { viewId: 44, categories: ["OST_Grids"], includeGeometry: true } }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(gridLease);
     const settled = settleAssignmentKernelOperationV2(lease, {
       content: [{ type: "text", text: "retained native frame" }],
       structuredContent: {
@@ -259,19 +326,55 @@ test("default registration reads the exact native frame observation and source-b
       }
     });
     const frameStored = settled.evidence_refs[0]!;
+    const gridItem = (elementId: number, name: string, ax: number, ay: number, bx: number, by: number) => ({
+      elementId, name, sourceScopedId: `host:${elementId}`, categoryToken: "OST_Grids",
+      geometry: { kind: "curve", isStraight: true, start: { model: { x: ax, y: ay, z: 10 } }, end: { model: { x: bx, y: by, z: 10 } } }
+    });
+    const nativeLandmarks = { ...nativeFrame, frameId: "frame-retained-2", items: [
+      gridItem(101, "west", 0, -100, 0, 0), gridItem(102, "east", 100, -100, 100, 0),
+      gridItem(201, "north", 0, 0, 100, 0), gridItem(202, "south", 0, -100, 100, -100)
+    ] };
+    const gridResult: OperationResultV2 = {
+      ...operationResult, result_id: `result-${gridLease.operation_id}`, operation_id: gridLease.operation_id, binding: gridLease.binding,
+      result_schema_id: "operator-native/POST:/revit/export-visible-elements/v2",
+      raw_payload_hash: createHash("sha256").update(canonicalJsonV2(nativeLandmarks), "utf8").digest("hex"),
+      receipt_id: `receipt-${gridLease.operation_id}`, native_correlation_id: `native-${gridLease.operation_id}`,
+      request_identity: gridLease.request_identity
+    };
+    const gridSettled = settleAssignmentKernelOperationV2(gridLease, {
+      content: [{ type: "text", text: "retained native grids" }],
+      structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: gridResult,
+        observation: { raw_payload: nativeLandmarks, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }], verification_relevance: ["task_result"] } }
+    });
     const snapshot = getAssignmentKernelSnapshotV2(goal.id)!;
     const operation = Object.values(snapshot.operations).find(candidate => candidate.request_identity?.path === "/revit/export-view-frame")!;
     const observationId = operation.observation_ids[0]!;
-    const result = registerStructuredExistingConditionsInterpretationV1({
+    const gridOperation = Object.values(snapshot.operations).find(candidate => candidate.request_identity?.path === "/revit/export-visible-elements")!;
+    const gridObservationId = gridOperation.observation_ids[0]!;
+    const result = registerNative({
       ...input,
       ...currentBinding,
       interpretation_evidence_id: interpretationStored.ref.evidence_id,
-      frame_observation_id: observationId
+      frame_observation_id: observationId,
+      landmark_observation_id: gridObservationId,
+      controls: [
+        { ...input.controls[0]!, native_grid_element_ids: [101, 201] },
+        { ...input.controls[1]!, native_grid_element_ids: [102, 201] },
+        { ...input.controls[2]!, native_grid_element_ids: [101, 202] }
+      ]
     });
     assert.equal(result.frame_operation_id, lease.operation_id);
     assert.equal(result.frame_evidence_id, frameStored.evidence_id);
+    assert.equal(result.landmark_evidence_id, gridSettled.evidence_refs[0]!.evidence_id);
     assert.equal(result.registration.verified, true);
     assert.equal(result.native_write_allowed, false);
+    assert.throws(() => registerNative({ ...input, ...currentBinding,
+      interpretation_evidence_id: interpretationStored.ref.evidence_id, frame_observation_id: observationId,
+      landmark_observation_id: observationId, controls: result.registration ? [
+        { ...input.controls[0]!, native_grid_element_ids: [101, 201] },
+        { ...input.controls[1]!, native_grid_element_ids: [102, 201] },
+        { ...input.controls[2]!, native_grid_element_ids: [101, 202] }
+      ] : [] }), /landmark_operation_invalid/);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

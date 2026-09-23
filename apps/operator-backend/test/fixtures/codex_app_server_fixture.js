@@ -81,6 +81,12 @@ input.on("line", line => {
       return;
     }
     respond({ turn: { id: turnId } });
+    if (process.env.CODEX_FIXTURE_PROGRESS_TURN === "1") {
+      setTimeout(() => notify("item/started", { threadId: message.params.threadId, turnId: "another-turn", item: { id: "wrong", type: "agentMessage" } }), 35);
+      setTimeout(() => notify("item/started", { threadId: message.params.threadId, turnId, item: { id: "right", type: "agentMessage" } }), 70);
+      setTimeout(() => notify("turn/completed", { threadId: message.params.threadId, turn: { id: turnId, status: "completed", error: null } }), 140);
+      return;
+    }
     const shouldWaitForInterrupt = JSON.stringify(message.params?.input ?? []).includes("interrupt-me");
     if (shouldWaitForInterrupt) {
       pendingToolTimers.set(turnId, setTimeout(() => {

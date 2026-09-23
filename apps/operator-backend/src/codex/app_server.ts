@@ -338,6 +338,8 @@ export class CodexAppServer {
         if (n.method === "turn/completed") {
           this.turnCompletions.observe(n.params?.threadId, n.params?.turn?.id,
             n.params?.turn?.status, n.params?.turn?.error?.message);
+        } else if (n.method === "turn/started" || n.method.startsWith("item/")) {
+          this.turnCompletions.observeProgress(n.params?.threadId, n.params?.turnId ?? n.params?.turn?.id);
         }
 
         // Convenience: hoist common fields used for routing.
@@ -513,7 +515,7 @@ export class CodexAppServer {
     return this.requestTyped<TurnSteerParams, TurnSteerResponse>("turn/steer", params);
   }
 
-  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
+  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     return this.turnCompletions.wait(opts);
   }
 }
