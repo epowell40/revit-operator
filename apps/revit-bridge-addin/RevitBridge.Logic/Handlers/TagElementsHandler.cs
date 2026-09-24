@@ -522,6 +522,8 @@ namespace RevitBridge.Logic.Handlers
             var dryRun = request.dryRun ?? false;
             ExistingTagSnapshot after;
             ExistingTagSnapshot? rollback = null;
+            bool effectiveChange;
+            TransactionStatus nativeStatus;
             using (var transaction = new Transaction(doc, "Repair Existing Tag Geometry"))
             {
                 transaction.Start();
@@ -562,28 +564,41 @@ namespace RevitBridge.Logic.Handlers
 
                 doc.Regenerate();
                 after = ReadExistingTagSnapshot(tag, view);
-                if (dryRun) transaction.RollBack();
-                else transaction.Commit();
+                effectiveChange = !ExistingTagSnapshotsMatch(before, after);
+                nativeStatus = dryRun || !effectiveChange
+                    ? transaction.RollBack()
+                    : transaction.Commit();
             }
 
-            if (dryRun)
+            if (nativeStatus == TransactionStatus.RolledBack)
             {
                 if (doc.GetElement(tagId) is not IndependentTag rolledBackTag)
                     throw new InvalidOperationException(
                         $"Tag {request.repairExistingTagId.Value} disappeared after dry-run rollback.");
                 rollback = ReadExistingTagSnapshot(rolledBackTag, view);
             }
+            else if (nativeStatus == TransactionStatus.Committed)
+            {
+                if (doc.GetElement(tagId) is not IndependentTag committedTag)
+                    throw new InvalidOperationException(
+                        $"Tag {request.repairExistingTagId.Value} disappeared after native commit.");
+                after = ReadExistingTagSnapshot(committedTag, view);
+            }
+
+            var transactionReceipt = OperatorNativeTransactionReceipt.FromObservedStatus(
+                nativeStatus.ToString(), new[] { request.repairExistingTagId.Value });
 
             return new
             {
-                status = dryRun ? "Dry Run" : "Repaired",
+                status = dryRun ? "Dry Run" : effectiveChange ? "Repaired" : "No Change",
                 dryRun,
-                changed = true,
+                changed = effectiveChange && (dryRun || nativeStatus == TransactionStatus.Committed),
                 before = ExistingTagSnapshotPayload(before),
                 after = ExistingTagSnapshotPayload(after),
-                rolledBack = dryRun,
-                rollbackVerified = dryRun ? ExistingTagSnapshotsMatch(before, rollback!) : (bool?)null,
-                rollback = rollback == null ? null : ExistingTagSnapshotPayload(rollback)
+                rolledBack = nativeStatus == TransactionStatus.RolledBack,
+                rollbackVerified = rollback == null ? (bool?)null : ExistingTagSnapshotsMatch(before, rollback),
+                rollback = rollback == null ? null : ExistingTagSnapshotPayload(rollback),
+                transaction = transactionReceipt
             };
         }
 

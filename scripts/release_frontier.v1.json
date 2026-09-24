@@ -20,6 +20,7 @@
     "general_revit_export_isolation.test.ts",
     "tool_registry_audit.test.ts",
     "native_artifact_contract_v2.test.ts",
+    "native_tag_repair_settlement.test.ts",
     "assignment_kernel_v2_pause_reporting.test.ts",
     "assignment_kernel_v2_pause_http.test.ts",
     "goal_endpoint_security.test.ts",
@@ -2854,6 +2855,13 @@
       "coverage": [
         "desktop:test/server_smoke.test.js",
         "dotnet:OperatorProjectCloseFocusTests"
+      ]
+    },
+    {
+      "id": "c76-existing-tag-repair-commits-with-unknown-effect",
+      "coverage": [
+        "backend:native_tag_repair_settlement.test.ts",
+        "dotnet:OperatorAttemptSettlementTests"
       ]
     },
     {

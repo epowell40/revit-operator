@@ -47,6 +47,30 @@ namespace RevitBridge.Common.Tests
                 "apply", "POST", "/revit/configure-schedule").EffectState);
         }
         [Fact]
+        public void ExistingTagRepairNeedsNativeTransactionTruthForApplyAndRollback()
+        {
+            var legacy = new { status = "Repaired", dryRun = false, changed = true,
+                before = new { tagId = 1492043L }, after = new { tagId = 1492043L } };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                legacy, "apply", "POST", "/revit/tag-elements").EffectState);
+
+            var applied = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                legacy.status, legacy.dryRun, legacy.changed, legacy.before, legacy.after,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1492043L })
+            }, "apply", "POST", "/revit/tag-elements");
+            Assert.Equal("applied", applied.EffectState);
+            Assert.Contains("element_id:1492043", applied.AffectedTargetIdentities);
+
+            var preview = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true, changed = true,
+                transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 1492043L })
+            }, "preview", "POST", "/revit/tag-elements");
+            Assert.Equal("none", preview.EffectState);
+            Assert.Equal("native_rollback", preview.EffectAuthority);
+        }
+        [Fact]
         public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
         {
             var result = HostedPlacementPreflight.CheckHost(false, "OneLevelBased", 1464223, null)!;
