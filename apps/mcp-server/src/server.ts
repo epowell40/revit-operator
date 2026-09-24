@@ -1128,7 +1128,7 @@ server.tool("operator_manage_work_plan", "Retain the complete multi-part task ch
     } catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] }; }
   });
 
-server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status without model-authored pass/fail status. For required read-result delivery, select retained native values with resultItems; those presentation paths never determine criterion truth.",
+server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status without model-authored pass/fail status. For a write task, first obtain independent native readback for the changed target, then cite its Observation IDs; omit resultItems and assessment. For a required read-result delivery only, select retained native values with resultItems; those presentation paths never determine criterion truth.",
   {
     claims: z.array(z.object({
       criterionId: z.string().min(1).max(240),
@@ -1140,7 +1140,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
       observationId: z.string().min(1).max(240),
       source: z.enum(["raw_payload", "deterministic_projection"]).optional().describe("Default raw_payload selects native keys. deterministic_projection selects [key_counts or key_facts, exact literal key] recomputed from the same retained bytes. Complete inventory summaries only; no caller-provided values."),
       path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
-    })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
+    })).min(1).max(32).optional().describe("Required only for a generic read's user-visible answer; omit for write tasks. Select exact concise values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery."),
     assessment: z.object({
       overview: z.string().min(1).max(1200).describe("The complete user-facing answer in the requested length and format. Include every conclusion, material uncertainty and limitation needed to interpret it correctly. Usually one sentence for a simple question; do not add audit boilerplate or repeat supporting facts."),
       findings: z.array(z.object({
