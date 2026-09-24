@@ -84,6 +84,8 @@
     "general_revit_campaign_completion.test.ts",
     "general_revit_capability_report.test.ts",
     "general_revit_capability_acceptance.test.ts",
+    "snowdon_architectural_fixture_preflight.test.ts",
+    "linked_background_model_gate.test.ts",
     "general_revit_tool_call_projection.test.ts",
     "general_revit_campaign_memory.test.ts",
     "revit_tool_contract_memory.test.ts",
@@ -2889,6 +2891,14 @@
       "id": "c71-delegated-native-calls-missing-from-benchmark-trace",
       "coverage": [
         "backend:general_revit_tool_call_projection.test.ts",
+        "backend:general_revit_capability_acceptance.test.ts"
+      ]
+    },
+    {
+      "id": "c72-loaded-architectural-link-resolved-from-wrong-fixture",
+      "coverage": [
+        "backend:linked_background_model_gate.test.ts",
+        "backend:snowdon_architectural_fixture_preflight.test.ts",
         "backend:general_revit_capability_acceptance.test.ts"
       ]
     }

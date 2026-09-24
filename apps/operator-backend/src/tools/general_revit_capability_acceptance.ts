@@ -1115,6 +1115,8 @@ async function main(): Promise<void> {
       enabled: requireSnowdonArchitecturalLink,
       fixture: preferredFixture,
       expectedDocumentTitle: fixtureConfig.fixtures[preferredFixture].document_title,
+      expectedDocumentPath: path.resolve(fixtureRoot, fixtureConfig.fixtures[preferredFixture].sample_filename),
+      expectedArchitecturalPath: path.resolve(fixtureRoot, "Snowdon Towers Sample Architectural.rvt"),
       requiresArchitecturalLink: fixtureConfig.fixtures[preferredFixture].requires_architectural_link,
       readModelHealth: () => requestJson(sidecar, "/api/benchmark/revit-fixture/model-health", {
         method: "POST",

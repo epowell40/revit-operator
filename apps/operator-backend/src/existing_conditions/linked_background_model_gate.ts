@@ -1,3 +1,5 @@
+import path from "node:path";
+
 export type RevitModelHealthLink = {
   typeId?: unknown;
   name?: unknown;
@@ -12,6 +14,8 @@ export type LinkedBackgroundModelGatePolicy = {
   minimum_instance_count: number;
   require_loaded: boolean;
   require_source_path: boolean;
+  expected_document_path?: string;
+  expected_source_path?: string;
 };
 
 export const DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY: LinkedBackgroundModelGatePolicy = {
@@ -66,6 +70,10 @@ function normalizedTokens(tokens: string[]): string[] {
   return [...new Set(tokens.map((token) => token.trim().toLowerCase()).filter(Boolean))];
 }
 
+function sameWindowsPath(observed: string | null, expected: string): boolean {
+  return !!observed && path.win32.normalize(observed).toLowerCase() === path.win32.normalize(expected).toLowerCase();
+}
+
 export function auditLinkedBackgroundModelHealth(
   modelHealth: unknown,
   policy: LinkedBackgroundModelGatePolicy = DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY
@@ -80,6 +88,9 @@ export function auditLinkedBackgroundModelHealth(
 
   if (String(root?.status ?? "").trim().toLowerCase() !== "ok") failures.push("model_health_status_not_ok");
   if (tokens.length === 0) failures.push("expected_link_name_tokens_missing");
+  if (policy.expected_document_path && !sameWindowsPath(text(document?.path), policy.expected_document_path)) {
+    failures.push("fixture_document_path_mismatch");
+  }
 
   const matchingItems = items
     .map((item) => record(item))
@@ -100,6 +111,9 @@ export function auditLinkedBackgroundModelHealth(
     if (instanceCount < policy.minimum_instance_count) matchFailures.push("background_link_has_no_placed_instance");
     if (policy.require_loaded && !loaded) matchFailures.push("background_link_unloaded");
     if (policy.require_source_path && !sourcePath) matchFailures.push("background_link_source_path_missing");
+    if (policy.expected_source_path && !sameWindowsPath(sourcePath, policy.expected_source_path)) {
+      matchFailures.push("background_link_source_path_mismatch");
+    }
     return {
       type_id: typeof item.typeId === "number" && Number.isInteger(item.typeId) ? item.typeId : null,
       name: text(item.name) ?? "",

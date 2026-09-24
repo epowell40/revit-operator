@@ -1244,7 +1244,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/snowdon_architectural_fixture_preflight.ts",
-      "sha256": "sha256:c2f7e736002204d21de225de70a03f8ec1f27ebfe6edb9aee64fddf7b4b82e54"
+      "sha256": "sha256:819cad1b3a5c02c59d0ae9839a91b8d4432e8a819ec02aeb8880700526551e9e"
     },
     {
       "path": "apps/operator-backend/src/benchmark/tasks.ts",
@@ -2409,7 +2409,7 @@
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/linked_background_model_gate.ts",
-      "sha256": "sha256:ef165ffddcc1eaa790e186b4003fa71a29b081c0d7afc5eaebc5e98082050dc8"
+      "sha256": "sha256:1c679709cfab3f02a5abed5d82430a0c98e99b421fdbecc72321621b4ae98036"
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/mep_draft_plan.ts",
@@ -3113,7 +3113,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:f7e41f621d0ce20d75a4cd0ec73867bd042add14180d27e9e8cf0d97dafb44de"
+      "sha256": "sha256:315e8e4350d32c88582c07be30c92061f67b48eaa661fc8f2bbe03e6548e4fcb"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -4413,7 +4413,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:f2c869b1dbaaa2fcbccd3897bfa2d01f8b379f6111e40484972f236534d184bd"
+      "sha256": "sha256:364f23264f3c77479fe9d9818755107b86d7eab77d4b1d55803e921a32ba2808"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_report.test.ts",
@@ -4514,6 +4514,10 @@
     {
       "path": "apps/operator-backend/test/large_pdf_intake.test.ts",
       "sha256": "sha256:d29f04e3b9448162746a7b68b79e3a47c61d3fab60a64f35c49444d2a9e6a71d"
+    },
+    {
+      "path": "apps/operator-backend/test/linked_background_model_gate.test.ts",
+      "sha256": "sha256:6f4491325013d218bf50058ffe710728dd950a33fe28cc4412267d5fce8bbe8f"
     },
     {
       "path": "apps/operator-backend/test/local_desktop_launcher_registration.test.ts",
@@ -4885,7 +4889,7 @@
     },
     {
       "path": "apps/operator-backend/test/snowdon_architectural_fixture_preflight.test.ts",
-      "sha256": "sha256:c45c8ac759686a2b7541a32078dc9d9d5ea5244d91f7c1ad336f5863ef4eba06"
+      "sha256": "sha256:8c9fa21b6808a350ae67efb8dd680efa7e0e7f0be543d87a218d85750dd6afdc"
     },
     {
       "path": "apps/operator-backend/test/speed_config.test.ts",
@@ -7557,7 +7561,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:5773fe8b04acee7265931371d0df262d93140f277e6898b0d516ca20395d174b",
+  "inputs_hash": "sha256:c8ff229b98dbf9d0d308860e7dedbadbf2e5550e22a33138cb118784cdf451a7",
   "result": {
     "passed": true,
     "checks": [

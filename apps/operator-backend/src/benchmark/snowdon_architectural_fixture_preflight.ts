@@ -8,6 +8,8 @@ export interface SnowdonArchitecturalFixturePreflightOptions {
   enabled: boolean;
   fixture: string;
   expectedDocumentTitle?: string;
+  expectedDocumentPath?: string;
+  expectedArchitecturalPath?: string;
   requiresArchitecturalLink?: boolean;
   readModelHealth: () => Promise<unknown>;
   retainReceipt: (receipt: LinkedBackgroundModelGateReceipt) => void;
@@ -19,7 +21,9 @@ export async function verifySnowdonArchitecturalFixtureBeforeAgent(
   if (!options.enabled || !(options.requiresArchitecturalLink ?? options.fixture === "snowdon_hvac")) return null;
   const receipt = auditLinkedBackgroundModelHealth(await options.readModelHealth(), {
     ...DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY,
-    expected_name_tokens: ["snowdon towers sample architectural"]
+    expected_name_tokens: ["snowdon towers sample architectural"],
+    expected_document_path: options.expectedDocumentPath,
+    expected_source_path: options.expectedArchitecturalPath
   });
   options.retainReceipt(receipt);
   if (receipt.document.title !== (options.expectedDocumentTitle ?? "Snowdon Towers Sample HVAC")) {

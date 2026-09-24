@@ -145,6 +145,8 @@ test("opt-in Architectural link preflight runs for each case after fixture trans
   const loop = runner.slice(runner.indexOf("for (const testCase of rescoreOnly || campaignStop"));
   assert.match(loop, /await ensureFixtureActive\(/);
   assert.match(loop, /await verifySnowdonArchitecturalFixtureBeforeAgent\(/);
+  assert.match(loop, /expectedDocumentPath: path\.resolve\(fixtureRoot, fixtureConfig\.fixtures\[preferredFixture\]\.sample_filename\)/);
+  assert.match(loop, /expectedArchitecturalPath: path\.resolve\(fixtureRoot, "Snowdon Towers Sample Architectural\.rvt"\)/);
   assert.match(loop, /expectedDocumentTitle: fixtureConfig\.fixtures\[preferredFixture\]\.document_title/);
   assert.match(loop, /requiresArchitecturalLink: fixtureConfig\.fixtures\[preferredFixture\]\.requires_architectural_link/);
   assert.match(loop, /traces\.push\(await runCase\(/);

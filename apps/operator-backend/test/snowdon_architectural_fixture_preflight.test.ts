@@ -99,3 +99,54 @@ test("opt-in check leaves other fixtures alone and rejects a wrong active model"
     retainReceipt: () => {}
   }), /wrong active model/);
 });
+
+test("linked HVAC fixture rejects a loaded Architectural model from another fixture directory", async () => {
+  const receipts: unknown[] = [];
+  await assert.rejects(verifySnowdonArchitecturalFixtureBeforeAgent({
+    enabled: true,
+    fixture: "snowdon_hvac",
+    expectedDocumentTitle: "Snowdon Towers Sample HVAC",
+    expectedDocumentPath: "C:\\fixtures\\current\\Snowdon Towers Sample HVAC.rvt",
+    expectedArchitecturalPath: "C:\\fixtures\\current\\Snowdon Towers Sample Architectural.rvt",
+    readModelHealth: async () => ({
+      ...modelHealth(true),
+      document: { title: "Snowdon Towers Sample HVAC", path: "C:\\fixtures\\current\\Snowdon Towers Sample HVAC.rvt" },
+      links: { revit: { items: [{ typeId: 31, name: "Snowdon Towers Sample Architectural.rvt", instanceCount: 1,
+        loaded: true, path: "C:\\fixtures\\old\\Snowdon Towers Sample Architectural.rvt" }] } }
+    }),
+    retainReceipt: (receipt) => receipts.push(receipt)
+  }), /background_link_source_path_mismatch/);
+  assert.equal((receipts[0] as { passed: boolean }).passed, false);
+});
+
+test("linked HVAC fixture rejects a same-title active model from another fixture directory", async () => {
+  await assert.rejects(verifySnowdonArchitecturalFixtureBeforeAgent({
+    enabled: true,
+    fixture: "snowdon_hvac",
+    expectedDocumentPath: "C:\\fixtures\\current\\Snowdon Towers Sample HVAC.rvt",
+    expectedArchitecturalPath: "C:\\fixtures\\current\\Snowdon Towers Sample Architectural.rvt",
+    readModelHealth: async () => modelHealth(true),
+    retainReceipt: () => {}
+  }), /fixture_document_path_mismatch/);
+});
+
+test("linked HVAC fixture accepts exact host and Architectural paths and retains them in evidence", async () => {
+  const receipts: unknown[] = [];
+  const receipt = await verifySnowdonArchitecturalFixtureBeforeAgent({
+    enabled: true,
+    fixture: "snowdon_hvac",
+    expectedDocumentPath: "C:\\fixtures\\current\\Snowdon Towers Sample HVAC.rvt",
+    expectedArchitecturalPath: "C:\\fixtures\\current\\Snowdon Towers Sample Architectural.rvt",
+    readModelHealth: async () => ({
+      ...modelHealth(true),
+      document: { title: "Snowdon Towers Sample HVAC", path: "c:\\FIXTURES\\current\\Snowdon Towers Sample HVAC.rvt" },
+      links: { revit: { items: [{ typeId: 31, name: "Snowdon Towers Sample Architectural.rvt", instanceCount: 1,
+        loaded: true, path: "c:\\FIXTURES\\current\\Snowdon Towers Sample Architectural.rvt" }] } }
+    }),
+    retainReceipt: (value) => receipts.push(value)
+  });
+  assert.equal(receipt?.passed, true);
+  assert.equal(receipt?.policy.expected_document_path, "C:\\fixtures\\current\\Snowdon Towers Sample HVAC.rvt");
+  assert.equal(receipt?.policy.expected_source_path, "C:\\fixtures\\current\\Snowdon Towers Sample Architectural.rvt");
+  assert.equal(receipts.length, 1);
+});
