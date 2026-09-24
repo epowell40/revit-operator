@@ -1731,7 +1731,7 @@ test("duplicated view creation receipts bind the new view even when the request 
     const ready = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
     const openRead = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`, `elementid:${id}`],
-      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [id] } } });
+      arguments: { method: "POST", path: "/revit/views", body: { viewIds: [id] } } });
     assert.throws(() => openRead(9999), /verification_target_unbound/);
     if (!carriesCreatedIdentity) {
       // Exact retained UI failure: commit is known, but new-view reads cannot bind.
@@ -1741,8 +1741,7 @@ test("duplicated view creation receipts bind the new view even when the request 
     const read = openRead(1542917);
     markAssignmentKernelOperationDispatchStartedV2(read);
     const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
-      [{ id: observedId, found: true, name: "M-COORDINATION COPY", className: "ViewPlan", fullClassName: "Autodesk.Revit.DB.ViewPlan",
-        category: "Views", boundingBox: null, location: null, viewIdUsed: null }])).snapshot;
+      { views: [{ id: observedId, name: "M-COORDINATION COPY", type: "FloorPlan" }] })).snapshot;
     assert.equal(verified.operations[read.operation_id]!.verification_of_operation_id, copy.operation_id);
     assert.equal(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
       .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), observedId === 1542917);
