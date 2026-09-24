@@ -3633,7 +3633,7 @@
     },
     {
       "path": "apps/operator-backend/test/candidate53_v2_native_evidence_authority.test.ts",
-      "sha256": "sha256:b8321eeaada53f72e9d15089d572396200d11b8792bc7e73fb2639499a0c61b9"
+      "sha256": "sha256:54e76f5c10686b485acdb5d8b85eedaa08ba9be346bfd869c486c28a135b9082"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:72bd0a4193b5f61956b61da7e97edec0a7c469240c951eebac49ef15f1f7e8ba",
+  "inputs_hash": "sha256:335b1f135d7184805388167d72e6b756cdfc05dbfa907e1405e01f537d25db83",
   "result": {
     "passed": true,
     "checks": [
