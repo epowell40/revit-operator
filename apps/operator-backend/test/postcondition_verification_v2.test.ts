@@ -288,6 +288,21 @@ test("change-list verification binds each parameter value to its requested eleme
   }), false);
 });
 
+test("unit-formatted native parameter details verify the requested target and field", () => {
+  const apply = { path: "/revit/set-parameter", body: { changes: [
+    { elementId: 1365188, parameterName: "Supply Air Pressure Drop", value: "0.10 in-wg" }
+  ], apply: true } };
+  const item = (id: number, name = "Supply Air Pressure Drop", valueString = "0.10 in-wg") => ({
+    id,
+    parameters: { [name]: "7.5846432" },
+    parameterDetails: [{ name, value: "7.5846432", valueString, storageType: "Double" }]
+  });
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188)] }, { path: "/revit/set-parameter" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365189)] }, { path: "/revit/set-parameter" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188, "Return Air Pressure Drop")] }, { path: "/revit/set-parameter" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188, "Supply Air Pressure Drop", "0.08 in-wg")] }, { path: "/revit/set-parameter" }), false);
+});
+
 test("TextNote newline semantics require an explicit admitted TextNote operation contract", () => {
   const expected = "ISSUE\nVERIFY";
   const observed = { items: [{ elementId: 1478627, text: "ISSUE\rVERIFY\r" }] };

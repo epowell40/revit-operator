@@ -239,7 +239,12 @@ function namedParameterTokens(
           : Object.prototype.hasOwnProperty.call(row, "target_value") ? row.target_value
             : undefined;
   const tokens = new Set<string>();
-  for (const candidate of scalarParameterRepresentations(parameterValue)) {
+  const candidates = [
+    ...scalarParameterRepresentations(parameterValue),
+    ...(allowDetailName && row.storageType === "Double"
+      ? scalarParameterRepresentations(row.valueString) : [])
+  ];
+  for (const candidate of candidates) {
     if (includeGeneric) tokens.add(propertyValueToken(name, candidate));
     for (const target of targets) tokens.add(targetPropertyValueToken(target, name, candidate));
   }

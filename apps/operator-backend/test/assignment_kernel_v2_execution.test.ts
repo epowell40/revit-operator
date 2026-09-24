@@ -2211,6 +2211,40 @@ test("parameter verification requires the requested property on the exact native
   assert.equal(verified.snapshot.outcome, "complete");
 }));
 
+test("unit-formatted native parameter readback settles only the exact applied target", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "unit-parameter-apply", provider_turn_id: "unit-parameter-apply-turn",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["elementids:42", "id:42"],
+    arguments: { method: "POST", path: "/revit/set-parameter", body: { changes: [
+      { elementId: 42, parameterName: "Supply Air Pressure Drop", value: "0.10 in-wg" }
+    ], apply: true } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(applyLease,
+    envelope(applyLease.operation_id, applyLease.binding, { elementId: 42, changed: true }, "applied")
+  ).snapshot;
+  const ready = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  const read = (state: typeof ready, id: number, turn: string) => {
+    const lease = openAssignmentKernelOperationV2({
+      snapshot: state, controller_request_id: `unit-parameter-${turn}`, provider_turn_id: turn,
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`],
+      arguments: { method: "POST", path: "/revit/get-parameters", body: {
+        elementIds: [id], names: ["Supply Air Pressure Drop"] } }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    return settleAssignmentKernelOperationV2(lease, envelope(lease.operation_id, lease.binding, {
+      items: [{ id, parameters: { "Supply Air Pressure Drop": "7.5846432" },
+        parameterDetails: [{ name: "Supply Air Pressure Drop", value: "7.5846432",
+          valueString: "0.10 in-wg", storageType: "Double" }] }]
+    }));
+  };
+  assert.throws(() => read(ready, 43, "unit-parameter-wrong-turn"), /verification_target_unbound/);
+  const verified = read(ready, 42, "unit-parameter-right-turn");
+  assert.ok(verified.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+  assert.equal(verified.snapshot.outcome, "complete");
+}));
+
 test("request echoes and metadata cannot impersonate an authoritative postcondition readback", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

@@ -2828,6 +2828,20 @@
         "backend:view_owned_detailing_v2.test.ts",
         "mcp:lib/workPlanStdio.test.ts"
       ]
+    },
+    {
+      "id": "c60-discovered-input-safe-pause-stops-isolated-campaign",
+      "coverage": [
+        "backend:assignment_kernel_v2_pause_reporting.test.ts",
+        "backend:general_revit_export_isolation.test.ts"
+      ]
+    },
+    {
+      "id": "c60-native-unit-display-readback-leaves-applied-parameter-unverified",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
