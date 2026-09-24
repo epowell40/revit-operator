@@ -1731,7 +1731,7 @@ test("duplicated view creation receipts bind the new view even when the request 
     const ready = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
     const openRead = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`, `elementid:${id}`],
-      arguments: { method: "POST", path: "/revit/views", body: { viewIds: [id] } } });
+      arguments: { method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, id] } } });
     assert.throws(() => openRead(9999), /verification_target_unbound/);
     if (!carriesCreatedIdentity) {
       // Exact retained UI failure: commit is known, but new-view reads cannot bind.
@@ -1740,8 +1740,13 @@ test("duplicated view creation receipts bind the new view even when the request 
     }
     const read = openRead(1542917);
     markAssignmentKernelOperationDispatchStartedV2(read);
+    const owned = (id: number, elementId: number) => ({ view: { id, name: id === 1363433 ? "L4" : "M-COORDINATION COPY", viewType: "FloorPlan" },
+      totalOwnedCount: 1, returnedCount: 1, annotationCount: 1, truncated: false, unreadableCount: 0,
+      unclassifiedCount: 0, incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+      items: [{ elementId, ownerViewId: id, isAnnotation: true, semanticSignature: `sha256:${"a".repeat(64)}`, semanticSignatureComplete: true }] });
     const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
-      { views: [{ id: observedId, name: "M-COORDINATION COPY", type: "FloorPlan" }] })).snapshot;
+      { schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view", requestedViewIds: [1363433, observedId], viewsComplete: true,
+        views: [owned(1363433, 11), owned(observedId, 22)] })).snapshot;
     assert.equal(verified.operations[read.operation_id]!.verification_of_operation_id, copy.operation_id);
     assert.equal(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
       .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), observedId === 1542917);

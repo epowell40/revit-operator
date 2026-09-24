@@ -96,11 +96,23 @@ test("view creation verifies requested name and scale without sheet uppercasing"
 });
 
 test("duplicate-view requires the requested new name from a native view observation", () => {
-  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } };
+  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: false } };
   assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "M-COORDINATION COPY" }] }), true);
   assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1363433, name: "Source" }] }), false);
   assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "Wrong name" }] }), false);
   assert.equal(postconditionSatisfiedByPayloadV2(input, { request: { viewId: 1542917, newName: "M-COORDINATION COPY" } }), false);
+});
+
+test("duplicate-view with detailing requires exact independent source and copy inventory", () => {
+  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "M-COORDINATION COPY" }] }), false);
+  const owned = (id: number, elementId: number) => ({ view: { id, name: id === 1363433 ? "L4" : "M-COORDINATION COPY", viewType: "FloorPlan" },
+    totalOwnedCount: 1, returnedCount: 1, annotationCount: 1, truncated: false,
+    unreadableCount: 0, unclassifiedCount: 0, incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+    items: [{ elementId, ownerViewId: id, isAnnotation: true, semanticSignature: `sha256:${"a".repeat(64)}`, semanticSignatureComplete: true }] });
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view",
+    requestedViewIds: [1363433, 1542917], viewsComplete: true, views: [owned(1363433, 11), owned(1542917, 22)] },
+    { affected_target_identities: ["view_id:1542917"] }), true);
 });
 
 test("posting project close after browser focus restoration is not proof that the document closed", () => {

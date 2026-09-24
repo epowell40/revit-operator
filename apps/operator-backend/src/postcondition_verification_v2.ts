@@ -8,6 +8,7 @@
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
+import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
   isExcludedEvidenceContainerV2,
   normalizedEvidenceKeyV2
@@ -40,6 +41,7 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  affected_target_identities?: readonly string[];
   native_artifact_receipt?: unknown;
   capability_id?: unknown;
   path?: unknown;
@@ -522,6 +524,14 @@ export function postconditionSatisfiedByPayloadV2(
   verificationPayload: unknown,
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
+  const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === "/revit/duplicate-view") {
+    const request = objectValue(semanticApplyInput(applyInput));
+    if (request.withDetailing === true
+        && !duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), structuredValue(verificationPayload),
+          createdViewIdsFromIdentitiesV2(contract.affected_target_identities ?? [])))
+      return false;
+  }
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(String(contract.path ?? objectValue(applyInput).path)))
     return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);

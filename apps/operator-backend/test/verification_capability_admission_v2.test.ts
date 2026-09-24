@@ -63,7 +63,12 @@ test("duplicate-view keeps the source contextual and verifies only the new view 
     value: { request: { viewIds: [1542917] }, views: [{ id: 1542917, name: "M-COORDINATION COPY" }] } });
   assert.deepEqual(read.principal_target_tokens, ["id:1542917"]);
   assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/get-context" } }).admissible, false);
-  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/views" } }).admissible, true);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/views" } }).admissible, false);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/view-owned-detailing" } }).admissible, true);
+  const withoutDetailing = { ...apply, arguments: { method: "POST", path: "/revit/duplicate-view",
+    body: { viewId: 1363433, withDetailing: false } } };
+  assert.equal(verificationCapabilityAdmissionV2({ apply: withoutDetailing,
+    verification: { ...apply, path: "/revit/views" } }).admissible, true);
 });
 
 test("parameter mutation verification requires a reviewed parameter-value readback", () => {

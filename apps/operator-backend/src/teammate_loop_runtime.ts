@@ -14,6 +14,7 @@ import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTo
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
+import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
 import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
@@ -772,6 +773,12 @@ function verificationMatches(state: TeammateLoopState, evidence: unknown, requir
 
 function accumulatedReadbackMatches(state: TeammateLoopState, evidence: unknown): boolean {
   if (!state.verification_has_substantive_readback) return false;
+  if (state.apply_call?.path === "/revit/duplicate-view") {
+    const request = objectValue(state.apply_call.raw_body);
+    if (request.withDetailing === true
+        && !duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), evidence,
+          createdViewIdsFromIdentitiesV2([...state.apply_target_tokens]))) return false;
+  }
   if (state.apply_expected_values.size > 0
       && ![...state.apply_expected_values].every(value => state.verification_observed_values.has(value))) return false;
   const applyIds = [...state.apply_target_tokens].filter(token => token.startsWith("id:"));
@@ -875,7 +882,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       // Admit same-call verification only when the primitive returns an explicit
       // verified/complete receipt (and, when present, the requested values). A
       // generic non-empty success payload must advance to a target-bound readback.
-      if (verificationMatches(state, evidence, true) || explicitDocumentOpenCompletion(pending, evidence)) {
+      const detailedDuplicate = pending.path === "/revit/duplicate-view"
+        && objectValue(pending.raw_body).withDetailing === true;
+      if ((!detailedDuplicate && verificationMatches(state, evidence, true))
+          || explicitDocumentOpenCompletion(pending, evidence)) {
         markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }

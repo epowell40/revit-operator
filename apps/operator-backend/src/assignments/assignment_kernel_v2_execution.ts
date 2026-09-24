@@ -10,6 +10,7 @@ import {
   OPERATION_V2_SCHEMA,
   OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
   appliedOperationHasVerifiedPostconditionV2,
+  affectedOperationTargetIdentitiesV2,
   assertOperationDoesNotRepeatSchemaRejectedInputV2,
   canonicalJsonV2,
   criteriaPendingEvaluationV2,
@@ -19,6 +20,7 @@ import {
   normalizeSemanticFactsForEvidenceV2,
   operationEffectAdmissibleForCriterionV2,
   operationMatchesTargetIdentityV2,
+  operationTargetIdentityAliasesV2,
   operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
@@ -325,7 +327,8 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
         capability_id: verifies.capability_id,
         method: verifies.request_identity?.method,
         path: verifies.request_identity?.path,
-        tool: verifies.input.tool
+        tool: verifies.input.tool,
+        arguments: verifies.input.arguments
       },
       verification: {
         capability_id: input.capability_id,
@@ -700,10 +703,21 @@ function commitInput(
     },
     value: envelope.observation.raw_payload
   });
-  const deterministicallyTargetBound = observedTarget.source !== "reviewed_capability_contract"
-    || Boolean(verificationSubject
-      && observedTarget.principal_target_tokens.length > 0
-      && operationMatchesTargetIdentityV2(verificationSubject, observedTarget.principal_target_tokens));
+  const detailedDuplicate = verificationSubject?.request_identity?.path === "/revit/duplicate-view";
+  const duplicateCreatedTargets = detailedDuplicate && verificationSubject
+    ? new Set(affectedOperationTargetIdentitiesV2(verificationSubject).flatMap(operationTargetIdentityAliasesV2))
+    : null;
+  // A detailed-view read reports both source and copy. The source was the
+  // admitted request target, but only a native-created identity can bind the
+  // duplicate's postcondition. Never let the unchanged source satisfy it.
+  const deterministicallyTargetBound = detailedDuplicate
+    ? Boolean(duplicateCreatedTargets?.size
+      && observedTarget.principal_target_tokens.some(token =>
+        operationTargetIdentityAliasesV2(token).some(alias => duplicateCreatedTargets.has(alias))))
+    : observedTarget.source !== "reviewed_capability_contract"
+      || Boolean(verificationSubject
+        && observedTarget.principal_target_tokens.length > 0
+        && operationMatchesTargetIdentityV2(verificationSubject, observedTarget.principal_target_tokens));
   const deterministicallySatisfied = Boolean(
     lease.purpose === "verification"
       && lease.fulfillment_role === "verification"
@@ -720,7 +734,8 @@ function commitInput(
         verificationSubject.input,
         envelope.observation.raw_payload,
         { capability_id: verificationSubject.capability_id, path: verificationSubject.request_identity?.path,
-          native_artifact_receipt: verificationSubject.result?.native_artifact_receipt }
+          native_artifact_receipt: verificationSubject.result?.native_artifact_receipt,
+          affected_target_identities: verificationSubject.result?.affected_target_identities }
       ))
   );
   if (trustedVerification) {
