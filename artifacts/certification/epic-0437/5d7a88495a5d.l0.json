@@ -347,7 +347,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.test.ts",
-      "sha256": "sha256:a908a357ebe218b81cd31ec5396d1fda57f431190b382e9bfa4c75b026de13d2"
+      "sha256": "sha256:bd4d1726442959f4e8ca72ab3d805ff607ddd6d70c3dd7c3ca3adca3cddd40b9"
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:71020db4ad501ad11357868857ce53c607ede45e3c78a73d42d14680cf5c8351",
+  "inputs_hash": "sha256:218014cb26dc604ce38bcebafe89ac2dc9e95ef245d76e15e0ae91888be58e47",
   "result": {
     "passed": true,
     "checks": [
