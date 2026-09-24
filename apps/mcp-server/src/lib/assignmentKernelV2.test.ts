@@ -1359,7 +1359,12 @@ test("typed MCP parent retains controller identity while its exact native action
     async markDispatch() {},
     async settle(lease: any, result: any) {
       settled.push({ lease, result });
-      return { operation_id: lease.operation_id, settled: true };
+      return { operation_id: lease.operation_id, settled: true,
+        evidence_projections: [{ schema: "revit-operator.evidence-projection.v1",
+          source: `assignment_kernel_v2:${lease.capability_id}`,
+          assignment_id: lease.binding.assignment_id, run_id: lease.binding.run_id,
+          generation: lease.binding.generation, attempt_id: lease.operation_id,
+          evidence_id: "ev1_native_child" }] };
     }
   };
   const decorated = await runWithAssignmentKernelV2(meta(), async () => {
@@ -1389,6 +1394,7 @@ test("typed MCP parent retains controller identity while its exact native action
   assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
   assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "native-child-1");
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].evidence_projections[0].attempt_id, "native-child-1");
   assert.equal(decorated.structuredContent.observation, undefined);
 });
 

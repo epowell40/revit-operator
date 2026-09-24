@@ -273,13 +273,50 @@ export function resolveSessionReceiptOperationV2(input: {
       || !effect || !capabilityId || normalizedText(requestIdentity.capability_id) !== capabilityId) {
     return unresolved("v2_operation_result_binding_invalid");
   }
-  if (capabilityId !== input.toolName) {
-    return unresolved("v2_capability_mismatch");
+  const projected = (Array.isArray(input.parsedResult.evidence_projections)
+    ? input.parsedResult.evidence_projections : []).map(record);
+  if (projected.some((item) => normalizedText(item.source) !== `assignment_kernel_v2:${capabilityId}`)) {
+    return unresolved("v2_evidence_projection_capability_mismatch");
   }
   const explicitMethod = normalizedText(input.explicitMethod).toUpperCase();
   const explicitPath = normalizedText(input.explicitPath).toLowerCase();
   const method = normalizedText(requestIdentity.method).toUpperCase() || null;
   const path = normalizedText(requestIdentity.path).toLowerCase() || null;
+  if (capabilityId !== input.toolName) {
+    if (snapshotOperation.operation_role !== "child") return unresolved("v2_capability_mismatch");
+    // A typed MCP alias is a transport parent. Its exact native child owns the
+    // retained Observation and projection; bind only through the published
+    // parent/child edge, never by guessing a path from the alias name.
+    const parentId = normalizedText(snapshotOperation.parent_operation_id);
+    const parent = record(record(snapshot.operations)[parentId]);
+    const parentResult = record(parent.result);
+    const observations = Array.isArray(snapshotOperation.observation_ids)
+      ? snapshotOperation.observation_ids.map(normalizedText).filter(Boolean) : [];
+    const evidenceId = projected.length === 1 ? normalizedText(projected[0]?.evidence_id) : "";
+    const matchingObservations = observations.filter((id) => {
+      const observation = record(record(snapshot.observations)[id]);
+      return normalizedText(observation.operation_id) === reference.operation_id
+        && normalizedText(observation.raw_payload_ref) === `evidence:${evidenceId}`
+        && sameBinding(observation.binding, { ...reference, session_id: input.expectedSessionId });
+    });
+    if (snapshotOperation.operation_role !== "child"
+        || !parentId || normalizedText(snapshotOperation.root_operation_id) !== parentId
+        || normalizedText(parent.operation_id) !== parentId
+        || normalizedText(parent.capability_id) !== input.toolName
+        || normalizedText(parentResult.operation_id) !== parentId
+        || !sameBinding(parent.binding, { ...reference, session_id: input.expectedSessionId })
+        || !sameBinding(parentResult.binding, { ...reference, session_id: input.expectedSessionId })
+        || requestedEffect(parent.requested_effect) !== effect
+        || parentResult.observation_required !== false
+        || result.observation_required !== true
+        || !normalizedText(capabilityId).startsWith("native:")
+        || !evidenceId
+        || !method || !path
+        || capabilityId !== `native:${method}:${path}`
+        || matchingObservations.length === 0) {
+      return unresolved("v2_native_child_parent_mismatch");
+    }
+  }
   if ((method && explicitMethod && method !== explicitMethod)
       || (path && explicitPath && path !== explicitPath)) {
     return unresolved("v2_transport_identity_mismatch");

@@ -1011,7 +1011,10 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       parent_operation_id: call.parent_operation_id,
       operation_role: call.operation_role,
       request_identity: call.lease.request_identity,
-      settlement_digest: sha256(call.settlement ?? null)
+      settlement_digest: sha256(call.settlement ?? null),
+      ...(Array.isArray(object(call.settlement).evidence_projections)
+        ? { evidence_projections: structuredClone(object(call.settlement).evidence_projections) }
+        : {})
     }));
   return {
     ...root,

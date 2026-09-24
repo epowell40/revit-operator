@@ -4,6 +4,57 @@ import test from "node:test";
 import { loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
 import { resolveSessionReceiptOperationV2 } from "../src/benchmark/v2_session_receipt_binding.js";
 
+test("typed parent notification binds one exact native child observation, never a foreign child", () => {
+  const binding = { assignment_id: "typed-assignment", run_id: "sidecar:typed", generation: 1,
+    session_id: "typed-session", principal_id: "local:test" };
+  const parentId = "opv2_typed_parent";
+  const childId = "opv2_typed_native_child";
+  const result = (id: string, capabilityId: string, method?: string, path?: string) => ({
+    schema: "revit-operator.operation-result/v2", result_id: `resultv2_${id}`,
+    operation_id: id, binding, status: "succeeded", dispatch_state: "dispatched",
+    persistent_effect: "none", request_identity: { capability_id: capabilityId,
+      ...(method ? { method } : {}), ...(path ? { path } : {}), request_signature: `sig-${id}` }
+  });
+  const parent = { schema: "revit-operator.operation/v2", operation_id: parentId, binding,
+    capability_id: "revit_get_context", requested_effect: "read", result: { ...result(parentId, "revit_get_context"), observation_required: false } };
+  const child = { schema: "revit-operator.operation/v2", operation_id: childId, binding,
+    parent_operation_id: parentId, root_operation_id: parentId, operation_role: "child",
+    capability_id: "native:GET:/revit/context", requested_effect: "read",
+    observation_ids: ["obsv2_typed_native_child"], result: { ...result(childId, "native:GET:/revit/context", "GET", "/revit/context"), observation_required: true } };
+  const publication = { schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    session_index: { schema: "revit-operator.assignment-kernel-session-index/v2", session_id: binding.session_id,
+      assignments: [{ assignment_id: binding.assignment_id, assignment_version: 3, binding,
+        outcome: "active", terminal: false }] },
+    assignment_ids: [binding.assignment_id], assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2", assignment_id: binding.assignment_id,
+      assignment_version: 3, snapshot: { schema: "revit-operator.assignment-snapshot/v2",
+        assignment_version: 3, current_binding: binding, provider_call_ids: [], provider_calls: {},
+        in_flight_provider_call_ids: [], operations: { [parentId]: parent, [childId]: child },
+        observations: { obsv2_typed_native_child: { observation_id: "obsv2_typed_native_child", operation_id: childId,
+          raw_payload_ref: "evidence:ev1_typed_native_child", binding } } },
+      provider_ledger: { schema: "revit-operator.assignment-provider-ledger/v2",
+        assignment_id: binding.assignment_id, run_id: binding.run_id, generation: 1,
+        assignment_version: 3, call_ids: [], calls: {}, in_flight_call_ids: [] } }] };
+  const parsedResult = { evidence_projections: [{ schema: "revit-operator.evidence-projection.v1",
+    source: "assignment_kernel_v2:native:GET:/revit/context", assignment_id: binding.assignment_id,
+    run_id: binding.run_id, generation: 1, attempt_id: childId, evidence_id: "ev1_typed_native_child" }] };
+  const resolve = (kernel: unknown, session = binding.session_id) => resolveSessionReceiptOperationV2({
+    assignmentKernelV2: kernel, expectedSessionId: session, toolName: "revit_get_context", parsedResult });
+  assert.deepEqual(resolve(publication), { state: "bound", assignment_id: binding.assignment_id,
+    operation_id: childId, capability_id: "native:GET:/revit/context", requested_effect: "read", method: "GET", path: "/revit/context" });
+  assert.equal(resolve(publication, "other-session").state, "unresolved");
+  const wrongChild = structuredClone(publication);
+  wrongChild.assignments[0]!.snapshot.operations[childId].parent_operation_id = "opv2_foreign_parent";
+  assert.deepEqual(resolve(wrongChild), { state: "unresolved", assignment_id: binding.assignment_id,
+    operation_id: childId, reason: "v2_native_child_parent_mismatch" });
+  const foreignEvidence = { evidence_projections: [{ ...parsedResult.evidence_projections[0],
+    evidence_id: "ev1_foreign" }] };
+  assert.deepEqual(resolveSessionReceiptOperationV2({ assignmentKernelV2: publication,
+    expectedSessionId: binding.session_id, toolName: "revit_get_context", parsedResult: foreignEvidence }), {
+    state: "unresolved", assignment_id: binding.assignment_id, operation_id: childId,
+    reason: "v2_native_child_parent_mismatch" });
+});
+
 test("Candidate 51 V2-tagged discovery notification uses the exact published operation effect", async () => {
   const sessionId = "candidate-51-session";
   const assignmentId = "candidate-51-assignment";

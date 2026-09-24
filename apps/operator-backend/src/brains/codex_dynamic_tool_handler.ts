@@ -33,8 +33,11 @@ import { currentAssignmentJournalContext } from "../assignments/turn_journal.js"
 import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
 import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
+import { nativeChildProjectionReferencesV2 } from "../assignments/assignment_kernel_v2_child_projection.js";
 import {
+  commitAssignmentKernelObservationV2,
   failAssignmentKernelOperationV2,
+  leaseFromOperation,
   markAssignmentKernelOperationDispatchStartedV2,
   openAssignmentKernelOperationV2,
   settleAssignmentKernelOperationV2
@@ -282,8 +285,18 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       });
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
       const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
+      const childProjections: EvidenceProjectionV1[] = [];
+      for (const reference of nativeChildProjectionReferencesV2(settled.snapshot, lease.operation_id, rawResult)) {
+        try {
+          const child = settled.snapshot.operations[reference.operation_id];
+          if (!child) continue;
+          const retained = commitAssignmentKernelObservationV2(leaseFromOperation(child));
+          const projection = retained.evidence_projections.find(item => item.evidence_id === reference.evidence_id);
+          if (projection) childProjections.push(projection);
+        } catch { /* Missing child provenance remains unprojected and fail closed. */ }
+      }
       const context = assembleBoundedEvidenceContext({
-        projections: [...settled.evidence_projections],
+        projections: [...settled.evidence_projections, ...childProjections],
         session_id: sessionId,
         model_call_id: typeof params.turnId === "string" ? params.turnId : null,
         source: `assignment_kernel_v2_context:${params.tool}`,

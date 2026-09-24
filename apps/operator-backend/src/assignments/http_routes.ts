@@ -265,6 +265,7 @@ export async function handleAssignmentHttpRoute(
         ok: true,
         operation_id: operation.operation_id,
         evidence_refs: settled.evidence_refs,
+        evidence_projections: settled.evidence_projections,
         assignment_snapshot_v2: settled.snapshot
       });
     } catch (error) {
