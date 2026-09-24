@@ -2776,6 +2776,13 @@
         "dotnet:OperatorDialogLifecycleContractTests",
         "dotnet:OperatorNativeTransportTests"
       ]
+    },
+    {
+      "id": "c60-preprovider-clarification-omits-bound-usage",
+      "coverage": [
+        "backend:agent_response_policy.test.ts",
+        "backend:provider_turn_usage.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

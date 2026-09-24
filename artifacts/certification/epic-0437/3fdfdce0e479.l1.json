@@ -1280,7 +1280,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:6dec86ea2b80ddcd52d8ba49532a03b04224fbb8763f3a4f6b5baf80d7474335"
+      "sha256": "sha256:9dbc70d00409909cd3138009f521d1062906f7a39c30efa9a2ea1f5f79845171"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -3401,7 +3401,7 @@
     },
     {
       "path": "apps/operator-backend/test/agent_response_policy.test.ts",
-      "sha256": "sha256:e9e50a0a1160b898bc76289aa2afd6ef88a403fa0ea27796736c8d4a2fedc8e0"
+      "sha256": "sha256:1bce536074bef2929d1f4a6efc095677e048aadd6db0cfffdb8f43eb9f9cb61e"
     },
     {
       "path": "apps/operator-backend/test/allowlist.test.ts",
@@ -4649,7 +4649,7 @@
     },
     {
       "path": "apps/operator-backend/test/provider_turn_usage.test.ts",
-      "sha256": "sha256:6689193dc4ddf6831a518e74ffbe869bd5e6d0ae1930d30529c3e2761444a659"
+      "sha256": "sha256:4a43f77d979452f937a9378f80a415e10b00e01f2207482d757cbde899e7eb2b"
     },
     {
       "path": "apps/operator-backend/test/read_attachment.test.ts",
@@ -7509,7 +7509,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:da9cc443b78d6df02600c522232d983573b9f3155dd074c7811fdc2f60aad355",
+  "inputs_hash": "sha256:4ade30f418c038cc41776c18c1e4bc8eab8d10d7d7285ac2111d6adbcc2f8178",
   "result": {
     "passed": true,
     "checks": [

@@ -170,6 +170,17 @@ test("Codex settles the durable Assignment before publishing turn completion", (
   assert.match(codexBrain, /if \(!progression\.prompt\)[\s\S]*canonicalAssignmentOutcomeForBinding\([\s\S]*canonical_assignment_outcome: canonicalAssignmentOutcome/);
 });
 
+test("a V2 clarification that stops before the provider reports explicit no-start usage", () => {
+  const source = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const start = source.indexOf("if (!progression.prompt)");
+  const end = source.indexOf("assignmentProgressTurnStart = progression.snapshot", start);
+  assert.ok(start >= 0 && end > start);
+  const clarificationReturn = source.slice(start, end);
+  assert.match(clarificationReturn, /provider_turn_usage:\s*\{[\s\S]*?session_id:\s*req\.session_id,\s*message_id:\s*req\.message_id,[\s\S]*?thread_id:\s*null,\s*turn_id:\s*null,\s*disposition:\s*"not_started",\s*raw_response_ids:\s*\[\]/);
+  assert.match(clarificationReturn, /assignment_snapshot_v2:\s*progression\.snapshot/);
+  assert.match(clarificationReturn, /canonical_assignment_outcome:\s*canonicalAssignmentOutcome/);
+});
+
 test("pre-model redline routing uses async recovery bridge", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
 

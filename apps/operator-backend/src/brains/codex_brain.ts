@@ -735,6 +735,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             version: OPERATOR_BACKEND_CONTRACT_VERSION,
             assistant_message: message,
             actions: [],
+            provider_turn_usage: {
+              schema: "revit-operator.provider-turn-usage/v1",
+              session_id: req.session_id, message_id: req.message_id,
+              thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+            },
             assignment_snapshot_v2: progression.snapshot,
             ...(progression.snapshot.terminal ? { terminal_result_v2: deriveTerminalResultV2(progression.snapshot) } : {}),
             ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {})
