@@ -65,6 +65,7 @@
     "openai_brain_recovery.test.ts",
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
+    "view_owned_detailing_v2.test.ts",
     "provider_dynamic_program.test.ts",
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
@@ -219,6 +220,7 @@
     "test/task_navigation.test.js"
   ],
   "dotnet_test_classes": [
+    "ViewOwnedDetailingInventoryContractTests",
     "OperatorDesktopLaunchPlanTests",
     "OperatorDuplicateSheetContractTests",
     "OperatorPrinterDestinationTests",
