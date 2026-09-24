@@ -95,6 +95,14 @@ test("view creation verifies requested name and scale without sheet uppercasing"
   }
 });
 
+test("duplicate-view requires the requested new name from a native view observation", () => {
+  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "M-COORDINATION COPY" }] }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1363433, name: "Source" }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "Wrong name" }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { request: { viewId: 1542917, newName: "M-COORDINATION COPY" } }), false);
+});
+
 test("posting project close after browser focus restoration is not proof that the document closed", () => {
   const input = { method: "POST", path: "/revit/close-active-model", body: { discardUnsavedChanges: true } };
   for (const restoredGraphicalFocus of [false, true]) {

@@ -107,7 +107,7 @@ function sheetCreationOperation(path: string): boolean {
 }
 
 function viewCreationOperation(path: string): boolean {
-  return path === "/revit/create-view" || path === "/revit/create-drafting-view";
+  return path === "/revit/create-view" || path === "/revit/create-drafting-view" || path === "/revit/duplicate-view";
 }
 
 function exactViewRenameValues(value: unknown): readonly string[] {
@@ -380,7 +380,8 @@ export function expectedPostconditionValuesV2(
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
     const sheetIdentity = sheetCreationOperation(operationPath)
       && depth === 1 && ["name", "newname", "number", "newnumber"].includes(normalizedChildKey);
-    const viewIdentity = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "name";
+    const viewIdentity = viewCreationOperation(operationPath) && depth === 1
+      && (normalizedChildKey === "name" || (operationPath === "/revit/duplicate-view" && normalizedChildKey === "newname"));
     const viewScale = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "scale";
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedChildKey);
     const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedChildKey);

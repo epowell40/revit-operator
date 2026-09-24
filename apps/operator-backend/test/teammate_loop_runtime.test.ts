@@ -1176,6 +1176,57 @@ test("structured request-validation failures do not consume the mutation stage",
   }
 });
 
+test("duplicate view remains unverified until a native read names the new target", () => {
+  for (const observed of [
+    { views: [{ id: 1363433, name: "M-COORDINATION COPY" }] },
+    { views: [{ id: 1542917, name: "WRONG COPY" }] },
+    { request: { viewIds: [1542917], name: "M-COORDINATION COPY" }, views: [] }
+  ]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Duplicate the source plan including annotations as M-COORDINATION COPY."));
+    try {
+      const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: "/revit/duplicate-view",
+        body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true }
+      } });
+      assert.equal(apply.allowed, true);
+      recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({
+        status: "Success", viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY"
+      }) }] });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+      const read = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: "/revit/views", body: { viewIds: [1542917] }
+      } });
+      assert.equal(read.allowed, true);
+      recordTeammateMcpResult(owner, read, { content: [{ type: "text", text: JSON.stringify(observed) }] });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Duplicate the source plan including annotations as M-COORDINATION COPY."));
+  try {
+    const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/duplicate-view",
+      body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true }
+    } });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({
+      status: "Success", viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY"
+    }) }] });
+    const read = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/views", body: { viewIds: [1542917] }
+    } });
+    assert.equal(read.allowed, true);
+    recordTeammateMcpResult(owner, read, { content: [{ type: "text", text: JSON.stringify({
+      views: [{ id: 1542917, name: "M-COORDINATION COPY" }]
+    }) }] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test("C60 rolled-back MEP route preview does not consume the one unverified apply slot", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
@@ -2595,7 +2646,7 @@ test("two sequential sheet renames finish after each write receives a fresh targ
   }
 });
 
-test("focused exported-view capture filename verifies a newly created view", () => {
+test("focused exported-view capture filename cannot verify a newly created view", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Duplicate L2 and create a view template from the duplicate."));
@@ -2606,7 +2657,7 @@ test("focused exported-view capture filename verifies a newly created view", () 
     });
     assert.equal(apply.allowed, true);
     recordTeammateMcpResult(owner, apply, {
-      content: [{ type: "text", text: JSON.stringify({ success: true, viewId: 1542985, name: "VISIBILITY TEST - L2" }) }]
+      content: [{ type: "text", text: JSON.stringify({ success: true, viewId: 1542985, sourceViewId: 9948, name: "VISIBILITY TEST - L2" }) }]
     });
 
     const capture = guardTeammateMcpCall(owner, {
@@ -2620,8 +2671,16 @@ test("focused exported-view capture filename verifies a newly created view", () 
     });
 
     const receipt = teammateLoopReceiptForOwner(owner);
-    assert.equal(receipt?.verified, true);
-    assert.equal(receipt?.stage, "report");
+    assert.equal(receipt?.verified, false);
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/views", body: { viewIds: [1542985] } }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({ views: [{ id: 1542985, name: "VISIBILITY TEST - L2" }] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
   } finally {
     endTeammateLoopOwner(lease);
   }

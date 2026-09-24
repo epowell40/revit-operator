@@ -71,6 +71,15 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/duplicate-view", {
+    semantic_outputs: [],
+    principal_target_fields: ["viewId"],
+    contextual_scope_fields: ["sourceViewId"]
+  }],
+  ["/revit/views", {
+    semantic_outputs: ["view.identity"],
+    principal_target_fields: ["id", "ids"]
+  }],
   ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
   ["/revit/visibility", {
     semantic_outputs: ["view.visibility_properties"],
@@ -226,6 +235,20 @@ export function operationTargetSelectorV2(input: Readonly<{
       contextual_scope_tokens: []
     };
   }
+  if (pathOf(input.operation) === "/revit/duplicate-view") {
+    // The request's viewId names the source. The native result uses viewId for
+    // the newly created view and sourceViewId for the source. Never let a
+    // source-only request bind a post-apply observation of the source.
+    const created = tokensFromReviewedFields(input.value, ["sourceViewId"]).length > 0;
+    return {
+      schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
+      source: "reviewed_capability_contract",
+      principal_target_tokens: created ? tokensFromReviewedFields(input.value, ["viewId"]) : [],
+      contextual_scope_tokens: created
+        ? tokensFromReviewedFields(input.value, ["sourceViewId"])
+        : tokensFromReviewedFields(input.value, ["viewId"])
+    };
+  }
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
     source: "reviewed_capability_contract",
@@ -240,6 +263,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if (path === "/revit/duplicate-view") return ["view.identity"];
   if (path === "/revit/create-family-instance") return ["family.placement"];
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
@@ -303,6 +327,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (pathOf(apply) === "/revit/duplicate-view") return " Verify the newly created view, not the source, with POST /revit/views and viewIds=[new viewId from the create result]. Check the returned view ID and exact requested name. If WithDetailing was requested, separately inspect and compare view-owned annotations in source and copy; the view-name read alone does not prove detailing was copied.";
   if (pathOf(apply) === "/revit/create-family-instance") return " Verify every created family instance with POST /revit/get-element-summary, elementIds=[all created instance IDs], or revit_get_element_summary with ids=[all created instance IDs]. The native readback must match model-space XYZ in feet, family/type, requested level, rotation and batch spacing. The create response only identifies the new elements; its coordinates cannot independently verify placement. Connector reads alone cannot verify the insertion point. View-based placement needs a separate verification contract.";
   if (["/revit/mep-route-workflow", "/revit/create-duct"].includes(pathOf(apply))) return " For explicit world XYZ ducts in model feet, prefer one POST /revit/get-connectors with includeVerificationParameters=true, includeAllRefs=true, includeCoordinateSystem=true, onlyOpenPhysicalConnectors=false and all created duct/fitting elementIds (maximum 500 unique IDs). This single native callback returns parameters and the physical graph together. Legacy fallback: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height,Diameter], then POST /revit/get-connectors with elementIds covering ALL created ducts and fittings and includeAllRefs=true. The combined native reads must match the admitted geometry, type, level, system and sizes. A polyline branch requires connectSegments=true and every internal fitting connection; endpoints may explicitly be open construction stages or required existing connections. Read both ducts and fittings in the same batches. Open construction stages do not establish completed-system connectivity. Parameters alone cannot verify connections. This does not certify PDF interpretation or visual review. Inspect the delivered post-change image separately; a JSON evidence ID is not an image ID. Never repeat an applied route merely to verify it.";
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";

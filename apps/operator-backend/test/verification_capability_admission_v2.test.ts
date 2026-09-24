@@ -48,6 +48,24 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.deepEqual(capable.provided_semantic_outputs, ["text_note.value"]);
 });
 
+test("duplicate-view keeps the source contextual and verifies only the new view identity", () => {
+  const apply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/duplicate-view" };
+  const source = operationTargetSelectorV2({ operation: apply,
+    value: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true },
+    fallback_target_tokens: ["id:1363433"] });
+  assert.deepEqual(source.principal_target_tokens, []);
+  assert(source.contextual_scope_tokens.includes("id:1363433"));
+  const created = operationTargetSelectorV2({ operation: apply,
+    value: { viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY" } });
+  assert(created.principal_target_tokens.includes("id:1542917"));
+  assert(!created.principal_target_tokens.includes("id:1363433"));
+  const read = operationTargetSelectorV2({ operation: { ...apply, path: "/revit/views" },
+    value: { request: { viewIds: [1542917] }, views: [{ id: 1542917, name: "M-COORDINATION COPY" }] } });
+  assert.deepEqual(read.principal_target_tokens, ["id:1542917"]);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/get-context" } }).admissible, false);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/views" } }).admissible, true);
+});
+
 test("parameter mutation verification requires a reviewed parameter-value readback", () => {
   const genericApply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/set-parameter" };
   const incapable = verificationCapabilityAdmissionV2({
