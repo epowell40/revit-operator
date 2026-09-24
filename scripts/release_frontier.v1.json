@@ -2771,7 +2771,7 @@
       ]
     },
     {
-      "id": "c60-dialog-guard-subscription-runs-off-revit-dispatcher",
+      "id": "c60-dialog-guard-subscription-requires-revit-api-context",
       "coverage": [
         "dotnet:OperatorDialogLifecycleContractTests",
         "dotnet:OperatorNativeTransportTests"

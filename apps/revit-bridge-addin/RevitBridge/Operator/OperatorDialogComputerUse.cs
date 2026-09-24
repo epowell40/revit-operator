@@ -104,11 +104,6 @@ namespace RevitBridge.Operator
 
         public object ArmGuard(GuardParams? request)
         {
-            // HTTP and courier calls can arrive off the UI thread. Revit requires
-            // DialogBoxShowing subscription and its expiry timer on its dispatcher.
-            if (!_dispatcher.CheckAccess())
-                return _dispatcher.Invoke(() => ArmGuard(request));
-
             var selection = ButtonSelection.From(request?.button, request?.buttonText, request?.buttonIndex);
             if (selection.IsEmpty)
             {
@@ -782,11 +777,6 @@ namespace RevitBridge.Operator
 
         internal void DisarmGuard(string? guardId)
         {
-            if (!_dispatcher.CheckAccess())
-            {
-                _dispatcher.Invoke(() => DisarmGuard(guardId));
-                return;
-            }
             if (!long.TryParse(guardId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)) return;
             lock (_gate)
             {

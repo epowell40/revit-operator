@@ -27,30 +27,33 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void HttpGuardCanArmFromTransportThreadOnlyAfterEnteringRevitDispatcher()
+        public void HttpGuardMustEnterRevitExternalEventApiContext()
         {
             var guard = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDialogComputerUse.cs");
             var arm = Slice(guard, "public object ArmGuard(", "public void Dispose()");
-            Assert.Contains("if (!_dispatcher.CheckAccess())", arm);
-            Assert.Contains("_dispatcher.Invoke(() => ArmGuard(request))", arm);
-            Assert.True(arm.IndexOf("_dispatcher.Invoke(() => ArmGuard(request))", StringComparison.Ordinal)
-                < arm.IndexOf("_guards.Add(guard);", StringComparison.Ordinal));
+            Assert.DoesNotContain("_dispatcher.Invoke(() => ArmGuard(request))", arm);
+            Assert.Contains("UpdateDialogEventSubscription_NoLock();", arm);
 
             var server = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
-            Assert.Contains("IsDirectDialogComputerUsePath(path)", server);
-            Assert.Contains("\"/revit/computer-use-guard\"", server);
+            var direct = Slice(server, "private static bool IsDirectDialogComputerUsePath(string path)", "private static OperatorActionRisk GetRequestRisk(");
+            Assert.DoesNotContain("/revit/computer-use-guard", direct);
+            Assert.Contains("result = await _eventService.Run", server);
         }
 
         [Fact]
-        public void CourierRetryGuardAlsoUsesSameDispatcherBoundaryAndCanDisarmSafely()
+        public void CourierRetryGuardArmsAndDisarmsInsideOneRevitExternalEvent()
         {
             var guard = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDialogComputerUse.cs");
             var retry = Slice(guard, "internal string? ArmRetryableWarningCancelGuard()", "internal ResolvedDialogRecovery?");
             Assert.Contains("ArmGuard(new GuardParams", retry);
-            Assert.Contains("_dispatcher.Invoke(() => DisarmGuard(guardId))", retry);
+            Assert.DoesNotContain("_dispatcher.Invoke(() => DisarmGuard(guardId))", retry);
 
             var runner = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs");
-            Assert.Contains("dialogComputerUse!.ArmRetryableWarningCancelGuard()", runner);
+            var queued = Slice(runner, "result = await _eventService.Run(app =>", "var recoveredDialog =");
+            Assert.Contains("dialogComputerUse!.ArmRetryableWarningCancelGuard()", queued);
+            Assert.Contains("dialogComputerUse?.DisarmGuard(autoGuardId)", queued);
+            var direct = Slice(runner, "private static bool IsDirectDialogComputerUsePath(string path)", "private static void TryRefreshGraphics(");
+            Assert.DoesNotContain("/revit/computer-use-guard", direct);
         }
 
         private static string Slice(string source, string start, string end)

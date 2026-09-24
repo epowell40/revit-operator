@@ -357,7 +357,6 @@ namespace RevitBridge.Operator
             var dialogComputerUse = App.Instance?.DialogComputerUse;
             var dialogEventCursor = dialogComputerUse?.CaptureEventCursor() ?? 0;
             var autoGuardArmed = ShouldAutoArmRetryableDialogGuard(method, path, jsonBody) && dialogComputerUse != null;
-            var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
 
             object result;
             var deadline = OperatorActionDeadlinePolicy.Resolve(method, path, risk.ToString());
@@ -396,6 +395,10 @@ namespace RevitBridge.Operator
                             action.LaboratoryEvidenceDispatch!,
                             jsonBody);
                     object handlerResult;
+                    // Revit only permits DialogBoxShowing subscriptions from an API
+                    // context. Arm and remove the guard around this handler within
+                    // the same ExternalEvent so no other queued action can borrow it.
+                    var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
                     try
                     {
                         handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
@@ -411,6 +414,10 @@ namespace RevitBridge.Operator
                         throw new OperatorDispatchedMutationOutcomeUnknownException(
                             "The native mutation handler failed after Revit dispatch; reconcile the exact target before any retry.",
                             error);
+                    }
+                    finally
+                    {
+                        if (autoGuardId != null) dialogComputerUse?.DisarmGuard(autoGuardId);
                     }
                     handlerResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
                         app,
@@ -451,10 +458,6 @@ namespace RevitBridge.Operator
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
             {
                 throw deadline.ClassifyCancellation(ex, correlationId);
-            }
-            finally
-            {
-                if (autoGuardId != null) dialogComputerUse?.DisarmGuard(autoGuardId);
             }
 
             var recoveredDialog = dialogComputerUse?.GetResolvedRetryableRecoveryAfter(dialogEventCursor);
@@ -703,8 +706,7 @@ namespace RevitBridge.Operator
         private static bool IsDirectDialogComputerUsePath(string path)
         {
             return string.Equals(path, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-guard", StringComparison.OrdinalIgnoreCase);
+                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void TryRefreshGraphics(Autodesk.Revit.UI.UIApplication app)

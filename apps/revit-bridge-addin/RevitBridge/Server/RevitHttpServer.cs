@@ -1272,8 +1272,7 @@ namespace RevitBridge.Server
         private static bool IsDirectDialogComputerUsePath(string path)
         {
             return string.Equals(path, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-guard", StringComparison.OrdinalIgnoreCase);
+                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase);
         }
 
         private static OperatorActionRisk GetRequestRisk(string method, string path, string body)
