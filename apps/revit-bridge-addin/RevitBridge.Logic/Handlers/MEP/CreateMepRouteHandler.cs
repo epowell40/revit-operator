@@ -9,6 +9,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Logic.Handlers;
 
 namespace RevitBridge.Logic.Handlers.MEP
 {
@@ -228,10 +229,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             var fittingIds = new List<long>();
             var internalConnectionFailures = 0;
             var jointPlans = MepRouteJointPlanner.PlanJoints(segmentSizeTexts);
+            var nativeFailures = new List<CapturedFailure>();
 
             using (var tx = new Transaction(doc, p.dryRun ? "Create MEP Route (Dry Run)" : "Create MEP Route"))
             {
                 tx.Start();
+                tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, nativeFailures, rollbackOnErrors: true, deleteWarnings: false));
                 try
                 {
                     for (var i = 0; i < resolvedPoints.Count - 1; i++)
@@ -409,7 +412,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                     var completionStatus = p.dryRun ? tx.RollBack() : tx.Commit();
                     var expectedStatus = p.dryRun ? TransactionStatus.RolledBack : TransactionStatus.Committed;
                     if (completionStatus != expectedStatus)
-                        throw new InvalidOperationException($"Native route transaction returned {completionStatus}, expected {expectedStatus}.");
+                    {
+                        return Task.FromResult<object>(new
+                        {
+                            status = "Blocked",
+                            error = $"Native route transaction returned {completionStatus}, expected {expectedStatus}.",
+                            blockCode = nativeFailures.Count > 0 ? "native_revit_failure" : "native_transaction_uncommitted",
+                            dryRun = p.dryRun,
+                            plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
+                            attemptedCreatedElementIds = createdIds,
+                            attemptedCreatedFittingIds = fittingIds,
+                            nativeFailures,
+                            connectionAttempts,
+                            warnings,
+                            rolledBack = completionStatus == TransactionStatus.RolledBack,
+                            transaction = OperatorNativeTransactionReceipt.FromObservedStatus(completionStatus.ToString(), createdIds.Concat(fittingIds))
+                        });
+                    }
                     var transaction = OperatorNativeTransactionReceipt.FromObservedStatus(completionStatus.ToString(), createdIds.Concat(fittingIds));
                     var result = new
                     {
@@ -456,6 +475,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         internalConnectionsVerified = !p.connectSegments || internalConnectionFailures == 0,
                         openConnectorCount,
                         warnings,
+                        nativeFailures,
                         rolledBack = p.dryRun
                     };
 
@@ -474,6 +494,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         createdElementIds = new List<long>(),
                         plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
                         warnings,
+                        nativeFailures,
                         rolledBack = observedStatus == TransactionStatus.RolledBack,
                         transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observedStatus.ToString(), createdIds.Concat(fittingIds))
                     });
