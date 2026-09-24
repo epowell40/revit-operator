@@ -43,3 +43,20 @@ test("detailed duplicate requires two complete owner-view inventories with the s
   assert.equal(duplicatedViewDetailingSatisfiedV2(1363433, "M-COORDINATION COPY",
     payload(sourceWithLine, copyWithoutLine), [1542917]), false);
 });
+
+test("Revit housekeeping can differ while every drafting item still matches", () => {
+  const housekeeping = (ownerViewId: number, elementId: number, className: string, builtInCategory: string | null) => ({
+    elementId, ownerViewId, className, builtInCategory, isAnnotation: false,
+    comparisonExcluded: true, semanticSignature: null, semanticSignatureComplete: false
+  });
+  const sourceItems = [item(1363433, 11, "a"), housekeeping(1363433, 12, "SketchPlane", null),
+    housekeeping(1363433, 13, "SunAndShadowSettings", "OST_SunStudy")];
+  const targetItems = [item(1542917, 21, "a"), housekeeping(1542917, 22, "SketchPlane", null)];
+  const sourceInventory = { ...view(1363433, "L4", sourceItems), annotationCount: 1 };
+  const targetInventory = { ...view(1542917, "M-COORDINATION COPY", targetItems), annotationCount: 1 };
+  assert.equal(duplicatedViewDetailingSatisfiedV2(1363433, "M-COORDINATION COPY",
+    payload(sourceInventory, targetInventory), [1542917]), true);
+  const hiddenAnnotation = { ...item(1542917, 23, "b"), className: "SketchPlane", comparisonExcluded: true };
+  assert.equal(duplicatedViewDetailingSatisfiedV2(1363433, "M-COORDINATION COPY",
+    payload(sourceInventory, { ...targetInventory, items: [...targetItems, hiddenAnnotation], totalOwnedCount: 3, returnedCount: 3, annotationCount: 2 }), [1542917]), false);
+});

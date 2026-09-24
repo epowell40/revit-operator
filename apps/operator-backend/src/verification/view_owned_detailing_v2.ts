@@ -33,13 +33,18 @@ function completeInventory(value: unknown): Inventory | null {
   for (const value of items) {
     const item = row(value);
     const elementId = positiveId(item.elementId);
+    const infrastructure = item.isAnnotation === false && (
+      item.className === "SketchPlane" || item.className === "SunAndShadowSettings"
+      || item.className === "ExtentElem" || item.builtInCategory === "OST_SunStudy");
     const signature = typeof item.semanticSignature === "string" ? item.semanticSignature.trim() : "";
     if (!elementId || ids.has(elementId) || positiveId(item.ownerViewId) !== id
-        || item.semanticSignatureComplete !== true || !/^sha256:[a-f0-9]{64}$/.test(signature)
+        || (item.comparisonExcluded === true) !== infrastructure
+        || (infrastructure && (item.semanticSignatureComplete !== false || item.semanticSignature !== null))
+        || (!infrastructure && (item.semanticSignatureComplete !== true || !/^sha256:[a-f0-9]{64}$/.test(signature)))
         || (item.isAnnotation !== true && item.isAnnotation !== false)) return null;
     ids.add(elementId);
     if (item.isAnnotation) annotationCount++;
-    signatures.push(signature);
+    if (!infrastructure) signatures.push(signature);
   }
   if (annotationCount !== inventory.annotationCount) return null;
   return { id, name, viewType, signatures: signatures.sort(), annotationCount };

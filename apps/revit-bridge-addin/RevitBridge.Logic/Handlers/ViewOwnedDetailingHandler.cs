@@ -78,7 +78,10 @@ namespace RevitBridge.Logic.Handlers
                         throw new InvalidOperationException("Owner-view filter returned an element with another owner.");
                     var categoryType = element.Category?.CategoryType.ToString();
                     if (categoryType == "Annotation") annotationCount++;
-                    if (categoryType == null) unclassifiedCount++;
+                    var builtInCategory = element.Category?.BuiltInCategory.ToString();
+                    var comparisonExcluded = ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure(
+                        element.GetType().Name, builtInCategory, categoryType == "Annotation");
+                    if (categoryType == null && !comparisonExcluded) unclassifiedCount++;
                     var text = ReadVisibleText(element);
                     var textComplete = text == null || text.Length <= 4096;
                     if (!textComplete)
@@ -90,8 +93,8 @@ namespace RevitBridge.Logic.Handlers
                     var box = SafeBoundingBox(element, view);
                     var curve = element is CurveElement curveElement ? SafeCurve(curveElement) : null;
                     var geometryKey = RelativeGeometryKey(element, view);
-                    var signatureComplete = categoryType != null && textComplete && geometryKey != null;
-                    if (!signatureComplete) incompleteSignatureCount++;
+                    var signatureComplete = !comparisonExcluded && categoryType != null && textComplete && geometryKey != null;
+                    if (!signatureComplete && !comparisonExcluded) incompleteSignatureCount++;
                     var signature = signatureComplete
                         ? ViewOwnedDetailingSemanticSignature.Create(element.GetType().Name,
                             element.Category?.BuiltInCategory.ToString() ?? element.Category!.Name,
@@ -104,9 +107,10 @@ namespace RevitBridge.Logic.Handlers
                         ownerViewId = ElementIdCompat.GetValue(view.Id),
                         className = element.GetType().Name,
                         category = element.Category?.Name,
-                        builtInCategory = element.Category?.BuiltInCategory.ToString(),
+                        builtInCategory,
                         categoryType,
                         isAnnotation = categoryType == "Annotation",
+                        comparisonExcluded,
                         name = element.Name,
                         typeId = type == null ? (long?)null : ElementIdCompat.GetValue(type.Id),
                         typeUniqueId = type?.UniqueId,

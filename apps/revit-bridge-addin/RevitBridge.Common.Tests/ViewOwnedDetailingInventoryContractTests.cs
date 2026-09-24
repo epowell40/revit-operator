@@ -44,6 +44,17 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void OnlyKnownNonDraftingInfrastructureIsExcluded()
+        {
+            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("ExtentElem", null, false));
+            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SketchPlane", null, false));
+            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SunAndShadowSettings", "OST_SunStudy", false));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("TextNote", "OST_TextNotes", true));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("DetailCurve", "OST_Lines", false));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("ExtentElem", null, true));
+        }
+
+        [Fact]
         public void SemanticSignatureIgnoresNativeIdentityButChangesForTextTypeAndPosition()
         {
             var source = ViewOwnedDetailingSemanticSignature.Create("TextNote", "OST_TextNotes", "type-uid",
