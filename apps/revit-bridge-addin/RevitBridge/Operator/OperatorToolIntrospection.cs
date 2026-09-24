@@ -423,6 +423,7 @@ namespace RevitBridge.Operator
                 { "/revit/get-family-file-path", typeof(RevitBridge.Logic.Handlers.GetFamilyFilePathHandler.Params) },
                 { "/revit/open-family-doc", typeof(RevitBridge.Logic.Handlers.OpenFamilyDocHandler.Params) },
                 { "/revit/find-text-notes", typeof(RevitBridge.Logic.Handlers.FindTextNotesHandler.Params) },
+                { "/revit/view-owned-detailing", typeof(RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler.Request) },
                 { "/revit/replace-text-note", typeof(RevitBridge.Logic.Handlers.ReplaceTextNoteHandler.Params) },
                 { "/revit/save-family-doc", typeof(RevitBridge.Logic.Handlers.SaveFamilyDocHandler.Params) },
                 { "/revit/load-family-doc", typeof(RevitBridge.Logic.Handlers.LoadFamilyDocHandler.Params) },

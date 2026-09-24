@@ -136,6 +136,7 @@ namespace RevitBridge.Operator
                     "/revit/get-family-file-path",
                     "/revit/open-family-doc",
                     "/revit/find-text-notes",
+                    "/revit/view-owned-detailing",
                     "/revit/replace-text-note",
                     "/revit/save-family-doc",
                     "/revit/load-family-doc",

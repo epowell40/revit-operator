@@ -59,6 +59,47 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
       return [...content(),...complete(root.count,"list")];
     return root.count>0 ? content() : [];
   }
+  if(path==="/revit/view-owned-detailing") {
+    const requested=Array.isArray(body.viewIds)?body.viewIds:(body.viewId===undefined?[]:[body.viewId]);
+    if(root.schema!=="revit-operator.view-owned-detailing/v1" || root.scope!=="exact_owner_view"
+      || body.viewId!==undefined && body.viewIds!==undefined
+      || requested.length<1 || requested.length>2 || requested.some((id:unknown)=>!Number.isSafeInteger(id)||Number(id)<=0)
+      || new Set(requested).size!==requested.length || !Array.isArray(root.requestedViewIds)
+      || JSON.stringify(root.requestedViewIds)!==JSON.stringify(requested)
+      || !Array.isArray(root.views) || root.views.length!==requested.length
+      || typeof root.viewsComplete!=="boolean")return [];
+    let total=0,hasContent=false,allComplete=true;
+    for(let index=0;index<requested.length;index++){
+      const inventory=object(root.views[index]),view=object(inventory.view),items=inventory.items;
+      if(view.id!==requested[index] || !text(view.uniqueId) || !text(view.name) || !text(view.viewType)
+        || !Array.isArray(items) || !Number.isSafeInteger(inventory.limit) || inventory.limit<1
+        || inventory.limit>5000 || !count(inventory.totalOwnedCount) || !count(inventory.annotationCount)
+        || !count(inventory.returnedCount) || inventory.returnedCount!==items.length
+        || inventory.returnedCount>inventory.limit
+        || inventory.annotationCount>inventory.totalOwnedCount || inventory.returnedCount>inventory.totalOwnedCount
+        || !count(inventory.unreadableCount) || !count(inventory.unclassifiedCount)
+        || !count(inventory.incompleteTextCount) || !count(inventory.incompleteSignatureCount)
+        || typeof inventory.truncated!=="boolean"
+        || typeof inventory.itemsComplete!=="boolean"
+        || inventory.unreadableCount+inventory.returnedCount>inventory.totalOwnedCount
+        || items.some((item:unknown)=>{const row=object(item);return !Number.isSafeInteger(row.elementId)
+          || row.elementId<=0 || row.ownerViewId!==view.id || !text(row.uniqueId)
+          || !text(row.className) || typeof row.isAnnotation!=="boolean"
+          || typeof row.semanticSignatureComplete!=="boolean"
+          || row.semanticSignatureComplete && !/^sha256:[a-f0-9]{64}$/.test(text(row.semanticSignature));})
+        || new Set(items.map((item:unknown)=>object(item).elementId)).size!==items.length)return [];
+      total+=inventory.totalOwnedCount;
+      hasContent ||=inventory.returnedCount>0;
+      allComplete &&=inventory.itemsComplete===true && inventory.truncated===false
+        && inventory.unreadableCount===0 && inventory.unclassifiedCount===0
+        && inventory.incompleteTextCount===0 && inventory.incompleteSignatureCount===0
+        && inventory.returnedCount===inventory.totalOwnedCount
+        && items.every((item:unknown)=>object(item).semanticSignatureComplete===true)
+        && inventory.annotationCount===items.filter((item:unknown)=>object(item).isAnnotation===true).length;
+    }
+    if(root.viewsComplete!==allComplete)return [];
+    return allComplete?[...content(),...complete(total,"list")]:hasContent?content():[];
+  }
   // A targeted native object read can answer its attributes without a second
   // inventory request. These receipts establish observation, never enumeration
   // completeness, connectivity correctness or the truth of a prose conclusion.

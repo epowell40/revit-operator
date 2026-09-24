@@ -6,6 +6,7 @@ const READ_ONLY_PATHS = new Set([
   "/revit/state-snapshot",
   "/revit/computer-use-observe",
   "/revit/views",
+  "/revit/view-owned-detailing",
   "/revit/capabilities",
   "/revit/tool-registry",
   "/revit/tool-search",

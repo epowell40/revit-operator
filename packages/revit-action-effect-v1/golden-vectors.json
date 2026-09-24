@@ -16,6 +16,13 @@
       "expected_effect": "read"
     },
     {
+      "id": "view_owned_detailing_two_view_inventory_is_read",
+      "method": "POST",
+      "path": "/revit/view-owned-detailing",
+      "body": { "viewIds": [11, 12], "limit": 1000 },
+      "expected_effect": "read"
+    },
+    {
       "id": "create_text_inspection_is_read",
       "method": "POST",
       "path": "/revit/create-text",

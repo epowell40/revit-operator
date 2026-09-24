@@ -27,6 +27,29 @@ test("bounded element searches establish positive presence but never a complete 
   assert.deepEqual(nativeReadEvidence("/revit/find-elements",{},{...payload,count:2,elementIds:[42,42]}),[]);
 });
 
+test("view-owned detailing requires exact independent source and copy inventories before declaring completeness",()=>{
+  const item=(elementId:number,ownerViewId:number)=>({elementId,ownerViewId,uniqueId:`uid-${elementId}`,className:"TextNote",
+    isAnnotation:true,semanticSignatureComplete:true,semanticSignature:`sha256:${"a".repeat(64)}`});
+  const inventory=(id:number,elementId:number)=>({view:{id,uniqueId:`view-${id}`,name:id===11?"L4":"M-COORDINATION COPY",viewType:"FloorPlan"},
+    limit:1000,totalOwnedCount:1,annotationCount:1,returnedCount:1,truncated:false,unreadableCount:0,
+    unclassifiedCount:0,incompleteTextCount:0,incompleteSignatureCount:0,itemsComplete:true,items:[item(elementId,id)]});
+  const request={viewIds:[11,12]},route="/revit/view-owned-detailing";
+  const payload={schema:"revit-operator.view-owned-detailing/v1",documentTitle:"Sample",scope:"exact_owner_view",
+    requestedViewIds:[11,12],viewsComplete:true,views:[inventory(11,21),inventory(12,22)]};
+  assert.equal(complete(route,request,payload),2);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,views:[payload.views[0],{...payload.views[1],
+    items:[{...item(22,12),semanticSignatureComplete:false}]}]}),[]);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,views:[payload.views[0],{...payload.views[1],
+    annotationCount:0}]}),[]);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,views:[payload.views[0],{...payload.views[1],
+    items:[item(22,11)]}]}),[]);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,requestedViewIds:[12,11]}),[]);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,views:[payload.views[0],{...payload.views[1],
+    totalOwnedCount:2,truncated:true,itemsComplete:false}],viewsComplete:false}).map(f=>f.fact_id),["model.content_observed"]);
+  assert.deepEqual(nativeReadEvidence(route,request,{...payload,views:[payload.views[0],{...payload.views[1],
+    totalOwnedCount:2,truncated:true,itemsComplete:false}],viewsComplete:true}),[]);
+});
+
 test("view, room and schedule collections retain their actual native truncation limits",()=>{
   assert.equal(complete("/revit/views",{},[]),0);
   assert.equal(complete("/revit/rooms",{action:"list"},[{id:7}]),1);

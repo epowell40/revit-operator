@@ -89,6 +89,7 @@ namespace RevitBridge.Server
                 { "/revit/capture-screenshare", new RevitBridge.Logic.Handlers.CaptureScreenshareHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },
+                { "/revit/view-owned-detailing", new RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler() },
                 { "/revit/delete", new DeleteElementsHandler() },
                 { "/revit/set-parameter", new SetParameterHandler() },
                 { "/revit/create-sheet", new CreateSheetHandler() },

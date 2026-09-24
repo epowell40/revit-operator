@@ -17,8 +17,8 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
-  assert.equal(implemented.length, 216);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 102);
+  assert.equal(implemented.length, 217);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 103);
   assert.equal(SUPPORTED_MCP_ALIASES.length, 97);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);

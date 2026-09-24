@@ -122,6 +122,7 @@ namespace RevitBridge.Operator
                 { "/revit/highlight-and-export", new HighlightAndExportHandler() },
                 { "/revit/activate-view", new ActivateViewHandler() },
                 { "/revit/query", new QueryElementsHandler() },
+                { "/revit/view-owned-detailing", new RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler() },
                 { "/revit/resolve", new ResolveHandler() },
                 { "/revit/get-element-summary", new GetElementSummaryHandler() },
                 { "/revit/get-parameters", new GetElementParametersHandler() },

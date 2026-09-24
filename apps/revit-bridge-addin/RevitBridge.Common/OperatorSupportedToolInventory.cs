@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:b931530d9e2af541a14d651b2fa7b95a6a434854d2601fd00a385572e92e0525";
+        public const string InventoryHash = "sha256:1236429cd966b59d3a4b6ab5daeaead53314a807a29d40f94b70c671717882db";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -108,6 +108,7 @@ namespace RevitBridge.Common
             "POST /revit/transaction-validate",
             "POST /revit/update-parameter-by-query",
             "POST /revit/update-schedule-cell",
+            "POST /revit/view-owned-detailing",
             "POST /revit/views",
             "POST /revit/visibility",
         };

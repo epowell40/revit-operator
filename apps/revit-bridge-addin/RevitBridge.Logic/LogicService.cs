@@ -32,6 +32,7 @@ namespace RevitBridge.Logic
                 { "/revit/views", new ListViewsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },
+                { "/revit/view-owned-detailing", new ViewOwnedDetailingHandler() },
                 { "/revit/delete", new DeleteElementsHandler() },
                 { "/revit/set-parameter", new SetParameterHandler() },
                 { "/revit/create-sheet", new CreateSheetHandler() },
