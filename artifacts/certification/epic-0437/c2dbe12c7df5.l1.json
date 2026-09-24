@@ -351,7 +351,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
-      "sha256": "sha256:994ae2cf82e7ed14f131dc31492c1483730e3616eda19c54cbbc7a0dfb71204d"
+      "sha256": "sha256:4b9e45fab040eea055b0fc5fd84ca5480f5baa17db5d3bb2a805a4d6fb2ef5c7"
     },
     {
       "path": "apps/mcp-server/src/lib/textMatch.test.ts",
@@ -1420,7 +1420,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/supported_tool_inventory.ts",
-      "sha256": "sha256:994ae2cf82e7ed14f131dc31492c1483730e3616eda19c54cbbc7a0dfb71204d"
+      "sha256": "sha256:4b9e45fab040eea055b0fc5fd84ca5480f5baa17db5d3bb2a805a4d6fb2ef5c7"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -4893,7 +4893,7 @@
     },
     {
       "path": "apps/operator-backend/test/supported_tool_inventory.test.ts",
-      "sha256": "sha256:664ab810b4a75338818d6873e569d94a3f4c4292681134cfb1a3fb591f4c4aaa"
+      "sha256": "sha256:30e0201468592f26a5008a972b7934fdf5876e494797cacb5579ff42cdade181"
     },
     {
       "path": "apps/operator-backend/test/task_memory_prompt.test.ts",
@@ -5413,7 +5413,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorSupportedToolInventoryTests.cs",
-      "sha256": "sha256:2fdf5b305b32cb57fa4afe7ac8f795d573b6ca5076552342a7a5bbb142fa3fb1"
+      "sha256": "sha256:e592ebe0e9ac3f6bd8b25c1704d08da240247a2f14d232e8b77707e7a3ee3467"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorToolSearchRankingTests.cs",
@@ -5990,7 +5990,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorSupportedToolInventory.cs",
-      "sha256": "sha256:86fc7024a9238daf87cfbbcd07791b116ba372224b164e4af759aade3fae7136"
+      "sha256": "sha256:cef3b28b8b22987b526e98562eefb36b4e7df23a27d5102bec6ad868d2bda2e3"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:75cc21afce68223cee5cc0adc2aaa2db88051c7a38ebdef53db25a2368d0f098",
+  "inputs_hash": "sha256:71020db4ad501ad11357868857ce53c607ede45e3c78a73d42d14680cf5c8351",
   "result": {
     "passed": true,
     "checks": [
