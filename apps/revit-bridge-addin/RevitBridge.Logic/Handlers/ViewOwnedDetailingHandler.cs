@@ -192,6 +192,13 @@ namespace RevitBridge.Logic.Handlers
                         relative.DotProduct(depth) }.Select(number => Math.Round(number, 4)
                         .ToString("F4", CultureInfo.InvariantCulture)));
                 }
+                string Direction(XYZ value)
+                {
+                    var normalized = value.Normalize();
+                    return string.Join(",", new[] { normalized.DotProduct(right), normalized.DotProduct(up),
+                        normalized.DotProduct(depth) }.Select(number => Math.Round(number, 4)
+                        .ToString("F4", CultureInfo.InvariantCulture)));
+                }
                 if (element is CurveElement curveElement)
                 {
                     var curve = curveElement.GeometryCurve;
@@ -204,7 +211,9 @@ namespace RevitBridge.Logic.Handlers
                             + ":" + Position(curve.Evaluate(0.5, true));
                     }
                 }
-                if (element is TextNote note) return "text:" + Position(note.Coord);
+                if (element is TextNote note) return "text:" + Position(note.Coord)
+                    + ":base:" + Direction(note.BaseDirection)
+                    + ":up:" + Direction(note.UpDirection);
                 var box = element.get_BoundingBox(view) ?? element.get_BoundingBox(null);
                 if (box == null) return null;
                 var center = (box.Min + box.Max) * 0.5;

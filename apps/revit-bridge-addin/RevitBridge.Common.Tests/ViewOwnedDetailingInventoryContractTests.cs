@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using RevitBridge.Common;
 using Xunit;
 
@@ -56,6 +57,24 @@ namespace RevitBridge.Common.Tests
                 "SUPPLY AIR", "text:1.0000,2.0000,0.0000"));
             Assert.NotEqual(source, ViewOwnedDetailingSemanticSignature.Create("TextNote", "OST_TextNotes", "type-uid",
                 "SUPPLY AIR", "text:3.0000,2.0000,0.0000"));
+        }
+
+        [Fact]
+        public void NativeTextNoteGeometryIncludesCopyStableOrientation()
+        {
+            var directory = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+            while (directory != null && !Directory.Exists(Path.Combine(directory.FullName, "RevitBridge.Logic")))
+                directory = directory.Parent;
+            Assert.NotNull(directory);
+            var source = File.ReadAllText(Path.Combine(directory!.FullName, "RevitBridge.Logic", "Handlers",
+                "ViewOwnedDetailingHandler.cs"));
+            Assert.Contains("Direction(note.BaseDirection)", source);
+            Assert.Contains("Direction(note.UpDirection)", source);
+            var upright = ViewOwnedDetailingSemanticSignature.Create("TextNote", "OST_TextNotes", "type-uid",
+                "SUPPLY AIR", "text:1,2,0:base:1,0,0:up:0,1,0");
+            var rotated = ViewOwnedDetailingSemanticSignature.Create("TextNote", "OST_TextNotes", "type-uid",
+                "SUPPLY AIR", "text:1,2,0:base:0,1,0:up:-1,0,0");
+            Assert.NotEqual(upright, rotated);
         }
     }
 }
