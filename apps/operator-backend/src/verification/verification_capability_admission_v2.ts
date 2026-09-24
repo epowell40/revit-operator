@@ -83,7 +83,7 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
   }],
   ["/revit/view-owned-detailing", {
     semantic_outputs: ["view.identity", "view.detailing_inventory"],
-    principal_target_fields: ["id"]
+    principal_target_fields: ["id", "viewId", "viewIds"]
   }],
   ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
   ["/revit/visibility", {

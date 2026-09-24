@@ -39,6 +39,20 @@ test("whole-area created HRU summary uses the typed ids selector before MCP alia
   } finally { endTeammateLoopOwner(lease); }
 });
 
+test("paired native view-owned-detailing read retains the created view as a principal target", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Read the source and copied plans without changing anything."));
+  try {
+    const gate = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, 1542984], limit: 2000 }
+    } });
+    assert.equal(gate.allowed, true, gate.message);
+    assert.equal(gate.call?.effect, "read");
+    assert(gate.call?.principal_target_tokens.includes("id:1542984"));
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test('exact composite observation aliases admit reads without inventing routes or permitting lookalike writes', () => {
   for(const tool of ['revit_observe_model','revit_read_move_targets_certified','revit_observe_model_unchecked','revit_observe_anything']){
     __testOnlyResetTeammateLoopState();

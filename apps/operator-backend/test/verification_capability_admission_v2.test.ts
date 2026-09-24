@@ -71,6 +71,18 @@ test("duplicate-view keeps the source contextual and verifies only the new view 
     verification: { ...apply, path: "/revit/views" } }).admissible, true);
 });
 
+test("view-owned detailing selects requested view identities for single and paired readback", () => {
+  const operation = { capability_id: "revit_call_tool", method: "POST", path: "/revit/view-owned-detailing" };
+  const committed = { target: {}, result: { affected_target_identities: ["element_id:1542984"] } } as any;
+  for (const request of [{ viewId: 1542984 }, { viewIds: [1363433, 1542984], limit: 2000 }]) {
+    const selected = operationTargetSelectorV2({ operation, value: request });
+    assert(selected.principal_target_tokens.includes("id:1542984"));
+    assert(operationMatchesTargetIdentityV2(committed, selected.principal_target_tokens));
+  }
+  const sourceOnly = operationTargetSelectorV2({ operation, value: { viewIds: [1363433] } });
+  assert(!operationMatchesTargetIdentityV2(committed, sourceOnly.principal_target_tokens));
+});
+
 test("parameter mutation verification requires a reviewed parameter-value readback", () => {
   const genericApply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/set-parameter" };
   const incapable = verificationCapabilityAdmissionV2({

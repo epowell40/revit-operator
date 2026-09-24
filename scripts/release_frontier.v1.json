@@ -2804,6 +2804,14 @@
         "backend:assignment_kernel_v2_execution.test.ts",
         "dotnet:ViewOwnedDetailingInventoryContractTests"
       ]
+    },
+    {
+      "id": "c60-installed-b04-paired-owner-view-read-rejected-as-verification-target-unbound",
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

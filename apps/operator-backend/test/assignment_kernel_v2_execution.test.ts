@@ -1718,7 +1718,7 @@ test("authoritative affected identity from a targetless create binds its verific
 }));
 
 test("duplicated view creation receipts bind the new view even when the request names the source plan", () => {
-  for (const [carriesCreatedIdentity, observedId] of [[false, 1542917], [true, 9999], [true, 1542917]] as const) workspace(() => {
+  for (const [carriesCreatedIdentity, observedId] of [[false, 1542917], [null, 1542917], [true, 9999], [true, 1542917]] as const) workspace(() => {
     const { snapshot } = setup("apply");
     const copy = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duplicate-L4", provider_turn_id: "copy-turn",
       capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433", "viewid:1363433"],
@@ -1726,12 +1726,18 @@ test("duplicated view creation receipts bind the new view even when the request 
     markAssignmentKernelOperationDispatchStartedV2(copy);
     const native = envelope(copy.operation_id, copy.binding, { success: true, viewId: 1542917, sourceViewId: 1363433,
       name: "M-COORDINATION COPY", withDetailing: true }, "applied");
-    native.structuredContent.operation_result_v2.affected_target_identities = carriesCreatedIdentity ? ["element_id:1542917", "element_id:1542918"] : [];
+    if (carriesCreatedIdentity !== null) native.structuredContent.operation_result_v2.affected_target_identities = carriesCreatedIdentity ? ["element_id:1542917", "element_id:1542918"] : [];
+    else delete native.structuredContent.operation_result_v2.affected_target_identities;
     settleAssignmentKernelOperationV2(copy, native);
     const ready = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
-    const openRead = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
-      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`, `elementid:${id}`],
-      arguments: { method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, id] } } });
+    const openRead = (id: number) => {
+      const operation = { capability_id: "revit_call_tool", method: "POST", path: "/revit/view-owned-detailing" };
+      const body = { viewIds: [1363433, id] };
+      return openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
+        capability_id: "revit_call_tool", classified_effect: "read",
+        target_tokens: operationTargetSelectorV2({ operation, value: body }).principal_target_tokens,
+        arguments: { ...operation, body } });
+    };
     assert.throws(() => openRead(9999), /verification_target_unbound/);
     if (!carriesCreatedIdentity) {
       // Exact retained UI failure: commit is known, but new-view reads cannot bind.

@@ -263,9 +263,21 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
       && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
-      && operationMatchesTargetIdentityV2(operation, targetTokens))
+      && verificationTargetMatchesAppliedOperation(operation, targetTokens))
     .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
       .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0] ?? null;
+}
+
+function verificationTargetMatchesAppliedOperation(operation: OperationV2, targetTokens: readonly string[]): boolean {
+  if (operation.request_identity?.path !== "/revit/duplicate-view") {
+    return operationMatchesTargetIdentityV2(operation, targetTokens);
+  }
+  // The admitted duplicate request names its source view. Only the native
+  // affected set can identify the new view that needs post-apply verification.
+  const requested = new Set(targetTokens.flatMap(operationTargetIdentityAliasesV2));
+  return (operation.result?.affected_target_identities ?? [])
+    .flatMap(operationTargetIdentityAliasesV2)
+    .some(identity => requested.has(identity));
 }
 
 export function openAssignmentKernelOperationV2(input: Readonly<{
@@ -315,12 +327,20 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     capability_id: input.capability_id
   })}`;
   const targetTokens = [...new Set((input.target_tokens ?? []).map(String).filter(Boolean))].sort();
-  const targetId = canonicalTargetId(targetTokens);
   const verifies = purpose === "verification" ? verificationSubject(snapshot, targetTokens) : null;
   if (purpose === "verification" && !verifies) {
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
   const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  // A detailed view copy is verified by reading both source and created views.
+  // The source is comparison context, not another applied target. Keep the
+  // complete request in the operation input; bind only the native-created view
+  // as the verification subject. The paired-inventory comparator checks both.
+  const boundTargetTokens = verifies?.request_identity?.path === "/revit/duplicate-view"
+    && currentIdentity.path === "/revit/view-owned-detailing"
+    ? targetTokens.filter(token => verificationTargetMatchesAppliedOperation(verifies, [token]))
+    : targetTokens;
+  const targetId = canonicalTargetId(boundTargetTokens);
   if (verifies) {
     const verificationAdmission = verificationCapabilityAdmissionV2({
       apply: {
@@ -436,7 +456,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     target: {
       ...(targetId ? { target_id: targetId } : {}),
       ...(snapshot.current_binding.document_fingerprint ? { document_fingerprint: snapshot.current_binding.document_fingerprint } : {}),
-      ...(targetTokens.length > 1 ? { semantic_scope: Object.fromEntries(targetTokens.map((token, index) => [`target_${index}`, token])) } : {})
+      ...(boundTargetTokens.length > 1 ? { semantic_scope: Object.fromEntries(boundTargetTokens.map((token, index) => [`target_${index}`, token])) } : {})
     },
     input: canonicalInput(input.arguments),
     admission_state: "admitted",
