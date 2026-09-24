@@ -32,3 +32,23 @@ test('retains original outer action rows when they are present', () => {
     assignment_kernel_v2: { assignments: [{ snapshot: { operations: {} } }] },
   }), [outer]);
 });
+
+test('projects independently loaded assignment operations from the enriched benchmark attempt', () => {
+  const sidecarAttempt = { rounds: [] };
+  const loadedAssignment = { assignments: [{ snapshot: { operations: {
+    read: { operation_id: 'op-read', requested_effect: 'read',
+      input: { method: 'GET', path: '/revit/get-connectors' },
+      result: { status: 'completed', dispatch_state: 'dispatched' } },
+    route: { operation_id: 'op-preview', requested_effect: 'preview',
+      input: { method: 'POST', path: '/revit/create-mep-route', body: { dryRun: true } },
+      result: { status: 'failed_after_dispatch', dispatch_state: 'dispatched',
+        native_transaction_state: 'rolled_back' } },
+  } } }] };
+  assert.deepEqual(extractGeneralRevitToolCalls(sidecarAttempt), []);
+  const projected = extractGeneralRevitToolCalls({
+    ...sidecarAttempt, assignment_kernel_v2: loadedAssignment,
+  });
+  assert.equal(projected.length, 2);
+  assert.equal(projected.find((call) => call.action_id === 'op-preview')?.request_effect, 'preview');
+  assert.equal(projected.find((call) => call.action_id === 'op-preview')?.native_transaction_state, 'rolled_back');
+});

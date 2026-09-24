@@ -55,6 +55,7 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /flag\("--sidecar", "http:\/\/127\.0\.0\.1:3907"\)/);
   assert.match(runner, /harness_health_ms:/);
   assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
+  assert.match(runner, /const toolCalls = extractGeneralRevitToolCalls\(evaluatedAttempt\)/);
   assert.match(runner, /const readiness = await readExactFixtureHealth\(sidecar, expectedTitle\)/);
   assert.match(runner, /fixture_health_is_authoritative: Boolean\(requestedFixture \|\| orchestrateFixtures\)/);
   assert.match(runner, /initial_attempts: initialReadiness\.attempts/);

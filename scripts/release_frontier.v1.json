@@ -84,6 +84,7 @@
     "general_revit_campaign_completion.test.ts",
     "general_revit_capability_report.test.ts",
     "general_revit_capability_acceptance.test.ts",
+    "general_revit_tool_call_projection.test.ts",
     "general_revit_campaign_memory.test.ts",
     "revit_tool_contract_memory.test.ts",
     "supported_tool_inventory.test.ts",
@@ -207,10 +208,12 @@
     "lib/operatorBackendClient.test.ts"
   ],
   "desktop_tests": [
+    "test/server_smoke.test.js",
     "test/assignment_workspace_v2.test.js",
     "test/assignment_workspace_ux.test.js",
     "test/simple_assistant_ui.test.js",
     "test/sidecar_secure_integration.test.js",
+    "test/benchmark_fixture_concurrency.test.js",
     "test/runtime_source_freshness.test.js",
     "test/browser_asset_freshness.test.js",
     "test/idle_batch_worker.test.js",
@@ -2845,6 +2848,20 @@
       ]
     },
     {
+      "id": "c60-linked-fixture-close-reopen-races-native-teardown",
+      "coverage": [
+        "desktop:test/server_smoke.test.js",
+        "dotnet:OperatorProjectCloseFocusTests"
+      ]
+    },
+    {
+      "id": "c62-benchmark-fixture-chat-lease-survives-async-intake",
+      "coverage": [
+        "desktop:test/benchmark_fixture_concurrency.test.js",
+        "desktop:test/server_smoke.test.js"
+      ]
+    },
+    {
       "id": "c61-schedule-cell-no-match-preview-missing-native-settlement",
       "coverage": [
         "dotnet:OperatorAttemptSettlementTests",
@@ -2866,6 +2883,13 @@
         "dotnet:OperatorAttemptSettlementTests",
         "dotnet:OperatorNativeTransportTests",
         "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "c71-delegated-native-calls-missing-from-benchmark-trace",
+      "coverage": [
+        "backend:general_revit_tool_call_projection.test.ts",
+        "backend:general_revit_capability_acceptance.test.ts"
       ]
     }
   ],

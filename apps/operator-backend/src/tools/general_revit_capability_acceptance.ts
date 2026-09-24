@@ -669,7 +669,7 @@ async function runCase(
     durable_tool_evidence: durableToolEvidence
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
-  const toolCalls = extractGeneralRevitToolCalls(attempt);
+  const toolCalls = extractGeneralRevitToolCalls(evaluatedAttempt);
   const modelCallReceipts = deduplicateModelCallReceipts([
     ...modelCallReceiptsFromSources(attempt, attempt.computer_state),
     ...modelCallReceiptsFromAssignmentKernelPublicationsV2(assignmentKernelV2)
