@@ -140,7 +140,7 @@ function taggedNotification(operationId: string) {
           ok: true,
           evidence_projections: [{
             schema: "revit-operator.evidence-projection.v1",
-            source: "assignment_kernel_v2:test",
+            source: "assignment_kernel_v2:revit_tool_doc",
             assignment_id: assignmentId,
             attempt_id: operationId,
             run_id: binding.run_id,
