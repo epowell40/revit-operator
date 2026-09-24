@@ -2865,6 +2865,13 @@
       ]
     },
     {
+      "id": "c78-gpt6-sol-exact-usage-rejected-as-incomplete-cost",
+      "coverage": [
+        "backend:general_revit_model_telemetry.test.ts",
+        "backend:general_revit_campaign_completion.test.ts"
+      ]
+    },
+    {
       "id": "c62-benchmark-fixture-chat-lease-survives-async-intake",
       "coverage": [
         "desktop:test/benchmark_fixture_concurrency.test.js",
