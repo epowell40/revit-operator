@@ -35,11 +35,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:ed28ac0d6b7bb1ed2117f7515428feb50ba438cf38dfef97b4d82e38f706972e"
+      "sha256": "sha256:ad28126a8a80468543c933b4be9367d20f516870d783ae8ac14fa09a2b688d9c"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:46a01f2a34f9f1c3c5d5015ccf81b3cdfee70769e4ed79dcef4153e452c63431"
+      "sha256": "sha256:4b4fbeee1870033c5279230613cf2a20c6b035e618e645c8c8692db2772b1fd6"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -5249,7 +5249,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAttemptSettlementTests.cs",
-      "sha256": "sha256:070c5541f072ddf03116b57fc52f3e6693f6a9a9ad83023cf9bc8bd3bf19b917"
+      "sha256": "sha256:5a96c35529beda5bc0a2f11b389fb71114d91a620655eacb341d5dca763d016d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAuthTokenStoreTests.cs",
@@ -5365,7 +5365,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransportTests.cs",
-      "sha256": "sha256:549313ede2eaff7b1a7017c11dbfe7c3660d3a22ffdb9c8e3407559dd3fffe5b"
+      "sha256": "sha256:edb78f4675d3a71e4c0836f19ae86fde5f2490ed3200540bf9180ccfe3f0bbb0"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPaneIntegrationContractTests.cs",
@@ -7286,7 +7286,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/UpdateScheduleCellHandler.cs",
-      "sha256": "sha256:4403392ce5c45f6fe8f51f31e010fc5d19ea9f9c14e8bbae8837913039e22cbe"
+      "sha256": "sha256:49d899dd90d0746ace2889749406dc67da509d50faa46be6817d993248500aea"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ViewVisibilityHandler.cs",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:f6075d88b0dd604877f9fdb872a8de15c97a0a9d109b614a5402341386e48eb7",
+  "inputs_hash": "sha256:272e23cbd14b9670ec2580604a07f14c90062e94bd5a507f0fa153a04364457e",
   "result": {
     "passed": true,
     "checks": [
