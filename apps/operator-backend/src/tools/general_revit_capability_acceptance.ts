@@ -23,7 +23,7 @@ import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
 import { finishGeneralRevitCampaignCase, finishGeneralRevitCampaignExports, initializeGeneralRevitCampaignExports, generalRevitCampaignCompletion, generalRevitSuiteTiming, retainedGeneralRevitCampaignStop, type GeneralRevitCampaignStop } from "../benchmark/general_revit_campaign_completion.js";
-import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
+import { reviewPacketForSettledCampaign } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitInstructionRuntime, benchmarkInstructionExpectation, loadCaseInstructionTurns } from "../benchmark/general_revit_instruction_preflight.js";
 import { assertGeneralRevitCampaignMemoryStart, observeGeneralRevitCampaignMemory } from "../benchmark/general_revit_campaign_memory.js";
@@ -1168,7 +1168,7 @@ async function main(): Promise<void> {
   const baselineReport = baselinePath ? readJsonFile<JsonRecord>(path.resolve(baselinePath)) : null;
   const baselineComparison = generalRevitBaselineComparison(path.resolve(baselinePath), baselineReport);
   const caseDeltas = baselineCaseDeltas(traces, baselineReport);
-  const independentReview = buildGeneralRevitAcceptanceReviewPacket(runId, selected, traces);
+  const independentReview = reviewPacketForSettledCampaign(runId, selected, traces, campaignCompletion.complete);
   const report = {
     schema: "revit-operator.general-revit-capability-report/v1",
     run_id: runId,

@@ -2753,6 +2753,13 @@
         "backend:teammate_loop_runtime.test.ts",
         "mcp:lib/revitRouteEffect.test.ts"
       ]
+    },
+    {
+      "id": "c60-stopped-precase-campaign-masked-by-independent-review",
+      "coverage": [
+        "backend:general_revit_acceptance_review.test.ts",
+        "backend:general_revit_campaign_completion.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
