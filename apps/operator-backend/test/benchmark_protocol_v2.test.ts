@@ -1241,6 +1241,26 @@ test("declared model comparison allows only GPT-5.6 Sol to GPT-6 Sol at medium e
   const baseline = writeReport(baselineDraft, "gpt-5.6-sol", "baseline");
   const candidate = writeReport(candidateDraft, "gpt-6-sol", "candidate");
   const declaration = { baseline_model: "gpt-5.6-sol", candidate_model: "gpt-6-sol", reasoning_effort: "medium" };
+  const initialMemoryHash = "a".repeat(64);
+  const withMemory = (draft: ReturnType<typeof envelopeDraft>, runId: string, memoryPath: string) => ({
+    ...draft,
+    identity: { ...draft.identity, run_id: runId },
+    feature_flags: { ...draft.feature_flags, tool_contract_memory_policy: "isolated_campaign_initial_empty_ordered_adaptation",
+      tool_contract_memory_initial_sha256: initialMemoryHash, tool_contract_memory_path: memoryPath }
+  });
+  const isolatedBaseline = writeReport(withMemory(baselineDraft, "run-v2-isolated-baseline", path.join(tmp, "baseline-memory.json")),
+    "gpt-5.6-sol", "isolated-baseline");
+  const isolatedCandidateDraft = withMemory(candidateDraft, "run-v2-isolated-candidate", path.join(tmp, "candidate-memory.json"));
+  const isolatedCandidate = writeReport(isolatedCandidateDraft, "gpt-6-sol", "isolated-candidate");
+  assert.doesNotThrow(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, isolatedCandidate, declaration));
+  const changedMemory = writeReport({ ...isolatedCandidateDraft,
+    feature_flags: { ...isolatedCandidateDraft.feature_flags, tool_contract_memory_initial_sha256: "b".repeat(64) },
+    identity: { ...isolatedCandidateDraft.identity, run_id: "run-v2-changed-memory" } }, "gpt-6-sol", "changed-memory");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, changedMemory, declaration), /feature flags drift/);
+  const reusedMemory = writeReport({ ...isolatedCandidateDraft,
+    feature_flags: { ...isolatedCandidateDraft.feature_flags, tool_contract_memory_path: path.join(tmp, "baseline-memory.json") },
+    identity: { ...isolatedCandidateDraft.identity, run_id: "run-v2-reused-memory" } }, "gpt-6-sol", "reused-memory");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, reusedMemory, declaration), /memory stores must be separate/);
   assert.throws(() => compareBenchmarkExactRerunsV2(baseline, candidate), /requested model and effort drift/);
   const comparison = compareBenchmarkDeclaredModelVariantsV2(baseline, candidate, declaration);
   assert.equal(comparison.schema, "revit-operator.benchmark-declared-model-variant-comparison/v2");

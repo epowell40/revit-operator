@@ -2872,6 +2872,13 @@
       ]
     },
     {
+      "id": "c79-isolated-model-comparison-rejects-run-specific-memory-path",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:general_revit_campaign_memory.test.ts"
+      ]
+    },
+    {
       "id": "c62-benchmark-fixture-chat-lease-survives-async-intake",
       "coverage": [
         "desktop:test/benchmark_fixture_concurrency.test.js",
