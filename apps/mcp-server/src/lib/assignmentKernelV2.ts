@@ -577,6 +577,7 @@ function nativeDomainFailure(payload: unknown): boolean {
   const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
   return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
     || status === "failed" || status === "partialfailure" || status === "printfailed" || status === "blocked"
+    || status === "notfound" || status === "ambiguous"
     || status === "blockedrolledback" || status === "blockedrollbackfailed";
 }
 

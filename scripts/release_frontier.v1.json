@@ -2842,6 +2842,14 @@
         "backend:postcondition_verification_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
       ]
+    },
+    {
+      "id": "c61-schedule-cell-no-match-preview-missing-native-settlement",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

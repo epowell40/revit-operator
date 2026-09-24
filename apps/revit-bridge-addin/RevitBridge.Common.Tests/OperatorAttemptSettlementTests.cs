@@ -10,6 +10,22 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorAttemptSettlementTests
     {
         [Fact]
+        public void ScheduleCellNoMatchAndDryRunCarryDistinctNoEffectTransactionReceipts()
+        {
+            var noMatch = new { status = "Not Found", applied = false,
+                transaction = OperatorNativeTransactionReceipt.NotStarted() };
+            var preview = new { status = "Dry Run", dryRun = true, applied = false,
+                transaction = OperatorNativeTransactionReceipt.RolledBack(System.Array.Empty<long>()) };
+            var noMatchSettlement = OperatorAttemptSuccessfulSettlement.Classify(noMatch, "preview", "POST", "/revit/update-schedule-cell");
+            var previewSettlement = OperatorAttemptSuccessfulSettlement.Classify(preview, "preview", "POST", "/revit/update-schedule-cell");
+            Assert.Equal("none", noMatchSettlement.EffectState);
+            Assert.Equal("native_transaction_not_started", noMatchSettlement.EffectReason);
+            Assert.Equal("none", previewSettlement.EffectState);
+            Assert.Equal("verified_native_rollback", previewSettlement.EffectReason);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                new { noMatch.status, noMatch.applied }, "preview", "POST", "/revit/update-schedule-cell").EffectState);
+        }
+        [Fact]
         public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
         {
             var result = HostedPlacementPreflight.CheckHost(false, "OneLevelBased", 1464223, null)!;

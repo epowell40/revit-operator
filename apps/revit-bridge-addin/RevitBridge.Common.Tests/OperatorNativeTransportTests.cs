@@ -709,6 +709,15 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ScheduleCellPreviewReturnsNativeTransactionTruthForNoMatchAndRollback()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "UpdateScheduleCellHandler.cs")).Replace("\r\n", "\n");
+            Assert.Contains("status = visibleRowFound ? \"Blocked\" : \"Not Found\",\n                    applied = false,\n                    transaction = OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
+            Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    applied = false,\n                    transaction = OperatorNativeTransactionReceipt.RolledBack", handler, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ConnectorInventorySupportsCompactExhaustiveOpenPhysicalFiltering()
         {
             var root = FindRevitBridgeAddinRoot();

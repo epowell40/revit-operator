@@ -710,6 +710,34 @@ test("plan-only view response cannot manufacture native rollback or preview comp
   }
 });
 
+test("schedule-cell no-match preflight retains no effect without claiming an executed preview", async () => {
+  const body = { scheduleId: 1488968, rowKey: "HRU202", rowField: "Mark",
+    targetField: "Supply Air Pressure Drop", value: "0.10 in. w.g.", apply: false, dryRun: true };
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", {
+    method: "POST", path: "/revit/update-schedule-cell", body
+  }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/update-schedule-cell", body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/update-schedule-cell", {
+      status: "Not Found", applied: false, candidateCount: 0,
+      blockedReason: "No unique editable schedule-backed cell matched the requested row and field.",
+      transaction: { status: "not_started", affectedElementIds: [] },
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1",
+        attempt_id: "schedule-no-match", requested_effect: "preview", effect_state: "none",
+        effect_authority: "native_transaction", effect_reason: "native_transaction_not_started",
+        request_dispatched: true }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "not_started");
+  assert.equal(result.error_code, "native_domain_operation_failed");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) =>
+    f.fact_id === "task.preview_valid" && f.value === true), false);
+});
+
 test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
   const body = {
     elementId: 1421361,
