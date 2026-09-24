@@ -11,6 +11,21 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorNativeTransportTests
     {
+        [Fact]
+        public void DirectHttpDialogGuardRetainsNativeAuthorizationBeforeDispatcherMarshalling()
+        {
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            Assert.Contains("if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))", server);
+            Assert.Contains("body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody", server);
+            Assert.Contains("await handler.Handle(null!, body)", server);
+            Assert.Contains("string.Equals(path, \"/revit/computer-use-guard\"", server);
+
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Handlers", "ComputerUseDialogHandlers.cs");
+            Assert.Contains("service.ArmGuard(request)", handler);
+            var guard = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorDialogComputerUse.cs");
+            Assert.Contains("_dispatcher.Invoke(() => ArmGuard(request))", guard);
+        }
+
         private const string Token = "0123456789abcdef0123456789abcdef";
         private const string RequestId = "fedcba9876543210fedcba9876543210";
         private static readonly DateTimeOffset Now = DateTimeOffset.FromUnixTimeMilliseconds(1785345600123);

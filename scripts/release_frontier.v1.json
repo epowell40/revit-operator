@@ -236,6 +236,7 @@
     "OperatorNativeMutationScopePolicyTests",
     "OperatorNativeToolExposureAuthorityTests",
     "OperatorNativeTransportTests",
+    "OperatorDialogLifecycleContractTests",
     "OperatorToolSearchRankingTests",
     "ScheduleAppearanceContractTests",
     "TextNoteCanonicalizationTests",
@@ -2767,6 +2768,13 @@
         "backend:direct_revit_execution_authorization.test.ts",
         "backend:supported_tool_inventory.test.ts",
         "dotnet:OperatorSupportedToolInventoryTests"
+      ]
+    },
+    {
+      "id": "c60-dialog-guard-subscription-runs-off-revit-dispatcher",
+      "coverage": [
+        "dotnet:OperatorDialogLifecycleContractTests",
+        "dotnet:OperatorNativeTransportTests"
       ]
     }
   ],
