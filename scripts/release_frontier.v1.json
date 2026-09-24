@@ -113,6 +113,7 @@
     "existing_conditions_source_disposition_ledger.test.ts",
     "existing_conditions_registered_route_connector_snap.test.ts",
     "existing_conditions_registered_route_evidence.test.ts",
+    "existing_conditions_registration_handoff.test.ts",
     "existing_conditions_registered_route_connector_observation.test.ts",
     "existing_conditions_registered_route_plan_http.test.ts",
     "execution_strategy.test.ts",
@@ -201,6 +202,7 @@
     "tools/existingConditionsInterpretationTool.test.ts",
     "tools/existingConditionsRegistrationTool.test.ts",
     "tools/existingConditionsDuctContinuationTool.test.ts",
+    "tools/existingConditionsRegistrationHandoffTool.test.ts",
     "lib/operatorBackendClient.test.ts"
   ],
   "desktop_tests": [
@@ -2719,6 +2721,37 @@
       "coverage": [
         "backend:assignment_kernel_v2_progress_controller.test.ts",
         "mcp:tools/existingConditionsInterpretationTool.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-completed-registration-cannot-continue-in-follow-up-assignment",
+      "coverage": [
+        "backend:existing_conditions_registration_handoff.test.ts",
+        "backend:existing_conditions_registered_route_evidence.test.ts",
+        "mcp:tools/existingConditionsRegistrationHandoffTool.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-readonly-handoff-blocked-as-unknown-revit-contract",
+      "coverage": [
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:existing_conditions_registration_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-conditional-dry-run-incorrectly-completes-without-duct-creation",
+      "coverage": [
+        "backend:assignment_auto_goal_admission.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "existing-conditions-c60-rolled-back-route-preview-blocks-first-apply-as-unverified-write",
+      "coverage": [
+        "backend:endpoint_mutability.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "mcp:lib/revitRouteEffect.test.ts"
       ]
     }
   ],

@@ -70,6 +70,34 @@
       "expected_effect": "apply"
     },
     {
+      "id": "c60_route_workflow_native_rollback_preview",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": false },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c60_branch_network_native_rollback_preview",
+      "method": "POST",
+      "path": "/revit/mep-branch-network-workflow",
+      "body": { "kind": "duct", "apply": false },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c60_route_workflow_actual_apply",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": true },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c60_route_workflow_conflict_fails_closed",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": false, "commit": true },
+      "expected_effect": "apply"
+    },
+    {
       "id": "nested_rollback_mode_is_preview",
       "method": "POST",
       "path": "/revit/set-parameter",

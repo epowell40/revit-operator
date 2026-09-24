@@ -145,6 +145,12 @@ function genericConditionalIntentEffect(row) {
 }
 
 function explicitConditionalActionPathEffect(normalized, row) {
+  if (normalized === "/revit/mep-route-workflow" || normalized === "/revit/mep-branch-network-workflow") {
+    // These native workflows use apply=false for a rolled-back transaction.
+    // A generic apply=false flag is not sufficient for other handlers.
+    if (genericConditionalIntentEffect(row) === "apply") return "apply";
+    return row.apply === false ? "preview" : "apply";
+  }
   if (normalized === "/revit/move-elements") {
     // A rollback-only move preview and a committed translation are distinct
     // policy effects. Preview certification must never authorize apply.

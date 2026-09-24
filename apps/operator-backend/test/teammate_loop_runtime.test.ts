@@ -71,6 +71,19 @@ test("registered PDF interpretation and frame registration are read-only teammat
   } finally { endTeammateLoopOwner(lease); }
 });
 
+test("registered PDF handoff and connected continuation planning remain read-only teammate actions", () => {
+  for (const tool of ["operator_resume_existing_conditions_registration", "operator_plan_existing_conditions_duct_continuation"]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Resume the registered PDF and plan one duct connection without changing the model."));
+    try {
+      const gate = guardTeammateMcpCall(owner, { tool, arguments: { registrationEvidenceRefId: "ev1-example", connectorObservationId: "obsv2-example" } });
+      assert.equal(gate.allowed, true, `${tool}: ${gate.message}`);
+      assert.equal(gate.call?.effect, "read");
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
 test("inspection of an existing view's name and scale does not authorize creation", () => {
   const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
   assert.equal(classifyAgentTurn(prompt), "inspection");
@@ -1117,6 +1130,26 @@ test("structured request-validation failures do not consume the mutation stage",
     });
     assert.equal(corrected.allowed, true);
     assert.equal(corrected.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("C60 rolled-back MEP route preview does not consume the one unverified apply slot", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Dry-run and then create one 8-inch duct in the disposable sample model."));
+  const route = { method: "POST", path: "/revit/mep-route-workflow", body: { kind: "duct", apply: false } };
+  try {
+    const preview = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: route });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ status: "DryRunReady", transaction: { status: "rolled_back", committed: false } }) }] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 0);
+
+    const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: { ...route, body: { kind: "duct", apply: true } } });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
   } finally {
     endTeammateLoopOwner(lease);
   }

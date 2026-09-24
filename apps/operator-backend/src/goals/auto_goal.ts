@@ -1,7 +1,7 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
 import { requestedWorkbookExport } from "../artifact_export_intent.js";
 import { classifyAgentTurn, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
-import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "../no_write_intent.js";
+import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest, hasPostPreviewModelMutation, previewIntentText } from "../no_write_intent.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -54,7 +54,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     && !EXECUTABLE_PREVIEW.test(text);
   const whatIfPreview = hasNoncommittingChangePreviewRequest(text);
   const explicitNoWrite = isExplicitNoWriteRequest(text) || whatIfPreview;
-  const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
+  const appliesAfterPreflight = (APPLY_AFTER_PREFLIGHT.test(text) || hasPostPreviewModelMutation(text)) && !explicitNoWrite;
   const requestedEffect = requestedWorkbookExport(text) ? "apply" : (PREVIEW_REQUEST.test(previewIntentText(text)) || whatIfPreview) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"

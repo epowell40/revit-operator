@@ -447,6 +447,15 @@ namespace RevitBridge.Operator
             }
 
             var hasObjectBody = TryParseBodyObject(body, out var root);
+            if (hasObjectBody &&
+                (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(p, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Both native workflows roll back when apply=false. An explicit
+                // conflicting commit signal still reserves apply authority.
+                if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;
+                return HasFalseValue(root, "apply") ? OperatorActionEffect.Preview : OperatorActionEffect.Apply;
+            }
             if (hasObjectBody && string.Equals(p, "/revit/move-elements", StringComparison.OrdinalIgnoreCase))
             {
                 if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;

@@ -172,7 +172,7 @@ function readFrame(binding: Binding, observationId: string): TrustedFrameObserva
   return { frame: extractTrustedFrame(payload), operation_id: operation.operation_id, evidence_id: evidenceId };
 }
 
-function readLandmarks(binding: Binding, observationId: string): TrustedGridLandmarks {
+export function readTrustedNativeGridLandmarksV1(binding: Binding, observationId: string): TrustedGridLandmarks {
   const snapshot = getAssignmentKernelSnapshotV2(binding.assignment_id);
   const current = snapshot?.current_binding;
   if (!snapshot || !current || current.session_id !== binding.session_id || current.assignment_id !== binding.assignment_id || current.run_id !== binding.run_id || current.generation !== binding.generation) throw new Error("existing_conditions_registration_assignment_binding_invalid");
@@ -184,7 +184,11 @@ function readLandmarks(binding: Binding, observationId: string): TrustedGridLand
   const ref = readEvidenceRef(evidenceId);
   if (ref.trust_level !== "authoritative_native" || ref.session_id !== binding.session_id || ref.assignment_id !== binding.assignment_id || ref.run_id !== binding.run_id || ref.generation !== binding.generation) throw new Error("existing_conditions_registration_landmark_evidence_scope_invalid");
   const payload = JSON.parse(readAuthoritativeEvidence(ref, { ...binding, attempt_id: operation.operation_id }).toString("utf8"));
-  return { frame: extractTrustedFrame(payload), axes: nativeGridAxes(payload), operation_id: operation.operation_id, evidence_id: evidenceId };
+  return {
+    frame: extractTrustedFrame(payload), axes: nativeGridAxes(payload), operation_id: operation.operation_id, evidence_id: evidenceId,
+    project_fingerprint: clean(object(object(payload).document).projectIdentity?.fingerprint),
+    truncated: object(payload).truncated === true
+  };
 }
 
 function viewUvToModel(frame: CandidateVisibleFrameMapping, point: { u: number; v: number }, label: string): ExistingConditionsPlanPoint {
@@ -210,7 +214,7 @@ export function registerStructuredExistingConditionsInterpretationV1(
   if (!/^[A-Za-z0-9._:-]{1,240}$/.test(landmarkObservationId)) throw new Error("existing_conditions_registration_landmark_observation_id_invalid");
   const interpretation = (dependencies.read_interpretation ?? readInterpretation)(binding, interpretationEvidenceId);
   const frameObservation = (dependencies.read_frame ?? readFrame)(binding, frameObservationId);
-  const landmarks = (dependencies.read_landmarks ?? readLandmarks)(binding, landmarkObservationId);
+  const landmarks = (dependencies.read_landmarks ?? readTrustedNativeGridLandmarksV1)(binding, landmarkObservationId);
   const sameFrame = (a: CandidateVisibleFrameMapping, b: CandidateVisibleFrameMapping) => a.view_id === b.view_id
     && a.width_px === b.width_px && a.height_px === b.height_px
     && JSON.stringify([a.top_left_xyz, a.top_right_xyz, a.bottom_left_xyz]) === JSON.stringify([b.top_left_xyz, b.top_right_xyz, b.bottom_left_xyz]);

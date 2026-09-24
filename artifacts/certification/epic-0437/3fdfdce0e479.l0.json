@@ -243,7 +243,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:4163d049ab14157e801999983a5ecc986c9a023bc386e9c6842bc7b9053d4469"
+      "sha256": "sha256:b35713f9f26fb3a65ca34d0e29700609eb83a6a4ef80bcf4ce931ddc0fbc2043"
     },
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.fixtures.ts",
@@ -279,7 +279,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/operatorBackendClient.ts",
-      "sha256": "sha256:77c3e3822b86c2eafeaa8cbf9d2e9b01fbf3373dd086355f242f870bf842f4a5"
+      "sha256": "sha256:379b0dd623c95471c978e67863bf45d640224717bf2fadaa501a0ed7c7f96ea9"
     },
     {
       "path": "apps/mcp-server/src/lib/payloadDigestV2.test.ts",
@@ -327,7 +327,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitRouteEffect.test.ts",
-      "sha256": "sha256:ce63ecc51b7d45df7589452cda4d3713f91a7d77d2186fdcea9863751e8045d1"
+      "sha256": "sha256:b9a8eff21a6b7875c5bee1127235928f85bde0481fbc8ee75c41f433075a95f6"
     },
     {
       "path": "apps/mcp-server/src/lib/revitRouteEffect.ts",
@@ -351,7 +351,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
-      "sha256": "sha256:2c23cb443eb3675e13f85b1c63a2744f3932ba9ced0c059c0af86eb23a18c0ac"
+      "sha256": "sha256:df2a2b0c77d49ab2699bbe107e0fc67244e859a64a45d44cbe154082e05f44b7"
     },
     {
       "path": "apps/mcp-server/src/lib/textMatch.test.ts",
@@ -460,7 +460,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:566582722603908fc6061989990daaa5d2e91808b89930660c5c5229d738ec61"
+      "sha256": "sha256:db31dcdb292b925029378e4c57cc924f509242ab8b92c45ff6b1c981d13fd08d"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -545,6 +545,14 @@
     {
       "path": "apps/mcp-server/src/tools/existingConditionsInterpretationTool.ts",
       "sha256": "sha256:22547fa74a42b5e6ed0d843716e76005af8c80170b0d4a065889da3156b18284"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsRegistrationHandoffTool.test.ts",
+      "sha256": "sha256:11baf9ce981130e074dfbe1b3fbb2838b78bf73a69ac8bcac0d4db56f6222abc"
+    },
+    {
+      "path": "apps/mcp-server/src/tools/existingConditionsRegistrationHandoffTool.ts",
+      "sha256": "sha256:86d58f9ada2b261b2d94f113c520c7a107d7a2f831872307e3c7375e39ab9f3f"
     },
     {
       "path": "apps/mcp-server/src/tools/existingConditionsRegistrationTool.test.ts",
@@ -1408,7 +1416,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/supported_tool_inventory.ts",
-      "sha256": "sha256:2c23cb443eb3675e13f85b1c63a2744f3932ba9ced0c059c0af86eb23a18c0ac"
+      "sha256": "sha256:df2a2b0c77d49ab2699bbe107e0fc67244e859a64a45d44cbe154082e05f44b7"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -2413,7 +2421,7 @@
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/native_grid_landmarks.ts",
-      "sha256": "sha256:f927b84441a9a6158fe7b196730e873c35646a0e0143e57e3bd4199322f43e76"
+      "sha256": "sha256:c07ba37422b23bfcf72070a07e20b7a14f9ea8207971b8e24276377a7ca03703"
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/one_action_execution_ledger.ts",
@@ -2477,7 +2485,7 @@
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/registered_structured_interpretation.ts",
-      "sha256": "sha256:d3b1ebfd976ae92bf2f89c19b32a8908e6136b96353a7cb44c53c6e6ebf650bc"
+      "sha256": "sha256:a4d6437438ae1d7784a1cd6201c0b2a9c2e4b5d3ac493d363fa9191abf80a30f"
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/registration.ts",
@@ -2486,6 +2494,14 @@
     {
       "path": "apps/operator-backend/src/existing_conditions/registration_ambiguity.ts",
       "sha256": "sha256:912e6bf5947e690900849c3b1685c48b5be01b4a82dc227746ec3f02e904ee49"
+    },
+    {
+      "path": "apps/operator-backend/src/existing_conditions/registration_handoff.ts",
+      "sha256": "sha256:00078c1ba741534f7c86fbd155c86e18bb3d240403f9c73dcf23612baf948159"
+    },
+    {
+      "path": "apps/operator-backend/src/existing_conditions/registration_handoff_http.ts",
+      "sha256": "sha256:b7ec156cf948785bb6f0dbb04cfb9bb92cde03c628533b066ae48d0ec730ed76"
     },
     {
       "path": "apps/operator-backend/src/existing_conditions/repair_ledger_store.ts",
@@ -2637,7 +2653,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:c9d981fb72de66b9d8f58eb04557de119283cac7b69a77f0d0f5b7b0e44652ca"
+      "sha256": "sha256:23a2bd340a530e434b5c849b15a36da5fa905e5d7a69be5c0410f78051304c3c"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
@@ -2709,7 +2725,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:2cee4ab3c00a0f47099bff63c61e1d17769a4b29a2a6e350bf9ea4960c925d89"
+      "sha256": "sha256:290643c499d7f4d2193b20694e9b0163edf4bf8d736afdfde338d3029db466e6"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -2773,7 +2789,7 @@
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
-      "sha256": "sha256:1283311b278ebc6744390281df15650945341c2e3fbd9a64580964eb58531c70"
+      "sha256": "sha256:4dd207c6934862eff6bd5d4d1bc201368637e7ab66600390d0244a68ef05eb62"
     },
     {
       "path": "apps/operator-backend/src/openai_client.ts",
@@ -2985,7 +3001,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:ffad8e9cb49ee257b38f2d306f76601351006208d3b0c0a4943cadaa5f18c921"
+      "sha256": "sha256:fb8ae6be352b8382c7f2a558bb3acea9d74914393d5021aef76afe26a8f3b5e9"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
@@ -3405,7 +3421,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_auto_goal_admission.test.ts",
-      "sha256": "sha256:c51d30e3ce38df7b2810d05977bd428766c08a6690e20362879d40eb3ec6bc7e"
+      "sha256": "sha256:d4d63bb8f8aabf23e2db8ad9093dda2a7e86a40aafd10cde23b69919592e06ae"
     },
     {
       "path": "apps/operator-backend/test/assignment_control_plane.test.ts",
@@ -3445,7 +3461,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:55c9b2b298e8ceb402e605ced165226a2173b294719fe8e60fb6fa32ca59fe1d"
+      "sha256": "sha256:802cd60d443c3715966ce3a798bfe6999d94f0b658dcd490bffbf39f508c0516"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -3785,7 +3801,7 @@
     },
     {
       "path": "apps/operator-backend/test/endpoint_mutability.test.ts",
-      "sha256": "sha256:ac35e626542145017346928a399c7cfaf02da0935706d876c6ec7399dc06c5d7"
+      "sha256": "sha256:f211d27a3141e7588b74986ac7307f78a444f01f8de750ece203d90bbbb24d5b"
     },
     {
       "path": "apps/operator-backend/test/enlarged_plan_sheet.test.ts",
@@ -4022,6 +4038,10 @@
     {
       "path": "apps/operator-backend/test/existing_conditions_registration_ambiguity.test.ts",
       "sha256": "sha256:059dafc4878e578c32bfacefb978c2be61e9a6b4750edfed8f3959d380949bbc"
+    },
+    {
+      "path": "apps/operator-backend/test/existing_conditions_registration_handoff.test.ts",
+      "sha256": "sha256:612893bb33c0b3adb652e1f768e68ffa1100c35743b062a2663c06ba0b82c2e2"
     },
     {
       "path": "apps/operator-backend/test/existing_conditions_route_profile_source_evidence_gate.test.ts",
@@ -4857,7 +4877,7 @@
     },
     {
       "path": "apps/operator-backend/test/supported_tool_inventory.test.ts",
-      "sha256": "sha256:a4f178c250e44157690dda1362a1a533ac7141dfaeda66f88a07d02702e61c1e"
+      "sha256": "sha256:e090bed744a5c9849731e95173eb818953bf8807fc4a9e145373d8e25071d2d1"
     },
     {
       "path": "apps/operator-backend/test/task_memory_prompt.test.ts",
@@ -4889,7 +4909,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:d76cf7c2c4a7e8021e76694dbe87559311803549ab340172b5af37ffb9b41738"
+      "sha256": "sha256:1ac689bf152b45fa40cf4519973bc6b86e30a2eaf8ab5181ff92b366070c9719"
     },
     {
       "path": "apps/operator-backend/test/teammate_mutation_intent_binding.test.ts",
@@ -5946,7 +5966,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorSupportedToolInventory.cs",
-      "sha256": "sha256:48f16ff000bc242f5e4947b09230318923b5083bcc93b4ed92e0106ebacd837d"
+      "sha256": "sha256:6dbe1bf59df385642bffdfea0b80f34163e07542f112e4830f53d21956fc5af9"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs",
@@ -7254,7 +7274,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorApprovalPolicy.cs",
-      "sha256": "sha256:660357de68ed8106114f64d0c329ad046fd8d8cdc4cc3abca83e3cfe9f8591b7"
+      "sha256": "sha256:c6c6aae0d4025ed3814b6abb3a421b3e7ac9a7eca02af3dc69e4fff9bbf97a61"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorAuthSession.cs",
@@ -7454,7 +7474,7 @@
     },
     {
       "path": "packages/revit-action-effect-v1/golden-vectors.json",
-      "sha256": "sha256:4eb3444e5235e63c898c837f0dbe5ab6c324f4e9554151109add8eef24f994c1"
+      "sha256": "sha256:25b48974478c8c51829737081057933a348c7f5ab15b71b5a2998d127fb7d1cd"
     },
     {
       "path": "packages/revit-action-effect-v1/index.d.ts",
@@ -7462,7 +7482,7 @@
     },
     {
       "path": "packages/revit-action-effect-v1/index.js",
-      "sha256": "sha256:308cb210c12235e53dce024e73287c5bbcfb2a4210bec107114d964d8ab5a00a"
+      "sha256": "sha256:cfa2ae3ea60fe27e22e77fd1f1e0f94df65444abf7ef3daac86ffdf12bf275be"
     },
     {
       "path": "packages/revit-action-effect-v1/package.json",
@@ -7485,7 +7505,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:4b268288a3b345eaf89a5d95605177dcdbd87904cb2713e97591bea3a29247f4",
+  "inputs_hash": "sha256:fd788e92d9d3dafe67340d4d304837dcb6579ccd6b28f83390fb60798864813f",
   "result": {
     "passed": true,
     "checks": [

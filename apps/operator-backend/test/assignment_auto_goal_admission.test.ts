@@ -113,6 +113,11 @@ for (const [effect, prompt, facts] of [
   ["apply", "Save the settings from this plan as TEST COORDINATION TEMPLATE.", ["task.result_available"]],
   ["apply", "Tidy up the crowded tags without changing what they label.", ["task.result_available"]],
   ["apply", "Show me what would change if we moved this equipment, then apply the move.", ["task.result_available"]],
+  ["apply", "On this disposable Level 4 sample, reconstruct the first source-bound 8-inch duct segment in the now-cleared Unit 403 area from the M104 PDF we registered earlier in this chat. First rebind that verified registration using a fresh complete L4 grid observation. Inspect the cleared model and nearby like ducts to justify system, type, size, and an assumed elevation. Stage a dry run; if it is safe and faithfully follows one registered source primitive, create only that first duct segment with both ends open and record which source continuations remain unresolved. Independently verify its native geometry and both physical connectors. Do not invent branches, do not use hidden fixture IDs, and do not claim the multi-room network is complete.", ["task.result_available"]],
+  ["apply", "Dry-run the proposed duct; if the geometry and system are supported, create it and independently verify both ends.", ["task.result_available"]],
+  ["apply", "Preview the proposed duct, then draw it in the disposable model and verify it.", ["task.result_available"]],
+  ["preview", "Dry-run the proposed duct and tell me if it is safe to create. Do not create it yet.", ["task.preview_valid"]],
+  ["preview", "Stage a dry run; if it is safe, report the proposed duct geometry. Leave the model unchanged.", ["task.preview_valid"]],
   ["apply", "Replace the selected note text with the exact literal 'Issued for Construction'.", ["task.result_available"]]
 ] as const) {
   test(`normal chat admits ${effect} auto-goals with a native evidence contract under V2`, () => {

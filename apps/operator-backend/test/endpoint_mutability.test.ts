@@ -95,6 +95,17 @@ test("generic conditional intent remains deny-by-default and explicit handlers r
   assert.equal(revitRouteEffect("/revit/lighting-audit", "POST", { visualize: true, apply: false }), "apply");
 });
 
+test("C60 native route workflows classify rollback preview before a later apply", () => {
+  for (const route of ["/revit/mep-route-workflow", "/revit/mep-branch-network-workflow"]) {
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: false }), "preview", route);
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: true }), "apply", route);
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct" }), "apply", route);
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: false, commit: true }), "apply", route);
+    assert.equal(revitRouteEffectWhenBodyUnavailable(route, "POST"), "apply", route);
+  }
+  assert.equal(revitRouteEffect("/revit/unclassified-future-command", "POST", { apply: false }), "apply");
+});
+
 test("bodyless recovery is distinct from an authoritative empty request and fails closed", () => {
   assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/fire-damper-audit", "POST"), "apply");
   assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/visibility", "POST"), "apply");

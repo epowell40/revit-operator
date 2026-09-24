@@ -418,6 +418,7 @@
     "operator_plan_existing_conditions_duct_continuation",
     "operator_plan_semantic_mep_route",
     "operator_register_existing_conditions_interpretation",
+    "operator_resume_existing_conditions_registration",
     "operator_record_execution_strategy",
     "operator_request_assignment_input",
     "operator_request_clarification",

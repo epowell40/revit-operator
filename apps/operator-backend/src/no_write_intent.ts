@@ -22,6 +22,14 @@ export function previewIntentText(text: string): string {
   return text.replace(/\bdry[- _]?run(?=["']?\s*[:=]\s*false\b)/gi, "disabled_option");
 }
 
+/** A preview is a precondition, not the requested final effect, when a later clause commands a model edit. */
+export function hasPostPreviewModelMutation(text: string): boolean {
+  const preview = /\b(?:preview|preflight|dry[- ]?run)\b/i.exec(previewIntentText(text));
+  if (!preview) return false;
+  const later = text.slice(preview.index + preview[0].length);
+  return /(?:\b(?:then|and then)\b|[;])\s*(?:and\s+)?(?:if\b[^,;.!?]{0,180},\s*)?(?:please\s+)?(?:create|draw|place|connect|route|add|move|modify|edit|delete|remove|rename|set|apply|commit|duplicate|update|change)\b/i.test(later);
+}
+
 export const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
   "\\b(?:do not|don't|dont|never)\\s+"
   + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"

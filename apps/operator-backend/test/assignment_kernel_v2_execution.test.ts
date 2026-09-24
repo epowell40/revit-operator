@@ -571,6 +571,25 @@ test("plan-only preview settles without invented rollback and permits the author
     capability_id: "revit_call_tool", classified_effect: "apply", arguments: { ...args, body: { ...args.body, dryRun: false } } }));
 }));
 
+test("a successful dry run cannot finish a conditional create assignment", () => workspace(() => {
+  const { goal, snapshot } = setup("apply", "Stage a dry run; if the source-bound duct is safe, create it and verify both connectors.");
+  assert.equal(snapshot.spec.requested_effect, "apply");
+  const args = { method: "POST", path: "/revit/create-duct", body: { dryRun: true } };
+  const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duct-preview", provider_turn_id: "turn-preview",
+    capability_id: "revit_call_tool", classified_effect: "preview", arguments: args });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const result = envelope(lease.operation_id, lease.binding, { status: "Dry Run", rolledBack: true, openConnectorCount: 2 });
+  result.structuredContent.operation_result_v2.native_transaction_state = "rolled_back";
+  result.structuredContent.observation.semantic_facts = [{ fact_id: "control.result_available", fact_class: "control", value: true }];
+  settleAssignmentKernelOperationV2(lease, result);
+  __testOnlyResetGoalListCache();
+  const retained = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+  assert.equal(retained.operations[lease.operation_id]!.persistent_effect, "none");
+  assert.notEqual(retained.outcome, "complete");
+  assert.equal(retained.criteria[snapshot.spec.criteria[0]!.criterion_id]?.status, undefined);
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.spec.requested_effect, "apply");
+}));
+
 test("V2 operation identity survives admission, MCP acceptance, native result, evidence, and restart", () => workspace(() => {
   const { goal, snapshot } = setup();
   const lease = openAssignmentKernelOperationV2({

@@ -2,7 +2,7 @@ import type { CandidateVisibleFrameMapping } from "./candidate_visible_registrat
 import type { ExistingConditionsPlanPoint } from "./registration.js";
 
 type GridAxis = { element_id: number; name: string; start: ExistingConditionsPlanPoint; end: ExistingConditionsPlanPoint };
-export type TrustedGridLandmarks = { frame: CandidateVisibleFrameMapping; axes: GridAxis[]; operation_id: string; evidence_id: string };
+export type TrustedGridLandmarks = { frame: CandidateVisibleFrameMapping; axes: GridAxis[]; operation_id: string; evidence_id: string; project_fingerprint?: string; truncated?: boolean };
 
 function row(value: unknown): Record<string, any> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {}; }
 function point(value: unknown): ExistingConditionsPlanPoint | null {

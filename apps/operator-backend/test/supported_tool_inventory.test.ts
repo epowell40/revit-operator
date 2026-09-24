@@ -19,7 +19,7 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 216);
   assert.equal(SUPPORTED_NATIVE_ROUTES.length, 102);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 96);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 97);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");

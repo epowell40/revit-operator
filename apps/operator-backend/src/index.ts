@@ -58,6 +58,7 @@ import { resolveMepSemanticRoutePlan } from "./deterministic/mep_semantic_route.
 import { adaptMepSemanticRoutePlanToAecIntentEvidence } from "./deterministic/mep_semantic_route_evidence.js";
 import { handleStructuredExistingConditionsInterpretationHttp } from "./existing_conditions/structured_interpretation_http.js";
 import { handleRegisteredDuctContinuationPlanHttp } from "./existing_conditions/registered_route_plan_http.js";
+import { handleExistingConditionsRegistrationHandoffHttp } from "./existing_conditions/registration_handoff_http.js";
 
 
 
@@ -749,6 +750,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/tools/redline/gemini-analyze" ||
     pathname === "/tools/existing-conditions/validate-interpretation" ||
     pathname === "/tools/existing-conditions/register-interpretation" ||
+    pathname === "/tools/existing-conditions/resume-registration" ||
     pathname === "/tools/existing-conditions/plan-duct-continuation" ||
     pathname === "/tools/mep/semantic-route-plan" ||
     pathname === "/tools/aec/task-intent" ||
@@ -3526,6 +3528,7 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, r.status, r.body);
     }
     if (await handleStructuredExistingConditionsInterpretationHttp(req, res, url.pathname, auth.principal, sessionAccessAllowed)) return;
+    if (await handleExistingConditionsRegistrationHandoffHttp(req, res, url.pathname, auth.principal, sessionAccessAllowed)) return;
     if (await handleRegisteredDuctContinuationPlanHttp(req, res, url.pathname, auth.principal, sessionAccessAllowed)) return;
     if (req.method === "POST" && url.pathname === "/tools/mep/semantic-route-plan") {
       const body = await readJson(req);
