@@ -244,6 +244,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/model-health"
+    },
+    {
+      "method": "POST",
       "path": "/revit/move-elements"
     },
     {

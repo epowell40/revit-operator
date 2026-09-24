@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:1236429cd966b59d3a4b6ab5daeaead53314a807a29d40f94b70c671717882db";
+        public const string InventoryHash = "sha256:d78c047ee3eab8bf4edd8887629d25f47ca44d2ec292eaec5e8c5c310c9ff8b5";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -67,6 +67,7 @@ namespace RevitBridge.Common
             "POST /revit/load-family-doc",
             "POST /revit/mep-branch-network-workflow",
             "POST /revit/mep-route-workflow",
+            "POST /revit/model-health",
             "POST /revit/move-elements",
             "POST /revit/native-api-call",
             "POST /revit/native-api-catalog",
