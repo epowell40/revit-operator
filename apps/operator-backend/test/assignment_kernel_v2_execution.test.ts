@@ -1757,8 +1757,59 @@ test("duplicated view creation receipts bind the new view even when the request 
     assert.equal(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
       .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), observedId === 1542917);
     assert.equal(Object.values(verified.operations).filter(op => op.requested_effect === "apply").length, 1);
+    if (observedId === 1542917) {
+      assert.deepEqual(retainWorkPlanInspectionV2(verified, [read.operation_id]).target_ids, ["element_id:1542917"],
+        "the complete native copied-view inventory must count as fresh inspection coverage of the created view");
+      const untrusted = structuredClone(verified);
+      (untrusted.operations[read.operation_id]!.result as any).authority = "model";
+      assert.throws(() => retainWorkPlanInspectionV2(untrusted, [read.operation_id]), /work_plan_inspection/);
+      const wrongTarget = structuredClone(verified);
+      (wrongTarget.operations[read.operation_id]!.target as any).target_id = "id:1542918";
+      assert.throws(() => retainWorkPlanInspectionV2(wrongTarget, [read.operation_id]), /work_plan_inspection/);
+    } else {
+      assert.throws(() => retainWorkPlanInspectionV2(verified, [read.operation_id]), /work_plan_inspection/,
+        "a wrong created-view identity cannot close copied-view inspection");
+    }
   });
 });
+
+test("C60 copied-view inspection closes a declared plan only from the paired native detailing read", () => workspace(() => {
+  const { goal, snapshot } = setup("apply", "Make a coordination copy of this plan, including its annotations. Call it M-COORDINATION COPY.");
+  manageAssignmentWorkPlan({ binding: snapshot.current_binding, action: "declare", declaration: { items: [
+    { item_id: "copy", kind: "edit", description: "Copy L4 with detailing", source_basis: "Active Revit plan and requested name" },
+    { item_id: "inspect", kind: "inspection", depends_on: ["copy"], description: "Inspect copied detailing", source_basis: "Fresh owner-view inventory" }
+  ], assumptions: [] } });
+  const planned = getAssignmentKernelSnapshotV2(goal.id)!;
+  const copy = openAssignmentKernelOperationV2({ snapshot: planned, controller_request_id: "copy", provider_turn_id: "copy",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433"],
+    arguments: { method: "POST", path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } } });
+  markAssignmentKernelOperationDispatchStartedV2(copy);
+  const commit = envelope(copy.operation_id, copy.binding, { success: true, viewId: 1542917, sourceViewId: 1363433,
+    name: "M-COORDINATION COPY", withDetailing: true }, "applied");
+  commit.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542917"];
+  settleAssignmentKernelOperationV2(copy, commit);
+  const afterApply = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
+  const read = openAssignmentKernelOperationV2({ snapshot: afterApply, controller_request_id: "inspect", provider_turn_id: "inspect",
+    capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1363433", "id:1542917"],
+    arguments: { method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, 1542917] } },
+    opened_at: new Date(Date.now() + 1000).toISOString() });
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  const owned = (id: number, elementId: number) => ({ view: { id, name: id === 1363433 ? "L4" : "M-COORDINATION COPY", viewType: "FloorPlan" },
+    totalOwnedCount: 1, returnedCount: 1, annotationCount: 1, truncated: false, unreadableCount: 0,
+    unclassifiedCount: 0, incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+    items: [{ elementId, ownerViewId: id, isAnnotation: true, semanticSignature: `sha256:${"a".repeat(64)}`, semanticSignatureComplete: true }] });
+  settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+    { schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view", requestedViewIds: [1363433, 1542917], viewsComplete: true,
+      views: [owned(1363433, 11), owned(1542917, 22)] }));
+  const beforeClosure = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(beforeClosure.outcome, "active");
+  assert.ok(manageAssignmentWorkPlan({ binding: copy.binding, action: "status" }).available_inspection_operations.items
+    .some((item: any) => item.operation_id === read.operation_id));
+  manageAssignmentWorkPlan({ binding: copy.binding, action: "complete", item_id: "copy", operation_ids: [copy.operation_id] });
+  const completed = manageAssignmentWorkPlan({ binding: copy.binding, action: "complete", item_id: "inspect", operation_ids: [read.operation_id] });
+  assert.equal(completed.outcome, "complete");
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.terminal, true);
+}));
 
 test("sheet and view creation bind verification to native-created identities without replaying creation", () => {
   for (const route of ["/revit/duplicate-sheet", "/revit/create-sheet", "/revit/create-view", "/revit/create-drafting-view"]) workspace(() => {

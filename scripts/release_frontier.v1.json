@@ -2820,6 +2820,14 @@
         "backend:postcondition_verification_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
       ]
+    },
+    {
+      "id": "c60-copied-view-plan-inspection-rejects-native-detailing-read-and-stalls-campaign",
+      "coverage": [
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:view_owned_detailing_v2.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

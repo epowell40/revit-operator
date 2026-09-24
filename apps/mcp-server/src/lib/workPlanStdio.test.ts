@@ -25,7 +25,10 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   const client = new Client({ name: "work-plan-stdio", version: "1.0.0" }, { capabilities: {} });
   t.after(async () => { await client.close(); await transport.close(); await new Promise<void>((resolve,reject) => backend.close(error => error ? reject(error) : resolve())); fs.rmSync(workspace, { recursive: true, force: true }); });
   await client.connect(transport);
-  assert((await client.listTools()).tools.some(tool => tool.name === "operator_manage_work_plan"));
+  const workPlanTool = (await client.listTools()).tools.find(tool => tool.name === "operator_manage_work_plan");
+  assert(workPlanTool);
+  assert.match(workPlanTool.description ?? "", /\/revit\/view-owned-detailing/,
+    "the agent must be told that a native copied-view read can close a detailing inspection");
   const binding = { assignment_id: "area-assignment", run_id: "area-run", session_id: "area-session", generation: 1, principal_id: "test" };
   const _meta = { "revit-operator/assignment-kernel-binding-v2": binding };
   const items = [{ itemId: "room_a_supply", description: "Supply branch in first room", sourceBasis: "Source plan, first room" },

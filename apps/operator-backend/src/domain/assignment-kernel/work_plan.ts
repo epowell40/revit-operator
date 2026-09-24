@@ -57,7 +57,7 @@ export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: s
     && new Set(operationIds).size === operationIds.length, "work_plan_proof_missing", "Cite every applied operation for this item.");
   if (item!.kind === "inspection") {
     const completed = { ...item!, operation_ids: [...operationIds].sort(), completed_at: occurredAt, inspection };
-    kernelAssertV2(inspectionIsCurrentV2(snapshot, completed), "work_plan_inspection_unverified", "Inspect all dependent completed edits with fresh complete native connector reads after the latest edit. This records inspection coverage, not an engineering pass.");
+    kernelAssertV2(inspectionIsCurrentV2(snapshot, completed), "work_plan_inspection_unverified", "Inspect all dependent completed edits with fresh complete native connector or copied-view-detailing reads after the latest edit. This records inspection coverage, not an engineering pass.");
     return { ...plan!, items: plan!.items.map(candidate => candidate.item_id === itemId ? completed : candidate) };
   }
   kernelAssertV2(!inspection, "work_plan_edit_inspection_invalid", "Read-only inspection cannot complete an edit item.");
