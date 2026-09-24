@@ -15,8 +15,9 @@ namespace RevitBridge.Common.Tests
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(217, implemented.Count);
-            Assert.Equal(103, OperatorToolManifest.Tools.Count);
-            Assert.Equal(103, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(104, OperatorToolManifest.Tools.Count);
+            Assert.Equal(104, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/model-health"));
             foreach (var route in implemented)
             {
                 var supported = OperatorSupportedToolInventory.IsSupportedTool(route.Method, route.Path);
