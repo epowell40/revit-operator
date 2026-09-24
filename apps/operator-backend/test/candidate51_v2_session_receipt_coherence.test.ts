@@ -53,6 +53,14 @@ test("typed parent notification binds one exact native child observation, never 
     expectedSessionId: binding.session_id, toolName: "revit_get_context", parsedResult: foreignEvidence }), {
     state: "unresolved", assignment_id: binding.assignment_id, operation_id: childId,
     reason: "v2_native_child_parent_mismatch" });
+  const ambiguous = structuredClone(publication);
+  ambiguous.assignments[0]!.snapshot.operations[childId].observation_ids.push("obsv2_duplicate");
+  (ambiguous.assignments[0]!.snapshot.observations as Record<string, unknown>).obsv2_duplicate = {
+    observation_id: "obsv2_duplicate", operation_id: childId,
+    raw_payload_ref: "evidence:ev1_typed_native_child", binding
+  };
+  assert.deepEqual(resolve(ambiguous), { state: "unresolved", assignment_id: binding.assignment_id,
+    operation_id: childId, reason: "v2_native_child_parent_mismatch" });
 });
 
 test("Candidate 51 V2-tagged discovery notification uses the exact published operation effect", async () => {

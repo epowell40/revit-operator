@@ -313,7 +313,7 @@ export function resolveSessionReceiptOperationV2(input: {
         || !evidenceId
         || !method || !path
         || capabilityId !== `native:${method}:${path}`
-        || matchingObservations.length === 0) {
+        || matchingObservations.length !== 1) {
       return unresolved("v2_native_child_parent_mismatch");
     }
   }
