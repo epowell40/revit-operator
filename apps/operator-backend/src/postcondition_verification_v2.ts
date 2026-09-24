@@ -527,10 +527,14 @@ export function postconditionSatisfiedByPayloadV2(
   const operationPath = operationContractPath(applyInput, contract);
   if (operationPath === "/revit/duplicate-view") {
     const request = objectValue(semanticApplyInput(applyInput));
-    if (request.withDetailing === true
-        && !duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), structuredValue(verificationPayload),
-          createdViewIdsFromIdentitiesV2(contract.affected_target_identities ?? [])))
-      return false;
+    if (request.withDetailing === true) {
+      // The complete paired-inventory comparator checks native-created target
+      // identity, requested name, view type, completeness and every signature.
+      // Generic scalar traversal has a bounded token budget and can exhaust it
+      // on the source view before it reaches the copied view's name.
+      return duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), structuredValue(verificationPayload),
+        createdViewIdsFromIdentitiesV2(contract.affected_target_identities ?? []));
+    }
   }
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(String(contract.path ?? objectValue(applyInput).path)))
     return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));

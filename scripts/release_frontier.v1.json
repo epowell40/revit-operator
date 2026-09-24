@@ -2812,6 +2812,14 @@
         "backend:teammate_loop_runtime.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
       ]
+    },
+    {
+      "id": "c60-installed-b04-complete-owner-view-read-exhausts-generic-postcondition-traversal",
+      "coverage": [
+        "backend:view_owned_detailing_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
