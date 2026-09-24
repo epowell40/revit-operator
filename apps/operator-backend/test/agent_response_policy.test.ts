@@ -181,6 +181,18 @@ test("a V2 clarification that stops before the provider reports explicit no-star
   assert.match(clarificationReturn, /canonical_assignment_outcome:\s*canonicalAssignmentOutcome/);
 });
 
+test("a provider connection failure before turn/start reports exact no-start usage", () => {
+  const source = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const helperStart = source.indexOf("const stopBeforeProvider = (");
+  const helperEnd = source.indexOf("const requestBackendAuth =", helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.match(helper, /provider_turn_usage:\s*\{[\s\S]*?session_id:\s*req\.session_id,\s*message_id:\s*req\.message_id,[\s\S]*?thread_id:\s*null,\s*turn_id:\s*null,\s*disposition:\s*"not_started"(?: as const)?,\s*raw_response_ids:\s*\[\]/);
+  assert.doesNotMatch(helper, /phase\s*!==\s*"provider_start"/);
+  const connectionFailure = source.slice(source.indexOf('if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);', helperEnd), source.indexOf("providerReceiptRecorder =", helperEnd));
+  assert.match(connectionFailure, /return stopBeforeProvider\([\s\S]*?"provider_start"/);
+});
+
 test("pre-model redline routing uses async recovery bridge", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
 

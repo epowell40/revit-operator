@@ -488,11 +488,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: assistantMessage,
       actions: [],
-      ...(phase !== "provider_start" ? { provider_turn_usage: {
+      // Every caller returns before startBoundTurn admits a model turn,
+      // including failure to initialize the provider connection. Record the
+      // exact no-start result so a later benchmark does not lose this turn.
+      provider_turn_usage: {
         schema: "revit-operator.provider-turn-usage/v1" as const,
         session_id: req.session_id, message_id: req.message_id,
         thread_id: null, turn_id: null, disposition: "not_started" as const, raw_response_ids: []
-      } } : {}),
+      },
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {})
     };
