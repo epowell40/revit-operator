@@ -80,7 +80,7 @@ namespace RevitBridge.Logic.Handlers
                     if (categoryType == "Annotation") annotationCount++;
                     var builtInCategory = element.Category?.BuiltInCategory.ToString();
                     var comparisonExcluded = ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure(
-                        element.GetType().Name, builtInCategory, categoryType == "Annotation");
+                        element.GetType().Name, builtInCategory, categoryType == "Annotation", element.Name);
                     if (categoryType == null && !comparisonExcluded) unclassifiedCount++;
                     var text = ReadVisibleText(element);
                     var textComplete = text == null || text.Length <= 4096;

@@ -35,7 +35,8 @@ function completeInventory(value: unknown): Inventory | null {
     const elementId = positiveId(item.elementId);
     const infrastructure = item.isAnnotation === false && (
       item.className === "SketchPlane" || item.className === "SunAndShadowSettings"
-      || item.className === "ExtentElem" || item.builtInCategory === "OST_SunStudy");
+      || (item.className === "Element" && item.name === "ExtentElem")
+      || item.builtInCategory === "OST_SunStudy");
     const signature = typeof item.semanticSignature === "string" ? item.semanticSignature.trim() : "";
     if (!elementId || ids.has(elementId) || positiveId(item.ownerViewId) !== id
         || (item.comparisonExcluded === true) !== infrastructure

@@ -50,7 +50,8 @@ test("Revit housekeeping can differ while every drafting item still matches", ()
     comparisonExcluded: true, semanticSignature: null, semanticSignatureComplete: false
   });
   const sourceItems = [item(1363433, 11, "a"), housekeeping(1363433, 12, "SketchPlane", null),
-    housekeeping(1363433, 13, "SunAndShadowSettings", "OST_SunStudy")];
+    housekeeping(1363433, 13, "SunAndShadowSettings", "OST_SunStudy"),
+    { ...housekeeping(1363433, 14, "Element", null), name: "ExtentElem" }];
   const targetItems = [item(1542917, 21, "a"), housekeeping(1542917, 22, "SketchPlane", null)];
   const sourceInventory = { ...view(1363433, "L4", sourceItems), annotationCount: 1 };
   const targetInventory = { ...view(1542917, "M-COORDINATION COPY", targetItems), annotationCount: 1 };

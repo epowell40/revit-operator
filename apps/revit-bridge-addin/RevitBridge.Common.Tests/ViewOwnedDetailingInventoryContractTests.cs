@@ -46,12 +46,13 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void OnlyKnownNonDraftingInfrastructureIsExcluded()
         {
-            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("ExtentElem", null, false));
+            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("Element", null, false, "ExtentElem"));
             Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SketchPlane", null, false));
             Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SunAndShadowSettings", "OST_SunStudy", false));
             Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("TextNote", "OST_TextNotes", true));
             Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("DetailCurve", "OST_Lines", false));
-            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("ExtentElem", null, true));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("Element", null, true, "ExtentElem"));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("Element", null, false, "Other"));
         }
 
         [Fact]

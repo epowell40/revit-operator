@@ -9,11 +9,13 @@ namespace RevitBridge.Common
     {
         // Per-view Revit housekeeping is not user-authored drafting and need not
         // have copy-stable geometry under Duplicate with Detailing.
-        public static bool IsNonDraftingInfrastructure(string className, string? builtInCategory, bool isAnnotation)
+        public static bool IsNonDraftingInfrastructure(string className, string? builtInCategory, bool isAnnotation,
+            string? elementName = null)
         {
             if (isAnnotation) return false;
             return className == "SketchPlane" || className == "SunAndShadowSettings"
-                || className == "ExtentElem" || builtInCategory == "OST_SunStudy";
+                || (className == "Element" && elementName == "ExtentElem")
+                || builtInCategory == "OST_SunStudy";
         }
         public const int DefaultLimit = 1000;
         public const int MaximumLimit = 5000;
