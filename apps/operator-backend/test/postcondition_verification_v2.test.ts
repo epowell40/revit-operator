@@ -428,6 +428,27 @@ test("schedule field and settings verification consume only the typed detail con
     table: { body: { rows: [{ name: "Count", showGrandTotals: true, filterBySheet: false }] } }
   }, { path: "/revit/configure-schedule" }), false);
 });
+test("schedule sort and group verification requires the complete ordered native definition", () => {
+  const input = {
+    scheduleId: 1488968,
+    replaceSortGroup: true,
+    sortGroup: [
+      { field: "Level", ascending: true, showHeader: true, showBlankLine: false },
+      { field: "Family", ascending: true, showHeader: false, showBlankLine: false },
+      { field: "Type", ascending: true, showHeader: false, showBlankLine: false }
+    ]
+  };
+  const read = {
+    status: "Ok", action: "detail", schedule: { id: 1488968 },
+    sortGroupDefinitionsComplete: true,
+    sortGroupDefinitions: input.sortGroup.map((item, index) => ({ index, ...item, readable: true }))
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read, { path: "/revit/configure-schedule" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitions: [...read.sortGroupDefinitions].reverse() }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitions: read.sortGroupDefinitions.map((item, index) => index === 0 ? { ...item, showBlankLine: true } : item) }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitionsComplete: false }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { schedule: { id: 1488968 }, metadata: { request: read } }, { path: "/revit/configure-schedule" }), false);
+});
 test("visibility properties require successful native get on the exact returned view", () => {
   const input = { path: "/revit/visibility", body: JSON.stringify({ action: "set_scale", viewId: 1363433, scale: 96 }) };
   const read = { status: "Ok", action: "get", dryRun: false, view: { id: 1363433, scale: 96 } };

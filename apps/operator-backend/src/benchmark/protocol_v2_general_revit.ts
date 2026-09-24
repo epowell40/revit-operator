@@ -63,7 +63,8 @@ export function loadGeneralRevitProtocolInputsV2(externalHoldoutPath: string, co
     fixtures: Object.fromEntries(externalHoldout.manifest.fixtures.map((fixture) => [fixture.identity, {
       discipline: fixture.discipline,
       document_title: fixture.document_title,
-      sample_filename: path.resolve(path.dirname(externalHoldoutPath), fixture.path)
+      sample_filename: path.resolve(path.dirname(externalHoldoutPath), fixture.path),
+      requires_architectural_link: false
     }])),
     case_overrides: Object.fromEntries(externalHoldout.manifest.fixtures.map((fixture) => [fixture.identity, fixture.case_ids]))
   };

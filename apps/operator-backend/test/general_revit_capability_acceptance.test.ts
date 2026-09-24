@@ -139,6 +139,19 @@ test("benchmark wrapper orchestrates controlled fixtures unless one is pinned an
   assert.match(wrapper, /InteractionManifest SHA-256 does not match ProtocolV2Envelope/);
 });
 
+test("opt-in Architectural link preflight runs for each case after fixture transition and before the agent", () => {
+  const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  const loop = runner.slice(runner.indexOf("for (const testCase of rescoreOnly || campaignStop"));
+  assert.match(loop, /await ensureFixtureActive\(/);
+  assert.match(loop, /await verifySnowdonArchitecturalFixtureBeforeAgent\(/);
+  assert.match(loop, /expectedDocumentTitle: fixtureConfig\.fixtures\[preferredFixture\]\.document_title/);
+  assert.match(loop, /requiresArchitecturalLink: fixtureConfig\.fixtures\[preferredFixture\]\.requires_architectural_link/);
+  assert.match(loop, /traces\.push\(await runCase\(/);
+  assert.ok(loop.indexOf("await ensureFixtureActive(") < loop.indexOf("await verifySnowdonArchitecturalFixtureBeforeAgent("));
+  assert.ok(loop.indexOf("await verifySnowdonArchitecturalFixtureBeforeAgent(") < loop.indexOf("traces.push(await runCase("));
+  assert.match(runner, /process\.argv\.includes\("--require-snowdon-architectural-link"\)/);
+});
+
 test("benchmark groups cases by fixture and fails closed on an unpinned mixed-model run", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
   assert.match(runner, /--orchestrate-fixtures/);
@@ -998,6 +1011,8 @@ test("sample fixture adapters bind discipline-specific tasks without changing th
   assert.equal(generalRevitFixtureForCase(fixtures, "r09_pipe_size_transition"), "snowdon_plumbing");
   assert.equal(generalRevitFixtureForCase(fixtures, "c20_add_duplex_match_circuit"), "snowdon_electrical");
   assert.equal(fixtures.fixtures.snowdon_hvac.document_title, "Snowdon Towers Sample HVAC");
+  assert.equal(fixtures.fixtures.snowdon_hvac.requires_architectural_link, true);
+  assert.equal(fixtures.fixtures.snowdon_plumbing.requires_architectural_link, false);
   assert.equal(fixtures.fixtures.snowdon_plumbing.sample_filename, "Snowdon Towers Sample Plumbing.rvt");
   assert.equal(fixtures.fixtures.snowdon_electrical.sample_filename, "Snowdon Towers Sample Electrical.rvt");
 });

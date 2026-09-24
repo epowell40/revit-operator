@@ -178,6 +178,19 @@ function scheduleFilterSetToken(values: readonly string[]): string {
   return `schedule_filter_set:${JSON.stringify([...new Set(values)].sort())}`;
 }
 
+function scheduleSortGroupTokens(value: unknown, index: number): readonly string[] {
+  const row = objectValue(value);
+  const field = typeof row.field === "string" ? row.field.trim().toLowerCase() : "";
+  if (!field) return [];
+  const tokens = [`schedule_sort_group:${index}:field:${JSON.stringify(field)}`];
+  for (const property of ["ascending", "showHeader", "showFooter", "showBlankLine", "showFooterCount", "showFooterTitle"] as const) {
+    if (typeof row[property] === "boolean") {
+      tokens.push(`schedule_sort_group:${index}:${property}:${JSON.stringify(row[property])}`);
+    }
+  }
+  return tokens;
+}
+
 function scalarParameterRepresentations(value: unknown): readonly unknown[] {
   if (value === null || value === undefined) return [];
   if (typeof value !== "object" || Array.isArray(value)) return [value];
@@ -276,6 +289,17 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
       for (const token of filterTokens) tokens.add(token);
       const complete = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitionscomplete")?.[1] === true;
       if (complete && filterTokens.length === filterEntry[1].length) tokens.add(scheduleFilterSetToken(filterTokens));
+    }
+    const sortGroupEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "sortgroupdefinitions");
+    if (sortGroupEntry && Array.isArray(sortGroupEntry[1])
+        && row.sortGroupDefinitionsComplete === true
+        && row.status === "Ok" && row.action === "detail"
+        && objectValue(row.schedule).id !== undefined
+        && sortGroupEntry[1].every((item, index) => objectValue(item).readable === true && objectValue(item).index === index)) {
+      tokens.add(`schedule_sort_group_count:${sortGroupEntry[1].length}`);
+      sortGroupEntry[1].forEach((item, index) => {
+        for (const token of scheduleSortGroupTokens(item, index)) tokens.add(token);
+      });
     }
     for (const [key, child] of entries) {
       const normalized = normalizedEvidenceKeyV2(key);
@@ -422,6 +446,13 @@ export function expectedPostconditionValuesV2(
     }
     if (Array.isArray(filters) && scheduleInput.replaceFilters !== false) {
       values.add(scheduleFilterSetToken(filterTokens));
+    }
+    const sortGroup = scheduleInput.sortGroup;
+    if (Array.isArray(sortGroup)) {
+      if (scheduleInput.replaceSortGroup !== false) values.add(`schedule_sort_group_count:${sortGroup.length}`);
+      sortGroup.forEach((item, index) => {
+        for (const token of scheduleSortGroupTokens(item, index)) values.add(token);
+      });
     }
     for (const field of Array.isArray(scheduleInput.addFields) ? scheduleInput.addFields : []) {
       const token = scheduleFieldToken(field);

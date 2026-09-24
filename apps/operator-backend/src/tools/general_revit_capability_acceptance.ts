@@ -9,6 +9,7 @@ import {
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
+import { verifySnowdonArchitecturalFixtureBeforeAgent } from "../benchmark/snowdon_architectural_fixture_preflight.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
   revitHealthDocumentTitle,
@@ -785,7 +786,7 @@ async function main(): Promise<void> {
       "General Revit capability acceptance runner",
       "--isolate-exports: fresh local protocol campaigns only. Start each case with empty native export folders, archive exact output bytes, and restore original files after the campaign. Interrupted runs retain a recovery journal and must be recovered before restarting.",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--interaction-manifest FILE] [--direct-variant] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--require-snowdon-architectural-link] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--interaction-manifest FILE] [--direct-variant] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
@@ -807,6 +808,10 @@ async function main(): Promise<void> {
   if (directVariant && !interactionManifest) throw new Error("--direct-variant requires --interaction-manifest.");
   const requestedFixture = flag("--fixture").trim().toLowerCase();
   const orchestrateFixtures = process.argv.includes("--orchestrate-fixtures");
+  const requireSnowdonArchitecturalLink = process.argv.includes("--require-snowdon-architectural-link");
+  if (requireSnowdonArchitecturalLink && !requestedFixture && !orchestrateFixtures) {
+    throw new Error("--require-snowdon-architectural-link requires --fixture snowdon_hvac or --orchestrate-fixtures.");
+  }
   if (requestedFixture && orchestrateFixtures) throw new Error("Use either --fixture or --orchestrate-fixtures, not both.");
   if (requestedFixture && !fixtureConfig.fixtures[requestedFixture]) {
     throw new Error(`Unknown General Revit sample fixture '${requestedFixture}'.`);
@@ -984,6 +989,10 @@ async function main(): Promise<void> {
     fixture_transitions: (Array.isArray(priorSuiteContext.fixture_transitions)
       ? priorSuiteContext.fixture_transitions.map(asRecord)
       : []) as JsonRecord[],
+    snowdon_architectural_link_required: requireSnowdonArchitecturalLink,
+    snowdon_architectural_link_preflights: (Array.isArray(priorSuiteContext.snowdon_architectural_link_preflights)
+      ? priorSuiteContext.snowdon_architectural_link_preflights.map(asRecord)
+      : []) as JsonRecord[],
     fixture_preconditions: (Array.isArray(priorSuiteContext.fixture_preconditions) ? priorSuiteContext.fixture_preconditions.map(asRecord) : []) as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
@@ -1110,6 +1119,21 @@ async function main(): Promise<void> {
       }, fixtureTimeoutMs());
       (suiteContext.fixture_preconditions as JsonRecord[]).push(prepared);
     }
+    await verifySnowdonArchitecturalFixtureBeforeAgent({
+      enabled: requireSnowdonArchitecturalLink,
+      fixture: preferredFixture,
+      expectedDocumentTitle: fixtureConfig.fixtures[preferredFixture].document_title,
+      requiresArchitecturalLink: fixtureConfig.fixtures[preferredFixture].requires_architectural_link,
+      readModelHealth: () => requestJson(sidecar, "/api/benchmark/revit-fixture/model-health", {
+        method: "POST",
+        body: JSON.stringify({})
+      }, healthTimeoutMs()),
+      retainReceipt: (receipt) => (suiteContext.snowdon_architectural_link_preflights as JsonRecord[]).push({
+        case_id: testCase.case_id,
+        checked_at: nowIso(),
+        ...receipt
+      })
+    });
     console.log(`[${traces.length + 1}/${selected.length}] ${testCase.case_id}`);
     exportIsolation?.begin(testCase.case_id);
     traces.push(await runCase(

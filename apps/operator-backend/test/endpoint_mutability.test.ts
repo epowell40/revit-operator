@@ -91,6 +91,11 @@ test("generic conditional intent remains deny-by-default and explicit handlers r
     assert.equal(revitRouteEffect(route, "POST", {}), "apply", `${route} unqualified request`);
   }
   assert.equal(revitRouteEffect("/revit/get-parameters", "POST", { dryRun: true, apply: false }), "read");
+  assert.equal(revitRouteEffect("/revit/native-api-call", "POST", {
+    memberId: "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+    target: "doc", args: [1365188], dryRun: true
+  }), "read");
+  assert.equal(revitRouteEffect("/revit/native-api-mutation-ops", "POST", { dryRun: true }), "preview");
   assert.equal(revitRouteEffect("/revit/set-parameter", "POST", { dryRun: true, apply: true }), "apply");
   assert.equal(revitRouteEffect("/revit/lighting-audit", "POST", { visualize: true, apply: false }), "apply");
 });

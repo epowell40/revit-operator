@@ -5,17 +5,20 @@
     "snowdon_hvac": {
       "discipline": "mechanical",
       "document_title": "Snowdon Towers Sample HVAC",
-      "sample_filename": "Snowdon Towers Sample HVAC.rvt"
+      "sample_filename": "Snowdon Towers Sample HVAC.rvt",
+      "requires_architectural_link": true
     },
     "snowdon_plumbing": {
       "discipline": "plumbing",
       "document_title": "Snowdon Towers Sample Plumbing",
-      "sample_filename": "Snowdon Towers Sample Plumbing.rvt"
+      "sample_filename": "Snowdon Towers Sample Plumbing.rvt",
+      "requires_architectural_link": false
     },
     "snowdon_electrical": {
       "discipline": "electrical",
       "document_title": "Snowdon Towers Sample Electrical",
-      "sample_filename": "Snowdon Towers Sample Electrical.rvt"
+      "sample_filename": "Snowdon Towers Sample Electrical.rvt",
+      "requires_architectural_link": false
     }
   },
   "case_overrides": {
