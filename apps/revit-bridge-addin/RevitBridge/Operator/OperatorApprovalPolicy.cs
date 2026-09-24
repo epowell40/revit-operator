@@ -441,6 +441,7 @@ namespace RevitBridge.Operator
             if (m == "GET" || m == "HEAD" || m == "OPTIONS") return OperatorActionEffect.Read;
             if (m != "POST") return OperatorActionEffect.Apply;
             if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
+            if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
 
             if (string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
             {

@@ -2,6 +2,13 @@
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
     {
+      "id": "c68_native_api_single_call_read_with_dry_run",
+      "method": "POST",
+      "path": "/revit/native-api-call",
+      "body": {"memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)", "target": "doc", "args": [1365188], "dryRun": true},
+      "expected_effect": "read"
+    },
+    {
       "id": "safe_method_is_read",
       "method": "GET",
       "path": "/revit/unclassified-future-command",

@@ -220,6 +220,7 @@
     "test/task_navigation.test.js"
   ],
   "dotnet_test_classes": [
+    "NativeApiPolicyMethodBoundaryContractTests",
     "ViewOwnedDetailingInventoryContractTests",
     "OperatorDesktopLaunchPlanTests",
     "OperatorDuplicateSheetContractTests",
@@ -2849,6 +2850,14 @@
         "dotnet:OperatorAttemptSettlementTests",
         "dotnet:OperatorNativeTransportTests",
         "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "c68-native-read-with-dryrun-misclassified-as-unknown-preview",
+      "coverage": [
+        "backend:endpoint_mutability.test.ts",
+        "mcp:lib/revitRouteEffect.test.ts",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
       ]
     },
     {

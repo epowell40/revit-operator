@@ -559,6 +559,10 @@ namespace RevitBridge.Operator
             if (string.IsNullOrWhiteSpace(id)) throw new InvalidOperationException("memberId is required.");
             if (!_byId!.TryGetValue(id, out var descriptor) || descriptor.Method == null) throw new InvalidOperationException($"Unknown memberId: {id}");
             if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason)) throw new InvalidOperationException($"Native API call blocked: {reason}");
+            // A single reflected call has no rollback envelope. Mutations must
+            // use native-api-mutation-ops, which owns and verifies a transaction.
+            if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)
+                throw new InvalidOperationException("Native API single-call accepts only low-risk read members; use native-api-mutation-ops for writes.");
 
             var method = descriptor.Method;
             var ps = method.GetParameters();
@@ -584,11 +588,6 @@ namespace RevitBridge.Operator
                     continue;
                 }
                 throw new InvalidOperationException($"Missing argument for parameter '{p.Name}' ({p.ParameterType.Name}).");
-            }
-
-            if (dryRun && descriptor.MutatingHint)
-            {
-                return new { ok = true, dry_run = true, blocked_execution = true, member_id = descriptor.MemberId, signature = descriptor.Signature };
             }
 
             var sw = Stopwatch.StartNew();

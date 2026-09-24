@@ -16,6 +16,16 @@ test("Candidate 18 schedule child remains a read operation", () => {
   assert.equal(revitRouteEffect("/revit/list-schedules", "POST", { action: "list", query: "", max: 200 }), "read");
 });
 
+test("C68 native API single-call reads stay reads even with legacy dryRun", () => {
+  const body = {
+    memberId: "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+    target: "doc", args: [1365188], dryRun: true
+  };
+  assert.equal(revitRouteEffect("/revit/native-api-call", "POST", body), "read");
+  assert.equal(revitRouteCertificationEffect("/revit/native-api-call", "POST", body), "read");
+  assert.equal(revitRouteEffect("/revit/native-api-mutation-ops", "POST", { dryRun: true }), "preview");
+});
+
 test("Candidate 40 create-text inspection is a read even when the containing task requests preview", () => {
   assert.equal(revitRouteEffect("/revit/create-text", "POST", {
     action: "inspect",
