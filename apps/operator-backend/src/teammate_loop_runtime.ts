@@ -66,6 +66,7 @@ type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 export type TeammateLoopState = {
   key: string;
   contract: TeammateTurnContract;
+  attached_pdf_requires_registered_route: boolean;
   expires_at_ms: number;
   successful_preview_signatures: Set<string>;
   successful_preview_operations: Set<string>;
@@ -608,6 +609,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
   const state: TeammateLoopState = {
     key,
     contract,
+    attached_pdf_requires_registered_route: (req.user_attachments ?? []).some(attachment =>
+      attachment.mime?.toLowerCase() === "application/pdf" || /\.pdf$/i.test(attachment.filename ?? "")),
     expires_at_ms: now + MAX_STATE_AGE_MS,
     successful_preview_signatures: new Set(),
     successful_preview_operations: new Set(),
@@ -654,6 +657,13 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
+  // A PDF carried by the same user turn is source evidence, not an XYZ write
+  // authorization. Generic route endpoints cannot bind points to that source;
+  // the registered existing-conditions workflow owns that proof.
+  if (state.attached_pdf_requires_registered_route && call.effect === "apply" && new Set([
+    "/revit/mep-route-workflow", "/revit/create-mep-route", "/revit/create-duct",
+    "/revit/create-pipe", "/revit/mep-branch-network-workflow"
+  ]).has(call.path.toLowerCase())) return "pdf_route_requires_registered_source_workflow";
   if (isRedundantEvidenceItemRange(state.successful_evidence_item_ranges, call)) return "evidence_selection_already_available";
   const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
@@ -1121,6 +1131,8 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
     if (!recoverableEvidenceRead) state.contract.stage = needsInput ? "clarify" : "blocked";
     const remedy = needsInput
       ? " Grounding reads remain available. Call operator_request_clarification with missingFields=[\"replacement_text\"] and ask for the exact replacement wording; do not preview or apply a guessed value."
+      : reason === "pdf_route_requires_registered_source_workflow"
+        ? " Register the PDF against authoritative model landmarks and use the registered existing-conditions drafting workflow; generic XYZ routing cannot prove source alignment."
       : recoverableEvidenceRead
         ? " Use the retained result and continue to the bounded completion. Request pagination.next_start only when pagination.has_more is true."
       : "";

@@ -84,6 +84,47 @@ test("registered PDF handoff and connected continuation planning remain read-onl
   }
 });
 
+test("an attached PDF cannot be turned into an unregistered generic MEP route write", () => {
+  for (const route of ["/revit/mep-route-workflow", "/revit/create-mep-route", "/revit/create-duct", "/revit/mep-branch-network-workflow"]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const req = request("Use the attached record drawing to reconstruct the duct in the open model. Dry-run, then create it.");
+    req.user_attachments = [{ id: "source-pdf", filename: "M104-source.pdf", mime: "application/pdf" }];
+    const lease = beginTeammateLoopOwner(owner, req);
+    try {
+      const preview = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: route, body: { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: false, dryRun: true }
+      } });
+      assert.equal(preview.allowed, true, route);
+      const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: route, body: { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: true, dryRun: false }
+      } });
+      assert.equal(apply.allowed, false, route);
+      assert.match(apply.message ?? "", /pdf route requires registered source workflow/i);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
+test("the PDF route boundary preserves ordinary modeled routes and the registered drafting workflow", () => {
+  for (const attached of [false, true]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const req = request(attached
+      ? "Reconstruct the source-supported duct from this record PDF in the open model."
+      : "Draw a 10-foot supply duct in the open model, then verify it.");
+    if (attached) req.user_attachments = [{ id: "source-pdf", filename: "M104-source.pdf", mime: "application/pdf" }];
+    const lease = beginTeammateLoopOwner(owner, req);
+    try {
+      const path = attached ? "/revit/existing-conditions-mep-draft-workflow" : "/revit/mep-route-workflow";
+      const gate = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path, body: attached ? { apply: true, stagedHandoffId: "registered-source" }
+          : { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: true }
+      } });
+      assert.equal(gate.allowed, true, `${path}: ${gate.message}`);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
 test("inspection of an existing view's name and scale does not authorize creation", () => {
   const prompt = "Please check the drafting view we just created. Keep the existing view and report its name and scale.";
   assert.equal(classifyAgentTurn(prompt), "inspection");
