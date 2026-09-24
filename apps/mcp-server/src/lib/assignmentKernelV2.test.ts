@@ -738,6 +738,34 @@ test("schedule-cell no-match preflight retains no effect without claiming an exe
     f.fact_id === "task.preview_valid" && f.value === true), false);
 });
 
+test("configure-schedule apply needs confirmed native commit to settle persistence", async () => {
+  const body = { scheduleId: 1488968, addFields: ["Supply Air Pressure Drop"], dryRun: false };
+  for (const confirmed of [false, true]) {
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", {
+      method: "POST", path: "/revit/configure-schedule", body
+    }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/configure-schedule", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/configure-schedule", {
+        status: "Success", dryRun: false, schedule: { id: 1488968, name: "Equipment Schedule" },
+        ...(confirmed ? { transaction: { status: "committed", committed: true, modified_element_ids: [1488968], affected_element_ids: [1488968] } } : {}),
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1", attempt_id: `configure-${confirmed}`,
+          requested_effect: "apply", effect_state: confirmed ? "applied" : "unknown",
+          effect_authority: confirmed ? "native_transaction" : "native_host",
+          effect_reason: confirmed ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+          request_dispatched: true, affected_target_identities: confirmed ? ["element_id:1488968"] : []
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, confirmed ? "applied" : "unknown");
+    assert.equal(result.native_transaction_state, confirmed ? "committed" : "unknown");
+    assert.deepEqual(result.affected_target_identities ?? [], confirmed ? ["element_id:1488968"] : []);
+  }
+});
+
 test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
   const body = {
     elementId: 1421361,

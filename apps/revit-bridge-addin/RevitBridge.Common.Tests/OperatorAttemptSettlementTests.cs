@@ -26,6 +26,27 @@ namespace RevitBridge.Common.Tests
                 new { noMatch.status, noMatch.applied }, "preview", "POST", "/revit/update-schedule-cell").EffectState);
         }
         [Fact]
+        public void ConfigureSchedulePlanAndCommitHaveDistinctNativeEffectAuthority()
+        {
+            var plan = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true,
+                transaction = OperatorNativeTransactionReceipt.NotStarted()
+            }, "preview", "POST", "/revit/configure-schedule");
+            var committed = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Success", dryRun = false,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1488968L })
+            }, "apply", "POST", "/revit/configure-schedule");
+            Assert.Equal("none", plan.EffectState);
+            Assert.Equal("native_transaction_not_started", plan.EffectReason);
+            Assert.Equal("applied", committed.EffectState);
+            Assert.Equal("native_transaction", committed.EffectAuthority);
+            Assert.Contains("element_id:1488968", committed.AffectedTargetIdentities);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(new { status = "Success", dryRun = false },
+                "apply", "POST", "/revit/configure-schedule").EffectState);
+        }
+        [Fact]
         public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
         {
             var result = HostedPlacementPreflight.CheckHost(false, "OneLevelBased", 1464223, null)!;

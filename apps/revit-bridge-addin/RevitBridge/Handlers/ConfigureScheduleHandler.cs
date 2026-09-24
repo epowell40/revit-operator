@@ -143,6 +143,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "Dry Run",
                     dryRun = true,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
                     schedule = new
                     {
                         id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
@@ -152,11 +153,12 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            var applySummary = ApplyOperations(doc, schedule, p);
+            var applySummary = ApplyOperations(doc, schedule, p, out var transactionReceipt);
             return Task.FromResult<object>(new
             {
                 status = "Success",
                 dryRun = false,
+                transaction = transactionReceipt,
                 schedule = new
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
@@ -313,7 +315,8 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static object ApplyOperations(Document doc, ViewSchedule schedule, Params p)
+        private static object ApplyOperations(Document doc, ViewSchedule schedule, Params p,
+            out RevitBridge.Common.OperatorNativeTransactionReceipt transactionReceipt)
         {
             var addResults = new List<object>();
             var filterResults = new List<object>();
@@ -380,8 +383,12 @@ namespace RevitBridge.Handlers
                     ApplyFilterBySheet(schedule, p.filterBySheet.Value, filterBySheetResults);
                 }
 
-                tx.Commit();
+                if (tx.Commit() != TransactionStatus.Committed)
+                    throw new InvalidOperationException("Revit did not confirm the schedule configuration commit.");
             }
+
+            transactionReceipt = RevitBridge.Common.OperatorNativeTransactionReceipt.Committed(
+                new[] { RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id) });
 
             return new
             {

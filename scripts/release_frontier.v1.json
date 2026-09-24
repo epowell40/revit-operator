@@ -2850,6 +2850,14 @@
         "dotnet:OperatorNativeTransportTests",
         "mcp:lib/assignmentKernelV2.test.ts"
       ]
+    },
+    {
+      "id": "c62-configure-schedule-commit-returned-without-native-effect-truth",
+      "coverage": [
+        "dotnet:OperatorAttemptSettlementTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

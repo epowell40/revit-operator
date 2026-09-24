@@ -718,6 +718,17 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ConfigureScheduleReportsNoTransactionForPlanAndConfirmedCommitForApply()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "ConfigureScheduleHandler.cs")).Replace("\r\n", "\n");
+            Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
+            Assert.Contains("var applySummary = ApplyOperations(doc, schedule, p, out var transactionReceipt);", handler, StringComparison.Ordinal);
+            Assert.Contains("transaction = transactionReceipt,", handler, StringComparison.Ordinal);
+            Assert.Contains("if (tx.Commit() != TransactionStatus.Committed)", handler, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ConnectorInventorySupportsCompactExhaustiveOpenPhysicalFiltering()
         {
             var root = FindRevitBridgeAddinRoot();
