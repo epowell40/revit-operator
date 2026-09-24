@@ -2783,6 +2783,15 @@
         "backend:agent_response_policy.test.ts",
         "backend:provider_turn_usage.test.ts"
       ]
+    },
+    {
+      "id": "c60-duplicate-view-source-id-and-image-filename-masquerade-as-new-view-verification",
+      "coverage": [
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
