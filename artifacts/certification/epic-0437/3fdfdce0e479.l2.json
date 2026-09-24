@@ -7446,7 +7446,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Tooling/tool_examples.json",
-      "sha256": "sha256:d2c675d4e7804f89101160b225b89dfe20b985cfc96440e3742759561bb4f56c"
+      "sha256": "sha256:13ca2390ee1ce826e4a0a1ebca949e1a4813275b10283397d18fef086075e675"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/packages.lock.json",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:67b88ef1bcb21606e68b2d1268e5af79771cd3cb608d1f3ab4ea96528706bf58",
+  "inputs_hash": "sha256:caca62a0e43257a59cb6f5f317be6ad7971bb481afda6c27955ef224e2b3e8fb",
   "result": {
     "passed": true,
     "checks": [

@@ -8813,6 +8813,32 @@
     },
     {
       "method": "POST",
+      "path": "/revit/view-owned-detailing",
+      "examples": [
+        {
+          "name": "Read complete source and duplicated-view detailing",
+          "request": {
+            "viewIds": [123, 456],
+            "limit": 5000
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.view-owned-detailing/v1",
+            "requestedViewIds": [123, 456],
+            "viewsComplete": true,
+            "views": [
+              { "view": { "id": 123, "name": "L4" }, "itemsComplete": true, "truncated": false },
+              { "view": { "id": 456, "name": "M-COORDINATION COPY" }, "itemsComplete": true, "truncated": false }
+            ]
+          },
+          "notes": [
+            "Pass both exact view IDs; the source is comparison context and the created view is the verification target.",
+            "Check each complete owner-view inventory and comparable item signatures before claiming copied detailing."
+          ]
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/duplicate-sheet",
       "examples": [
         {
