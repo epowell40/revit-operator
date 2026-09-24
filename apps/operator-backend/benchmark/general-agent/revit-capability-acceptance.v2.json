@@ -408,11 +408,13 @@
         "clear_selection": true
       },
       "capability_paths": [
-        "/revit/duplicate-view"
+        "/revit/duplicate-view",
+        "/revit/view-owned-detailing"
       ],
       "dispatch_any_of": [
         "/revit/context",
         "/revit/duplicate-view",
+        "/revit/view-owned-detailing",
         "/revit/views"
       ],
       "expected_effect": "apply",
