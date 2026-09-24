@@ -351,7 +351,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
-      "sha256": "sha256:df2a2b0c77d49ab2699bbe107e0fc67244e859a64a45d44cbe154082e05f44b7"
+      "sha256": "sha256:f62ee023214a5bb059a17de67e01992797f848e0502c4fdecb026928ce1f118f"
     },
     {
       "path": "apps/mcp-server/src/lib/textMatch.test.ts",
@@ -1392,7 +1392,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
-      "sha256": "sha256:9f0c50e0be5bef813319786eeb83476c46ea6b271c522b6e2c9da4721a952a1d"
+      "sha256": "sha256:698dfada983238aa6809fa1952c7e8f8c5d14e6b7ca8eb72fb41b57101cbb377"
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_promotion_authority.ts",
@@ -1416,7 +1416,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/supported_tool_inventory.ts",
-      "sha256": "sha256:df2a2b0c77d49ab2699bbe107e0fc67244e859a64a45d44cbe154082e05f44b7"
+      "sha256": "sha256:f62ee023214a5bb059a17de67e01992797f848e0502c4fdecb026928ce1f118f"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -3777,7 +3777,7 @@
     },
     {
       "path": "apps/operator-backend/test/direct_revit_execution_authorization.test.ts",
-      "sha256": "sha256:d0262b225e442f88e0c481d4a6014eb7932871dd1370e531ad567a0cd66ffb57"
+      "sha256": "sha256:6b0ce265b66b8268b74fa778044ddee146c57102db42d6855c0b1b2b8d3dcbb1"
     },
     {
       "path": "apps/operator-backend/test/discovered_input_projection.test.ts",
@@ -4881,7 +4881,7 @@
     },
     {
       "path": "apps/operator-backend/test/supported_tool_inventory.test.ts",
-      "sha256": "sha256:e090bed744a5c9849731e95173eb818953bf8807fc4a9e145373d8e25071d2d1"
+      "sha256": "sha256:1f00b51acb3e6488b9807c2d4cf5ab9e9b0324db8809f25eb6bc9f29c6856911"
     },
     {
       "path": "apps/operator-backend/test/task_memory_prompt.test.ts",
@@ -5397,7 +5397,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorSupportedToolInventoryTests.cs",
-      "sha256": "sha256:dd2db5c64820d2d559e467f20f61dc60a470f6518d71c217263c30977ccc1ae8"
+      "sha256": "sha256:af008324fdbf12dc19f7ec5b48bca2a78782bf0bd5d7df7c44f39fc44004d40a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorToolSearchRankingTests.cs",
@@ -5970,7 +5970,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorSupportedToolInventory.cs",
-      "sha256": "sha256:6dbe1bf59df385642bffdfea0b80f34163e07542f112e4830f53d21956fc5af9"
+      "sha256": "sha256:78786908e3e0ebd8b92aca994cb8af778a3504f69c205eb8af978eb327aba90e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs",
@@ -7509,7 +7509,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:c008af089a5f9f3bc909ba49ece7a6a2505b7d0c46789cd3e390131d2ba11ac3",
+  "inputs_hash": "sha256:57eb407afd2bd342b061cd41264aacba5b7f4c6b6ce047e584b4e9ad34a290d2",
   "result": {
     "passed": true,
     "checks": [

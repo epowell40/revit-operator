@@ -326,7 +326,7 @@ export function authorizeDirectRevitExecution(
 
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   if (!isSupportedNativeTransport(method, toolPath) || !isSupportedMcpAlias(alias)) {
-    throw new DirectRevitExecutionAuthorizationError("PRODUCT_TOOL_NOT_SUPPORTED", "The requested route or alias is outside the fixed supported product inventory.", 403, false);
+    throw new DirectRevitExecutionAuthorizationError("CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED", "The requested route or alias is outside the fixed supported product inventory.", 403, false);
   }
   try {
     const hostedGeneralAgent = isHostedGeneralAgentReady(env) && !requestFamilyAdmission;

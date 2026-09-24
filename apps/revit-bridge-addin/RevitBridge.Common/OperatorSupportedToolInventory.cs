@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:633caf020c297e221b011dd06c9fc35f408bfc3f09a7628df6afcf2a403f250f";
+        public const string InventoryHash = "sha256:b931530d9e2af541a14d651b2fa7b95a6a434854d2601fd00a385572e92e0525";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -113,6 +113,7 @@ namespace RevitBridge.Common
         };
         private static readonly HashSet<string> Internal = new HashSet<string>(StringComparer.Ordinal)
         {
+            "POST /revit/computer-use-guard",
             "POST /revit/dynamic-runtime/annotation-result-apply-v1",
             "POST /revit/dynamic-runtime/annotation-result-authorize-v1",
             "POST /revit/dynamic-runtime/annotation-result-preview-v1",

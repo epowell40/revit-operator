@@ -2760,6 +2760,14 @@
         "backend:general_revit_acceptance_review.test.ts",
         "backend:general_revit_campaign_completion.test.ts"
       ]
+    },
+    {
+      "id": "c60-warning-guard-rejected-by-fixed-native-transport-inventory",
+      "coverage": [
+        "backend:direct_revit_execution_authorization.test.ts",
+        "backend:supported_tool_inventory.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

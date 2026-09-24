@@ -29,8 +29,20 @@ test("fixed product support denies excluded direct routes before every deploymen
     assert.throws(() => authorizeDirectRevitExecution(directRequest({ path: "/revit/fire-alarm-layout" }), {
       REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_BRAIN: "codex",
       OPERATOR_OPENAI_API_KEY: "test-only", OPERATOR_AUTH_MODE: "shared_token"
-    }), error => error instanceof DirectRevitExecutionAuthorizationError && error.code === "PRODUCT_TOOL_NOT_SUPPORTED");
+    }), error => error instanceof DirectRevitExecutionAuthorizationError && error.code === "CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED");
   }
+});
+
+test("the benchmark's one-shot Revit warning guard is an internal authorized transport", () => {
+  const authorization = authorizeDirectRevitExecution(directRequest({
+    path: "/revit/computer-use-guard",
+    body_json: JSON.stringify({ buttonText: "OK", dialogIdContains: "Dialog_Revit_DocWarnDialog", maxTriggers: 1 })
+  }), {
+    REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex", OPERATOR_AUTH_MODE: "shared_token"
+  });
+  assert.equal(authorization.path, "/revit/computer-use-guard");
+  assert.equal(authorization.policy_trust_source, "deployment");
 });
 
 function rawSha256(value: string): string {

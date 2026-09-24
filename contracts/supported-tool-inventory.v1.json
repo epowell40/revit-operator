@@ -513,6 +513,10 @@
   "internal_routes": [
     {
       "method": "POST",
+      "path": "/revit/computer-use-guard"
+    },
+    {
+      "method": "POST",
       "path": "/revit/dynamic-runtime/annotation-result-apply-v1"
     },
     {
