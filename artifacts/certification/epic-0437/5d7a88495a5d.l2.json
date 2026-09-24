@@ -1051,6 +1051,10 @@
       "sha256": "sha256:d92a17bae0c6376a45993840958ccb5a1889d35be8e1412381203229a4cb7181"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/general_revit_tool_call_projection.ts",
+      "sha256": "sha256:76f0750714be32876546dd808e74cea3588eef0f853cbc062cab9c319c03033f"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/general_revit_trace_reporting.ts",
       "sha256": "sha256:570bf66aa5544333e443870add7367fedb96a6322d459465d183adf5848a2b2f"
     },
@@ -3109,7 +3113,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:847614910acdccc10bde188c1d9f24404b70357ee27601ab7572000231c21379"
+      "sha256": "sha256:ac29a385b6874d5cd5ce00faf61b285506e9b8e28d5c38ec2edc4edec624baf5"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -4442,6 +4446,10 @@
     {
       "path": "apps/operator-backend/test/general_revit_request.test.ts",
       "sha256": "sha256:2625aeeed0fe9188667814f8977737540acd513d219295a29ad64431c62b9362"
+    },
+    {
+      "path": "apps/operator-backend/test/general_revit_tool_call_projection.test.ts",
+      "sha256": "sha256:b4ce2adae607d205cebd220c00d89de95d657daa3fdba32999fa1fe755435d83"
     },
     {
       "path": "apps/operator-backend/test/generated_parameter_postcondition.fixtures.ts",
@@ -7549,7 +7557,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:360bec976cf09201cf2906c7425431f318b22b738796754b5afac1a6140ffd90",
+  "inputs_hash": "sha256:d697505ee1b5630d66f25efd3ecfb266dfff8601ec9c1998647c8a58f9fede35",
   "result": {
     "passed": true,
     "checks": [
