@@ -7234,7 +7234,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SchedulesHandler.cs",
-      "sha256": "sha256:d3af0d665478e11a0abd7f3da1e02459b7483b915ee7f75fff6ecb76c01e9d0e"
+      "sha256": "sha256:072f41d35cbfa501183917496c0d6fb7fadac087335cba82e0e3e607ee546c62"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SelectionHandlerProxies.cs",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:218014cb26dc604ce38bcebafe89ac2dc9e95ef245d76e15e0ae91888be58e47",
+  "inputs_hash": "sha256:3faf5a74bdb1e45b77f81aa6afe43796f691aec54eb7853c3299ae1a3b15b2a9",
   "result": {
     "passed": true,
     "checks": [
