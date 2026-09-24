@@ -4961,7 +4961,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_registry_audit.test.ts",
-      "sha256": "sha256:43f842b2b0ada3b148da7079966d55b036c80b71f972672e9a6c4463f1e3458c"
+      "sha256": "sha256:7fd4b7d4a3be6915ddd76752c721d10bdb32aca0bfdbc2ca994da714b062885a"
     },
     {
       "path": "apps/operator-backend/test/tool_result_compaction.test.ts",
@@ -7541,7 +7541,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:335b1f135d7184805388167d72e6b756cdfc05dbfa907e1405e01f537d25db83",
+  "inputs_hash": "sha256:1c00ad332c9e90d63528d02dedd8f9b26c675936b201fda6cf19ad554cdb1c0d",
   "result": {
     "passed": true,
     "checks": [
