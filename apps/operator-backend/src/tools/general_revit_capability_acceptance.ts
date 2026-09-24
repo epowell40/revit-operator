@@ -9,6 +9,7 @@ import {
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
+import { extractGeneralRevitToolCalls } from "../benchmark/general_revit_tool_call_projection.js";
 import { verifySnowdonArchitecturalFixtureBeforeAgent } from "../benchmark/snowdon_architectural_fixture_preflight.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -179,15 +180,6 @@ function safeGrant(value: JsonRecord): JsonRecord {
     write_ready: value.write_ready === true,
     expires_at: value.expires_at ?? null
   };
-}
-
-function extractToolCalls(attempt: JsonRecord): JsonRecord[] {
-  const calls: JsonRecord[] = [];
-  for (const round of Array.isArray(attempt.rounds) ? attempt.rounds : []) {
-    const row = asRecord(round);
-    for (const action of Array.isArray(row.actions) ? row.actions : []) calls.push(asRecord(action));
-  }
-  return calls;
 }
 
 function assistantTextFromComputerState(state: JsonRecord): string {
@@ -677,7 +669,7 @@ async function runCase(
     durable_tool_evidence: durableToolEvidence
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
-  const toolCalls = extractToolCalls(attempt);
+  const toolCalls = extractGeneralRevitToolCalls(attempt);
   const modelCallReceipts = deduplicateModelCallReceipts([
     ...modelCallReceiptsFromSources(attempt, attempt.computer_state),
     ...modelCallReceiptsFromAssignmentKernelPublicationsV2(assignmentKernelV2)
