@@ -1,0 +1,48 @@
+{
+  "provenance": "Synthetic examples of the pre-receipt handler response contract, not live qualification. No current run dispatched this excluded route.",
+  "synthetic_handler_shapes": {
+    "directApply": {
+      "status": "Connected",
+      "connectionMode": "air_terminal_on_duct",
+      "dryRun": false,
+      "mainElementId": 41,
+      "terminalElementId": 42,
+      "nativeResult": true,
+      "connectedDuringTransaction": true,
+      "connectedAfterCommit": true,
+      "retainedMainConnectionsPreserved": true,
+      "postCommitVerified": true,
+      "transactionGroupRolledBack": false,
+      "rollbackVerified": true,
+      "nativeFailures": []
+    },
+    "directPreview": {
+      "status": "DryRunReady",
+      "connectionMode": "air_terminal_on_duct",
+      "dryRun": true,
+      "mainElementId": 41,
+      "terminalElementId": 42,
+      "nativeResult": true,
+      "connectedDuringTransaction": true,
+      "connectedAfterCommit": true,
+      "retainedMainConnectionsPreserved": true,
+      "postCommitVerified": true,
+      "transactionGroupRolledBack": true,
+      "rollbackVerified": true,
+      "nativeFailures": []
+    },
+    "takeoffApply": {
+      "status": "Connected",
+      "dryRun": false,
+      "mainElementId": 41,
+      "branchElementId": 42,
+      "createdFittingId": 43,
+      "connectedDuringTransaction": true,
+      "connectedAfterCommit": true,
+      "committedFittingVerified": true,
+      "transactionGroupRolledBack": false,
+      "rollbackVerified": true,
+      "nativeFailures": []
+    }
+  }
+}

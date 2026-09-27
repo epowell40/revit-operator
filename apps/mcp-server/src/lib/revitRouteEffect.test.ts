@@ -67,6 +67,15 @@ test("shared route-effect contract stays fail closed for unknown POST routes", (
   assert.equal(revitRouteEffect("/revit/unclassified-future-command", "GET"), "read");
 });
 
+test("C60 native route preview is rollback-only across MCP classification and certification", () => {
+  for (const route of ["/revit/mep-route-workflow", "/revit/mep-branch-network-workflow"]) {
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: false }), "preview");
+    assert.equal(revitRouteCertificationEffect(route, "POST", { kind: "duct", apply: false }), "preview");
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: true }), "apply");
+    assert.equal(revitRouteEffect(route, "POST", { kind: "duct", apply: false, commit: true }), "apply");
+  }
+});
+
 test("MCP process satisfies the cross-runtime Revit action-effect golden vectors", () => {
   const contractUrl = [
     new URL("../../../../packages/revit-action-effect-v1/golden-vectors.json", import.meta.url),

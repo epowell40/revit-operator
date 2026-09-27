@@ -149,7 +149,7 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
   const remainingSummary = remainingWorkPresentationV2(snapshot);
   const registrationFailure = !complete ? rejectedRegistrationSummary(snapshot) : null;
   const resultSummary = complete
-    ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
+    ? successfulSummary ?? verifiedChangePresentationV2(snapshot) ?? "The requested work completed from authoritative Revit evidence."
     : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
       + (registrationFailure ? `\n\n${registrationFailure}` : "")
       + (partialSummary ? `\n\n${partialSummary}` : "")

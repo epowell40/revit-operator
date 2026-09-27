@@ -270,6 +270,13 @@ export function getPendingCodexThreadHandoff(threadId: string): string {
   return started ? "" : binding.handoff_text;
 }
 
+/** A fresh provider thread needs bounded source pixels; an ongoing one already has them. */
+export function hasCodexThreadStartedTurn(threadId: string): boolean {
+  const d = openDb();
+  if (!d) throw new Error("Provider thread history is unavailable.");
+  return Boolean(d.prepare("SELECT 1 FROM events WHERE kind='codex.turn.start' AND json_valid(payload_json) AND json_extract(payload_json,'$.thread_id')=? LIMIT 1").get(threadId));
+}
+
 export function appendEvent(sessionId: string, role: string, kind: string, payload: unknown): boolean {
   const d = openDb();
   if (!d) return false;

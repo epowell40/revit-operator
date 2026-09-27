@@ -1,0 +1,14 @@
+{
+  "description": "Retained Unit403 Save As native result. Only workstation file path normalized; original event and bytes retained privately in save-as-receipt-before/event203187.json.",
+  "original_payload_sha256": "b5b999c00dce49d01e23921ac66f3b34447fc9592648de1ed48f867d5692ced3",
+  "original_event_id": 203187,
+  "duration_ms": 5131,
+  "normalized_native_result": {
+    "status": "Success",
+    "path": "C:\\fixture\\Unit403-HVAC-Draft.rvt",
+    "overwrite": false,
+    "compact": false,
+    "maximumBackups": 3,
+    "saveAsCentral": false
+  }
+}

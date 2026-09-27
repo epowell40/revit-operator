@@ -14,7 +14,7 @@ import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js
 import { canonicalAttemptRequestedEffect, loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
 import { summarizeGeneralRevitLatency } from "../src/benchmark/general_revit_latency.js";
 import { assertReleaseCanaryInvocationV2, RELEASE_CANARY_CASE_IDS_V2, selectReleaseCanaryCasesV2 } from "../src/benchmark/protocol_v2_canary.js";
-import { compareBenchmarkExactRerunsV2 } from "../src/benchmark/protocol_v2_compare.js";
+import { compareBenchmarkExactRerunsV2, compareBenchmarkDeclaredModelVariantsV2, writeBenchmarkDeclaredModelVariantComparisonV2 } from "../src/benchmark/protocol_v2_compare.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "../src/benchmark/protocol_v2_envelope.js";
 import { loadExternalHiddenHoldoutV2, redactedExternalHoldoutDescriptorV2 } from "../src/benchmark/protocol_v2_holdout.js";
 import {
@@ -1219,6 +1219,75 @@ test("applied partial work with failed trusted verification cannot become first-
   subject.verification_operation_ids.length = 0;
   assert.equal(build().execution_truth.effect_state, "applied");
   assert.notEqual(build().delivery_verdict, "verification_evidence_failure", "blocked for an unrelated reason must not erase valid partial work");
+});
+
+test("declared model comparison allows only GPT-5.6 Sol to GPT-6 Sol at medium effort", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "benchmark-v2-model-compare-"));
+  const testCase = benchmarkCase();
+  const baselineDraft = envelopeDraft(testCase);
+  const candidateDraft = envelopeDraft(testCase, {
+    requested_agent: { model: "gpt-6-sol", reasoning_effort: "medium" },
+    identity: { run_id: "run-v2-gpt6", session_id: "session-v2-gpt6", generation: 1 }
+  });
+  const writeReport = (draft: ReturnType<typeof envelopeDraft>, model: string, name: string) => {
+    const envelope = finalizeBenchmarkRunEnvelopeV2(draft,
+      [{ route: "codex_agent", model, reasoning_effort: "medium", call_count: 1 }], FINISH);
+    const result = buildBenchmarkCaseResultV2({ runId: draft.identity.run_id, lane: "committed_apply", testCase,
+      trace: traceFor(testCase), rawTraceRef: `trace#${name}`, judgedAt: FINISH });
+    const output = path.join(tmp, `${name}.json`);
+    writeBenchmarkRawReportV2(output, buildBenchmarkRawReportV2(envelope, [result], FINISH));
+    return output;
+  };
+  const baseline = writeReport(baselineDraft, "gpt-5.6-sol", "baseline");
+  const candidate = writeReport(candidateDraft, "gpt-6-sol", "candidate");
+  const declaration = { baseline_model: "gpt-5.6-sol", candidate_model: "gpt-6-sol", reasoning_effort: "medium" };
+  const initialMemoryHash = "a".repeat(64);
+  const withMemory = (draft: ReturnType<typeof envelopeDraft>, runId: string, memoryPath: string) => ({
+    ...draft,
+    identity: { ...draft.identity, run_id: runId },
+    feature_flags: { ...draft.feature_flags, tool_contract_memory_policy: "isolated_campaign_initial_empty_ordered_adaptation",
+      tool_contract_memory_initial_sha256: initialMemoryHash, tool_contract_memory_path: memoryPath }
+  });
+  const isolatedBaseline = writeReport(withMemory(baselineDraft, "run-v2-isolated-baseline", path.join(tmp, "baseline-memory.json")),
+    "gpt-5.6-sol", "isolated-baseline");
+  const isolatedCandidateDraft = withMemory(candidateDraft, "run-v2-isolated-candidate", path.join(tmp, "candidate-memory.json"));
+  const isolatedCandidate = writeReport(isolatedCandidateDraft, "gpt-6-sol", "isolated-candidate");
+  assert.doesNotThrow(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, isolatedCandidate, declaration));
+  const changedMemory = writeReport({ ...isolatedCandidateDraft,
+    feature_flags: { ...isolatedCandidateDraft.feature_flags, tool_contract_memory_initial_sha256: "b".repeat(64) },
+    identity: { ...isolatedCandidateDraft.identity, run_id: "run-v2-changed-memory" } }, "gpt-6-sol", "changed-memory");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, changedMemory, declaration), /feature flags drift/);
+  const reusedMemory = writeReport({ ...isolatedCandidateDraft,
+    feature_flags: { ...isolatedCandidateDraft.feature_flags, tool_contract_memory_path: path.join(tmp, "baseline-memory.json") },
+    identity: { ...isolatedCandidateDraft.identity, run_id: "run-v2-reused-memory" } }, "gpt-6-sol", "reused-memory");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(isolatedBaseline, reusedMemory, declaration), /memory stores must be separate/);
+  assert.throws(() => compareBenchmarkExactRerunsV2(baseline, candidate), /requested model and effort drift/);
+  const comparison = compareBenchmarkDeclaredModelVariantsV2(baseline, candidate, declaration);
+  assert.equal(comparison.schema, "revit-operator.benchmark-declared-model-variant-comparison/v2");
+  assert.equal(comparison.baseline.model, "gpt-5.6-sol");
+  assert.equal(comparison.candidate.model, "gpt-6-sol");
+  assert.equal(comparison.case_deltas.length, 1);
+  const comparisonPath = path.join(tmp, "model-comparison.json");
+  assert.equal(writeBenchmarkDeclaredModelVariantComparisonV2(comparisonPath, comparison), comparisonPath);
+  assert.throws(() => writeBenchmarkDeclaredModelVariantComparisonV2(comparisonPath, comparison), /already exists/);
+  assert.throws(() => writeBenchmarkDeclaredModelVariantComparisonV2(path.join(tmp, "tampered.json"),
+    { ...comparison, comparison_sha256: "0".repeat(64) }), /hash does not match/);
+
+  const wrongModel = writeReport({ ...candidateDraft, requested_agent: { model: "gpt-6-astra", reasoning_effort: "medium" },
+    identity: { ...candidateDraft.identity, run_id: "run-v2-wrong-model" } }, "gpt-6-astra", "wrong-model");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(baseline, wrongModel, declaration), /declared candidate model/);
+  const wrongEffort = writeReport({ ...candidateDraft, requested_agent: { model: "gpt-6-sol", reasoning_effort: "high" },
+    identity: { ...candidateDraft.identity, run_id: "run-v2-wrong-effort" } }, "gpt-6-sol", "wrong-effort");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(baseline, wrongEffort, declaration), /declared reasoning effort/);
+  const changedSource = writeReport({ ...candidateDraft, source_revisions: { public: "c".repeat(40), private: "d".repeat(40) },
+    identity: { ...candidateDraft.identity, run_id: "run-v2-changed-source" } }, "gpt-6-sol", "changed-source");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(baseline, changedSource, declaration), /source revisions drift/);
+  const changedFlags = writeReport({ ...candidateDraft, feature_flags: { ...candidateDraft.feature_flags, model_test_flag: true },
+    identity: { ...candidateDraft.identity, run_id: "run-v2-changed-flags" } }, "gpt-6-sol", "changed-flags");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(baseline, changedFlags, declaration), /feature flags drift/);
+  const fallback = writeReport({ ...candidateDraft,
+    identity: { ...candidateDraft.identity, run_id: "run-v2-fallback" } }, "gpt-5.6-sol", "fallback");
+  assert.throws(() => compareBenchmarkDeclaredModelVariantsV2(baseline, fallback, declaration), /observed provider model/);
 });
 import { hasUnresolvedTrustedVerificationFailureV2 } from "../src/benchmark/trusted_verification_state.js";
 

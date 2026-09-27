@@ -108,6 +108,7 @@ const defaultAllowed: Allowlist = {
     "/revit/titleblock-date-candidates",
     "/revit/get-family-file-path",
     "/revit/find-text-notes",
+    "/revit/view-owned-detailing",
     "/revit/find-family-text-notes",
     "/revit/inspect-family-content",
     "/revit/quantify",

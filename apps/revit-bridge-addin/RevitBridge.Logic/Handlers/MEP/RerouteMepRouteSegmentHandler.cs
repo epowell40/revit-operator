@@ -56,6 +56,27 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
+            var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted();
+            var nativeStages = new Dictionary<string, object?>();
+            try { return Task.FromResult(HandleCore(app, jsonData, ref transactionReceipt, nativeStages)); }
+            catch (Exception ex)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = transactionReceipt.CommittedValue == true ? "CommittedWithErrors"
+                        : transactionReceipt.CommittedValue == false ? "Blocked" : "UnknownEffect",
+                    success = false,
+                    applied = transactionReceipt.CommittedValue,
+                    transaction = transactionReceipt,
+                    nativeStages,
+                    error = ex.Message
+                });
+            }
+        }
+
+        private static object HandleCore(UIApplication app, string jsonData,
+            ref OperatorNativeTransactionReceipt transactionReceipt, Dictionary<string, object?> nativeStages)
+        {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
             var shouldApply = MepMutationApplyPolicy.ResolveShouldApply(p.apply, p.dryRun);
@@ -77,30 +98,32 @@ namespace RevitBridge.Logic.Handlers.MEP
             var connectedEndpointCount = hostConnectors.Count(c => SafeIsConnected(c));
             if (connectedEndpointCount > 0 && endpointConnections.Count != connectedEndpointCount)
             {
-                return Task.FromResult<object>(new
+                return new
                 {
                     status = "Blocked",
+                    transaction = transactionReceipt,
                     blockCode = "connected_host_endpoint_unresolved",
                     reason = "Connected endpoint preservation requires every connected host connector to resolve to an external connector at the original start or end point.",
                     host = SnapshotElement(host),
                     connectedEndpointCount,
                     endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
-                });
+                };
             }
 
             if (shouldApply && connectedEndpointCount > 0 && !p.preserveConnectedEndpoints)
             {
-                return Task.FromResult<object>(new
+                return new
                 {
                     status = "Blocked",
+                    transaction = transactionReceipt,
                     blockCode = "connected_host_requires_preserve_connected_endpoints",
                     reason = "The host has connected endpoints. Set preserveConnectedEndpoints:true to explicitly reconnect the replacement route to the original external endpoint connectors.",
                     host = SnapshotElement(host),
                     connectedEndpointCount,
                     endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
-                });
+                };
             }
 
             var offsetMode = NormalizeOffsetMode(p.offsetMode);
@@ -136,14 +159,15 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             if (sizeTransitionRequested)
             {
-                return Task.FromResult(HandleSizeTransition(app, doc, host, kind, p, shouldApply, selected, size, hostSnapshot, warnings));
+                return HandleSizeTransition(app, doc, host, kind, p, shouldApply, selected, size, hostSnapshot, warnings, ref transactionReceipt, nativeStages);
             }
 
             if (!plan.ApplySupported)
             {
-                return Task.FromResult<object>(new
+                return new
                 {
                     status = "Blocked",
+                    transaction = transactionReceipt,
                     dryRun = !shouldApply,
                     kind,
                     operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
@@ -153,14 +177,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                     selected = selected.response,
                     plan,
                     warnings
-                });
+                };
             }
 
             if (!shouldApply)
             {
-                return Task.FromResult<object>(new
+                return new
                 {
                     status = "Dry Run",
+                    previewExecuted = false,
+                    transaction = transactionReceipt,
                     dryRun = true,
                     kind,
                     operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
@@ -171,7 +197,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     expectedFitting = "elbow",
                     endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
-                });
+                };
             }
 
             var createdIds = new List<long>();
@@ -179,128 +205,92 @@ namespace RevitBridge.Logic.Handlers.MEP
             var connectionAttempts = new List<object>();
             var deletedOriginalIds = new List<long>();
             var createdElements = new List<Element>();
-            var nativeFailures = new List<CapturedFailure>();
-            var transactionStatus = "";
-
-            using (var tx = new Transaction(doc, "Reroute MEP Route Segment"))
+            var failureGuard = new OperatorNativeFailureGuard();
+            // From here until Execute returns, a failed call cannot assert no effect.
+            transactionReceipt = OperatorNativeTransactionReceipt.Unknown("transaction_pending");
+            var response = NativeSingleTransaction.Execute(app, doc, "Reroute MEP Route Segment", nativeCreated =>
             {
-                try
+                foreach (var segment in plan.Segments)
                 {
-                    tx.Start();
-                    tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, nativeFailures, rollbackOnErrors: true, deleteWarnings: false));
-
-                    foreach (var segment in plan.Segments)
-                    {
-                        var created = CreateLikeHost(doc, host, kind, selected, size, segment);
-                        createdElements.Add(created);
-                        createdIds.Add(ElementIdCompat.GetValue(created.Id));
-                    }
-
-                    doc.Regenerate();
-
-                    for (var i = 0; i < createdElements.Count - 1; i++)
-                    {
-                        var shared = ToXyz(plan.Segments[i].End);
-                        var a = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(createdElements[i]), shared, 0.3);
-                        var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(createdElements[i + 1]), shared, 0.3);
-                        var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, a, b, out var fittingId, out var method, out var err);
-                        connectionAttempts.Add(new
-                        {
-                            fromId = createdIds[i],
-                            toId = createdIds[i + 1],
-                            point = ToResponsePoint(shared),
-                            expectedFitting = "elbow",
-                            connected = ok,
-                            method,
-                            fittingId,
-                            error = err
-                        });
-                        if (!ok) throw new InvalidOperationException($"Could not connect reroute segment {i} to {i + 1}: {err}");
-                        if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
-                    }
-
-                    doc.Regenerate();
-                    var deleted = doc.Delete(host.Id);
-                    deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
-                    doc.Regenerate();
-
-                    foreach (var endpoint in endpointConnections)
-                    {
-                        var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
-                        var replacementPoint = endpoint.IsStart ? start : end;
-                        var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
-                        var external = endpoint.ResolveConnector(doc);
-                        var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var fittingId, out var method, out var err);
-                        connectionAttempts.Add(new
-                        {
-                            fromId = ElementIdCompat.GetValue(replacement!.Id),
-                            toExternalId = endpoint.ExternalOwnerId,
-                            endpoint = endpoint.Endpoint,
-                            point = ToResponsePoint(replacementPoint),
-                            expectedFitting = "preserve_endpoint_connection",
-                            connected = ok,
-                            method,
-                            fittingId,
-                            error = err
-                        });
-                        if (!ok) throw new InvalidOperationException($"Could not reconnect reroute endpoint '{endpoint.Endpoint}' to original external connector: {err}");
-                        if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
-                    }
-
-                    doc.Regenerate();
-                    var st = tx.Commit();
-                    transactionStatus = st.ToString();
-                    if (st != TransactionStatus.Committed)
-                    {
-                        return Task.FromResult<object>(new
-                        {
-                            status = "Blocked",
-                            dryRun = false,
-                            kind,
-                            operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
-                            blockCode = "native_revit_failure",
-                            reason = "Revit rejected the reroute transaction; the transaction was rolled back before committing.",
-                            host = hostSnapshot,
-                            selected = selected.response,
-                            plan,
-                            transactionStatus,
-                            nativeFailures,
-                            attemptedCreatedElementIds = createdIds,
-                            attemptedCreatedFittingIds = createdFittingIds.Distinct().ToList(),
-                            connectionAttempts,
-                            endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
-                            warnings
-                        });
-                    }
+                    var created = CreateLikeHost(doc, host, kind, selected, size, segment);
+                    createdElements.Add(created);
+                    createdIds.Add(ElementIdCompat.GetValue(created.Id));
+                    nativeCreated.Add(ElementIdCompat.GetValue(created.Id));
                 }
-                catch (Exception ex)
+
+                doc.Regenerate();
+
+                for (var i = 0; i < createdElements.Count - 1; i++)
                 {
-                    try { if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack(); } catch { }
-                    if (nativeFailures.Count > 0)
+                    var shared = ToXyz(plan.Segments[i].End);
+                    var a = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(createdElements[i]), shared, 0.3);
+                    var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(createdElements[i + 1]), shared, 0.3);
+                    var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, a, b, out var fittingId, out var method, out var err);
+                    connectionAttempts.Add(new
                     {
-                        return Task.FromResult<object>(new
-                        {
-                            status = "Blocked",
-                            dryRun = false,
-                            kind,
-                            operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
-                            blockCode = "native_revit_failure",
-                            reason = "Revit rejected the reroute transaction; the transaction was rolled back before committing.",
-                            host = hostSnapshot,
-                            selected = selected.response,
-                            plan,
-                            transactionStatus,
-                            nativeFailures,
-                            exceptionMessage = ex.Message,
-                            attemptedCreatedElementIds = createdIds,
-                            attemptedCreatedFittingIds = createdFittingIds.Distinct().ToList(),
-                            connectionAttempts,
-                            endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
-                            warnings
-                        });
-                    }
-                    throw;
+                        fromId = createdIds[i],
+                        toId = createdIds[i + 1],
+                        point = ToResponsePoint(shared),
+                        expectedFitting = "elbow",
+                        connected = ok,
+                        method,
+                        fittingId,
+                        error = err
+                    });
+                    if (!ok) throw new InvalidOperationException($"Could not connect reroute segment {i} to {i + 1}: {err}");
+                    if (fittingId.HasValue) { createdFittingIds.Add(fittingId.Value); nativeCreated.Add(fittingId.Value); }
                 }
+
+                doc.Regenerate();
+                var deleted = doc.Delete(host.Id);
+                deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
+                foreach (var deletedId in deletedOriginalIds) nativeCreated.Remove(deletedId);
+                doc.Regenerate();
+
+                foreach (var endpoint in endpointConnections)
+                {
+                    var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
+                    var replacementPoint = endpoint.IsStart ? start : end;
+                    var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
+                    var external = endpoint.ResolveConnector(doc);
+                    var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var fittingId, out var method, out var err);
+                    connectionAttempts.Add(new
+                    {
+                        fromId = ElementIdCompat.GetValue(replacement!.Id),
+                        toExternalId = endpoint.ExternalOwnerId,
+                        endpoint = endpoint.Endpoint,
+                        point = ToResponsePoint(replacementPoint),
+                        expectedFitting = "preserve_endpoint_connection",
+                        connected = ok,
+                        method,
+                        fittingId,
+                        error = err
+                    });
+                    if (!ok) throw new InvalidOperationException($"Could not reconnect reroute endpoint '{endpoint.Endpoint}' to original external connector: {err}");
+                    if (fittingId.HasValue) { createdFittingIds.Add(fittingId.Value); nativeCreated.Add(fittingId.Value); }
+                }
+
+                doc.Regenerate();
+                return new Dictionary<string, object?>();
+            }, nativeDeletedElements: () => deletedOriginalIds,
+                configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
+            transactionReceipt = (OperatorNativeTransactionReceipt)response["transaction"]!;
+            nativeStages["route"] = transactionReceipt;
+            response["nativeFailures"] = failureGuard.Failures;
+            response["failureRollbackRequested"] = failureGuard.RollbackRequested;
+            if (response["success"] is not true)
+            {
+                response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Rerouted");
+                response["dryRun"] = false;
+                response["kind"] = kind;
+                response["operation"] = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal";
+                response["host"] = hostSnapshot;
+                response["plan"] = plan;
+                response["attemptedCreatedElementIds"] = createdIds;
+                response["attemptedCreatedFittingIds"] = createdFittingIds.Distinct().ToList();
+                response["connectionAttempts"] = connectionAttempts;
+                response["warnings"] = warnings;
+                return response;
             }
 
             var allIds = createdIds.Concat(createdFittingIds).Distinct().ToList();
@@ -319,7 +309,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             object visualVerification = new { status = "SkippedByRequest" };
             if (p.visualVerify && allIds.Count > 0)
             {
-                visualVerification = new HighlightAndExportHandler().Handle(app, JsonSerializer.Serialize(new HighlightAndExportHandler.Params
+                visualVerification = CaptureVisualWithObservedRollback(doc, () =>
+                    new HighlightAndExportHandler().Handle(app, JsonSerializer.Serialize(new HighlightAndExportHandler.Params
                 {
                     viewId = p.visualViewId,
                     elementIds = allIds,
@@ -328,13 +319,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                     imageSize = p.imageSize <= 0 ? 1800 : p.imageSize,
                     focusPaddingFt = p.focusPaddingFt <= 0 ? 4.0 : p.focusPaddingFt,
                     overrideStyle = new HighlightAndExportHandler.OverrideStyle { lineWeight = 14, r = 0, g = 170, b = 255 }
-                })).GetAwaiter().GetResult();
+                })).GetAwaiter().GetResult(), ref transactionReceipt, nativeStages);
             }
 
-            var after = createdIds.Select(id => doc.GetElement(ElementIdCompat.Create(id))).Where(e => e != null).Select(e => SnapshotElement(e!)).ToList();
-            return Task.FromResult<object>(new
+            var after = createdIds.Select(id => SnapshotElement(doc.GetElement(ElementIdCompat.Create(id))
+                ?? throw new InvalidOperationException($"Reroute readback element {id} is unavailable after commit."))).ToList();
+            return new
             {
                 status = "Rerouted",
+                transaction = transactionReceipt,
+                changeTracking = response["changeTracking"],
+                nativeStages,
                 dryRun = false,
                 kind,
                 operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
@@ -356,7 +351,36 @@ namespace RevitBridge.Logic.Handlers.MEP
                 visualVerification,
                 after,
                 warnings
-            });
+            };
+        }
+
+        // HighlightAndExport performs temporary child transactions. The outer group
+        // proves their removal independently of the already committed route.
+        private static object CaptureVisualWithObservedRollback(Document doc, Func<object> capture,
+            ref OperatorNativeTransactionReceipt transactionReceipt, Dictionary<string, object?> nativeStages)
+        {
+            var routeReceipt = transactionReceipt;
+            transactionReceipt = OperatorNativeTransactionReceipt.Unknown("visual_stage_unsettled", routeReceipt.AffectedElementIds);
+            Dictionary<string, object?> visual;
+            using (var group = new TransactionGroup(doc, "Reroute Visual Verification"))
+            {
+                visual = OperatorNativeTransactionExecution.Execute(
+                    () => group.Start().ToString(),
+                    () => throw new InvalidOperationException("Visual verification cannot commit its outer group."),
+                    () => group.RollBack().ToString(),
+                    () => group.GetStatus().ToString(),
+                    () => new Dictionary<string, object?> { ["capture"] = capture() },
+                    () => throw new InvalidOperationException("Visual verification has no committed inventory."),
+                    disposition: NativeTransactionDisposition.Rollback);
+                nativeStages["visual"] = visual;
+            }
+            var visualReceipt = (OperatorNativeTransactionReceipt)visual["transaction"]!;
+            if (visualReceipt.Status == "rolled_back" || visualReceipt.Status == "not_started")
+                transactionReceipt = routeReceipt;
+            if (visual["success"] is not true || transactionReceipt.CommittedValue != true)
+                throw new InvalidOperationException(visual.TryGetValue("error", out var error)
+                    ? Convert.ToString(error, CultureInfo.InvariantCulture) : "Visual verification did not reach an observed rollback.");
+            return visual["capture"]!;
         }
 
         private static object HandleSizeTransition(
@@ -369,7 +393,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             SelectedIds selected,
             MepRoutingUtil.SizeChoice existingSize,
             Dictionary<string, object> hostSnapshot,
-            List<string> warnings)
+            List<string> warnings,
+            ref OperatorNativeTransactionReceipt transactionReceipt, Dictionary<string, object?> nativeStages)
         {
             if (host.Location is not LocationCurve lc || lc.Curve is not Line curve)
                 throw new InvalidOperationException("Size transition currently supports one straight duct or pipe curve.");
@@ -403,6 +428,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return new
                 {
                     status = "Blocked",
+                    transaction = transactionReceipt,
                     dryRun = !shouldApply,
                     kind,
                     operation = "size_transition",
@@ -423,6 +449,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return new
                 {
                     status = "Dry Run",
+                    previewExecuted = false,
+                    transaction = transactionReceipt,
                     dryRun = true,
                     kind,
                     operation = "size_transition",
@@ -444,73 +472,88 @@ namespace RevitBridge.Logic.Handlers.MEP
             var connectionAttempts = new List<object>();
             var createdElements = new List<Element>();
 
-            using (var tx = new Transaction(doc, "Change MEP Route Size At Transition"))
+            var failureGuard = new OperatorNativeFailureGuard();
+            transactionReceipt = OperatorNativeTransactionReceipt.Unknown("transaction_pending");
+            var response = NativeSingleTransaction.Execute(app, doc, "Change MEP Route Size At Transition", nativeCreated =>
             {
-                tx.Start();
-                try
-                {
-                    var upstream = CreateLikeHost(doc, host, kind, selected, upstreamSize, transitionPlan.Segments[0]);
-                    var downstream = CreateLikeHost(doc, host, kind, selected, downstreamSize, transitionPlan.Segments[1]);
-                    createdElements.Add(upstream);
-                    createdElements.Add(downstream);
-                    createdIds.Add(ElementIdCompat.GetValue(upstream.Id));
-                    createdIds.Add(ElementIdCompat.GetValue(downstream.Id));
-                    doc.Regenerate();
+                var upstream = CreateLikeHost(doc, host, kind, selected, upstreamSize, transitionPlan.Segments[0]);
+                var downstream = CreateLikeHost(doc, host, kind, selected, downstreamSize, transitionPlan.Segments[1]);
+                createdElements.Add(upstream);
+                createdElements.Add(downstream);
+                createdIds.Add(ElementIdCompat.GetValue(upstream.Id));
+                createdIds.Add(ElementIdCompat.GetValue(downstream.Id));
+                nativeCreated.Add(ElementIdCompat.GetValue(upstream.Id));
+                nativeCreated.Add(ElementIdCompat.GetValue(downstream.Id));
+                doc.Regenerate();
 
-                    var shared = ToXyz(transitionPlan.TransitionPoint);
-                    var a = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(upstream), shared, 0.3);
-                    var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(downstream), shared, 0.3);
-                    var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, preferTransition: true, out var fittingId, out var method, out var err);
+                var shared = ToXyz(transitionPlan.TransitionPoint);
+                var a = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(upstream), shared, 0.3);
+                var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(downstream), shared, 0.3);
+                var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, preferTransition: true, out var fittingId, out var method, out var err);
+                connectionAttempts.Add(new
+                {
+                    fromId = createdIds[0],
+                    toId = createdIds[1],
+                    point = ToResponsePoint(shared),
+                    expectedFitting = "transition",
+                    connected = ok,
+                    method,
+                    fittingId,
+                    error = err
+                });
+                if (!ok) throw new InvalidOperationException($"Could not create required transition fitting at route size change: {err}");
+                if (fittingId.HasValue) { createdFittingIds.Add(fittingId.Value); nativeCreated.Add(fittingId.Value); }
+
+                doc.Regenerate();
+                var deleted = doc.Delete(host.Id);
+                deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
+                foreach (var deletedId in deletedOriginalIds) nativeCreated.Remove(deletedId);
+                doc.Regenerate();
+
+                foreach (var endpoint in endpointConnections)
+                {
+                    var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
+                    var replacementPoint = endpoint.IsStart ? curve.GetEndPoint(0) : curve.GetEndPoint(1);
+                    var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
+                    var external = endpoint.ResolveConnector(doc);
+                    var endpointOk = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var endpointFittingId, out var endpointMethod, out var endpointErr);
                     connectionAttempts.Add(new
                     {
-                        fromId = createdIds[0],
-                        toId = createdIds[1],
-                        point = ToResponsePoint(shared),
-                        expectedFitting = "transition",
-                        connected = ok,
-                        method,
-                        fittingId,
-                        error = err
+                        fromId = ElementIdCompat.GetValue(replacement!.Id),
+                        toExternalId = endpoint.ExternalOwnerId,
+                        endpoint = endpoint.Endpoint,
+                        point = ToResponsePoint(replacementPoint),
+                        expectedFitting = "preserve_endpoint_connection",
+                        connected = endpointOk,
+                        method = endpointMethod,
+                        fittingId = endpointFittingId,
+                        error = endpointErr
                     });
-                    if (!ok) throw new InvalidOperationException($"Could not create required transition fitting at route size change: {err}");
-                    if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
-
-                    doc.Regenerate();
-                    var deleted = doc.Delete(host.Id);
-                    deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
-                    doc.Regenerate();
-
-                    foreach (var endpoint in endpointConnections)
-                    {
-                        var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
-                        var replacementPoint = endpoint.IsStart ? curve.GetEndPoint(0) : curve.GetEndPoint(1);
-                        var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
-                        var external = endpoint.ResolveConnector(doc);
-                        var endpointOk = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var endpointFittingId, out var endpointMethod, out var endpointErr);
-                        connectionAttempts.Add(new
-                        {
-                            fromId = ElementIdCompat.GetValue(replacement!.Id),
-                            toExternalId = endpoint.ExternalOwnerId,
-                            endpoint = endpoint.Endpoint,
-                            point = ToResponsePoint(replacementPoint),
-                            expectedFitting = "preserve_endpoint_connection",
-                            connected = endpointOk,
-                            method = endpointMethod,
-                            fittingId = endpointFittingId,
-                            error = endpointErr
-                        });
-                        if (!endpointOk) throw new InvalidOperationException($"Could not reconnect size-transition endpoint '{endpoint.Endpoint}' to original external connector: {endpointErr}");
-                        if (endpointFittingId.HasValue) createdFittingIds.Add(endpointFittingId.Value);
-                    }
-
-                    doc.Regenerate();
-                    tx.Commit();
+                    if (!endpointOk) throw new InvalidOperationException($"Could not reconnect size-transition endpoint '{endpoint.Endpoint}' to original external connector: {endpointErr}");
+                    if (endpointFittingId.HasValue) { createdFittingIds.Add(endpointFittingId.Value); nativeCreated.Add(endpointFittingId.Value); }
                 }
-                catch
-                {
-                    try { tx.RollBack(); } catch { }
-                    throw;
-                }
+
+                doc.Regenerate();
+                return new Dictionary<string, object?>();
+            }, nativeDeletedElements: () => deletedOriginalIds,
+                configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
+            transactionReceipt = (OperatorNativeTransactionReceipt)response["transaction"]!;
+            nativeStages["route"] = transactionReceipt;
+            response["nativeFailures"] = failureGuard.Failures;
+            response["failureRollbackRequested"] = failureGuard.RollbackRequested;
+            if (response["success"] is not true)
+            {
+                response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "ChangedSizeAtTransition");
+                response["dryRun"] = false;
+                response["kind"] = kind;
+                response["operation"] = "size_transition";
+                response["host"] = hostSnapshot;
+                response["plan"] = transitionPlan;
+                response["attemptedCreatedElementIds"] = createdIds;
+                response["attemptedCreatedFittingIds"] = createdFittingIds.Distinct().ToList();
+                response["connectionAttempts"] = connectionAttempts;
+                response["warnings"] = warnings;
+                return response;
             }
 
             var allIds = createdIds.Concat(createdFittingIds).Distinct().ToList();
@@ -529,7 +572,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             object visualVerification = new { status = "SkippedByRequest" };
             if (p.visualVerify && allIds.Count > 0)
             {
-                visualVerification = new HighlightAndExportHandler().Handle(app, JsonSerializer.Serialize(new HighlightAndExportHandler.Params
+                visualVerification = CaptureVisualWithObservedRollback(doc, () =>
+                    new HighlightAndExportHandler().Handle(app, JsonSerializer.Serialize(new HighlightAndExportHandler.Params
                 {
                     viewId = p.visualViewId,
                     elementIds = allIds,
@@ -538,13 +582,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                     imageSize = p.imageSize <= 0 ? 1800 : p.imageSize,
                     focusPaddingFt = p.focusPaddingFt <= 0 ? 4.0 : p.focusPaddingFt,
                     overrideStyle = new HighlightAndExportHandler.OverrideStyle { lineWeight = 14, r = 0, g = 170, b = 255 }
-                })).GetAwaiter().GetResult();
+                })).GetAwaiter().GetResult(), ref transactionReceipt, nativeStages);
             }
 
-            var after = createdIds.Select(id => doc.GetElement(ElementIdCompat.Create(id))).Where(e => e != null).Select(e => SnapshotElement(e!)).ToList();
+            var after = createdIds.Select(id => SnapshotElement(doc.GetElement(ElementIdCompat.Create(id))
+                ?? throw new InvalidOperationException($"Reroute readback element {id} is unavailable after commit."))).ToList();
             return new
             {
                 status = "ChangedSizeAtTransition",
+                transaction = transactionReceipt,
+                changeTracking = response["changeTracking"],
+                nativeStages,
                 dryRun = false,
                 kind,
                 operation = "size_transition",

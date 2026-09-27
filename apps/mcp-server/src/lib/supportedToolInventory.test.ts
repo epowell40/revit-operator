@@ -15,11 +15,13 @@ const implemented = [...nativeSource.matchAll(/new OperatorToolInfo\("[^"\r\n]+"
 const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
 
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
-  assert.equal(implemented.length, 216);
-  assert.equal(excluded.length, 114);
+  assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
+  assert.equal(implemented.length, 217);
+  assert.equal(excluded.length, 110);
+  assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 102);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 107);
     for (const route of excluded) {
       assert.equal(isKnownToolExposureRoute(route.method, route.path, env), false);
       assert.equal(isToolRouteExposedForSearch(route.method, route.path, env), false);
@@ -60,6 +62,12 @@ test("actual MCP list generic call and tool documentation cannot expose or dispa
           const denied = await client.callTool({ name: "revit_call_tool", arguments: { method: "POST", path, requireKnownPath: false } });
           assert.equal(denied.isError, true);
         }
+        const unsourcedStage = await client.callTool({ name: "revit_call_tool", arguments: {
+          method: "POST", path: "/revit/existing-conditions-mep-draft-workflow",
+          body: { dryRun: true, operations: [] }, requireKnownPath: false
+        } });
+        assert.equal(unsourcedStage.isError, true);
+        assert.match(JSON.stringify(unsourcedStage.content), /registered_existing_conditions_stage_v2_binding_required/);
         const probe = await client.callTool({ name: "operator_runtime_probe", arguments: {} });
         assert.notEqual(probe.isError, true);
         assert.equal(requests, 0, "Excluded calls and introspection must stop before any backend or native network request.");

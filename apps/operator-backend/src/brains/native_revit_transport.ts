@@ -304,7 +304,8 @@ function protectRequest(
   pathname: string,
   body: unknown,
   writeGrant: string,
-  deterministic: DeterministicProtectOptions = {}
+  deterministic: DeterministicProtectOptions = {},
+  completionLookup = false
 ): ProtectedRequest {
   const prepared = validateRequest(method, pathname, body);
   if (strictUtf8(writeGrant, "Native write grant").length > 16 * 1024) {
@@ -323,8 +324,8 @@ function protectRequest(
     path: pathname,
     body_present: prepared.bodyPresent,
     body_json: prepared.bodyJson,
-    channel: "generic_call",
-    alias: "revit_call_tool",
+    channel: completionLookup ? "typed_mcp" : "generic_call",
+    alias: completionLookup ? "operator_recover_native_completion" : "revit_call_tool",
     write_grant: writeGrant
   }), "Protected native request");
   const envelopeJson = protectPlaintext(token, epoch, "request", inner, deterministic.iv ?? randomBytes(16));
@@ -477,6 +478,28 @@ export async function sendNativeBridgeRequest(
   }
   const responseBytes = await readLimitedResponse(response);
   return openResponse(token, request, responseBytes);
+}
+
+/** A fixed host-only evidence lookup. Always protected, including laboratory
+ * mode; it cannot dispatch the original action or enter model tool admission. */
+export async function readNativeTerminalCompletionV1(
+  dispatch: import("@revitoperator/assignment-kernel-v2-contracts").NativeCompletionDispatchV1,
+  options: NativeBridgeTransportOptions
+): Promise<NativeBridgeHttpResult> {
+  const env = options.env ?? process.env, token = options.token.trim();
+  const receipt = readReceipt(options.receiptPath ?? defaultReceiptPath(env));
+  if (receipt.server_epoch !== dispatch.native.server_epoch) throw new Error("native_completion_epoch_mismatch");
+  const n = dispatch.native;
+  const body = { schema: "revit-operator.native-completion-lookup/v1", request_id: n.request_id,
+    request_nonce_sha256: n.request_nonce_sha256, server_epoch: n.server_epoch, method: n.method, path: n.path,
+    body_present: n.body_present, source_body_sha256: n.source_body_sha256, expected_document_fingerprint: n.expected_document_fingerprint };
+  const request = protectRequest(token, receipt.server_epoch, "POST", "/revit/operator-completions/v1/read", body, "", {}, true);
+  const response = await fetchWithOptionalTimeout(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
+    method: "POST", headers: { "Content-Type": NATIVE_TRANSPORT_CONTENT_TYPE }, body: request.envelopeJson
+  }, options);
+  if (response.status !== 200 || response.headers.get("Content-Type")?.trim() !== NATIVE_TRANSPORT_CONTENT_TYPE)
+    throw new Error("native_completion_lookup_unauthenticated");
+  return openResponse(token, request, await readLimitedResponse(response));
 }
 
 export function __testOnlyProtectNativeRequest(

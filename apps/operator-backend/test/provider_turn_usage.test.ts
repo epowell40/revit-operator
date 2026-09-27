@@ -61,3 +61,18 @@ test("only explicit bound no-start records support no provider invocation; absen
   assert.throws(() => parseProviderTurnUsageV1({ ...usage(), message_id: "bad\nidentity" }));
   assert.equal(coverage(Array.from({ length: 1001 }, () => row), []).complete, false);
 });
+
+test("a clarification without a provider call and a resumed model turn form one complete measured case", () => {
+  const noStart = {
+    schema, session_id: "session-a", message_id: "clarification",
+    thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+  };
+  const resumed = { ...usage("continuation", "turn-a", ["response-a"]) };
+  const rows = [
+    { session_id: "session-a", message_id: "clarification", provider_turn_usage: noStart },
+    { session_id: "session-a", message_id: "continuation", provider_turn_usage: resumed }
+  ];
+  assert.equal(coverage(rows, [receipt]).complete, true);
+  assert.equal(coverage([{ ...rows[0]!, provider_turn_usage: null }, rows[1]!], [receipt]).complete, false);
+  assert.equal(coverage(rows, []).complete, false, "the resumed response still needs its receipt");
+});

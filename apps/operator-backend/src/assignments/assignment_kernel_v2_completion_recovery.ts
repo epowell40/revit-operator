@@ -4,6 +4,7 @@ import { commitAssignmentKernelObservationV2, leaseFromOperation, settleAssignme
 import type { AssignmentKernelBindingInputV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { getWorkspaceRoot } from "../workspace.js";
 import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
+import { recoverLateNativeCompletionV1, type NativeCompletionLookupV1 } from "./assignment_kernel_v2_native_completion.js";
 
 /** Recover only already-retained completions. Safe while a late original
  * response is arriving: settlement uses the original result/event identities.
@@ -36,5 +37,21 @@ export function recoverRetainedAssignmentCompletionsV2(binding: AssignmentKernel
     }
   }
   return { snapshot, recovered_operation_ids: recovered,
+    unresolved_operation_ids: [...new Set([...snapshot.in_flight_operation_ids, ...snapshot.unresolved_unknown_operation_ids])] };
+}
+
+/** Authenticated command path; old retained-result recovery remains synchronous
+ * for existing callers. No dispatch, provider start or permission grant occurs. */
+export async function recoverAssignmentCompletionsV2(binding: AssignmentKernelBindingInputV2, lookup?: NativeCompletionLookupV1) {
+  const recovered = recoverRetainedAssignmentCompletionsV2(binding);
+  let snapshot = recovered.snapshot;
+  if (!snapshot.terminal && snapshot.unresolved_unknown_operation_ids.length > 0) {
+    const workspace = getWorkspaceRoot(), key = completionOutboxKeyV2(workspace);
+    for (const id of snapshot.unresolved_unknown_operation_ids) {
+      const next = await recoverLateNativeCompletionV1(workspace, key, snapshot, snapshot.operations[id]!, lookup);
+      if (next) { snapshot = next; recovered.recovered_operation_ids.push(id); }
+    }
+  }
+  return { snapshot, recovered_operation_ids: recovered.recovered_operation_ids,
     unresolved_operation_ids: [...new Set([...snapshot.in_flight_operation_ids, ...snapshot.unresolved_unknown_operation_ids])] };
 }

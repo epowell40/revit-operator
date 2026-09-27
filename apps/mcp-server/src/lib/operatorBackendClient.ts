@@ -6,9 +6,17 @@ import {
   type OperatorBackendAuthV1
 } from "./operatorBackendAuth.js";
 
+export const OPERATION_HANDOFF_SCHEMA = "revit-operator.operation-handoff/v1";
+
 export const SEMANTIC_MEP_ROUTE_PLAN_PATH = "/tools/mep/semantic-route-plan";
 export const EXISTING_CONDITIONS_INTERPRETATION_PATH = "/tools/existing-conditions/validate-interpretation";
 export const EXISTING_CONDITIONS_REGISTRATION_PATH = "/tools/existing-conditions/register-interpretation";
+export const EXISTING_CONDITIONS_DUCT_CONTINUATION_PATH = "/tools/existing-conditions/plan-duct-continuation";
+export const EXISTING_CONDITIONS_DUCT_BRANCH_PATH = "/tools/existing-conditions/plan-duct-branch";
+export const EXISTING_CONDITIONS_STAGE_AUTHORIZE_PATH = "/tools/existing-conditions/authorize-registered-stage";
+export const EXISTING_CONDITIONS_STAGE_RECORD_PATH = "/tools/existing-conditions/record-registered-stage";
+export const EXISTING_CONDITIONS_STAGE_RESOLVE_PATH = "/tools/existing-conditions/resolve-registered-stage";
+export const EXISTING_CONDITIONS_REGISTRATION_HANDOFF_PATH = "/tools/existing-conditions/resume-registration";
 export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
 export const READ_COMPLETION_CLAIM_PATH = "/api/assignments/read-completion-claims";
 export const ASSIGNMENT_CLARIFICATION_PATH = "/api/assignments/clarifications";
@@ -46,7 +54,7 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
   if (!/^https?:\/\//i.test(baseUrl)) throw new Error("OPERATOR_API_BASE_URL must be an http(s) URL.");
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  async function post(path: string, body: unknown, label: string): Promise<unknown> {
+  async function post(path: string, body: unknown, label: string, compactOperationHandoff = false): Promise<unknown> {
     const targetUrl = `${baseUrl}${path}`;
     const auth = resolveOperatorBackendAuth({
       auth: options.auth,
@@ -55,9 +63,11 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
       baseUrl,
       env: options.env
     });
+    const headers = buildOperatorBackendAuthHeaders(auth, targetUrl);
+    if (compactOperationHandoff) headers.set("X-Operator-Assignment-Handoff", "operation_handoff_v1");
     const response = await fetchImpl(targetUrl, {
       method: "POST",
-      headers: buildOperatorBackendAuthHeaders(auth, targetUrl),
+      headers,
       body: JSON.stringify(body)
     });
     if (!response.ok) {
@@ -91,13 +101,13 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
       return await post(ASSIGNMENT_V2_INPUT_PATH, input, "Operator V2 input response");
     },
     async openAssignmentChildOperationV2(input: unknown): Promise<unknown> {
-      return await post(ASSIGNMENT_V2_CHILD_OPERATION_PATH, input, "Operator V2 child operation admission");
+      return await post(ASSIGNMENT_V2_CHILD_OPERATION_PATH, input, "Operator V2 child operation admission", true);
     },
     async markAssignmentOperationDispatchV2(input: unknown): Promise<unknown> {
-      return await post(ASSIGNMENT_V2_OPERATION_DISPATCH_PATH, input, "Operator V2 operation dispatch");
+      return await post(ASSIGNMENT_V2_OPERATION_DISPATCH_PATH, input, "Operator V2 operation dispatch", true);
     },
     async settleAssignmentOperationV2(input: unknown): Promise<unknown> {
-      return await post(ASSIGNMENT_V2_OPERATION_RESULT_PATH, input, "Operator V2 operation settlement");
+      return await post(ASSIGNMENT_V2_OPERATION_RESULT_PATH, input, "Operator V2 operation settlement", true);
     },
     async retrieveEvidence(input: unknown): Promise<unknown> {
       return await post(EVIDENCE_RETRIEVE_PATH, input, "Operator evidence retrieval");
@@ -116,6 +126,24 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
     },
     async registerExistingConditionsInterpretation(input: unknown): Promise<unknown> {
       return await post(EXISTING_CONDITIONS_REGISTRATION_PATH, input, "Existing-conditions registration validator");
+    },
+    async planExistingConditionsDuctContinuation(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_DUCT_CONTINUATION_PATH, input, "Existing-conditions duct continuation planner");
+    },
+    async planExistingConditionsDuctBranch(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_DUCT_BRANCH_PATH, input, "Existing-conditions source-bound duct branch planner");
+    },
+    async authorizeRegisteredExistingConditionsStage(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_STAGE_AUTHORIZE_PATH, input, "Registered existing-conditions stage authorization");
+    },
+    async recordRegisteredExistingConditionsStage(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_STAGE_RECORD_PATH, input, "Registered existing-conditions stage result");
+    },
+    async resolveRegisteredExistingConditionsStage(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_STAGE_RESOLVE_PATH, input, "Registered existing-conditions stage reference");
+    },
+    async resumeExistingConditionsRegistration(input: unknown): Promise<unknown> {
+      return await post(EXISTING_CONDITIONS_REGISTRATION_HANDOFF_PATH, input, "Existing-conditions registration handoff");
     }
   };
 }

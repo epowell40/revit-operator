@@ -8,6 +8,7 @@ export type GeneralRevitSampleFixture = {
   discipline: string;
   document_title: string;
   sample_filename: string;
+  requires_architectural_link: boolean;
 };
 
 export type GeneralRevitSampleFixtures = {
@@ -37,6 +38,9 @@ export function loadGeneralRevitSampleFixtures(cases: GeneralRevitCapabilityCase
     if (!/^[a-z][a-z0-9_]+$/.test(fixtureKey)) throw new Error(`Invalid General Revit sample fixture key ${fixtureKey}.`);
     if (!fixture.document_title.trim() || !fixture.sample_filename.toLowerCase().endsWith(".rvt")) {
       throw new Error(`${fixtureKey}: sample fixture identity is incomplete.`);
+    }
+    if (typeof fixture.requires_architectural_link !== "boolean") {
+      throw new Error(`${fixtureKey}: Architectural-link requirement must be Boolean.`);
     }
   }
   return config;

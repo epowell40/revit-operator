@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.IO;
 using RevitBridge.Common;
 using Xunit;
 
@@ -9,6 +11,192 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorAttemptSettlementTests
     {
+        [Fact]
+        public void C138BlockedInteriorTeeWithOuterAndChildRollbackIsKnownNoEffect()
+        {
+            const string path = "/revit/existing-conditions-mep-draft-workflow";
+            var raw = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "c138-registered-branch-blocked-rollback.json"));
+            var exact = JsonNode.Parse(raw)!;
+            var result = OperatorAttemptSuccessfulSettlement.Classify(exact, "preview", "POST", path);
+            Assert.Equal("none", result.EffectState);
+            Assert.Equal("verified_native_rollback", result.EffectReason);
+            Assert.Empty(result.AffectedTargetIdentities);
+
+            void Reject(Action<JsonNode> change)
+            {
+                var changed = JsonNode.Parse(raw)!;
+                change(changed);
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(changed, "preview", "POST", path).EffectState);
+            }
+            Reject(x => x["rollbackVerified"] = false);
+            Reject(x => x["transactionGroupRolledBack"] = false);
+            Reject(x => x["residualCreatedElementIds"] = new JsonArray(1543424));
+            Reject(x => x["failedOperation"]!["response"]!["rolledBack"] = false);
+            Reject(x => x["failedOperation"]!["response"]!["createdBranchElementIds"] = new JsonArray(1543426));
+            Reject(x => x["failedOperation"]!["path"] = "/revit/create-mep-route");
+            Reject(x => x["failedOperation"]!["response"]!["error"] = "different failure");
+            Reject(x => x["operations"] = new JsonArray(JsonValue.Create("unexpected")));
+        }
+
+        [Fact]
+        public void C114RegisteredRoutePreflightNotStartedIsKnownNoEffect()
+        {
+            const string path = "/revit/existing-conditions-mep-draft-workflow";
+            var raw = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "c114-registered-stage-preflight-not-started.json"));
+            var exact = JsonNode.Parse(raw)!;
+            var result = OperatorAttemptSuccessfulSettlement.Classify(exact, "preview", "POST", path);
+            Assert.Equal("none", result.EffectState);
+            Assert.Equal("native_transaction_not_started", result.EffectReason);
+            Assert.Equal("native_transaction", result.EffectAuthority);
+            Assert.True(result.RequestDispatched);
+
+            void Reject(Action<JsonNode> change)
+            {
+                var changed = JsonNode.Parse(raw)!;
+                change(changed);
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(changed, "preview", "POST", path).EffectState);
+            }
+            Reject(x => x["rollbackVerified"] = false);
+            Reject(x => x["residualCreatedElementIds"] = new JsonArray(1543240));
+            Reject(x => x["failedOperation"]!["response"]!["transaction"]!["status"] = "committed");
+            Reject(x => x["failedOperation"]!["response"]!["transaction"]!["affected_element_ids"] = new JsonArray(1543240));
+            Reject(x => x["failedOperation"]!["response"]!["error"] = "different failure");
+        }
+
+        [Fact]
+        public void C109BlockedStageWithVerifiedRollbackHasNoPersistentEffect()
+        {
+            const string path = "/revit/existing-conditions-mep-draft-workflow";
+            var raw = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "c109-registered-stage-blocked-rollback.json"));
+            var exact = JsonNode.Parse(raw)!;
+            var result = OperatorAttemptSuccessfulSettlement.Classify(exact, "preview", "POST", path);
+            Assert.Equal("none", result.EffectState);
+            Assert.Equal("verified_native_rollback", result.EffectReason);
+            Assert.True(result.RequestDispatched);
+            Assert.Empty(result.AffectedTargetIdentities);
+
+            void Reject(Action<JsonNode> change)
+            {
+                var changed = JsonNode.Parse(raw)!;
+                change(changed);
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(changed, "preview", "POST", path).EffectState);
+            }
+            Reject(x => x["rollbackVerified"] = false);
+            Reject(x => x["transactionGroupRolledBack"] = false);
+            Reject(x => x["residualCreatedElementIds"] = new JsonArray(1543184));
+            Reject(x => x["createdElementIds"] = new JsonArray(1543184));
+            Reject(x => x["failedOperation"]!["response"]!["transaction"]!["status"] = "committed");
+            Reject(x => x["failedOperation"]!["response"]!["transaction"]!["committed"] = true);
+            Reject(x => x["failedOperation"]!["response"]!["error"] = "different failure");
+            Reject(x => x["failedOperation"]!["response"]!["dryRun"] = true);
+            Reject(x => x["failedOperation"]!["actionKey"] = "unrelated-route");
+            Reject(x => x["failedOperation"]!["path"] = "/revit/unrelated");
+        }
+
+        [Fact]
+        public void ExistingConditionsStageRollbackAndCommitRequireMatchingNativeReceipt()
+        {
+            const string path = "/revit/existing-conditions-mep-draft-workflow";
+            var preview = new
+            {
+                schema = "operator.existing_conditions_mep_draft_workflow.v1",
+                status = "DryRunReady", dryRun = true, transactionGroupRolledBack = true,
+                rollbackVerified = true, atomic = true, error = (string?)null,
+                residualCreatedElementIds = Array.Empty<long>(), createdElementIds = Array.Empty<long>(),
+                transientCreatedElementIds = new[] { 101L, 102L }, operationCount = 1
+            };
+            var applied = new
+            {
+                schema = "operator.existing_conditions_mep_draft_workflow.v1",
+                status = "Applied", dryRun = false, transactionGroupRolledBack = false,
+                rollbackVerified = true, atomic = true, error = (string?)null,
+                residualCreatedElementIds = Array.Empty<long>(), createdElementIds = new[] { 101L, 102L },
+                transientCreatedElementIds = Array.Empty<long>(), operationCount = 1
+            };
+            var previewSettlement = OperatorAttemptSuccessfulSettlement.Classify(preview, "preview", "POST", path);
+            var applySettlement = OperatorAttemptSuccessfulSettlement.Classify(applied, "apply", "POST", path);
+            Assert.Equal("none", previewSettlement.EffectState);
+            Assert.Equal("verified_native_rollback", previewSettlement.EffectReason);
+            Assert.Equal("applied", applySettlement.EffectState);
+            Assert.Equal("native_transaction_committed", applySettlement.EffectReason);
+            Assert.Contains("element_id:101", applySettlement.AffectedTargetIdentities);
+            foreach (var invalid in new object[]
+            {
+                new { preview.schema, preview.status, preview.dryRun, preview.transactionGroupRolledBack,
+                    rollbackVerified = false, preview.atomic, preview.error, preview.residualCreatedElementIds,
+                    preview.createdElementIds, preview.transientCreatedElementIds, preview.operationCount },
+                new { preview.schema, preview.status, preview.dryRun, preview.transactionGroupRolledBack,
+                    preview.rollbackVerified, preview.atomic, preview.error,
+                    residualCreatedElementIds = new[] { 101L }, preview.createdElementIds,
+                    preview.transientCreatedElementIds, preview.operationCount },
+                new { applied.schema, applied.status, applied.dryRun, applied.transactionGroupRolledBack,
+                    applied.rollbackVerified, applied.atomic, applied.error, applied.residualCreatedElementIds,
+                    createdElementIds = Array.Empty<long>(), applied.transientCreatedElementIds, applied.operationCount }
+            }) Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(invalid, "preview", "POST", path).EffectState);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(preview, "preview", "POST", "/revit/unrelated").EffectState);
+        }
+
+        [Fact]
+        public void ScheduleCellNoMatchAndDryRunCarryDistinctNoEffectTransactionReceipts()
+        {
+            var noMatch = new { status = "Not Found", applied = false,
+                transaction = OperatorNativeTransactionReceipt.NotStarted() };
+            var preview = new { status = "Dry Run", dryRun = true, applied = false,
+                transaction = OperatorNativeTransactionReceipt.RolledBack(System.Array.Empty<long>()) };
+            var noMatchSettlement = OperatorAttemptSuccessfulSettlement.Classify(noMatch, "preview", "POST", "/revit/update-schedule-cell");
+            var previewSettlement = OperatorAttemptSuccessfulSettlement.Classify(preview, "preview", "POST", "/revit/update-schedule-cell");
+            Assert.Equal("none", noMatchSettlement.EffectState);
+            Assert.Equal("native_transaction_not_started", noMatchSettlement.EffectReason);
+            Assert.Equal("none", previewSettlement.EffectState);
+            Assert.Equal("verified_native_rollback", previewSettlement.EffectReason);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                new { noMatch.status, noMatch.applied }, "preview", "POST", "/revit/update-schedule-cell").EffectState);
+        }
+        [Fact]
+        public void ConfigureSchedulePlanAndCommitHaveDistinctNativeEffectAuthority()
+        {
+            var plan = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true,
+                transaction = OperatorNativeTransactionReceipt.NotStarted()
+            }, "preview", "POST", "/revit/configure-schedule");
+            var committed = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Success", dryRun = false,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1488968L })
+            }, "apply", "POST", "/revit/configure-schedule");
+            Assert.Equal("none", plan.EffectState);
+            Assert.Equal("native_transaction_not_started", plan.EffectReason);
+            Assert.Equal("applied", committed.EffectState);
+            Assert.Equal("native_transaction", committed.EffectAuthority);
+            Assert.Contains("element_id:1488968", committed.AffectedTargetIdentities);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(new { status = "Success", dryRun = false },
+                "apply", "POST", "/revit/configure-schedule").EffectState);
+        }
+        [Fact]
+        public void ExistingTagRepairNeedsNativeTransactionTruthForApplyAndRollback()
+        {
+            var legacy = new { status = "Repaired", dryRun = false, changed = true,
+                before = new { tagId = 1492043L }, after = new { tagId = 1492043L } };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                legacy, "apply", "POST", "/revit/tag-elements").EffectState);
+
+            var applied = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                legacy.status, legacy.dryRun, legacy.changed, legacy.before, legacy.after,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 1492043L })
+            }, "apply", "POST", "/revit/tag-elements");
+            Assert.Equal("applied", applied.EffectState);
+            Assert.Contains("element_id:1492043", applied.AffectedTargetIdentities);
+
+            var preview = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run", dryRun = true, changed = true,
+                transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 1492043L })
+            }, "preview", "POST", "/revit/tag-elements");
+            Assert.Equal("none", preview.EffectState);
+            Assert.Equal("native_rollback", preview.EffectAuthority);
+        }
         [Fact]
         public void MissingCreateSimilarHostPreservesNoWriteAtNativeSettlementBoundary()
         {
@@ -37,6 +225,29 @@ namespace RevitBridge.Common.Tests
             Assert.Empty(settlement.AffectedTargetIdentities);
             var legacy = new { workflow.status, workflow.atomicRollbackSucceeded, workflow.mainApply, workflow.branchResults };
             Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(legacy, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
+        }
+
+        [Fact]
+        public void AtomicNetworkCommitNeedsTopLevelTransactionReceipt()
+        {
+            var createdIds = new[] { 1542939L, 1542942L, 1542945L };
+            var workflow = new
+            {
+                status = "AppliedNetworkVerified",
+                workflowMode = "apply",
+                atomicCommitSucceeded = true,
+                created = new { allModelIds = createdIds },
+                transaction = OperatorNativeTransactionReceipt.Committed(createdIds)
+            };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(workflow, "apply", "POST", "/revit/mep-branch-network-workflow");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            foreach (var id in createdIds)
+                Assert.Contains($"element_id:{id}", settlement.AffectedTargetIdentities);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                workflow.status, workflow.workflowMode, workflow.atomicCommitSucceeded, workflow.created
+            }, "apply", "POST", "/revit/mep-branch-network-workflow").EffectState);
         }
 
         [Theory]
@@ -305,6 +516,56 @@ namespace RevitBridge.Common.Tests
             }, "apply", "POST", "/revit/replace-text-note");
 
             Assert.Equal("unknown", settlement.EffectState);
+        }
+
+        [Theory]
+        [InlineData("offset_orthogonal")]
+        [InlineData("offset_dogleg45")]
+        [InlineData("size_transition")]
+        public void ReroutePlanningRequiresNativeNotStartedReceipt(string operation)
+        {
+            const string route = "/revit/reroute-mep-route-segment";
+            var oldPlan = new { status = "Dry Run", dryRun = true, operation, plan = new { ApplySupported = true } };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(oldPlan, "preview", "POST", route).EffectState);
+            foreach (var status in new[] { "Dry Run", "Blocked" })
+            {
+                var payload = new { status, dryRun = true, operation, previewExecuted = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(), plan = oldPlan.plan };
+                var result = OperatorAttemptSuccessfulSettlement.Classify(payload, "preview", "POST", route);
+                Assert.Equal("none", result.EffectState);
+                Assert.Equal("native_transaction", result.EffectAuthority);
+                Assert.Equal("native_transaction_not_started", result.EffectReason);
+            }
+        }
+
+        [Theory]
+        [InlineData("RolledBack", false, "applied")]
+        [InlineData("RolledBack", true, "applied")]
+        [InlineData("Pending", false, "unknown")]
+        [InlineData("Started", true, "unknown")]
+        public void RerouteVisualStageCannotEraseCommittedRouteOrHideUnsettledEffects(string observed, bool captureFails, string effect)
+        {
+            var routeReceipt = OperatorNativeTransactionReceipt.CommittedChanges(new[] { 52L }, System.Array.Empty<long>(), new[] { 42L });
+            var status = "Uninitialized";
+            var rollbacks = 0;
+            var visual = OperatorNativeTransactionExecution.Execute(
+                () => status = "Started", () => throw new System.Exception("unexpected commit"),
+                () => { rollbacks++; if (observed == "Started") throw new System.Exception("rollback failed"); return status = observed; },
+                () => status,
+                () => captureFails ? throw new System.Exception("capture failed") : new Dictionary<string, object?>(),
+                () => throw new System.Exception("unexpected committed visual inventory"),
+                disposition: NativeTransactionDisposition.Rollback);
+            var visualReceipt = (OperatorNativeTransactionReceipt)visual["transaction"]!;
+            var finalReceipt = visualReceipt.Status == "rolled_back" || visualReceipt.Status == "not_started"
+                ? routeReceipt : OperatorNativeTransactionReceipt.Unknown("visual_stage_unsettled", routeReceipt.AffectedElementIds);
+            var payload = new { success = !captureFails && effect == "applied", transaction = finalReceipt,
+                nativeStages = new { route = routeReceipt, visual } };
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(payload, "apply", "POST", "/revit/reroute-mep-route-segment");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(1, rollbacks);
+            Assert.Equal("committed", routeReceipt.Status);
+            Assert.Equal(new[] { 42L, 52L }, routeReceipt.AffectedElementIds);
+            if (captureFails) Assert.False((bool)visual["success"]!);
         }
 
         [Fact]

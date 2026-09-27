@@ -18,6 +18,23 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="Fixtures\c109-registered-stage-blocked-rollback.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\c114-registered-stage-preflight-not-started.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\c138-registered-branch-blocked-rollback.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\reset-reference-rotate-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\reset-reference-rotate-preview-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\branch-handler-legacy-shapes.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\branch-preview-modal-deadline.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\read-recovery-connect-mep-elements-applied-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\scope-information-detail-curves-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\unit403-branch-network-preview-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\unit403-takeoff-omitted-identity-rollback.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\unit403-save-as-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\unit407-tag-elements-preview-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\RevitBridge\Tooling\tool_examples.json" Link="Fixtures\native-tool-examples.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\RevitBridge.Common\RevitBridge.Common.csproj" />
     <ProjectReference Include="..\RevitBridge.Logic\RevitBridge.Logic.csproj" />
   </ItemGroup>

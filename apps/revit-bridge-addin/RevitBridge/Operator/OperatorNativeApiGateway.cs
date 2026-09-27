@@ -75,6 +75,8 @@ namespace RevitBridge.Operator
         public int ParameterCount { get; set; }
         public string[] ParameterTypes { get; set; } = Array.Empty<string>();
         public bool Callable { get; set; }
+        public bool GraphCallable { get; set; }
+        public bool DetachedGeometryFactory { get; set; }
         public string[] UnsupportedParameterTypes { get; set; } = Array.Empty<string>();
         public string DocsSearchUrl { get; set; } = "";
 
@@ -162,10 +164,10 @@ namespace RevitBridge.Operator
             }
         }
 
-        public static bool IsAllowed(NativeApiMemberDescriptor d, out string reason)
+        public static bool IsAllowed(NativeApiMemberDescriptor d, out string reason, bool graphArguments = false)
         {
             var s = Snapshot();
-            if (!d.Callable)
+            if (!(graphArguments ? d.GraphCallable : d.Callable))
             {
                 reason = "Unsupported parameter types for this gateway.";
                 return false;
@@ -180,7 +182,9 @@ namespace RevitBridge.Operator
                 reason = "Method blocked by enterprise policy.";
                 return false;
             }
-            if (!s.AllowMutating && d.MutatingHint)
+            var mutating = d.MutatingHint && !(graphArguments && d.DetachedGeometryFactory);
+            var risk = graphArguments && d.DetachedGeometryFactory ? OperatorActionRisk.Low : d.RiskLevel;
+            if (!s.AllowMutating && mutating)
             {
                 reason = "Mutating calls disabled by current profile.";
                 return false;
@@ -190,7 +194,7 @@ namespace RevitBridge.Operator
                 reason = "Freeze-risk calls disabled by current profile.";
                 return false;
             }
-            if (d.RiskLevel > s.MaxRisk)
+            if (risk > s.MaxRisk)
             {
                 reason = $"Risk '{d.Risk}' exceeds max_risk '{RiskToString(s.MaxRisk)}'.";
                 return false;
@@ -559,6 +563,10 @@ namespace RevitBridge.Operator
             if (string.IsNullOrWhiteSpace(id)) throw new InvalidOperationException("memberId is required.");
             if (!_byId!.TryGetValue(id, out var descriptor) || descriptor.Method == null) throw new InvalidOperationException($"Unknown memberId: {id}");
             if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason)) throw new InvalidOperationException($"Native API call blocked: {reason}");
+            // A single reflected call has no rollback envelope. Mutations must
+            // use native-api-mutation-ops, which owns and verifies a transaction.
+            if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)
+                throw new InvalidOperationException("Native API single-call accepts only low-risk read members; use native-api-mutation-ops for writes.");
 
             var method = descriptor.Method;
             var ps = method.GetParameters();
@@ -584,11 +592,6 @@ namespace RevitBridge.Operator
                     continue;
                 }
                 throw new InvalidOperationException($"Missing argument for parameter '{p.Name}' ({p.ParameterType.Name}).");
-            }
-
-            if (dryRun && descriptor.MutatingHint)
-            {
-                return new { ok = true, dry_run = true, blocked_execution = true, member_id = descriptor.MemberId, signature = descriptor.Signature };
             }
 
             var sw = Stopwatch.StartNew();
@@ -682,10 +685,14 @@ namespace RevitBridge.Operator
             }
 
             var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            var valueOwners = new Dictionary<string, Document?>(StringComparer.OrdinalIgnoreCase);
+            var valueOwners = new Dictionary<string, IReadOnlyList<object>>(StringComparer.OrdinalIgnoreCase);
+            var argumentResolver = new OperatorNativeGraphArguments();
+            var ownedGeometry = new List<IDisposable>();
+            var geometryCleanupErrors = new List<string>();
             var receipts = new List<object>();
             var total = Stopwatch.StartNew();
             Transaction? transaction = null;
+            TransactionStatus? observedFinalStatus = null;
             NativeMutationScopeUpdater? mutationScopeUpdater = null;
             NativeMutationScopeFailuresPreprocessor? mutationScopePreprocessor = null;
             var mutationScopeUpdaterRegistered = false;
@@ -693,6 +700,7 @@ namespace RevitBridge.Operator
             var modifiedIds = new HashSet<long>();
             var deletedIds = new HashSet<long>();
             var mutationOperationCount = 0;
+            string? activeOperationId = null;
             try
             {
                 if (mutationEnvelopeRequired)
@@ -712,6 +720,7 @@ namespace RevitBridge.Operator
                 var id = (operation.id ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(id) || id.Length > 64 || id.Any(ch => !(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-')))
                     throw new InvalidOperationException("Each native-api-ops operation requires a unique alphanumeric id (plus '_' or '-', max 64 characters).");
+                activeOperationId = id;
                 if (values.ContainsKey(id)) throw new InvalidOperationException($"Duplicate native-api-ops id: {id}");
 
                 var op = (operation.op ?? "").Trim().ToLowerInvariant();
@@ -722,16 +731,18 @@ namespace RevitBridge.Operator
                 {
                     if (string.IsNullOrWhiteSpace(memberId)) throw new InvalidOperationException($"native-api-ops operation '{id}' requires memberId.");
                     if (!_byId!.TryGetValue(memberId, out descriptor) || descriptor.Method == null) throw new InvalidOperationException($"Unknown memberId: {memberId}");
-                    if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason)) throw new InvalidOperationException($"Native API operation blocked: {reason}");
-                    if (!mutationEnvelopeRequired && (descriptor.RiskLevel != OperatorActionRisk.Low || descriptor.MutatingHint || descriptor.FreezeRiskHint))
+                    if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason, graphArguments: true)) throw new InvalidOperationException($"Native API operation blocked: {reason}");
+                    var graphMutating = descriptor.MutatingHint && !descriptor.DetachedGeometryFactory;
+                    var graphRisk = descriptor.DetachedGeometryFactory ? OperatorActionRisk.Low : descriptor.RiskLevel;
+                    if (!mutationEnvelopeRequired && (graphRisk != OperatorActionRisk.Low || graphMutating || descriptor.FreezeRiskHint))
                         throw new InvalidOperationException($"native-api-ops v2 is read-only; member is not low-risk: {descriptor.MemberId}");
                     if (mutationEnvelopeRequired)
                     {
                         if (descriptor.FreezeRiskHint)
                             throw new InvalidOperationException($"native-api-mutation-ops blocks freeze-risk members: {descriptor.MemberId}");
-                        if (descriptor.RiskLevel != OperatorActionRisk.Low && !descriptor.MutatingHint)
+                        if (graphRisk != OperatorActionRisk.Low && !graphMutating)
                             throw new InvalidOperationException($"native-api-mutation-ops blocks high-risk members that are not recognized model mutations: {descriptor.MemberId}");
-                        if (descriptor.MutatingHint) mutationOperationCount++;
+                        if (graphMutating) mutationOperationCount++;
                     }
                 }
                 else if (!string.IsNullOrWhiteSpace(memberId))
@@ -774,25 +785,33 @@ namespace RevitBridge.Operator
                 if (provided.Count > ps.Length)
                     throw new InvalidOperationException($"Native API operation '{id}' supplied {provided.Count} arguments for a member that accepts {ps.Length}.");
                 var args = new object?[ps.Length];
+                var argumentOwners = new List<object>();
                 for (var i = 0; i < ps.Length; i++)
                 {
                     var parameter = ps[i];
                     if (parameter.IsOut || parameter.ParameterType.IsByRef) throw new InvalidOperationException($"Unsupported by-ref parameter: {parameter.Name}");
-                    if (i < provided.Count) args[i] = ConvertOperationArgument(provided[i], parameter.ParameterType, values, id);
+                    if (i < provided.Count)
+                    {
+                        var resolved = ConvertOperationArgument(provided[i], parameter.ParameterType, values, valueOwners, argumentResolver, id);
+                        args[i] = resolved.Value;
+                        argumentOwners.AddRange(resolved.Owners);
+                    }
                     else if (TryResolveContextObject(parameter.ParameterType, app, out var context)) args[i] = context;
                     else if (parameter.HasDefaultValue) args[i] = parameter.DefaultValue;
                     else throw new InvalidOperationException($"Missing argument for parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in operation '{id}'.");
                 }
 
-                var operationOwner = ResolveOperationOwner(operation.target, targetObject, args, valueOwners);
-                if (mutationEnvelopeRequired && descriptor?.MutatingHint == true)
-                    ValidateMutationOwnership(descriptor, operationOwner, args, transactionDocument!, id);
+                var operationOwners = ResolveOperationOwners(operation.target, targetObject, args, argumentOwners, valueOwners);
+                if (mutationEnvelopeRequired && descriptor?.MutatingHint == true && !descriptor.DetachedGeometryFactory)
+                    ValidateMutationOwnership(descriptor, operationOwners, transactionDocument!, id);
 
                 var step = Stopwatch.StartNew();
                 object? raw;
                 try
                 {
                     raw = propertyInfo != null ? propertyInfo.GetValue(targetObject, null) : InvokeReflectedMember(descriptor!, targetObject, args);
+                    // Register before deadline checks: even a slow successful factory owns a temporary.
+                    if (descriptor?.DetachedGeometryFactory == true && raw is IDisposable temporary) ownedGeometry.Add(temporary);
                 }
                 catch (TargetInvocationException tie)
                 {
@@ -809,7 +828,8 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException($"native-api-ops exceeded its {maxTotalMs} ms total budget after operation '{id}'.");
 
                 values[id] = raw;
-                valueOwners[id] = ResolveOwningDocument(raw) ?? operationOwner;
+                var returnedOwner = ResolveOwningDocument(raw);
+                valueOwners[id] = OperatorNativeGraphArguments.MergeOwners(returnedOwner == null ? operationOwners : operationOwners.Concat(new object[] { returnedOwner }));
                 receipts.Add(new
                 {
                     id,
@@ -855,6 +875,7 @@ namespace RevitBridge.Operator
                         static_calls = true,
                         property_access = true,
                         argument_references = true,
+                        geometry_cleanup_errors = geometryCleanupErrors,
                         budgets = new { max_total_ms = maxTotalMs, max_operation_ms = maxOperationMs },
                         operation_count = operations.Count,
                         duration_ms = total.ElapsedMilliseconds,
@@ -881,6 +902,7 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException($"native-api-mutation-ops exceeded its {maxTotalMs} ms total budget during transaction finalization.");
 
                 var transactionStatus = transaction.Commit();
+                observedFinalStatus = transactionStatus;
                 if (!mutationScopePreprocessor.Executed || mutationScopePreprocessor.ScopeDecision == null)
                     throw new InvalidOperationException($"native-api-mutation-ops transaction checkpoint did not execute. Transaction.Commit returned {transactionStatus}; mutation safety could not be verified.");
 
@@ -939,6 +961,7 @@ namespace RevitBridge.Operator
                     budgets = new { max_total_ms = maxTotalMs, max_operation_ms = maxOperationMs },
                     operation_count = operations.Count,
                     mutation_operation_count = mutationOperationCount,
+                    geometry_cleanup_errors = geometryCleanupErrors,
                     duration_ms = total.ElapsedMilliseconds,
                     operations = receipts,
                     results = returned
@@ -946,32 +969,38 @@ namespace RevitBridge.Operator
             }
             catch (Exception originalError)
             {
-                var cleanupFailures = new List<string>();
-                if (transaction != null)
-                {
-                    try
-                    {
-                        var transactionStatus = transaction.GetStatus();
-                        if (transactionStatus == TransactionStatus.Started) transactionStatus = transaction.RollBack();
-                        if (transactionStatus != TransactionStatus.RolledBack && transactionStatus != TransactionStatus.Committed && transactionStatus != TransactionStatus.Uninitialized)
-                            cleanupFailures.Add($"Transaction cleanup returned {transactionStatus}.");
-                    }
-                    catch (Exception cleanupError)
-                    {
-                        cleanupFailures.Add($"Transaction cleanup threw: {cleanupError.Message}");
-                    }
-                }
-                if (cleanupFailures.Count > 0)
-                    throw new InvalidOperationException($"{originalError.Message} Native mutation transaction cleanup could not be verified: {string.Join(" ", cleanupFailures)}", originalError);
-                throw;
+                if (!mutationEnvelopeRequired) throw;
+                var failed = OperatorNativeGraphFailureSettlement.Capture(originalError,
+                    observedFinalStatus == TransactionStatus.Committed || observedFinalStatus == TransactionStatus.RolledBack
+                        ? () => observedFinalStatus.Value.ToString()
+                        : transaction == null ? (Func<string>?)null : () => transaction.GetStatus().ToString(),
+                    transaction == null ? (Func<string>?)null : () => transaction.RollBack().ToString(),
+                    () => OperatorNativeTransactionReceipt.CommittedChanges(
+                        addedIds.Concat(mutationScopeUpdater == null ? Enumerable.Empty<long>() : mutationScopeUpdater.AddedIds),
+                        modifiedIds.Concat(mutationScopeUpdater == null ? Enumerable.Empty<long>() : mutationScopeUpdater.ModifiedIds),
+                        deletedIds.Concat(mutationScopeUpdater == null ? Enumerable.Empty<long>() : mutationScopeUpdater.DeletedIds)));
+                failed["version"] = "operator.native_api_mutation_ops.v1";
+                failed["read_only"] = false;
+                failed["ephemeral_handles"] = true;
+                failed["operations"] = receipts;
+                failed["failed_operation_id"] = activeOperationId;
+                failed["geometry_cleanup_errors"] = geometryCleanupErrors;
+                return failed;
             }
+
             finally
             {
-                transaction?.Dispose();
+                try { transaction?.Dispose(); }
+                catch (Exception cleanupError) { geometryCleanupErrors.Add("Transaction disposal: " + cleanupError.Message); }
                 if (mutationScopeUpdaterRegistered && mutationScopeUpdater != null)
                 {
                     try { UpdaterRegistry.UnregisterUpdater(mutationScopeUpdater.GetUpdaterId(), transactionDocument!); }
                     catch { }
+                }
+                for (var i = ownedGeometry.Count - 1; i >= 0; i--)
+                {
+                    try { ownedGeometry[i].Dispose(); }
+                    catch (Exception cleanupError) { geometryCleanupErrors.Add(cleanupError.Message); }
                 }
             }
         }
@@ -997,19 +1026,21 @@ namespace RevitBridge.Operator
             }
         }
 
-        private static Document? ResolveOperationOwner(string? rawTarget, object? targetObject, object?[] args, Dictionary<string, Document?> valueOwners)
+        private static IReadOnlyList<object> ResolveOperationOwners(string? rawTarget, object? targetObject, object?[] args,
+            IEnumerable<object> argumentOwners, Dictionary<string, IReadOnlyList<object>> valueOwners)
         {
+            var owners = new List<object>(argumentOwners);
             var target = (rawTarget ?? "").Trim();
-            if (target.StartsWith("$", StringComparison.Ordinal) && target.Length > 1 && valueOwners.TryGetValue(target.Substring(1), out var referencedOwner))
-                return referencedOwner;
+            if (target.StartsWith("$", StringComparison.Ordinal) && target.Length > 1 && valueOwners.TryGetValue(target.Substring(1), out var inherited))
+                owners.AddRange(inherited);
             var owner = ResolveOwningDocument(targetObject);
-            if (owner != null) return owner;
+            if (owner != null) owners.Add(owner);
             foreach (var arg in args)
             {
                 owner = ResolveOwningDocument(arg);
-                if (owner != null) return owner;
+                if (owner != null) owners.Add(owner);
             }
-            return null;
+            return OperatorNativeGraphArguments.MergeOwners(owners);
         }
 
         private static Document? ResolveOwningDocument(object? value)
@@ -1029,20 +1060,13 @@ namespace RevitBridge.Operator
             return null;
         }
 
-        private static void ValidateMutationOwnership(NativeApiMemberDescriptor descriptor, Document? operationOwner, object?[] args, Document activeDocument, string operationId)
+        private static void ValidateMutationOwnership(NativeApiMemberDescriptor descriptor, IReadOnlyList<object> owners,
+            Document activeDocument, string operationId)
         {
             if (descriptor.DeclaringType == typeof(Transaction) || descriptor.DeclaringType == typeof(TransactionGroup) || descriptor.DeclaringType == typeof(SubTransaction))
                 throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' cannot manage its own transaction.");
-            if (operationOwner == null)
-                throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' could not prove active-document ownership for {descriptor.MemberId}.");
-            if (!SameDocument(operationOwner, activeDocument))
-                throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' targets a document other than the active transaction document.");
-            foreach (var arg in args)
-            {
-                var argumentOwner = ResolveOwningDocument(arg);
-                if (argumentOwner != null && !SameDocument(argumentOwner, activeDocument))
-                    throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' contains an argument owned by another document.");
-            }
+            OperatorNativeGraphArguments.RequireActiveOwners(owners, activeDocument,
+                (owner, active) => owner is Document document && active is Document activeDoc && SameDocument(document, activeDoc));
         }
 
         private static bool SameDocument(Document? left, Document? right)
@@ -1109,26 +1133,15 @@ namespace RevitBridge.Operator
             return matches[0];
         }
 
-        private static object? ConvertOperationArgument(JsonElement value, Type targetType, Dictionary<string, object?> values, string operationId)
-        {
-            if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("$ref", out var referenceElement))
-            {
-                if (referenceElement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(referenceElement.GetString()))
-                    throw new InvalidOperationException($"Operation '{operationId}' argument $ref must be a non-empty string.");
-                var referenceId = (referenceElement.GetString() ?? "").Trim().TrimStart('$');
-                if (!values.TryGetValue(referenceId, out var referenced))
-                    throw new InvalidOperationException($"Operation '{operationId}' argument reference was not found: ${referenceId}");
-                if (referenced == null)
-                {
-                    if (!targetType.IsValueType || Nullable.GetUnderlyingType(targetType) != null) return null;
-                    throw new InvalidOperationException($"Operation '{operationId}' cannot pass null reference ${referenceId} to {targetType.FullName}.");
-                }
-                if (targetType.IsInstanceOfType(referenced)) return referenced;
-                if (targetType == typeof(ElementId) && referenced is Element element) return element.Id;
-                throw new InvalidOperationException($"Operation '{operationId}' argument reference ${referenceId} has type {referenced.GetType().FullName}, not {targetType.FullName}.");
-            }
-            return ConvertValue(value, targetType);
-        }
+        private static NativeGraphArgument ConvertOperationArgument(JsonElement value, Type targetType,
+            Dictionary<string, object?> values, Dictionary<string, IReadOnlyList<object>> owners,
+            OperatorNativeGraphArguments resolver, string operationId)
+            => resolver.Resolve(value, targetType,
+                id => values.TryGetValue(id, out var referenced)
+                    ? new NativeGraphArgument(referenced, owners.TryGetValue(id, out var provenance) ? provenance : Array.Empty<object>()) : null,
+                ConvertValue, type => OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(type.FullName),
+                (referenced, expected) => expected == typeof(ElementId) && referenced is Element element ? element.Id : null,
+                referenced => ResolveOwningDocument(referenced));
 
         private static int ResolveBudget(int? requested, string name, int fallback, int min, int max)
         {
@@ -1160,9 +1173,10 @@ namespace RevitBridge.Operator
         {
             var allowed = OperatorNativeApiPolicy.IsAllowed(d, out var reason);
             var signatureSupported = d.Callable;
+            var graphAllowed = OperatorNativeApiPolicy.IsAllowed(d, out var graphReason, graphArguments: true);
             var isConstructor = d.Method is ConstructorInfo;
             var targetReachable = signatureSupported && (d.IsStatic || isConstructor || (d.DeclaringType != null && CanResolveContextParameter(d.DeclaringType)));
-            var chainable = signatureSupported && !d.IsStatic && !isConstructor;
+            var chainable = d.GraphCallable && !d.IsStatic && !isConstructor;
             var reachability = !signatureSupported
                 ? "unsupported_signature"
                 : targetReachable
@@ -1187,6 +1201,10 @@ namespace RevitBridge.Operator
                 freeze_risk_hint = d.FreezeRiskHint,
                 priority = d.Priority,
                 signature_supported = signatureSupported,
+                graph_signature_supported = d.GraphCallable,
+                graph_allowed = graphAllowed,
+                graph_blocked_reason = graphAllowed ? null : graphReason,
+                detached_geometry_factory = d.DetachedGeometryFactory,
                 target_reachable = targetReachable,
                 target_reachability = reachability,
                 chainable,
@@ -1203,7 +1221,9 @@ namespace RevitBridge.Operator
 
         private static object PublicSemantics() => new
         {
-            signature_supported = "The reflected parameter signature can be supplied by the gateway converter or Revit context.",
+            signature_supported = "The reflected parameter signature can be supplied by the direct gateway converter or Revit context.",
+            graph_signature_supported = "The graph accepts this signature using bounded prior typed references and collections; this does not make it directly callable.",
+            graph_allowed = "The current native policy permits this member in the operation graph; model mutation still requires its authorized transaction envelope.",
             target_reachable = "The member can be invoked directly without first producing an instance handle.",
             chainable = "The operation graph can invoke this instance member when a compatible prior ephemeral result is available.",
             terminally_useful = "Null until a bounded live receipt proves a useful terminal result for the member.",
@@ -1258,10 +1278,13 @@ namespace RevitBridge.Operator
             var ps = m.GetParameters();
             var paramTypes = ps.Select(x => FriendlyType(x.ParameterType)).ToArray();
             var unsupported = new List<string>();
+            var graphUnsupported = new List<string>();
             foreach (var p in ps)
             {
                 if (p.IsOut || p.ParameterType.IsByRef) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
                 else if (!IsSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
+                if (p.IsOut || p.ParameterType.IsByRef || (!IsGraphSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)))
+                    graphUnsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
             }
 
             var mut = IsMutatingHint(m.Name);
@@ -1288,6 +1311,10 @@ namespace RevitBridge.Operator
                 ParameterCount = ps.Length,
                 ParameterTypes = paramTypes,
                 Callable = unsupported.Count == 0,
+                GraphCallable = graphUnsupported.Count == 0,
+                DetachedGeometryFactory = m is MethodInfo factory && OperatorNativeGeometryGraphPolicy.IsDetachedFactory(
+                    factory.DeclaringType?.FullName ?? "", factory.Name, factory.IsStatic, factory.ReturnType.FullName ?? "",
+                    ps.Select(parameter => NativeParameterShape(parameter.ParameterType)).ToArray()),
                 UnsupportedParameterTypes = unsupported.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 DocsSearchUrl = "https://www.revitapidocs.com/search/?query=" + Uri.EscapeDataString($"{t.FullName}.{m.Name}"),
                 Method = m,
@@ -1422,6 +1449,18 @@ namespace RevitBridge.Operator
             if (t.IsArray) return FriendlyType(t.GetElementType() ?? typeof(object)) + "[]";
             if (t.IsGenericType) { var n = t.Name; var tick = n.IndexOf('`'); if (tick > 0) n = n.Substring(0, tick); return n + "<" + string.Join(", ", t.GetGenericArguments().Select(FriendlyType)) + ">"; }
             return t.Name;
+        }
+
+        private static string NativeParameterShape(Type type)
+            => type.IsGenericType
+                ? (type.GetGenericTypeDefinition().FullName ?? "") + "<" + string.Join(",", type.GetGenericArguments().Select(NativeParameterShape)) + ">"
+                : type.FullName ?? type.Name;
+
+        private static bool IsGraphSupportedType(Type type)
+        {
+            if (IsSupportedType(type) || OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(type.FullName)) return true;
+            var element = OperatorNativeGraphArguments.CollectionElementType(type);
+            return element != null && IsGraphSupportedType(element);
         }
 
         private static bool IsSupportedType(Type t)

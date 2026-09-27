@@ -1,0 +1,3204 @@
+{
+  "input": {
+    "method": "POST",
+    "path": "/revit/existing-conditions-mep-draft-workflow",
+    "body": {
+      "inputFingerprintSha256": "a3da8ca10b56af157f6418d2b2f03124b79d264a8ccfbc99292ad9e2f5ddee0a",
+      "stageKey": "operation:registered-branch:upper-ra",
+      "priorActionOutputs": [],
+      "operations": [
+        {
+          "action_key": "registered-branch:upper-ra",
+          "path": "/revit/connect-mep-branch",
+          "depends_on": [],
+          "apply_body": {
+            "kind": "duct",
+            "mainElementId": 1543280,
+            "connectionMode": "tee",
+            "branchPoints": [
+              {
+                "x": -38.30822533968893,
+                "y": -12.065654492814247,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -42.247766029334926,
+                "y": -12.065654492814247,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -43.99867330120131,
+                "y": -10.315084650814924,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -43.99867330120131,
+                "y": -2.382814881755536,
+                "z": 40.16806102362584
+              }
+            ],
+            "branchSize": "8\"",
+            "viewId": 1363433,
+            "levelName": "L4",
+            "verify": true,
+            "visualVerify": true,
+            "visualViewId": 1363433
+          },
+          "expected_created_min": 2,
+          "expected_created_max": 14
+        }
+      ],
+      "dryRun": false,
+      "verify": true,
+      "maximumCreatedElements": 14,
+      "targetViewId": 1363433,
+      "applyTargetViewPhase": true,
+      "requireAllCreatedElementsVisibleInTargetView": true
+    }
+  },
+  "affected_target_identities": [
+    "element_id:1543337",
+    "element_id:1543339",
+    "element_id:1543342",
+    "element_id:1543345",
+    "element_id:1543348",
+    "element_id:1543352",
+    "element_id:1543355"
+  ],
+  "apply": {
+    "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+    "inputFingerprintSha256": "a3da8ca10b56af157f6418d2b2f03124b79d264a8ccfbc99292ad9e2f5ddee0a",
+    "stageKey": "operation:registered-branch:upper-ra",
+    "priorActionOutputCount": 0,
+    "status": "Applied",
+    "dryRun": false,
+    "transactionGroupRolledBack": false,
+    "rollbackVerified": true,
+    "residualCreatedElementIds": [],
+    "atomic": true,
+    "error": null,
+    "targetView": {
+      "id": 1363433,
+      "name": "L4",
+      "phaseId": 21885,
+      "phaseName": "New Construction"
+    },
+    "targetViewAcceptance": {
+      "applyTargetViewPhase": true,
+      "requireAllCreatedElementsVisible": true,
+      "phaseAdjustedElementIds": [
+        1543337,
+        1543339,
+        1543342,
+        1543345,
+        1543348,
+        1543352,
+        1543355
+      ],
+      "phaseSkippedElementIds": [],
+      "visibleCreatedElementIds": [
+        1543337,
+        1543339,
+        1543342,
+        1543345,
+        1543348,
+        1543352,
+        1543355
+      ],
+      "invisibleCreatedElementIds": [],
+      "passed": true
+    },
+    "operationCount": 1,
+    "createdElementIds": [
+      1543337,
+      1543339,
+      1543342,
+      1543345,
+      1543348,
+      1543352,
+      1543355
+    ],
+    "transientCreatedElementIds": [],
+    "failedOperation": null,
+    "operations": [
+      {
+        "actionKey": "registered-branch:upper-ra",
+        "path": "/revit/connect-mep-branch",
+        "createdElementIds": [
+          1543337,
+          1543339,
+          1543342,
+          1543345,
+          1543348,
+          1543352,
+          1543355
+        ],
+        "transientCreatedElementIds": [],
+        "response": {
+          "status": "CreatedWithSplitTee",
+          "dryRun": false,
+          "scaffoldOnly": false,
+          "kind": "duct",
+          "main": {
+            "id": 1543280,
+            "category": "Ducts",
+            "name": "Tees",
+            "connectorCount": 2
+          },
+          "branchPlan": {
+            "points": [
+              {
+                "x": -38.30822533968893,
+                "y": -12.065654492814247,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -42.247766029334926,
+                "y": -12.065654492814247,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -43.99867330120131,
+                "y": -10.315084650814924,
+                "z": 40.16806102362584
+              },
+              {
+                "x": -43.99867330120131,
+                "y": -2.382814881755536,
+                "z": 40.16806102362584
+              }
+            ],
+            "segmentCount": 3,
+            "requestedSize": "8\"",
+            "segmentSizes": [
+              "8\"",
+              "8\"",
+              "8\""
+            ],
+            "requestedSystemType": null,
+            "requestedPipeType": null,
+            "jointPlan": [
+              {
+                "jointIndex": 0,
+                "expectedFitting": "elbow_or_connect",
+                "reason": "adjacent segment sizes match or are unspecified",
+                "fromSize": "8",
+                "toSize": "8"
+              },
+              {
+                "jointIndex": 1,
+                "expectedFitting": "elbow_or_connect",
+                "reason": "adjacent segment sizes match or are unspecified",
+                "fromSize": "8",
+                "toSize": "8"
+              }
+            ],
+            "connectionMode": "tee"
+          },
+          "mainIntersection": {
+            "branchStart": {
+              "x": -38.30822533968893,
+              "y": -12.065654492814247,
+              "z": 40.16806102362584
+            },
+            "nearestPointOnMain": {
+              "x": -38.28333333333332,
+              "y": -12.065654492814247,
+              "z": 40.16806102362583
+            },
+            "distanceToMainFt": 0.02489200635561417,
+            "curveParameter": 3.9798539678798655,
+            "mainStart": {
+              "x": -38.28333333333334,
+              "y": -8.085800524934381,
+              "z": 40.16806102362584
+            },
+            "mainEnd": {
+              "x": -38.28333333333332,
+              "y": -12.858816167999777,
+              "z": 40.16806102362583
+            }
+          },
+          "splitPlan": {
+            "applySupported": true,
+            "mode": "tee",
+            "expectedFitting": "tee",
+            "blockCode": null,
+            "blockReason": null,
+            "projectedSplitPoint": {
+              "x": -38.28333333333332,
+              "y": -12.065654492814247,
+              "z": 40.16806102362583
+            },
+            "mainSegments": [
+              {
+                "start": {
+                  "x": -38.28333333333334,
+                  "y": -8.085800524934381,
+                  "z": 40.16806102362584
+                },
+                "end": {
+                  "x": -38.28333333333332,
+                  "y": -12.065654492814247,
+                  "z": 40.16806102362583
+                }
+              },
+              {
+                "start": {
+                  "x": -38.28333333333332,
+                  "y": -12.065654492814247,
+                  "z": 40.16806102362583
+                },
+                "end": {
+                  "x": -38.28333333333332,
+                  "y": -12.858816167999777,
+                  "z": 40.16806102362583
+                }
+              }
+            ],
+            "distanceToMainFt": 0.02489200635561417,
+            "distanceFromMainStartFt": 3.9798539678798655,
+            "distanceFromMainEndFt": 0.7931616751855302
+          },
+          "existingConnectorFeasibility": {
+            "nearestOpenConnectorFound": false,
+            "nearestConnectorDistanceFt": null,
+            "nearestConnectorOpen": false
+          },
+          "existingBranchAnchorPlan": null,
+          "selected": {
+            "type": {
+              "id": 139186,
+              "name": "Tees"
+            },
+            "system": {
+              "id": 712042,
+              "name": "Return Air"
+            },
+            "branchPipeType": null,
+            "branchSystemType": null,
+            "level": {
+              "id": 1362791,
+              "name": "L4",
+              "elevation": 32.16666666667046
+            },
+            "size": "8\"",
+            "segmentSizes": [
+              "8\"",
+              "8\"",
+              "8\""
+            ],
+            "takeoffRoutingPreference": {
+              "curveKind": "duct",
+              "curveTypeId": 139186,
+              "curveTypeName": "Tees",
+              "ductTypeId": 139186,
+              "ductTypeName": "Tees",
+              "pipeTypeId": null,
+              "pipeTypeName": null,
+              "requestedFamilyName": null,
+              "requestedTypeName": null,
+              "requestedMatched": null,
+              "candidateCount": 2,
+              "candidates": [
+                {
+                  "groupName": "Junctions",
+                  "ruleIndex": 0,
+                  "partId": 697633,
+                  "partName": "Standard",
+                  "categoryName": "Duct Fittings",
+                  "familyName": "Round Tee",
+                  "typeName": "Standard"
+                },
+                {
+                  "groupName": "Junctions",
+                  "ruleIndex": 1,
+                  "partId": 696624,
+                  "partName": "Standard",
+                  "categoryName": "Duct Fittings",
+                  "familyName": "Round Takeoff",
+                  "typeName": "Standard"
+                }
+              ],
+              "explicitTakeoffCandidateCount": 0,
+              "explicitTakeoffCandidates": [],
+              "matchingCandidates": []
+            }
+          },
+          "tapApplyPrecheck": null,
+          "splitMainSegmentIds": [
+            1543280,
+            1543337
+          ],
+          "splitMainStartSegmentId": 1543337,
+          "splitMainEndSegmentId": 1543280,
+          "createdBranchElementIds": [
+            1543339,
+            1543342,
+            1543345
+          ],
+          "createdFittingIds": [
+            1543348,
+            1543352,
+            1543355
+          ],
+          "connectionAttempts": [
+            {
+              "connection": "split_main_to_branch_tee",
+              "mainSegmentIds": [
+                1543280,
+                1543337
+              ],
+              "branchElementId": 1543339,
+              "connected": true,
+              "method": "new_tee_fitting",
+              "fittingId": 1543348,
+              "requestedTee": {
+                "familyName": null,
+                "typeName": null
+              },
+              "error": null
+            },
+            {
+              "connection": "branch_internal",
+              "fromSegment": 0,
+              "toSegment": 1,
+              "expectedFitting": "elbow_or_connect",
+              "fromSize": "8",
+              "toSize": "8",
+              "connected": true,
+              "method": "new_elbow_fitting",
+              "fittingId": 1543352,
+              "error": null
+            },
+            {
+              "connection": "branch_internal",
+              "fromSegment": 1,
+              "toSegment": 2,
+              "expectedFitting": "elbow_or_connect",
+              "fromSize": "8",
+              "toSize": "8",
+              "connected": true,
+              "method": "new_elbow_fitting",
+              "fittingId": 1543355,
+              "error": null
+            }
+          ],
+          "openConnectorCount": 1,
+          "connectedNetworkAudit": {
+            "status": "Ok",
+            "startElementId": 1543339,
+            "systemName": "Mechanical Return Air 1",
+            "inferredSystemName": "Mechanical Return Air 1",
+            "traversal": {
+              "stopAtBranchFittings": false,
+              "stopAtTransitions": false,
+              "maxHops": 12,
+              "excludeCount": 0,
+              "stopAtElementIdsCount": 0,
+              "stopAtCategories": []
+            },
+            "maxElements": 500,
+            "visitedCount": 16,
+            "includedCount": 14,
+            "elementIdsOrdered": [
+              1543339,
+              1543348,
+              1543352,
+              1543280,
+              1543337,
+              1543342,
+              1543292,
+              1543355,
+              1543283,
+              1543345,
+              1543295,
+              1543286,
+              1543298,
+              1543289
+            ],
+            "elementIdsByCategory": {
+              "OST_DuctCurves": [
+                1543339,
+                1543280,
+                1543337,
+                1543342,
+                1543283,
+                1543345,
+                1543286,
+                1543289
+              ],
+              "OST_DuctFitting": [
+                1543348,
+                1543352,
+                1543292,
+                1543355,
+                1543295,
+                1543298
+              ]
+            },
+            "elements": [
+              {
+                "id": 1543339,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543348,
+                "category": "OST_DuctFitting",
+                "name": "Standard",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543352,
+                "category": "OST_DuctFitting",
+                "name": "1.5 D",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543280,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543337,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543342,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543292,
+                "category": "OST_DuctFitting",
+                "name": "1.5 D",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543355,
+                "category": "OST_DuctFitting",
+                "name": "1.5 D",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543283,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543345,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543295,
+                "category": "OST_DuctFitting",
+                "name": "1.5 D",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543286,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543298,
+                "category": "OST_DuctFitting",
+                "name": "1.5 D",
+                "systemName": "Mechanical Return Air 1"
+              },
+              {
+                "id": 1543289,
+                "category": "OST_DuctCurves",
+                "name": "Tees",
+                "systemName": "Mechanical Return Air 1"
+              }
+            ],
+            "edges": [
+              {
+                "fromId": 1543339,
+                "toId": 1543348
+              },
+              {
+                "fromId": 1543339,
+                "toId": 1543352
+              },
+              {
+                "fromId": 1543348,
+                "toId": 1543339
+              },
+              {
+                "fromId": 1543348,
+                "toId": 1543280
+              },
+              {
+                "fromId": 1543348,
+                "toId": 1543337
+              },
+              {
+                "fromId": 1543352,
+                "toId": 1543342
+              },
+              {
+                "fromId": 1543352,
+                "toId": 1543339
+              },
+              {
+                "fromId": 1543280,
+                "toId": 1543292
+              },
+              {
+                "fromId": 1543280,
+                "toId": 1543348
+              },
+              {
+                "fromId": 1543337,
+                "toId": 1543348
+              },
+              {
+                "fromId": 1543337,
+                "toId": 1542960
+              },
+              {
+                "fromId": 1543342,
+                "toId": 1543352
+              },
+              {
+                "fromId": 1543342,
+                "toId": 1543355
+              },
+              {
+                "fromId": 1543292,
+                "toId": 1543280
+              },
+              {
+                "fromId": 1543292,
+                "toId": 1543283
+              },
+              {
+                "fromId": 1543355,
+                "toId": 1543345
+              },
+              {
+                "fromId": 1543355,
+                "toId": 1543342
+              },
+              {
+                "fromId": 1543283,
+                "toId": 1543292
+              },
+              {
+                "fromId": 1543283,
+                "toId": 1543295
+              },
+              {
+                "fromId": 1543345,
+                "toId": 1543355
+              },
+              {
+                "fromId": 1543345,
+                "toId": 1543282
+              },
+              {
+                "fromId": 1543295,
+                "toId": 1543286
+              },
+              {
+                "fromId": 1543295,
+                "toId": 1543283
+              },
+              {
+                "fromId": 1543286,
+                "toId": 1543295
+              },
+              {
+                "fromId": 1543286,
+                "toId": 1543298
+              },
+              {
+                "fromId": 1543298,
+                "toId": 1543286
+              },
+              {
+                "fromId": 1543298,
+                "toId": 1543289
+              },
+              {
+                "fromId": 1543289,
+                "toId": 1543282
+              },
+              {
+                "fromId": 1543289,
+                "toId": 1543298
+              }
+            ],
+            "systemAudit": {
+              "systemName": "Mechanical Return Air 1",
+              "systemElementIds": [
+                1543280,
+                1543283,
+                1543286,
+                1543289,
+                1543337,
+                1543339,
+                1543342,
+                1543345,
+                1543292,
+                1543295,
+                1543298,
+                1543348,
+                1543352,
+                1543355
+              ],
+              "systemCount": 14,
+              "connectedCount": 14,
+              "disconnectedIds": [],
+              "disconnectedCount": 0,
+              "pass": true
+            },
+            "warnings": []
+          },
+          "focusedCapture": null,
+          "applyStatus": "AppliedSplitTee",
+          "recommendedNextImplementationStep": "Safe duct split/tee apply path is available for this projected non-connector branch point.",
+          "warnings": [
+            "Recommended elevation is a fallback because room/ceiling context was incomplete."
+          ],
+          "rolledBack": false
+        }
+      }
+    ],
+    "operationOutputs": [
+      {
+        "action_key": "registered-branch:upper-ra",
+        "created_element_ids": [
+          1543337,
+          1543339,
+          1543342,
+          1543345,
+          1543348,
+          1543352,
+          1543355
+        ],
+        "affected_element_ids": [],
+        "route_segment_element_ids": [],
+        "route_start_element_ids": [
+          1543339
+        ],
+        "route_end_element_ids": [
+          1543345
+        ],
+        "split_main_start_element_ids": [
+          1543337
+        ],
+        "split_main_end_element_ids": [
+          1543280
+        ]
+      }
+    ]
+  },
+  "connectors": {
+    "status": "Ok",
+    "requestedCount": 7,
+    "scannedElementCount": 7,
+    "failedElementCount": 0,
+    "matchedElementCount": 7,
+    "totalScannedConnectorCount": 15,
+    "physicallyConnectedConnectorCount": 14,
+    "openPhysicalConnectorCount": 1,
+    "connectorScanTruncatedElementCount": 0,
+    "results": [
+      {
+        "id": 1543337,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.283333333333346,
+              -11.565654492814268,
+              40.168061023625825
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.283333333333346,
+                -11.565654492814268,
+                40.168061023625825
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543348,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -11.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -11.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543348,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -11.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -11.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.28333333333334,
+              -8.085800524934381,
+              40.16806102362584
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.28333333333334,
+                -8.085800524934381,
+                40.16806102362584
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1542960,
+                "ownerCategory": "OST_MechanicalEquipment",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.28333333333334,
+                    -8.085800524934381,
+                    40.16806102362584
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.28333333333334,
+                  -8.085800524934381,
+                  40.16806102362584
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1542960,
+                "ownerCategory": "OST_MechanicalEquipment",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.28333333333334,
+                    -8.085800524934381,
+                    40.16806102362584
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.28333333333334,
+                  -8.085800524934381,
+                  40.16806102362584
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543339,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -41.833608916822264,
+              -12.065654492814282,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -41.833608916822264,
+                -12.065654492814282,
+                40.16806102362583
+              ],
+              "basisX": [
+                0,
+                1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                -1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543352,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -41.833608916822264,
+                    -12.065654492814282,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -41.833608916822264,
+                  -12.065654492814282,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543352,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -41.833608916822264,
+                    -12.065654492814282,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -41.833608916822264,
+                  -12.065654492814282,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.783333333333346,
+              -12.065654492814266,
+              40.168061023625825
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.783333333333346,
+                -12.065654492814266,
+                40.168061023625825
+              ],
+              "basisX": [
+                0,
+                -1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543348,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 3,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.783333333333346,
+                    -12.065654492814266,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    0,
+                    -1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    -1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.783333333333346,
+                  -12.065654492814266,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543348,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 3,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.783333333333346,
+                    -12.065654492814266,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    0,
+                    -1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    -1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.783333333333346,
+                  -12.065654492814266,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543342,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -42.5406475523563,
+              -11.772829413086614,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -42.5406475523563,
+                -11.772829413086614,
+                40.16806102362583
+              ],
+              "basisX": [
+                -0.7070386355340254,
+                -0.7071749202723353,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0.7071749202723353,
+                -0.7070386355340254,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543352,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -42.5406475523563,
+                    -11.772829413086612,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -0.7070386355340297,
+                    -0.7071749202723309,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    -0.7071749202723309,
+                    0.7070386355340297,
+                    0
+                  ]
+                },
+                "origin": [
+                  -42.5406475523563,
+                  -11.772829413086612,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543352,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -42.5406475523563,
+                    -11.772829413086612,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -0.7070386355340297,
+                    -0.7071749202723309,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    -0.7071749202723309,
+                    0.7070386355340297,
+                    0
+                  ]
+                },
+                "origin": [
+                  -42.5406475523563,
+                  -11.772829413086612,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -43.705711936735376,
+              -10.607989556600405,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -43.705711936735376,
+                -10.607989556600405,
+                40.16806102362583
+              ],
+              "basisX": [
+                0.7070386355340254,
+                0.7071749202723353,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                -0.7071749202723353,
+                0.7070386355340254,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543355,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.705711936735376,
+                    -10.607989556600405,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0.7070386355340407,
+                    0.70717492027232,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0.70717492027232,
+                    -0.7070386355340407,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.705711936735376,
+                  -10.607989556600405,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543355,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.705711936735376,
+                    -10.607989556600405,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0.7070386355340407,
+                    0.70717492027232,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0.70717492027232,
+                    -0.7070386355340407,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.705711936735376,
+                  -10.607989556600405,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543345,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 1,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -43.99867330120131,
+              -2.382814881755536,
+              40.16806102362584
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -43.99867330120131,
+                -2.382814881755536,
+                40.16806102362584
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543282,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false,
+                "connectorId": 10,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "Logical",
+                "domain": "DomainUndefined",
+                "shape": "Invalid",
+                "size": null,
+                "coordinateSystem": null,
+                "origin": null,
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          },
+          {
+            "index": 1,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -43.998673301201336,
+              -9.900814636328084,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -43.998673301201336,
+                -9.900814636328084,
+                40.16806102362583
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543355,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.998673301201336,
+                    -9.900814636328084,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.998673301201336,
+                  -9.900814636328084,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543355,
+                "ownerCategory": "OST_DuctFitting",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.998673301201336,
+                    -9.900814636328084,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.998673301201336,
+                  -9.900814636328084,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543348,
+        "ok": true,
+        "category": "OST_DuctFitting",
+        "name": "Standard",
+        "typeId": 697633,
+        "typeName": "Standard",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 3,
+        "returnedConnectorCount": 3,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.283333333333346,
+              -11.565654492814268,
+              40.168061023625825
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.283333333333346,
+                -11.565654492814268,
+                40.168061023625825
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543337,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -11.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -11.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543337,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -11.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -11.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 2,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.283333333333346,
+              -12.565654492814268,
+              40.168061023625825
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.283333333333346,
+                -12.565654492814268,
+                40.168061023625825
+              ],
+              "basisX": [
+                1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0,
+                -1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543280,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -12.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -12.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543280,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.283333333333346,
+                    -12.565654492814268,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.283333333333346,
+                  -12.565654492814268,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 2,
+            "connectorId": 3,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.783333333333346,
+              -12.065654492814266,
+              40.168061023625825
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -38.783333333333346,
+                -12.065654492814266,
+                40.168061023625825
+              ],
+              "basisX": [
+                0,
+                -1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                -1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543339,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.783333333333346,
+                    -12.065654492814266,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    0,
+                    -1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.783333333333346,
+                  -12.065654492814266,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543339,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -38.783333333333346,
+                    -12.065654492814266,
+                    40.168061023625825
+                  ],
+                  "basisX": [
+                    0,
+                    -1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -38.783333333333346,
+                  -12.065654492814266,
+                  40.168061023625825
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543352,
+        "ok": true,
+        "category": "OST_DuctFitting",
+        "name": "1.5 D",
+        "typeId": 693820,
+        "typeName": "1.5 D",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 2,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -41.833608916822264,
+              -12.065654492814282,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -41.833608916822264,
+                -12.065654492814282,
+                40.16806102362583
+              ],
+              "basisX": [
+                0,
+                1,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                1,
+                0,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543339,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -41.833608916822264,
+                    -12.065654492814282,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    -1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -41.833608916822264,
+                  -12.065654492814282,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543339,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -41.833608916822264,
+                    -12.065654492814282,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    -1,
+                    0,
+                    0
+                  ]
+                },
+                "origin": [
+                  -41.833608916822264,
+                  -12.065654492814282,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -42.5406475523563,
+              -11.772829413086612,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -42.5406475523563,
+                -11.772829413086612,
+                40.16806102362583
+              ],
+              "basisX": [
+                -0.7070386355340297,
+                -0.7071749202723309,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                -0.7071749202723309,
+                0.7070386355340297,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543342,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -42.5406475523563,
+                    -11.772829413086614,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -0.7070386355340254,
+                    -0.7071749202723353,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0.7071749202723353,
+                    -0.7070386355340254,
+                    0
+                  ]
+                },
+                "origin": [
+                  -42.5406475523563,
+                  -11.772829413086614,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543342,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -42.5406475523563,
+                    -11.772829413086614,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -0.7070386355340254,
+                    -0.7071749202723353,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0.7071749202723353,
+                    -0.7070386355340254,
+                    0
+                  ]
+                },
+                "origin": [
+                  -42.5406475523563,
+                  -11.772829413086614,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      },
+      {
+        "id": 1543355,
+        "ok": true,
+        "category": "OST_DuctFitting",
+        "name": "1.5 D",
+        "typeId": 693820,
+        "typeName": "1.5 D",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Return Air 1",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 0,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 2,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -43.705711936735376,
+              -10.607989556600405,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -43.705711936735376,
+                -10.607989556600405,
+                40.16806102362583
+              ],
+              "basisX": [
+                0.7070386355340407,
+                0.70717492027232,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0.70717492027232,
+                -0.7070386355340407,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543342,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.705711936735376,
+                    -10.607989556600405,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0.7070386355340254,
+                    0.7071749202723353,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    -0.7071749202723353,
+                    0.7070386355340254,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.705711936735376,
+                  -10.607989556600405,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543342,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.705711936735376,
+                    -10.607989556600405,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    0.7070386355340254,
+                    0.7071749202723353,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    -0.7071749202723353,
+                    0.7070386355340254,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.705711936735376,
+                  -10.607989556600405,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          },
+          {
+            "index": 1,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -43.998673301201336,
+              -9.900814636328084,
+              40.16806102362583
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "ReturnAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -43.998673301201336,
+                -9.900814636328084,
+                40.16806102362583
+              ],
+              "basisX": [
+                -1,
+                0,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                1
+              ],
+              "basisZ": [
+                0,
+                1,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543345,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.998673301201336,
+                    -9.900814636328084,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.998673301201336,
+                  -9.900814636328084,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543345,
+                "ownerCategory": "OST_DuctCurves",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 0,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -43.998673301201336,
+                    -9.900814636328084,
+                    40.16806102362583
+                  ],
+                  "basisX": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    -1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -43.998673301201336,
+                  -9.900814636328084,
+                  40.16806102362583
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      }
+    ],
+    "warnings": [],
+    "filter": "allConnectors",
+    "verificationParameters": {
+      "schema": "revit-operator.duct-verification-parameters/v1",
+      "fields": [
+        "System Classification",
+        "Reference Level",
+        "Width",
+        "Height",
+        "Diameter"
+      ],
+      "items": [
+        {
+          "id": 1543337,
+          "parameters": {
+            "System Classification": "Return Air",
+            "Reference Level": "1362791",
+            "Diameter": "0.66666666666666663"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            },
+            {
+              "name": "Reference Level",
+              "value": "1362791",
+              "valueString": "L4",
+              "nativeName": "Reference Level",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1114000
+            },
+            {
+              "name": "Diameter",
+              "value": "0.66666666666666663",
+              "valueString": "8\"",
+              "nativeName": "Diameter",
+              "storageType": "Double",
+              "isReadOnly": false,
+              "parameterId": -1114103
+            }
+          ],
+          "missingFields": [
+            "Width",
+            "Height"
+          ]
+        },
+        {
+          "id": 1543339,
+          "parameters": {
+            "System Classification": "Return Air",
+            "Reference Level": "1362791",
+            "Diameter": "0.66666666666666663"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            },
+            {
+              "name": "Reference Level",
+              "value": "1362791",
+              "valueString": "L4",
+              "nativeName": "Reference Level",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1114000
+            },
+            {
+              "name": "Diameter",
+              "value": "0.66666666666666663",
+              "valueString": "8\"",
+              "nativeName": "Diameter",
+              "storageType": "Double",
+              "isReadOnly": false,
+              "parameterId": -1114103
+            }
+          ],
+          "missingFields": [
+            "Width",
+            "Height"
+          ]
+        },
+        {
+          "id": 1543342,
+          "parameters": {
+            "System Classification": "Return Air",
+            "Reference Level": "1362791",
+            "Diameter": "0.66666666666666663"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            },
+            {
+              "name": "Reference Level",
+              "value": "1362791",
+              "valueString": "L4",
+              "nativeName": "Reference Level",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1114000
+            },
+            {
+              "name": "Diameter",
+              "value": "0.66666666666666663",
+              "valueString": "8\"",
+              "nativeName": "Diameter",
+              "storageType": "Double",
+              "isReadOnly": false,
+              "parameterId": -1114103
+            }
+          ],
+          "missingFields": [
+            "Width",
+            "Height"
+          ]
+        },
+        {
+          "id": 1543345,
+          "parameters": {
+            "System Classification": "Return Air",
+            "Reference Level": "1362791",
+            "Diameter": "0.66666666666666663"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            },
+            {
+              "name": "Reference Level",
+              "value": "1362791",
+              "valueString": "L4",
+              "nativeName": "Reference Level",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1114000
+            },
+            {
+              "name": "Diameter",
+              "value": "0.66666666666666663",
+              "valueString": "8\"",
+              "nativeName": "Diameter",
+              "storageType": "Double",
+              "isReadOnly": false,
+              "parameterId": -1114103
+            }
+          ],
+          "missingFields": [
+            "Width",
+            "Height"
+          ]
+        },
+        {
+          "id": 1543348,
+          "parameters": {
+            "System Classification": "Return Air"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            }
+          ],
+          "missingFields": [
+            "Reference Level",
+            "Width",
+            "Height",
+            "Diameter"
+          ]
+        },
+        {
+          "id": 1543352,
+          "parameters": {
+            "System Classification": "Return Air"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            }
+          ],
+          "missingFields": [
+            "Reference Level",
+            "Width",
+            "Height",
+            "Diameter"
+          ]
+        },
+        {
+          "id": 1543355,
+          "parameters": {
+            "System Classification": "Return Air"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Return Air",
+              "valueString": "Return Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            }
+          ],
+          "missingFields": [
+            "Reference Level",
+            "Width",
+            "Height",
+            "Diameter"
+          ]
+        }
+      ]
+    }
+  }
+}

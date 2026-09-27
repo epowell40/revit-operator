@@ -21,6 +21,54 @@ function isolated(fn: () => void) {
   }
 }
 
+test("failed native reference checks reach the dynamic model adapter as unresolved beside known pairs", () => isolated(() => {
+  const payload = JSON.parse(fs.readFileSync("test/fixtures/connector-reference-check-failure.json", "utf8"));
+  const raw = { content: [{ type: "text", text: JSON.stringify(payload) }] };
+  const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_call_tool", trust_level: "authoritative_native", raw });
+  const bounded = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection] });
+  const delivered = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_call_tool", ...bounded });
+  const text = (delivered.contentItems[0] as any).text;
+  const graph = JSON.parse(text).evidence_projections[0].connector_graph;
+  assert.deepEqual(graph.lists.reciprocal_edges, [[10, 0, 20, 0, 0]]);
+  assert(graph.lists.unresolved_references.some((r: any[]) => r[0] === 10 && r[2] === 30 && r[4] === "native_connection_check_unknown"));
+  assert.equal(graph.totals.excluded_references, 0);
+  assertBoundedModelEvidencePayload([{ type: "function_call_output", output: text }]);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString()), raw);
+}));
+
+test("connector topology crosses native storage, existing budget and dynamic adapter with raw paging intact", () => isolated(() => {
+  const payload = { status: "Ok", filter: "allConnectors", requestedCount: 160, scannedElementCount: 160, failedElementCount: 0, matchedElementCount: 160, totalScannedConnectorCount: 160, physicallyConnectedConnectorCount: 0, openPhysicalConnectorCount: 160, connectorScanTruncatedElementCount: 0,
+    results: Array.from({ length: 160 }, (_, i) => ({ id: i + 1, ok: true, connectorCount: 1, returnedConnectorCount: 1, connectorScanTruncated: false, connectors: [{ connectorId: 0, connectorIdBasis: "revit_native_connector_id", domain: "DomainHvac", connectorType: "End", origin: [i, 0, 0], isConnected: false, physicalConnectionCount: 0, isPhysicallyConnected: false, connectedTo: [], physicalConnectedTo: [], coordinateSystem: { sourceDetail: "retained native detail".repeat(160) } }] })) };
+  const raw = { content: [{ type: "text", text: JSON.stringify(payload) }] };
+  for (const trust_level of ["authoritative_native", "host_observed"] as const) {
+    const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_call_tool", trust_level, raw }, 8192);
+    const budget = { item_bytes: 8192, request_bytes: 8704 };
+    const bounded = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection], budget });
+    const delivered = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_call_tool", projections: bounded.projections, omitted: bounded.omitted });
+    const text = (delivered.contentItems[0] as any).text;
+    const envelope = JSON.parse(text), projection = envelope.evidence_projections[0];
+    assert.equal(delivered.success, true); assert.equal(envelope.omitted, 0);
+    assert.equal(projection.content_hash, stored.ref.content_hash); assert.equal(projection.evidence_id, stored.ref.evidence_id);
+    assert.equal(projection.trust_level, trust_level); assert.equal(projection.inline_payload, undefined);
+    if (trust_level === "authoritative_native") {
+      assert.equal(projection.connector_graph.totals.owner_components, 160);
+      assert.equal(projection.connector_graph.totals.open_hvac_endpoints, 160);
+      assert.equal(projection.connector_graph.lists_complete, false);
+      assert.equal(projection.connector_graph.coverage.native_reference_scan_complete, null);
+    } else assert.equal(projection.connector_graph, undefined);
+    assert(Buffer.byteLength(text) <= budget.request_bytes);
+    assertBoundedModelEvidencePayload([{ type: "function_call_output", output: text }], budget);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString()), raw);
+    const retrieved = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Read omitted connector geometry", item_range: { path: "payload.results", start: 159, count: 1 }, max_bytes: 8192 });
+    const result = { content: [{ type: "text", text: JSON.stringify({ ok: true, result: retrieved }) }] };
+    const expanded = adaptMcpToolCallResultToDynamicResponse(result, { tool: "operator_retrieve_evidence", projections: [stored.projection] });
+    assert.deepEqual(JSON.parse((expanded.contentItems[0] as any).text).result.selection[0], payload.results[159]);
+    const omitted = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection], budget: { item_bytes: 8192, request_bytes: 1024 } });
+    const omittedDelivery = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_call_tool", projections: omitted.projections, omitted: omitted.omitted });
+    assert.equal(JSON.parse((omittedDelivery.contentItems[0] as any).text).omitted, 1);
+  }
+}));
+
 test("small native capture arrives intact through store, budget and model adapter without another retrieval", () => isolated(() => {
   const payload = { sheetNumber: "M102", sheetViewId: 1363562, region: "titleblock", export: { viewName: "HVAC L2 - Team Review", mapping: null }, warnings: ["Sheet mapping unavailable"] };
   const raw = { content: [{ type: "text", text: JSON.stringify(payload) }] };
@@ -94,4 +142,86 @@ test("C48 oversized partial catalogue reaches the working model through projecti
   assert.equal(Object.hasOwn(doc.tools.find((tool:any)=>tool.path==="/revit/place-families"),"required_fields"),false);
   assert(doc.omitted_paths.some((item:string)=>item.endsWith("required_fields")));
   assertBoundedModelEvidencePayload([{type:"function_call_output",output:text}]);
+}));
+
+test("model presentation removes only selector instructions without changing durable evidence or expansion", () => isolated(() => {
+  const payload = { status: "Ok", items: [{ id: 41, diameterFt: 0.5, label: "風", actualNull: null }] };
+  const raw = { content: [{ type: "text", text: JSON.stringify(payload) }] };
+  const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_call_tool", trust_level: "authoritative_native", raw });
+  const original = JSON.stringify(stored.projection);
+  const retainedBytes = readAuthoritativeEvidence(stored.ref, scope);
+  const beforeSelection = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Read the target diameter", fields: ["payload.items[0].diameterFt"] });
+  Object.freeze(stored.projection.retrieval.selector_forms);
+  Object.freeze(stored.projection.retrieval);
+  Object.freeze(stored.projection);
+  const envelope = modelEvidenceEnvelope([stored.projection], 2);
+  const expected = JSON.parse(original);
+  delete expected.retrieval.selector_forms;
+  assert.deepEqual(envelope.evidence_projections, [expected]);
+  assert.notEqual(envelope.evidence_projections[0], stored.projection);
+  assert.notEqual(envelope.evidence_projections[0]!.retrieval, stored.projection.retrieval);
+  assert.equal(envelope.omitted, 2);
+  assert.equal(JSON.stringify(stored.projection), original);
+  assert.ok(stored.projection.retrieval.selector_forms.includes("fields"));
+  assert.deepEqual(readAuthoritativeEvidence(stored.ref, scope), retainedBytes);
+  const afterSelection = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Read the same target diameter after presentation", fields: ["payload.items[0].diameterFt"] });
+  assert.deepEqual(afterSelection.selection, beforeSelection.selection);
+  const response = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_call_tool", projections: [stored.projection], omitted: 2 });
+  assert.deepEqual(JSON.parse((response.contentItems[0] as any).text), envelope);
+}));
+
+test("compact presentation uses exact UTF-8 item and aggregate byte limits including envelope overhead", () => isolated(() => {
+  const stored = storeEvidence({ scope, source: "bounded:compact-budget", trust_level: "authoritative_native", raw: { label: "風é", id: 41 } });
+  const original = JSON.stringify(stored.projection);
+  const expected = JSON.parse(original);
+  delete expected.retrieval.selector_forms;
+  const itemBytes = Buffer.byteLength(JSON.stringify(expected), "utf8");
+  const oneEnvelope = { ...modelEvidenceEnvelope([]), evidence_projections: [expected] };
+  const requestBytes = Buffer.byteLength(JSON.stringify(oneEnvelope), "utf8");
+  assert.ok(Buffer.byteLength(original, "utf8") > itemBytes);
+  const exact = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection], budget: { item_bytes: itemBytes, request_bytes: requestBytes } });
+  assert.equal(exact.projections.length, 1);
+  assert.equal(exact.omitted, 0);
+  assert.equal(exact.bytes, requestBytes);
+  assert.equal(exact.bytes, Buffer.byteLength(JSON.stringify(modelEvidenceEnvelope(exact.projections, exact.omitted)), "utf8"));
+  const usage = assertBoundedModelEvidencePayload([{ type: "function_call_output", output: JSON.stringify(oneEnvelope) }], { item_bytes: itemBytes, request_bytes: requestBytes });
+  assert.equal(usage.projected_bytes, requestBytes);
+  for (const budget of [
+    { item_bytes: itemBytes - 1, request_bytes: requestBytes },
+    { item_bytes: itemBytes, request_bytes: requestBytes - 1 }
+  ]) {
+    const blocked = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection], budget });
+    assert.equal(blocked.projections.length, 0);
+    assert.equal(blocked.omitted, 1);
+    assert.equal(blocked.bytes, Buffer.byteLength(JSON.stringify(modelEvidenceEnvelope([], 1)), "utf8"));
+  }
+  const pairBytes = Buffer.byteLength(JSON.stringify({ ...oneEnvelope, evidence_projections: [expected, expected] }), "utf8");
+  const pair = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection, stored.projection], budget: { item_bytes: itemBytes, request_bytes: pairBytes } });
+  assert.equal(pair.projections.length, 2);
+  assert.equal(pair.bytes, pairBytes);
+  const short = assembleBoundedEvidenceContext({ ...scope, projections: [stored.projection, stored.projection], budget: { item_bytes: itemBytes, request_bytes: pairBytes - 1 } });
+  assert.equal(short.projections.length, 1);
+  assert.equal(short.omitted, 1);
+  assert.equal(JSON.stringify(stored.projection), original);
+}));
+
+test("selector trim leaves errors, images, focused retrieval and omitted response behavior intact", () => isolated(() => {
+  const raw = { content: [{ type: "text", text: JSON.stringify({ status: "Ok", viewId: 41 }) },
+    { type: "image", mimeType: "image/png", data: "AA==" }] };
+  const stored = storeEvidence({ scope, source: "assignment_kernel_v2:revit_call_tool", trust_level: "authoritative_native", raw });
+  const context = { tool: "revit_call_tool", projections: [stored.projection], omitted: 0 };
+  const response = adaptMcpToolCallResultToDynamicResponse(raw, context);
+  assert.deepEqual(response.contentItems.filter(item => item.type === "inputImage"), [{ type: "inputImage", imageUrl: "data:image/png;base64,AA==" }]);
+  assert.equal("selector_forms" in JSON.parse((response.contentItems[0] as any).text).evidence_projections[0].retrieval, false);
+  const error = { isError: true, content: [{ type: "text", text: '{"error":"native pending","selector_forms":"literal error detail"}' }, raw.content[1]!] };
+  assert.deepEqual(adaptMcpToolCallResultToDynamicResponse(error, context), adaptMcpToolCallResultToDynamicResponse(error));
+  const selection = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection: { selector_forms: "actual source data" }, complete: false } };
+  const retrieved = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(selection) }] }, { ...context, tool: "operator_retrieve_evidence" });
+  assert.deepEqual(JSON.parse((retrieved.contentItems[0] as any).text), selection);
+  const omitted = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_call_tool", projections: [], omitted: 1 });
+  assert.deepEqual(JSON.parse((omitted.contentItems[0] as any).text), modelEvidenceEnvelope([], 1));
+  assert.deepEqual(omitted.contentItems.filter(item => item.type === "inputImage"), response.contentItems.filter(item => item.type === "inputImage"));
+  const legacy = { schema: "revit-operator.evidence-projection.v1", evidence_id: "ev1_legacy", byte_count: 10 } as any;
+  assert.deepEqual(modelEvidenceEnvelope([legacy]).evidence_projections, [legacy]);
+  assert.notEqual(modelEvidenceEnvelope([legacy]).evidence_projections[0], legacy);
 }));

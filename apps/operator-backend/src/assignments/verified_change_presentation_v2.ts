@@ -41,8 +41,10 @@ export function verifiedChangePresentationV2(snapshot:AssignmentSnapshotV2):stri
      if(Object.values(snapshot.operations).some(other=>other.operation_id!==applied.operation_id&&other.requested_effect==='apply'
       &&['applied','unknown'].includes(other.persistent_effect)&&Date.parse(other.result?.completed_at??other.opened_at)>Date.parse(rr.completed_at)
       &&(other.result?.affected_target_identities?.includes(`element_id:${id}`)||other.persistent_effect==='unknown')))continue;
-     const category=label(r.category),kind=category==='Ducts'?'duct segment':category==='Duct Fittings'?'duct fitting'
-      :category==='Mechanical Equipment'||category==='Air Terminals'?label(r.typeName)||label(r.familyName)||category.toLowerCase():'';
+     const category=label(r.category),kind=['Ducts','OST_DuctCurves'].includes(category)?'duct segment'
+      :['Duct Fittings','OST_DuctFitting'].includes(category)?'duct fitting'
+      :['Mechanical Equipment','Air Terminals','OST_MechanicalEquipment','OST_DuctTerminal'].includes(category)
+        ?label(r.typeName)||label(r.familyName)||category.toLowerCase():'';
      if(kind)labels.set(id,kind);
     }
    }

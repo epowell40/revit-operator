@@ -21,6 +21,16 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void VisibleGridExportProjectsNativeAxisInsteadOfOnlyThePresentationBox()
+        {
+            var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Selection", "ExportVisibleElementsHandler.cs");
+            AssertOrdered(source,
+                "var curve = e is Grid grid ? grid.Curve : (e.Location as LocationCurve)?.Curve;",
+                "start = BuildProjectedPoint(start, widthPx, heightPx, topLeft, topRight, bottomLeft)",
+                "end = BuildProjectedPoint(end, widthPx, heightPx, topLeft, topRight, bottomLeft)");
+        }
+
+        [Fact]
         public void FindElementsUsesSourceOrOwnerViewWhenModelSpaceGeometryIsUnavailable()
         {
             var source = ReadSharedSource(

@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:2ecd1a848590fb5772841e9c0ee3e03e0338e67cc3dedc552291780276e12233";
+        public const string InventoryHash = "sha256:13e1bf185dbe4474353a877397051a8e41d0446a3f8bb96fdcbf237b04550cf5";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -25,6 +25,7 @@ namespace RevitBridge.Common
             "POST /revit/close-active-model",
             "POST /revit/close-doc",
             "POST /revit/configure-schedule",
+            "POST /revit/connect-existing-mep-branch",
             "POST /revit/connect-mep-elements",
             "POST /revit/create-dimension",
             "POST /revit/create-drafting-view",
@@ -46,6 +47,7 @@ namespace RevitBridge.Common
             "POST /revit/duplicate-sheet",
             "POST /revit/duplicate-type-and-swap-instance",
             "POST /revit/duplicate-view",
+            "POST /revit/existing-conditions-mep-draft-workflow",
             "POST /revit/export-elements-xlsx",
             "POST /revit/export-image",
             "POST /revit/export-pdf",
@@ -62,11 +64,13 @@ namespace RevitBridge.Common
             "POST /revit/get-titleblock-info",
             "POST /revit/inspect-exported-files",
             "POST /revit/inspect-family-content",
+            "POST /revit/linked-room-boundaries",
             "POST /revit/list-element-types",
             "POST /revit/load-family",
             "POST /revit/load-family-doc",
             "POST /revit/mep-branch-network-workflow",
             "POST /revit/mep-route-workflow",
+            "POST /revit/model-health",
             "POST /revit/move-elements",
             "POST /revit/native-api-call",
             "POST /revit/native-api-catalog",
@@ -108,11 +112,13 @@ namespace RevitBridge.Common
             "POST /revit/transaction-validate",
             "POST /revit/update-parameter-by-query",
             "POST /revit/update-schedule-cell",
+            "POST /revit/view-owned-detailing",
             "POST /revit/views",
             "POST /revit/visibility",
         };
         private static readonly HashSet<string> Internal = new HashSet<string>(StringComparer.Ordinal)
         {
+            "POST /revit/computer-use-guard",
             "POST /revit/dynamic-runtime/annotation-result-apply-v1",
             "POST /revit/dynamic-runtime/annotation-result-authorize-v1",
             "POST /revit/dynamic-runtime/annotation-result-preview-v1",

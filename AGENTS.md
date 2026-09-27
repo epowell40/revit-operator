@@ -32,6 +32,12 @@ Follow `docs/LOCAL_DEVELOPMENT_WORKFLOW.md`.
 - Build, restart, and test against the local backend at
   `http://127.0.0.1:7007` without pushing every experiment.
 - Do not create a PR per candidate or use GitHub Actions as the inner test loop.
+- Use the explicitly opted-in disposable experiment lane in the runbook for
+  local learning: focused changed tests and the mandatory safety smoke precede
+  each experiment; complete historical frontiers run at coherent batch
+  checkpoints. Keep exact source/installed provenance and verify the exact
+  loaded Architectural sibling in every linked-model fixture. This lane never
+  qualifies a release or relaxes native authorization or unknown-effect handling.
 - After the coherent batch passes applicable deterministic and real Revit UI
   validation, make one consolidated push and use one PR/CI checkpoint.
 - Hosted deployment and EC2 iteration belong in the private integration repo;

@@ -791,6 +791,11 @@ foreach ($consumer in $nativeEvidenceConsumers) {
 # The registry is the reviewed inventory of authoritative effect/outcome fields.
 # These declaration checks make introducing another mutable owner an explicit
 # architecture change instead of an unnoticed TypeScript addition.
+$operationScopeSource = Get-Content -Raw -LiteralPath (Join-Path $domainRoot "operation_scope.ts")
+if ($operationScopeSource -notmatch 'interface\s+InterpretedOperationScopeV1\s+extends\s+Pick<AssignmentSpecV2,\s*"requested_effect">' -or
+    $operationScopeSource -notmatch 'bound\.scope\.requested_effect\s*===\s*spec\.requested_effect') {
+  $violations.Add("Interpreted operation scope must derive and remain bound to the canonical AssignmentSpecV2 requested effect")
+}
 $requestedEffectDeclarations = @($domainFiles | ForEach-Object {
   $relative = $_.FullName.Substring($domainRoot.Length).TrimStart('\', '/').Replace('\', '/')
   $count = @([regex]::Matches((Get-Content -Raw -LiteralPath $_.FullName), '(?m)^\s*requested_effect\??\s*:')).Count

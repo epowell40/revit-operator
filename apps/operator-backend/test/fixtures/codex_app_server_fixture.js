@@ -3,7 +3,7 @@ import readline from "node:readline";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
-  process.stdout.write("codex-cli 0.149.0\n");
+  process.stdout.write("codex-cli 0.157.0\n");
   process.exit(0);
 }
 if (args[0] !== "app-server") throw new Error(`Unexpected fixture command: ${args.join(" ")}`);
@@ -49,7 +49,7 @@ input.on("line", line => {
       return;
     }
     initialized = true;
-    respond({ userAgent: "fixture/0.149.0", codexHome: process.cwd(), platformFamily: "windows", platformOs: "windows" });
+    respond({ userAgent: "fixture/0.157.0", codexHome: process.cwd(), platformFamily: "windows", platformOs: "windows" });
     return;
   }
   if (!initialized) throw new Error(`Method ${message.method} arrived before initialize.`);
@@ -81,6 +81,12 @@ input.on("line", line => {
       return;
     }
     respond({ turn: { id: turnId } });
+    if (process.env.CODEX_FIXTURE_PROGRESS_TURN === "1") {
+      setTimeout(() => notify("item/started", { threadId: message.params.threadId, turnId: "another-turn", item: { id: "wrong", type: "agentMessage" } }), 35);
+      setTimeout(() => notify("item/started", { threadId: message.params.threadId, turnId, item: { id: "right", type: "agentMessage" } }), 70);
+      setTimeout(() => notify("turn/completed", { threadId: message.params.threadId, turn: { id: turnId, status: "completed", error: null } }), 140);
+      return;
+    }
     const shouldWaitForInterrupt = JSON.stringify(message.params?.input ?? []).includes("interrupt-me");
     if (shouldWaitForInterrupt) {
       pendingToolTimers.set(turnId, setTimeout(() => {

@@ -2,6 +2,34 @@
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
     {
+      "id": "c103_registered_stage_explicit_rollback",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": { "dryRun": true },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c103_registered_stage_commit",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": { "dryRun": false },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c103_registered_stage_ambiguous_intent_fails_closed",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c68_native_api_single_call_read_with_dry_run",
+      "method": "POST",
+      "path": "/revit/native-api-call",
+      "body": {"memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)", "target": "doc", "args": [1365188], "dryRun": true},
+      "expected_effect": "read"
+    },
+    {
       "id": "safe_method_is_read",
       "method": "GET",
       "path": "/revit/unclassified-future-command",
@@ -13,6 +41,13 @@
       "method": "POST",
       "path": "/revit/list-schedules",
       "body": { "action": "list", "max": 200 },
+      "expected_effect": "read"
+    },
+    {
+      "id": "view_owned_detailing_two_view_inventory_is_read",
+      "method": "POST",
+      "path": "/revit/view-owned-detailing",
+      "body": { "viewIds": [11, 12], "limit": 1000 },
       "expected_effect": "read"
     },
     {
@@ -67,6 +102,34 @@
       "method": "POST",
       "path": "/revit/replace-text-note",
       "body": { "apply": false },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c60_route_workflow_native_rollback_preview",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": false },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c60_branch_network_native_rollback_preview",
+      "method": "POST",
+      "path": "/revit/mep-branch-network-workflow",
+      "body": { "kind": "duct", "apply": false },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c60_route_workflow_actual_apply",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": true },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c60_route_workflow_conflict_fails_closed",
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "body": { "kind": "duct", "apply": false, "commit": true },
       "expected_effect": "apply"
     },
     {

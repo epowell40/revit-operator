@@ -1,0 +1,109 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1363433,
+      "elementIds": [
+        1543492,
+        1543529,
+        1543495,
+        1543538,
+        1543573,
+        1543586,
+        1543453,
+        1543459,
+        1543468,
+        1543474
+      ],
+      "onlyUntagged": true,
+      "addLeader": false,
+      "orientation": "horizontal",
+      "offsetX": 1.5,
+      "offsetY": 1.5,
+      "dryRun": true
+    }
+  },
+  "raw_result": {
+    "status": "Dry Run",
+    "dryRun": true,
+    "viewId": 1363433,
+    "targetCount": 10,
+    "plannedToTag": 10,
+    "skippedAlreadyTagged": 0,
+    "unresolvedCategories": [],
+    "mappingWarnings": [],
+    "tagFamily": null,
+    "tagVisibility": {
+      "Status": "not_requested",
+      "Requested": false,
+      "CategoryId": null,
+      "CategoryName": null,
+      "OwnerViewId": null,
+      "OwnerViewName": null,
+      "OwnerKind": null,
+      "WasHidden": false,
+      "IsHidden": false,
+      "Changed": false,
+      "Error": null
+    },
+    "defaultTagTypeId": null,
+    "placementMode": "offset",
+    "placementProfile": null,
+    "geometry": null,
+    "targets": [
+      {
+        "elementId": 1543492,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543529,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543495,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543538,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543573,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543586,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543453,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543459,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543468,
+        "category": "Ducts",
+        "alreadyTagged": false
+      },
+      {
+        "elementId": 1543474,
+        "category": "Ducts",
+        "alreadyTagged": false
+      }
+    ]
+  },
+  "expected_historical_effect": "unknown",
+  "native_raw_sha256": "sha256:6f8fc4f263cfeb57565afc0ed0e62050c76f06debffd2bd91a9c30a8477858f0"
+}

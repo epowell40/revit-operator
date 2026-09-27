@@ -9,6 +9,17 @@ namespace RevitBridge.Common.Tests
     public sealed class NativeApiPolicyMethodBoundaryContractTests
     {
         [Fact]
+        public void SingleCallGatewayRejectsMutationAndFreezeRiskBeforeReflection()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(
+                gateway,
+                "public static object Invoke(UIApplication app, string memberId, string? target, JsonElement? args, bool dryRun)",
+                "if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)",
+                "raw = InvokeReflectedMember(descriptor, invokeTarget, values);");
+        }
+
+        [Fact]
         public void HandlerUsesMethodTruthBeforeInspectingAnAdversarialGetBody()
         {
             var handler = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Handlers", "NativeApiHandlers.cs");

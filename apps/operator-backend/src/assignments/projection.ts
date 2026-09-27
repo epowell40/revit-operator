@@ -311,6 +311,20 @@ function goalSteps(workItems: GoalWorkItem[]): AssignmentProjection["plan"]["ste
   }));
 }
 
+function canonicalWorkPlanSteps(snapshot: AssignmentSnapshotV2 | null): AssignmentProjection["plan"]["steps"] | null {
+  const items = snapshot?.work_plan?.items;
+  if (!items?.length) return null;
+  return items.map(item => ({
+    id: item.item_id,
+    title: item.description,
+    status: item.completed_at ? "complete" : item.operation_ids.length ? "in_progress" : "pending",
+    depends_on: [...(item.depends_on ?? [])],
+    blocker: null,
+    result_summary: null,
+    evidence_refs: []
+  }));
+}
+
 function progressFromSteps(steps: AssignmentProjection["plan"]["steps"]): AssignmentProjection["progress"] {
   if (steps.length === 0) return {
     determinate: false, total: null, completed: null, active: null, pending: null,
@@ -412,7 +426,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
   const kernelSnapshot = kernelRecord.events.length > 0
     ? new AssignmentJournalV2(kernelRecord.events).snapshot()
     : null;
-  const steps = goalSteps(goal.work_items);
+  const steps = canonicalWorkPlanSteps(kernelSnapshot) ?? goalSteps(goal.work_items);
   const evidence = goalEvidence(goal);
   const workBudget = object(goal.work_budget);
   const controlPlaneLog = normalizeAssignmentControlPlane(goal.assignment_control_plane);

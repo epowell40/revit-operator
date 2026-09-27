@@ -15,6 +15,8 @@ namespace RevitBridge.Operator
         public const string SearchVersion = "operator.tool_search.v1";
         public const string DocVersion = "operator.tool_doc.v1";
         public const string ExamplesVersion = "operator.tool_examples.v1";
+        private const string NativeArgumentContract = "Arguments are positional in the reflected signature. Use an object {\"$ref\":\"earlierOperationId\"} to pass an earlier operation's typed result; a string such as \"$doc\" is a literal, not an argument reference. To pass the active Document, first get_property with target:\"uidoc\", property:\"Document\", then use {\"$ref\":\"thatOperationId\"} in its argument position. Omitting a leading context argument does not shift later arguments. References exist only within this request.";
+        private const string NativeGeometryArgumentContract = "For graph_allowed native geometry signatures, collection arguments may contain typed prior-result references, for example args:[[{$ref:'edge_a'},{$ref:'edge_b'}]]. Geometry references are limited to Curve, CurveLoop, Solid and GeometryObject; supported detached factories are Line.CreateBound, three-XYZ Arc.Create, CurveLoop.Create and three-argument CreateExtrusionGeometry. DirectShape.CreateElement/SetShape are document mutations inside this graph's transaction. Collections are bounded to 64 items and depth 4, with a shared 256-node argument budget. See the one-foot generic 3D placeholder example; these graph-only signatures do not work through native-api-call.";
 
         private static readonly object _lock = new object();
         private static JsonDocument? _examplesDoc;
@@ -423,6 +425,7 @@ namespace RevitBridge.Operator
                 { "/revit/get-family-file-path", typeof(RevitBridge.Logic.Handlers.GetFamilyFilePathHandler.Params) },
                 { "/revit/open-family-doc", typeof(RevitBridge.Logic.Handlers.OpenFamilyDocHandler.Params) },
                 { "/revit/find-text-notes", typeof(RevitBridge.Logic.Handlers.FindTextNotesHandler.Params) },
+                { "/revit/view-owned-detailing", typeof(RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler.Request) },
                 { "/revit/replace-text-note", typeof(RevitBridge.Logic.Handlers.ReplaceTextNoteHandler.Params) },
                 { "/revit/save-family-doc", typeof(RevitBridge.Logic.Handlers.SaveFamilyDocHandler.Params) },
                 { "/revit/load-family-doc", typeof(RevitBridge.Logic.Handlers.LoadFamilyDocHandler.Params) },
@@ -452,6 +455,13 @@ namespace RevitBridge.Operator
 
                 if (string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
                     return OperatorDuplicateSheetContract.RequestSchema();
+
+                if (p == "/revit/place-families")
+                {
+                    var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    FamilyPlacementContract.ApplyRequestSchema(schema);
+                    return schema;
+                }
 
                 if (p == "/revit/move-elements")
                 {
@@ -616,7 +626,7 @@ namespace RevitBridge.Operator
                             { "op", Str(new[] { "construct", "call", "get_property" }) },
                             { "memberId", Str() },
                             { "target", Str() },
-                            { "args", Arr(new Dictionary<string, object>()) },
+                            { "args", new Dictionary<string, object> { { "type", "array" }, { "items", new Dictionary<string, object>() }, { "description", NativeArgumentContract } } },
                             { "property", Str() }
                         },
                         required: new[] { "id", "op" },
@@ -642,7 +652,7 @@ namespace RevitBridge.Operator
                             { "op", Str(new[] { "construct", "call", "get_property" }) },
                             { "memberId", Str() },
                             { "target", Str() },
-                            { "args", Arr(new Dictionary<string, object>()) },
+                            { "args", new Dictionary<string, object> { { "type", "array" }, { "items", new Dictionary<string, object>() }, { "description", NativeArgumentContract + " " + NativeGeometryArgumentContract } } },
                             { "property", Str() }
                         },
                         required: new[] { "id", "op" },
@@ -1180,6 +1190,11 @@ namespace RevitBridge.Operator
                 {
                     // null | object
                     var core = SchemaFromType(RequestTypesByPath[p], depth: 0);
+                    if (string.Equals(p, "/revit/export-image", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var properties = (Dictionary<string, object>)((Dictionary<string, object>)core)["properties"];
+                        properties["exportMode"] = OneOf(Null(), OperatorViewImageContract.ExportModeSchema());
+                    }
                     return OneOf(Null(), core);
                 }
 
@@ -1237,8 +1252,8 @@ namespace RevitBridge.Operator
                             { "docId", Str(maxLength: 64) },
                             { "familyDocumentId", Str(maxLength: 64) },
                             { "elementId", Int() },
-                            { "newText", Str(minLength: 1, maxLength: 200) },
-                            { "expectedOldText", Str(maxLength: 200) },
+                            { "newText", Str(minLength: 1, maxLength: 16_384) },
+                            { "expectedOldText", Str(maxLength: 16_384) },
                             { "dryRun", Bool() },
                             { "apply", Bool() },
                             { "confirm", Str(maxLength: 120) }
@@ -1332,6 +1347,13 @@ namespace RevitBridge.Operator
                 }
 
                 // Enumerations + units contracts for common tokens.
+                if (p == "/revit/native-api-ops" || p == "/revit/native-api-mutation-ops")
+                {
+                    notes.Add(NativeArgumentContract);
+                    notes.Add("A target is uiapp, uidoc, doc, view, or $earlierOperationId. Static calls must omit target. Argument references use an object with $ref, whereas target references use a string starting with $. The referenced runtime type must match the parameter type; an Element result can also supply an ElementId parameter.");
+                    commonErrors.Add("Unsupported parameter type: Autodesk.Revit.DB.Document: supply a typed Document result with an argument $ref; neither a bare $doc string nor omitting the first argument binds that position.");
+                    if (p == "/revit/native-api-mutation-ops") notes.Add(NativeGeometryArgumentContract);
+                }
                 if (p == "/revit/measure-gap" || p == "/revit/align-elements")
                 {
                     enumMap["axis"] = new[] { "viewX", "viewY" };
@@ -1563,7 +1585,7 @@ namespace RevitBridge.Operator
                     enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "points[*].x", "points[*].y", "points[*].z", "points[*].xyz", "defaultOffsetFt", "ceilingOffsetFt", "totalLengthFt" } });
                     unitNotes.Add(new { unit = "pixels", fields = new[] { "points[*].xPx", "points[*].yPx" } });
-                    notes.Add("Always dry-run first. If size is omitted, default policy uses 8x8 duct or 1 inch pipe and returns a warning.");
+                    notes.Add("A separate preview is optional. When the user has authorized drafting, use dryRun:false to apply directly; honor any explicit read-only or dry-run request. Native authorization, validation, transaction rollback, and connector verification still apply. If size is omitted, default policy uses 8x8 duct or 1 inch pipe and returns a warning.");
                     notes.Add("Use segmentSizes with one size per segment to draft multi-section routes; internal joints with differing adjacent sizes expect transition fittings.");
                     notes.Add("Internal route joints attempt Revit NewTransitionFitting for size changes, otherwise NewElbowFitting, then fall back to Connector.ConnectTo; fitting ids are returned when created.");
                     notes.Add("Connector verification is conservative: created standalone routes normally report open endpoint connectors until connected to equipment or existing runs.");
@@ -1580,7 +1602,7 @@ namespace RevitBridge.Operator
                     notes.Add("A duct/pipe non-connector tap path is available with connectionMode:'tap': the tool leaves the straight main intact, creates branch segments, requires Revit NewTakeoffFitting, audits continuity, and exports a focused capture.");
                     notes.Add("For named tap/takeoff requests, pass takeoffFamilyName and/or takeoffTypeName. Dry-run returns selected.takeoffRoutingPreference candidates and tapApplyPrecheck; pipe tap apply requires an explicit takeoff/tap routing preference, while ordinary pipe junction preferences belong on split tee. Apply reports connectionAttempts[*].fitting/requestedTakeoff/routingPreference and rolls back on takeoff_type_mismatch.");
                     notes.Add("Use branchSegmentSizes with one size per branch segment to draft reducer/transition branches; dry-run returns branchPlan.jointPlan and apply prefers transition fittings where adjacent branch sizes differ.");
-                    notes.Add("Run dry-run first and inspect splitPlan, selected, connectionAttempts, connectedNetworkAudit, and focusedCapture. Unsupported Revit takeoff/fitting cases block and roll back instead of leaving disconnected geometry.");
+                    notes.Add("A separate dry-run is optional; use dryRun:false for authorized drafting and preserve explicit read-only or dry-run requests. Inspect splitPlan, selected, connectionAttempts, connectedNetworkAudit, and focusedCapture when returned. Unsupported Revit takeoff/fitting cases block and roll back instead of leaving disconnected geometry.");
                 }
 
                 if (p == "/revit/mep-route-workflow")
@@ -1792,6 +1814,9 @@ namespace RevitBridge.Operator
                     return t.IsArray || IsListLike(t, out _)
                         ? Arr(new Dictionary<string, object>())
                         : Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
+
+                if (OperatorJsonWireSchema.TryCreateDictionary(t, valueType => SchemaFromType(valueType, depth + 1), out var dictionarySchema))
+                    return dictionarySchema!;
 
                 if (t.IsArray)
                 {

@@ -14,6 +14,7 @@ import {
 } from "./capabilities/sidecar_agent_profile.js";
 import { assertBoundedModelEvidencePayload, type ModelEvidencePayloadUsage } from "./evidence/model_context_budget.js";
 import { appendEvidenceTelemetry } from "./evidence/evidence_store.js";
+import { localExecutorCapability, type LocalExecutorCapabilityV1 } from "./assignments/local_advisory_policy.js";
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -61,13 +62,15 @@ export function getDesktopComputerConfig(): {
   model: string;
   reasoning_effort: string;
   sidecar_agent_profile: SidecarAgentProfileState;
+  local_executor: LocalExecutorCapabilityV1 | null;
 } {
   return {
     available: !!resolveOpenAiApiKey(),
     provider: "backend",
     model: resolveDesktopComputerModel(),
     reasoning_effort: resolveDesktopComputerReasoningEffort(),
-    sidecar_agent_profile: getSidecarAgentProfileState()
+    sidecar_agent_profile: getSidecarAgentProfileState(),
+    local_executor: localExecutorCapability()
   };
 }
 

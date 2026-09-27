@@ -1,0 +1,93 @@
+{
+  "inputFingerprintSha256": "d37c3eb8d3256d82574f0cc28a992e772c5c395861ae91fc7d9be2e6a00709bc",
+  "provisionalObservationIds": [
+    "sa-next"
+  ],
+  "operations": [
+    {
+      "action_key": "registered-route:sa-next",
+      "observation_ids": [
+        "sa-next"
+      ],
+      "path": "/revit/create-mep-route",
+      "depends_on": [],
+      "apply_body": {
+        "kind": "duct",
+        "points": [
+          {
+            "x": -46.62,
+            "y": -10.55,
+            "z": 40.16806102362584
+          },
+          {
+            "x": -46.62,
+            "y": -26.741916498235952,
+            "z": 40.16806102362584
+          },
+          {
+            "x": -41.697638440354766,
+            "y": -26.741916504425063,
+            "z": 40.16806102362584
+          },
+          {
+            "x": -41.697638442389206,
+            "y": -28.41824333224008,
+            "z": 40.16806102362584
+          }
+        ],
+        "viewId": 1363433,
+        "levelName": "L4",
+        "systemType": "SupplyAir",
+        "sizePolicy": "explicit_required",
+        "elevationPolicy": "explicit_required",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "connectToExisting": true,
+        "requireExistingEndpointConnections": false,
+        "requiredExistingEndpoint": "start",
+        "expectedExistingStartOwnerId": 1543123,
+        "externalConnectionToleranceFt": 0.01,
+        "verify": true,
+        "ductShape": "round",
+        "ductSize": "4\"",
+        "diameter": "4\"",
+        "ductTypeId": 139186
+      },
+      "expected_created_min": 1,
+      "expected_created_max": 5,
+      "execution_mode": "single_action",
+      "continuation_endpoints": [
+        {
+          "endpoint_key": "registered-route:sa-next:sa-next:far",
+          "output": "route_end",
+          "model_point": {
+            "x": -41.697638442389206,
+            "y": -28.41824333224008,
+            "z": 40.16806102362584
+          },
+          "direction_xyz": [
+            -1.213636578487907e-9,
+            -1,
+            0
+          ],
+          "source_observation_ids": [
+            "sa-next"
+          ],
+          "system_classification": "SupplyAir",
+          "size": "4\"",
+          "state": "unresolved_continuation"
+        }
+      ]
+    }
+  ],
+  "dryRun": true,
+  "verify": true,
+  "maximumCreatedElements": 5,
+  "targetViewId": 1363433,
+  "applyTargetViewPhase": true,
+  "requireAllCreatedElementsVisibleInTargetView": true,
+  "benchmarkCredit": false,
+  "authorizationBasis": "explicit_unscored_user_direction",
+  "stageKey": "operation:registered-route:sa-next",
+  "priorActionOutputs": []
+}

@@ -6,6 +6,7 @@ const READ_ONLY_PATHS = new Set([
   "/revit/state-snapshot",
   "/revit/computer-use-observe",
   "/revit/views",
+  "/revit/view-owned-detailing",
   "/revit/capabilities",
   "/revit/tool-registry",
   "/revit/tool-search",
@@ -13,6 +14,7 @@ const READ_ONLY_PATHS = new Set([
   "/revit/tool-examples",
   "/revit/native-api-catalog",
   "/revit/native-api-search",
+  "/revit/native-api-call",
   "/revit/native-api-ops",
   "/revit/self-test",
   "/revit/regenerate",
@@ -145,6 +147,19 @@ function genericConditionalIntentEffect(row) {
 }
 
 function explicitConditionalActionPathEffect(normalized, row) {
+  if (normalized === "/revit/existing-conditions-mep-draft-workflow") {
+    // This native wrapper rolls back only when dryRun is explicitly true.
+    // Missing or conflicting intent must reserve apply authority.
+    return genericConditionalIntentEffect(row) === "apply"
+      ? "apply"
+      : row.dryRun === true ? "preview" : "apply";
+  }
+  if (normalized === "/revit/mep-route-workflow" || normalized === "/revit/mep-branch-network-workflow") {
+    // These native workflows use apply=false for a rolled-back transaction.
+    // A generic apply=false flag is not sufficient for other handlers.
+    if (genericConditionalIntentEffect(row) === "apply") return "apply";
+    return row.apply === false ? "preview" : "apply";
+  }
   if (normalized === "/revit/move-elements") {
     // A rollback-only move preview and a committed translation are distinct
     // policy effects. Preview certification must never authorize apply.

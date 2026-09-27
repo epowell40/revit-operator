@@ -18,8 +18,12 @@
     }
   },
   "files": [
+    "input-schema-gap.js",
+    "input-schema-gap.d.ts",
     "native-artifact.js",
     "native-artifact.d.ts",
+    "native-completion.js",
+    "native-completion.d.ts",
     "completion-outbox.js",
     "completion-outbox.d.ts",
     "index.js",

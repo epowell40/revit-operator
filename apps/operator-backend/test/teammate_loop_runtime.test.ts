@@ -39,6 +39,20 @@ test("whole-area created HRU summary uses the typed ids selector before MCP alia
   } finally { endTeammateLoopOwner(lease); }
 });
 
+test("paired native view-owned-detailing read retains the created view as a principal target", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Read the source and copied plans without changing anything."));
+  try {
+    const gate = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, 1542984], limit: 2000 }
+    } });
+    assert.equal(gate.allowed, true, gate.message);
+    assert.equal(gate.call?.effect, "read");
+    assert(gate.call?.principal_target_tokens.includes("id:1542984"));
+  } finally { endTeammateLoopOwner(lease); }
+});
+
 test('exact composite observation aliases admit reads without inventing routes or permitting lookalike writes', () => {
   for(const tool of ['revit_observe_model','revit_read_move_targets_certified','revit_observe_model_unchecked','revit_observe_anything']){
     __testOnlyResetTeammateLoopState();
@@ -69,6 +83,60 @@ test("registered PDF interpretation and frame registration are read-only teammat
     const unknown = guardTeammateMcpCall(owner, { tool: "operator_apply_existing_conditions_interpretation", arguments: {} });
     assert.equal(unknown.allowed, false);
   } finally { endTeammateLoopOwner(lease); }
+});
+
+test("registered PDF handoff and connected continuation planning remain read-only teammate actions", () => {
+  for (const tool of ["operator_resume_existing_conditions_registration", "operator_plan_existing_conditions_duct_continuation"]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Resume the registered PDF and plan one duct connection without changing the model."));
+    try {
+      const gate = guardTeammateMcpCall(owner, { tool, arguments: { registrationEvidenceRefId: "ev1-example", connectorObservationId: "obsv2-example" } });
+      assert.equal(gate.allowed, true, `${tool}: ${gate.message}`);
+      assert.equal(gate.call?.effect, "read");
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
+test("an attached PDF cannot be turned into an unregistered generic MEP route write", () => {
+  for (const route of ["/revit/mep-route-workflow", "/revit/create-mep-route", "/revit/create-duct", "/revit/mep-branch-network-workflow"]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const req = request("Use the attached record drawing to reconstruct the duct in the open model. Dry-run, then create it.");
+    req.user_attachments = [{ id: "source-pdf", filename: "M104-source.pdf", mime: "application/pdf" }];
+    const lease = beginTeammateLoopOwner(owner, req);
+    try {
+      const preview = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: route, body: { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: false, dryRun: true }
+      } });
+      assert.equal(preview.allowed, true, route);
+      const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: route, body: { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: true, dryRun: false }
+      } });
+      assert.equal(apply.allowed, false, route);
+      assert.match(apply.message ?? "", /pdf route requires registered source workflow/i);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});
+
+test("the PDF route boundary preserves ordinary modeled routes and the registered drafting workflow", () => {
+  for (const attached of [false, true]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const req = request(attached
+      ? "Reconstruct the source-supported duct from this record PDF in the open model."
+      : "Draw a 10-foot supply duct in the open model, then verify it.");
+    if (attached) req.user_attachments = [{ id: "source-pdf", filename: "M104-source.pdf", mime: "application/pdf" }];
+    const lease = beginTeammateLoopOwner(owner, req);
+    try {
+      const path = attached ? "/revit/existing-conditions-mep-draft-workflow" : "/revit/mep-route-workflow";
+      const gate = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path, body: attached ? { apply: true, stagedHandoffId: "registered-source" }
+          : { kind: "duct", points: [{ xyz: [0, 0, 8] }, { xyz: [0, 10, 8] }], apply: true }
+      } });
+      assert.equal(gate.allowed, true, `${path}: ${gate.message}`);
+    } finally { endTeammateLoopOwner(lease); }
+  }
 });
 
 test("inspection of an existing view's name and scale does not authorize creation", () => {
@@ -1117,6 +1185,85 @@ test("structured request-validation failures do not consume the mutation stage",
     });
     assert.equal(corrected.allowed, true);
     assert.equal(corrected.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("duplicate view remains unverified until a native read names the new target", () => {
+  for (const observed of [
+    { views: [{ id: 1363433, name: "M-COORDINATION COPY" }] },
+    { views: [{ id: 1542917, name: "WRONG COPY" }] },
+    { request: { viewIds: [1542917], name: "M-COORDINATION COPY" }, views: [] }
+  ]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Duplicate the source plan including annotations as M-COORDINATION COPY."));
+    try {
+      const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: "/revit/duplicate-view",
+        body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true }
+      } });
+      assert.equal(apply.allowed, true);
+      recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({
+        status: "Success", verified: true, viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY"
+      }) }] });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+      const read = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: "/revit/views", body: { viewIds: [1542917] }
+      } });
+      assert.equal(read.allowed, true);
+      recordTeammateMcpResult(owner, read, { content: [{ type: "text", text: JSON.stringify(observed) }] });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Duplicate the source plan including annotations as M-COORDINATION COPY."));
+  try {
+    const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/duplicate-view",
+      body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true }
+    } });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({
+      status: "Success", verified: true, viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY"
+    }) }] });
+    const read = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/view-owned-detailing", body: { viewIds: [1363433, 1542917] }
+    } });
+    assert.equal(read.allowed, true);
+    const owned = (id: number, elementId: number) => ({
+      view: { id, name: id === 1363433 ? "L4" : "M-COORDINATION COPY", viewType: "FloorPlan" },
+      totalOwnedCount: 1, returnedCount: 1, annotationCount: 1, truncated: false,
+      unreadableCount: 0, unclassifiedCount: 0, incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+      items: [{ elementId, ownerViewId: id, isAnnotation: true,
+        semanticSignature: `sha256:${"a".repeat(64)}`, semanticSignatureComplete: true }]
+    });
+    recordTeammateMcpResult(owner, read, { content: [{ type: "text", text: JSON.stringify({
+      schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view", requestedViewIds: [1363433, 1542917], viewsComplete: true,
+      views: [owned(1363433, 11), owned(1542917, 22)]
+    }) }] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally { endTeammateLoopOwner(lease); }
+});
+
+test("C60 rolled-back MEP route preview does not consume the one unverified apply slot", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Dry-run and then create one 8-inch duct in the disposable sample model."));
+  const route = { method: "POST", path: "/revit/mep-route-workflow", body: { kind: "duct", apply: false } };
+  try {
+    const preview = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: route });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ status: "DryRunReady", transaction: { status: "rolled_back", committed: false } }) }] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 0);
+
+    const apply = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: { ...route, body: { kind: "duct", apply: true } } });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -2521,7 +2668,7 @@ test("two sequential sheet renames finish after each write receives a fresh targ
   }
 });
 
-test("focused exported-view capture filename verifies a newly created view", () => {
+test("focused exported-view capture filename cannot verify a newly created view", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Duplicate L2 and create a view template from the duplicate."));
@@ -2532,7 +2679,7 @@ test("focused exported-view capture filename verifies a newly created view", () 
     });
     assert.equal(apply.allowed, true);
     recordTeammateMcpResult(owner, apply, {
-      content: [{ type: "text", text: JSON.stringify({ success: true, viewId: 1542985, name: "VISIBILITY TEST - L2" }) }]
+      content: [{ type: "text", text: JSON.stringify({ success: true, viewId: 1542985, sourceViewId: 9948, name: "VISIBILITY TEST - L2" }) }]
     });
 
     const capture = guardTeammateMcpCall(owner, {
@@ -2546,8 +2693,7 @@ test("focused exported-view capture filename verifies a newly created view", () 
     });
 
     const receipt = teammateLoopReceiptForOwner(owner);
-    assert.equal(receipt?.verified, true);
-    assert.equal(receipt?.stage, "report");
+    assert.equal(receipt?.verified, false);
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -2777,7 +2923,8 @@ test("continuation identity, transaction binding, and expected-value verificatio
 test("leading read-only qualification keeps PDF registration as inspection", () => {
   for (const prompt of [
     "Read-only qualification. Interpret the attached PDF, validate source marks, and register three matching landmarks to the model. Do not modify Revit.",
-    "Read-only validation: inspect the PDF and register its native view-frame evidence."
+    "Read-only validation: inspect the PDF and register its native view-frame evidence.",
+    "Read-only existing-conditions qualification. Inspect the PDF, register three landmarks, and report its evidence ID. Do not create, delete, or alter Revit elements."
   ]) {
     const contract = buildTeammateTurnContract(request(prompt));
     assert.equal(contract.turn_kind, "inspection", prompt);

@@ -8,6 +8,7 @@
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
+import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
   isExcludedEvidenceContainerV2,
   normalizedEvidenceKeyV2
@@ -40,6 +41,7 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  affected_target_identities?: readonly string[];
   native_artifact_receipt?: unknown;
   capability_id?: unknown;
   path?: unknown;
@@ -107,7 +109,7 @@ function sheetCreationOperation(path: string): boolean {
 }
 
 function viewCreationOperation(path: string): boolean {
-  return path === "/revit/create-view" || path === "/revit/create-drafting-view";
+  return path === "/revit/create-view" || path === "/revit/create-drafting-view" || path === "/revit/duplicate-view";
 }
 
 function exactViewRenameValues(value: unknown): readonly string[] {
@@ -176,6 +178,19 @@ function scheduleFilterSetToken(values: readonly string[]): string {
   return `schedule_filter_set:${JSON.stringify([...new Set(values)].sort())}`;
 }
 
+function scheduleSortGroupTokens(value: unknown, index: number): readonly string[] {
+  const row = objectValue(value);
+  const field = typeof row.field === "string" ? row.field.trim().toLowerCase() : "";
+  if (!field) return [];
+  const tokens = [`schedule_sort_group:${index}:field:${JSON.stringify(field)}`];
+  for (const property of ["ascending", "showHeader", "showFooter", "showBlankLine", "showFooterCount", "showFooterTitle"] as const) {
+    if (typeof row[property] === "boolean") {
+      tokens.push(`schedule_sort_group:${index}:${property}:${JSON.stringify(row[property])}`);
+    }
+  }
+  return tokens;
+}
+
 function scalarParameterRepresentations(value: unknown): readonly unknown[] {
   if (value === null || value === undefined) return [];
   if (typeof value !== "object" || Array.isArray(value)) return [value];
@@ -237,7 +252,12 @@ function namedParameterTokens(
           : Object.prototype.hasOwnProperty.call(row, "target_value") ? row.target_value
             : undefined;
   const tokens = new Set<string>();
-  for (const candidate of scalarParameterRepresentations(parameterValue)) {
+  const candidates = [
+    ...scalarParameterRepresentations(parameterValue),
+    ...(allowDetailName && row.storageType === "Double"
+      ? scalarParameterRepresentations(row.valueString) : [])
+  ];
+  for (const candidate of candidates) {
     if (includeGeneric) tokens.add(propertyValueToken(name, candidate));
     for (const target of targets) tokens.add(targetPropertyValueToken(target, name, candidate));
   }
@@ -269,6 +289,17 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
       for (const token of filterTokens) tokens.add(token);
       const complete = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitionscomplete")?.[1] === true;
       if (complete && filterTokens.length === filterEntry[1].length) tokens.add(scheduleFilterSetToken(filterTokens));
+    }
+    const sortGroupEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "sortgroupdefinitions");
+    if (sortGroupEntry && Array.isArray(sortGroupEntry[1])
+        && row.sortGroupDefinitionsComplete === true
+        && row.status === "Ok" && row.action === "detail"
+        && objectValue(row.schedule).id !== undefined
+        && sortGroupEntry[1].every((item, index) => objectValue(item).readable === true && objectValue(item).index === index)) {
+      tokens.add(`schedule_sort_group_count:${sortGroupEntry[1].length}`);
+      sortGroupEntry[1].forEach((item, index) => {
+        for (const token of scheduleSortGroupTokens(item, index)) tokens.add(token);
+      });
     }
     for (const [key, child] of entries) {
       const normalized = normalizedEvidenceKeyV2(key);
@@ -380,7 +411,8 @@ export function expectedPostconditionValuesV2(
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
     const sheetIdentity = sheetCreationOperation(operationPath)
       && depth === 1 && ["name", "newname", "number", "newnumber"].includes(normalizedChildKey);
-    const viewIdentity = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "name";
+    const viewIdentity = viewCreationOperation(operationPath) && depth === 1
+      && (normalizedChildKey === "name" || (operationPath === "/revit/duplicate-view" && normalizedChildKey === "newname"));
     const viewScale = viewCreationOperation(operationPath) && depth === 1 && normalizedChildKey === "scale";
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedChildKey);
     const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedChildKey);
@@ -414,6 +446,13 @@ export function expectedPostconditionValuesV2(
     }
     if (Array.isArray(filters) && scheduleInput.replaceFilters !== false) {
       values.add(scheduleFilterSetToken(filterTokens));
+    }
+    const sortGroup = scheduleInput.sortGroup;
+    if (Array.isArray(sortGroup)) {
+      if (scheduleInput.replaceSortGroup !== false) values.add(`schedule_sort_group_count:${sortGroup.length}`);
+      sortGroup.forEach((item, index) => {
+        for (const token of scheduleSortGroupTokens(item, index)) values.add(token);
+      });
     }
     for (const field of Array.isArray(scheduleInput.addFields) ? scheduleInput.addFields : []) {
       const token = scheduleFieldToken(field);
@@ -521,6 +560,18 @@ export function postconditionSatisfiedByPayloadV2(
   verificationPayload: unknown,
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
+  const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === "/revit/duplicate-view") {
+    const request = objectValue(semanticApplyInput(applyInput));
+    if (request.withDetailing === true) {
+      // The complete paired-inventory comparator checks native-created target
+      // identity, requested name, view type, completeness and every signature.
+      // Generic scalar traversal has a bounded token budget and can exhaust it
+      // on the source view before it reaches the copied view's name.
+      return duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), structuredValue(verificationPayload),
+        createdViewIdsFromIdentitiesV2(contract.affected_target_identities ?? []));
+    }
+  }
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(String(contract.path ?? objectValue(applyInput).path)))
     return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);

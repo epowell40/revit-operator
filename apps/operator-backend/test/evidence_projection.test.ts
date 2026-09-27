@@ -29,6 +29,161 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+// Synthetic native producer shape: no project/model evidence belongs here.
+function connectorFixture() {
+  const ref = (ownerId: number, connectorId: number): any => ({ ownerId, connectorId, connectorIdBasis: "revit_native_connector_id", connectorType: "End", domain: "DomainHvac", isMepSystem: false, isPhysicalElement: true, isConnectedTo: true });
+  const connector = (connectorId: number, peer?: any): any => ({ connectorId, connectorIdBasis: "revit_native_connector_id", connectorType: "End", domain: "DomainHvac", origin: [0, 0, 0], size: { kind: "round", diameterFt: 1 }, systemClassification: "SupplyAir", isConnected: Boolean(peer), physicalConnectionCount: peer ? 1 : 0, isPhysicallyConnected: Boolean(peer), connectedTo: peer ? [peer] : [], physicalConnectedTo: peer ? [peer] : [] });
+  const row = (id: number, connectors: any[]): any => ({ id, ok: true, connectorScanTruncated: false, connectorCount: connectors.length, returnedConnectorCount: connectors.length, connectors });
+  const raw: any = { status: "Ok", filter: "allConnectors", requestedCount: 3, scannedElementCount: 3, failedElementCount: 0, matchedElementCount: 3, totalScannedConnectorCount: 5, physicallyConnectedConnectorCount: 2, openPhysicalConnectorCount: 3, connectorScanTruncatedElementCount: 0,
+    results: [row(10, [connector(0, ref(20, 1)), connector(1)]), row(20, [connector(1, ref(10, 0)), { ...connector(2), domain: "DomainElectrical" }]), row(30, [connector(0)])] };
+  return { raw, ref, connector, row };
+}
+
+test("failed native reference checks remain unresolved even when another physical peer is known", () => withWorkspace(() => {
+  // Generic producer-shaped fixture: IsConnectedTo throws, so native emits
+  // null and derives isPhysicalElement=false; it has not proved nonphysical.
+  const raw = JSON.parse(fs.readFileSync("test/fixtures/connector-reference-check-failure.json", "utf8"));
+  const graph = storeEvidence({ scope, source: "native_connectors_reference_failure", trust_level: "authoritative_native", raw }).projection.connector_graph!;
+  assert.deepEqual(graph.lists.reciprocal_edges, [[10, 0, 20, 0, 0]]);
+  assert.deepEqual(graph.lists.owner_components, [[10, 20], [30]]);
+  assert.deepEqual(graph.lists.excluded_references, []);
+  assert.deepEqual(graph.lists.unresolved_references, [
+    [10, 0, 30, 0, "native_connection_check_unknown"],
+    [30, 0, 10, 0, "native_connection_check_unknown"],
+    [30, 0, null, null, "connection_state_without_physical_peer"]
+  ]);
+  assert.equal(graph.coverage.native_reference_scan_complete, null);
+}));
+
+test("known logical system and disconnected refs remain excluded ahead of unknown connection checks", () => withWorkspace(() => {
+  for (const [kind, expected] of [["logical", "logical"], ["system", "mep_system"], ["disconnected", "nonphysical"], ["absent", "native_connection_check_unknown"]] as const) {
+    const raw = JSON.parse(fs.readFileSync("test/fixtures/connector-reference-check-failure.json", "utf8"));
+    for (const r of [raw.results[0].connectors[0].connectedTo[1], raw.results[2].connectors[0].connectedTo[0]]) {
+      if (kind === "logical") r.connectorType = "Logical";
+      if (kind === "system") r.isMepSystem = true;
+      if (kind === "disconnected") r.isConnectedTo = false;
+      if (kind === "absent") delete r.isConnectedTo;
+    }
+    const graph = storeEvidence({ scope, source: `native_reference_neighbor_${kind}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    const references = kind === "absent" ? graph.lists.unresolved_references.filter(r => r[2] !== null) : graph.lists.excluded_references;
+    assert.deepEqual(references, [[10, 0, 30, 0, expected], [30, 0, 10, 0, expected]]);
+    assert.equal(graph.totals.reciprocal_edges, 1);
+    assert.equal(graph.lists.unresolved_references.some(r => r[4] === "native_connection_check_unknown"), kind === "absent");
+  }
+}));
+
+test("native connector topology keeps exact reciprocal pairs, separate open domains and raw authority", () => withWorkspace(() => {
+  const { raw } = connectorFixture();
+  const stored = storeEvidence({ scope, source: "native_connectors", trust_level: "authoritative_native", raw });
+  const graph = stored.projection.connector_graph!;
+  assert(graph); assert.equal(graph.coverage.rows_complete, true);
+  assert.equal(graph.coverage.native_reference_scan_complete, null);
+  assert.equal(graph.coverage.whole_model_complete, null);
+  assert.deepEqual(graph.lists.reciprocal_edges, [[10, 0, 20, 1, 0]]);
+  assert.equal(graph.domains[0], "DomainHvac");
+  assert.deepEqual(graph.lists.owner_components, [[10, 20], [30]]);
+  assert.equal(graph.totals.open_hvac_endpoints, 2); assert.equal(graph.totals.open_electrical_endpoints, 1);
+  assert.match(graph.interpretation, /does not prove airflow/); assert.match(graph.interpretation, /not necessarily defects/);
+  assert.equal(stored.projection.key_facts["inventory.complete"], undefined);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString()), raw);
+  const retrieved = retrieveEvidence({ scope, evidence_id: stored.ref.evidence_id, purpose: "Inspect exact connector origin", item_range: { path: "results", start: 0, count: 1 } });
+  assert.deepEqual((retrieved.selection as any[])[0], raw.results[0]);
+}));
+
+test("one-sided, boundary, logical, system and unknown native references never invent joins", () => withWorkspace(() => {
+  for (const kind of ["one_sided", "boundary", "logical", "system", "unknown_id", "unknown_peer_id", "wrong_peer_id", "domain_mismatch", "reference_error", "contradictory_references"]) {
+    const { raw, ref } = connectorFixture();
+    const a = raw.results[0].connectors[0], b = raw.results[1].connectors[0];
+    if (kind === "one_sided") { b.physicalConnectedTo = []; b.connectedTo = []; b.physicalConnectionCount = 0; b.isPhysicallyConnected = false; }
+    if (kind === "boundary") { a.physicalConnectedTo = [ref(90, 2)]; a.connectedTo = a.physicalConnectedTo; }
+    if (kind === "logical") { a.connectorType = "Logical"; }
+    if (kind === "system") { a.physicalConnectedTo[0].isMepSystem = true; }
+    if (kind === "unknown_id") { a.connectorIdBasis = "enumeration_index_with_origin_guard_required"; }
+    if (kind === "unknown_peer_id") { a.physicalConnectedTo[0].connectorIdBasis = "unavailable"; }
+    if (kind === "wrong_peer_id") { a.physicalConnectedTo[0].connectorId = 9; }
+    if (kind === "domain_mismatch") { b.domain = "DomainElectrical"; }
+    if (kind === "reference_error") { a.physicalConnectedTo[0].isConnectedTo = null; }
+    if (kind === "contradictory_references") { a.connectedTo = []; }
+    const graph = storeEvidence({ scope, source: `connector_${kind}`, trust_level: "authoritative_readback", raw }).projection.connector_graph!;
+    assert(graph, kind); assert.equal(graph.totals.reciprocal_edges, 0, kind);
+    assert.deepEqual(graph.lists.owner_components, [[10], [20], [30]], kind);
+    if (kind === "boundary") { assert.equal(graph.totals.boundary_references, 1); assert.equal(graph.totals.open_hvac_endpoints, 2); }
+    if (kind === "logical") { assert.equal(graph.totals.logical_connectors, 1); assert(graph.totals.excluded_references > 0); }
+    if (kind === "one_sided") { assert.equal(graph.totals.one_sided_references, 1); assert(graph.totals.unresolved_references > 0); }
+  }
+}));
+
+test("partial requested rows do not turn an unscanned peer into a proven outside-scope boundary", () => withWorkspace(() => {
+  const { raw, ref } = connectorFixture();
+  raw.results.pop();
+  const c = raw.results[0].connectors[0]; c.physicalConnectedTo = [ref(90, 0)]; c.connectedTo = c.physicalConnectedTo;
+  const graph = storeEvidence({ scope, source: "connector_partial_boundary", trust_level: "authoritative_native", raw }).projection.connector_graph!;
+  assert.equal(graph.totals.boundary_references, 0);
+  assert(graph.lists.unresolved_references.some(r => r[4] === "peer_outside_returned_rows_requested_scope_unknown"));
+  assert.equal(graph.coverage.rows_complete, false);
+}));
+
+test("equipment ownership may join separately labeled physical domains without proving service continuity", () => withWorkspace(() => {
+  const { raw, ref } = connectorFixture();
+  const electrical = raw.results[1].connectors[1], peer = raw.results[2].connectors[0];
+  for (const [c, r] of [[electrical, ref(30, 0)], [peer, ref(20, 2)]]) {
+    c.domain = r.domain = "DomainElectrical";
+    c.isConnected = c.isPhysicallyConnected = true; c.physicalConnectionCount = 1;
+    c.connectedTo = c.physicalConnectedTo = [r];
+  }
+  raw.physicallyConnectedConnectorCount = 4; raw.openPhysicalConnectorCount = 1;
+  const graph = storeEvidence({ scope, source: "connector_mixed_equipment", trust_level: "authoritative_native", raw }).projection.connector_graph!;
+  assert.deepEqual(graph.lists.owner_components, [[10, 20, 30]]);
+  assert.deepEqual(graph.lists.reciprocal_edges.map(edge => graph.domains[edge[4]]), ["DomainHvac", "DomainElectrical"]);
+  assert.match(graph.interpretation, /including equipment ports, does not prove airflow\/service continuity/);
+}));
+
+test("missing duplicate failed truncated filtered and inconsistent connector rows stay explicit", () => withWorkspace(() => {
+  for (const kind of ["missing", "duplicate", "failed", "truncated", "filtered", "count", "duplicate_connector", "reference_error", "invalid_row"]) {
+    const { raw } = connectorFixture();
+    if (kind === "missing") raw.results.pop();
+    if (kind === "duplicate") raw.results[2] = structuredClone(raw.results[0]);
+    if (kind === "failed") { raw.results[2] = { id: 30, ok: false, error: "Cannot inspect" }; raw.failedElementCount = 1; }
+    if (kind === "truncated") { raw.results[0].connectorScanTruncated = true; raw.connectorScanTruncatedElementCount = 1; }
+    if (kind === "filtered") raw.filter = "openPhysicalConnectors";
+    if (kind === "count") raw.results[0].returnedConnectorCount = 100;
+    if (kind === "duplicate_connector") raw.results[0].connectors.push(structuredClone(raw.results[0].connectors[0]));
+    if (kind === "reference_error") raw.results[0].connectors[0].physicalConnectedTo = [null];
+    if (kind === "invalid_row") raw.results[0] = null;
+    const graph = storeEvidence({ scope, source: `connector_${kind}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    assert(graph, kind); assert.equal(graph.coverage.rows_complete, false, kind);
+    assert.equal(graph.coverage.native_reference_scan_complete, null);
+    if (kind === "duplicate") { assert.equal(graph.coverage.duplicate_owner_rows, 1); assert.equal(graph.totals.reciprocal_edges, 0); }
+    if (kind === "missing") assert.equal(graph.coverage.missing_owner_rows, 1);
+    if (kind === "duplicate_connector") assert.equal(graph.totals.reciprocal_edges, 0);
+    if (kind === "missing" || kind === "duplicate") assert.equal(graph.coverage.missing_requested_ids, "not_reported_by_native");
+  }
+}));
+
+test("connector projector recognizes only authoritative unambiguous native shape", () => withWorkspace(() => {
+  const { raw } = connectorFixture();
+  for (const trust_level of ["host_observed", "trusted_projection", "untrusted_caller"] as const) assert.equal(storeEvidence({ scope, source: "connector_untrusted", trust_level, raw }).projection.connector_graph, undefined);
+  for (const changed of [{ ...raw, status: "Error" }, { ...raw, requestedCount: undefined }, { content: [{ type: "text", text: JSON.stringify(raw) }], structuredContent: { ...raw, requestedCount: 4 } }, { isError: true, content: [{ type: "text", text: JSON.stringify(raw) }] }, { result: raw }]) {
+    assert.equal(storeEvidence({ scope, source: "connector_malformed", trust_level: "authoritative_native", raw: changed }).projection.connector_graph, undefined);
+  }
+}));
+
+test("large connector lists declare every budget omission and preserve whole component membership", () => withWorkspace(() => {
+  const { raw, connector, row } = connectorFixture();
+  raw.results = Array.from({ length: 240 }, (_, i) => row(i + 1, [connector(0)]));
+  Object.assign(raw, { requestedCount: 240, scannedElementCount: 240, matchedElementCount: 240, totalScannedConnectorCount: 240, physicallyConnectedConnectorCount: 0, openPhysicalConnectorCount: 240 });
+  for (const maxBytes of [4096, 8192]) {
+    const stored = storeEvidence({ scope, source: "connector_large", trust_level: "authoritative_native", raw }, maxBytes);
+    const graph = stored.projection.connector_graph!; assert(graph);
+    assert.equal(graph.coverage.rows_complete, true); assert.equal(graph.lists_complete, false);
+    for (const key of Object.keys(graph.lists) as (keyof typeof graph.lists)[]) assert.equal(graph.totals[key], graph.lists[key].length + graph.omitted[key]);
+    assert(graph.totals.omitted_component_members >= graph.omitted.owner_components);
+    assert(Buffer.byteLength(JSON.stringify(stored.projection)) <= maxBytes);
+  }
+  const tiny = storeEvidence({ scope, source: "connector_tiny", trust_level: "authoritative_native", raw }, 2048).projection;
+  assert.equal(tiny.connector_graph, undefined); assert.match(tiny.diagnostics[0]!, /connector_graph omitted/);
+}));
+
 test("whole-area tool documentation replay supplies exact input schemas within the existing evidence budget", () => withWorkspace(() => {
   for (const name of ["c42-route-tool-doc", "c42-hosted-tool-doc"]) {
     const raw = JSON.parse(fs.readFileSync(`test/fixtures/${name}.json`, "utf8"));

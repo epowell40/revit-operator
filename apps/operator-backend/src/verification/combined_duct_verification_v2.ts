@@ -1,4 +1,6 @@
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
+import { registeredStageDuctRouteInputV2 } from "./registered_stage_route_readback_v2.js";
+import { registeredStageDuctBranchInputV2 } from "./registered_stage_duct_branch_readback_v2.js";
 
 export const DUCT_VERIFICATION_PARAMETERS_SCHEMA = "revit-operator.duct-verification-parameters/v1";
 const fields = ["System Classification", "Reference Level", "Width", "Height", "Diameter"];
@@ -9,7 +11,9 @@ const sameIds = (a: unknown, b: number[]) => ids(a) && a.length === b.length && 
 
 /** This is a suggested inspection, not permission to dispatch or completion. */
 export function pendingDuctVerificationRequestV2(operation: OperationV2) {
-  if (!["/revit/mep-route-workflow", "/revit/create-duct"].includes(operation.request_identity?.path ?? "")
+  if (!["/revit/mep-route-workflow", "/revit/create-duct", "/revit/create-mep-route", "/revit/existing-conditions-mep-draft-workflow"].includes(operation.request_identity?.path ?? "")
+      || operation.request_identity?.path === "/revit/existing-conditions-mep-draft-workflow"
+        && !registeredStageDuctRouteInputV2(operation.input) && !registeredStageDuctBranchInputV2(operation.input)
       || operation.requested_effect !== "apply" || operation.persistent_effect !== "applied" || operation.settlement_state !== "settled"
       || operation.result?.authority !== "native-host" || operation.result.status !== "succeeded"
       || operation.result.native_transaction_state !== "committed") return null;
@@ -22,9 +26,9 @@ export function pendingDuctVerificationRequestV2(operation: OperationV2) {
     onlyOpenPhysicalConnectors: false, maxConnectorsPerElement: 512 } };
 }
 
-/** The caller has already checked native authority, payload hash, binding,
- * post-commit result time and absence of later edits. Validate this combined
- * read's admission and exact coverage before considering its geometric proof. */
+/** The caller checks native authority, payload hash, binding and the document's
+ * settled commit frontier. Validate this combined read's admission and exact
+ * coverage before considering its geometric proof. */
 export function combinedDuctVerificationParametersV2(snapshot: AssignmentSnapshotV2, subject: OperationV2,
   result: OperationResultV2, payload: unknown): unknown | null {
   const proposed = pendingDuctVerificationRequestV2(subject), read = snapshot.operations[result.operation_id];

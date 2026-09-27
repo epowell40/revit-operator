@@ -55,7 +55,7 @@ test("general discovery shares native ranking, ignores repeated prose and preser
 });
 
 test("general-agent discovery adds exactly one concise non-authorizing dynamic substrate", () => {
-  const result = discoverGeneralAgentCapabilities({ need: "complex geometry layout" }, env);
+  const result = discoverGeneralAgentCapabilities({ need: "complex geometry layout" }, env, name => name === "operator_run_dynamic_revit_program");
   assert.equal(result.executionSubstrates.length, 1);
   assert.equal(result.executionSubstrates[0]?.id, "dynamic_revit_program");
   assert.match(result.executionSubstrates[0]?.title ?? "", /Generate and preview a bounded task-specific Revit program/);
@@ -100,4 +100,23 @@ test("hosted General Agent discovery ranks live project query and write registry
   assert.equal(result.status, "available");
   assert.deepEqual(new Set(result.capabilities.map(item => item.path)), new Set(["/revit/query", "/revit/set-parameter"]));
   assert.equal(result.capabilities.every(item => item.authorization === "general_agent_ready"), true);
+});
+
+// Same retained query that previously returned native primitives without a substrate.
+test("hosted discovery retains the exposed dynamic substrate independently of native result count", async () => {
+  const need = "Inspect model elements geometry and execute C# Revit program for connected HVAC drafting";
+  const registry = nativeCatalog();
+  const exposed = (name: string) => name === "operator_run_dynamic_revit_program";
+  const result = await discoverHostedGeneralAgentCapabilities({ need, maxResults: 3 }, async () => registry, exposed);
+  const denied = await discoverHostedGeneralAgentCapabilities({ need, maxResults: 3 }, async () => registry, () => false);
+  assert.equal(result.capabilities.length, 3);
+  assert.deepEqual(result.capabilities, denied.capabilities);
+  assert.equal(result.executionSubstrates.length, 1);
+  assert.equal(result.executionSubstrates[0]?.execution.tool, "operator_run_dynamic_revit_program");
+  assert.equal(result.executionSubstrates[0]?.admission.authorizationGranted, false);
+  assert.equal(result.executionSubstrates[0]?.admission.state, "not_admitted_by_discovery");
+  assert.deepEqual(denied.executionSubstrates, []);
+  const absent = await discoverHostedGeneralAgentCapabilities({ need, maxResults: 1 }, async () => registry);
+  assert.deepEqual(absent.executionSubstrates, []);
+  assert.deepEqual(discoverGeneralAgentCapabilities({ need: "context" }, env, () => false).executionSubstrates, []);
 });

@@ -14,15 +14,19 @@ namespace RevitBridge.Common.Tests
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
-            Assert.Equal(216, implemented.Count);
-            Assert.Equal(102, OperatorToolManifest.Tools.Count);
-            Assert.Equal(102, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(217, implemented.Count);
+            Assert.Equal(107, OperatorToolManifest.Tools.Count);
+            Assert.Equal(107, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/model-health"));
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/linked-room-boundaries"));
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/existing-conditions-mep-draft-workflow"));
             foreach (var route in implemented)
             {
                 var supported = OperatorSupportedToolInventory.IsSupportedTool(route.Method, route.Path);
                 Assert.Equal(supported, OperatorActionAllowlist.IsAllowed(route.Method, route.Path));
                 Assert.Equal(supported, OperatorToolManifest.Tools.Any(t => t.Method == route.Method && t.Path == route.Path));
-                if (!supported)
+                if (!OperatorSupportedToolInventory.IsSupportedTransport(route.Method, route.Path))
                 {
                     var failure = Assert.Throws<OperatorToolUserErrorException>(() => OperatorSupportedToolInventory.RequireSupportedTransport(route.Method, route.Path));
                     Assert.Equal("PRODUCT_TOOL_NOT_SUPPORTED", failure.Code);
@@ -36,6 +40,9 @@ namespace RevitBridge.Common.Tests
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/certified/sheets/count"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/dynamic-runtime/bootstrap"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/dynamic-runtime/bootstrap"));
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/computer-use-guard"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/computer-use-guard"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("GET", "/revit/computer-use-guard"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("GET", "/revit/dynamic-runtime/bootstrap"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/dynamic-runtime/new-unreviewed-route"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/CREATE-VIEW"));

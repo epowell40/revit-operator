@@ -28,6 +28,34 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("failuresAccessor.DeleteWarning(failure)", gateway, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void ReroutePlanningAndBothWriteBranchesReturnObservedNativeReceipts()
+        {
+            var source = Environment.GetEnvironmentVariable("OPERATOR_REROUTE_HANDLER_SOURCE_FOR_TEST")
+                ?? Path.Combine(FindRevitBridgeAddinRoot(), "RevitBridge.Logic", "Handlers", "MEP", "RerouteMepRouteSegmentHandler.cs");
+            var handler = File.ReadAllText(source);
+            Assert.Contains("var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted();", handler, StringComparison.Ordinal);
+            Assert.Contains("HandleCore(app, jsonData, ref transactionReceipt, nativeStages)", handler, StringComparison.Ordinal);
+            Assert.Contains("ref OperatorNativeTransactionReceipt transactionReceipt", handler, StringComparison.Ordinal);
+            Assert.Equal(2, handler.Split(new[] { "NativeSingleTransaction.Execute(" }, StringSplitOptions.None).Length - 1);
+            Assert.Equal(2, handler.Split(new[] { "NativeNonInteractiveFailureHandling.Configure(" }, StringSplitOptions.None).Length - 1);
+            Assert.Contains("transactionReceipt = (OperatorNativeTransactionReceipt)response[\"transaction\"]!", handler, StringComparison.Ordinal);
+            Assert.Contains("transaction = transactionReceipt", handler, StringComparison.Ordinal);
+            Assert.Contains("nativeCreated.Remove(deletedId)", handler, StringComparison.Ordinal);
+            Assert.Contains("nativeDeletedElements: () => deletedOriginalIds", handler, StringComparison.Ordinal);
+            Assert.Equal(2, handler.Split(new[] { "visualVerification = CaptureVisualWithObservedRollback(" }, StringSplitOptions.None).Length - 1);
+            Assert.Contains("nativeStages[\"route\"] = transactionReceipt", handler, StringComparison.Ordinal);
+            Assert.Contains("() => group.RollBack().ToString()", handler, StringComparison.Ordinal);
+            Assert.Contains("() => group.GetStatus().ToString()", handler, StringComparison.Ordinal);
+            Assert.Contains("disposition: NativeTransactionDisposition.Rollback", handler, StringComparison.Ordinal);
+            Assert.Contains("visualReceipt.Status == \"rolled_back\" || visualReceipt.Status == \"not_started\"", handler, StringComparison.Ordinal);
+            Assert.Contains("transactionReceipt = routeReceipt", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorNativeTransactionReceipt.Unknown(\"visual_stage_unsettled\", routeReceipt.AffectedElementIds)", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("tx.Commit()", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("tx.RollBack()", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("transaction was rolled back before committing", handler, StringComparison.Ordinal);
+        }
+
         private static string FindRevitBridgeAddinRoot()
         {
             var current = new DirectoryInfo(AppContext.BaseDirectory);

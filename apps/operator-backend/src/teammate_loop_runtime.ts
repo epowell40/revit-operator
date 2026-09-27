@@ -1,6 +1,8 @@
+import { resultSucceeded, mcpResultSucceeded } from "./teammate_result_status.js";
 import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
-import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
+import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, reconcileCanonicalOutstandingVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
+import type { AssignmentSnapshotV2 } from "./domain/assignment-kernel/snapshot.js";
 import { canonicalNativeNoChangeForTeammate } from "./teammate_canonical_settlement.js";
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
@@ -12,8 +14,9 @@ import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveH
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, recordTeammateEvidenceResult, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
-import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
+import { canonicalTeammateInputs, canonicalTeammateOperationScope, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
+import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
 import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
@@ -38,6 +41,7 @@ export type TeammateTurnContract = {
   context_state: TeammateContextState;
   stage: TeammateLoopStage;
   no_write: boolean;
+  model_effect_limit?: "read" | "preview" | "apply";
   write_authorized: boolean;
   file_export_paths?: readonly string[];
   preview_required: boolean;
@@ -64,8 +68,10 @@ type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
 export type TeammateLoopState = {
+  canonical_supervision_only?: boolean;
   key: string;
   contract: TeammateTurnContract;
+  attached_pdf_requires_registered_route: boolean;
   expires_at_ms: number;
   successful_preview_signatures: Set<string>;
   successful_preview_operations: Set<string>;
@@ -75,6 +81,7 @@ export type TeammateLoopState = {
   preview_restoration_required: boolean;
   preview_restoration_target_tokens: Set<string>;
   apply_action_id: string | null;
+  apply_operation_id: string | null;
   verification_action_ids: string[];
   apply_attempts: number;
   stage_apply_attempts: number;
@@ -324,15 +331,17 @@ function contextIdentity(contextValue: unknown, kind: AgentTurnKind): { state: T
 
 export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTurnContract {
   const text = normalizedUserText(req);
-  const workbookExport = requestedWorkbookExport(text);
-  const turnKind = workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
-  const identity = contextIdentity(req.context, turnKind);
-  const ambiguity = ambiguityFor(text, turnKind);
-  const noWrite = hasNoWriteAuthority(text);
-  const authorized = writeAuthorized(text, turnKind, noWrite);
+  const scope=canonicalTeammateOperationScope(req);
   const savedInputs = canonicalTeammateInputs(req);
+  const pendingPrerequisites=scope?.prerequisites.filter(p=>!Object.hasOwn(savedInputs,p.variable_id)||(p.kind==="approval"&&savedInputs[p.variable_id]!==true))??[];
+  const workbookExport = requestedWorkbookExport(text);
+  const turnKind:AgentTurnKind = scope?(scope.requested_effect==="read"?"inspection":"mutation"):workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
+  const identity = contextIdentity(req.context, turnKind);
+  const ambiguity = scope?(pendingPrerequisites.length?"material":"none"):ambiguityFor(text, turnKind);
+  const noWrite = scope?scope.model_effect!=="apply":hasNoWriteAuthority(text);
+  const authorized = scope?scope.requested_effect==="apply"&&!pendingPrerequisites.length:writeAuthorized(text, turnKind, noWrite);
   const opaqueMutationInputs = missingOpaqueMutationInputs(text).filter(key => !(typeof savedInputs[key] === "string" && (savedInputs[key] as string).trim())); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
-  const requiredUserInputs = turnKind === "mutation" || previewRequired ? opaqueMutationInputs : [];
+  const requiredUserInputs = [...new Set([...(turnKind === "mutation" || previewRequired ? opaqueMutationInputs : []),...pendingPrerequisites.map(p=>p.variable_id)])];
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
     : requiredUserInputs.length > 0 && identity.state === "live"
@@ -348,6 +357,7 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
     context_state: identity.state,
     stage,
     no_write: noWrite,
+    ...(scope?{model_effect_limit:scope.model_effect}:{}),
     write_authorized: authorized,
     ...(workbookExport ? { file_export_paths: ["/revit/export-elements-xlsx"] } : {}),
     preview_required: previewRequired,
@@ -506,7 +516,9 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // calls Revit nor creates fresh truth or consumes the Revit discovery budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
   if (tool === "operator_validate_existing_conditions_interpretation"
-      || tool === "operator_register_existing_conditions_interpretation") return call("read");
+      || tool === "operator_register_existing_conditions_interpretation"
+      || tool === "operator_resume_existing_conditions_registration"
+      || tool === "operator_plan_existing_conditions_duct_continuation") return call("read");
   if (tool === "operator_request_clarification") return call("interaction");
   if (tool === "operator_manage_work_plan") return call("interaction");
   if (tool === "operator_request_assignment_input") return call("interaction"); if (tool === "operator_evaluate_assignment_criteria") return call("completion_claim");
@@ -606,6 +618,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
   const state: TeammateLoopState = {
     key,
     contract,
+    attached_pdf_requires_registered_route: (req.user_attachments ?? []).some(attachment =>
+      attachment.mime?.toLowerCase() === "application/pdf" || /\.pdf$/i.test(attachment.filename ?? "")),
     expires_at_ms: now + MAX_STATE_AGE_MS,
     successful_preview_signatures: new Set(),
     successful_preview_operations: new Set(),
@@ -615,6 +629,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     preview_restoration_required: false,
     preview_restoration_target_tokens: new Set(),
     apply_action_id: null,
+    apply_operation_id: null,
     verification_action_ids: [],
     apply_attempts: 0,
     stage_apply_attempts: 0,
@@ -652,6 +667,15 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
+  if(call.effect==="preview"&&contract.model_effect_limit==="read"
+    &&!authorizedArtifactExportPath(state.authoritative_user_text,call.path))return "user_no_write_limit";
+  // A PDF carried by the same user turn is source evidence, not an XYZ write
+  // authorization. Generic route endpoints cannot bind points to that source;
+  // the registered existing-conditions workflow owns that proof.
+  if (state.attached_pdf_requires_registered_route && call.effect === "apply" && new Set([
+    "/revit/mep-route-workflow", "/revit/create-mep-route", "/revit/create-duct",
+    "/revit/create-pipe", "/revit/mep-branch-network-workflow"
+  ]).has(call.path.toLowerCase())) return "pdf_route_requires_registered_source_workflow";
   if (isRedundantEvidenceItemRange(state.successful_evidence_item_ranges, call)) return "evidence_selection_already_available";
   const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
@@ -682,6 +706,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
       state.successful_preview_signatures.clear();
       state.successful_preview_operations.clear();
       state.apply_action_id = null;
+      state.apply_operation_id = null;
       state.stage_apply_attempts = 0;
       state.apply_succeeded = false;
       state.apply_signature = "";
@@ -699,6 +724,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     state.successful_preview_signatures.clear();
     state.successful_preview_operations.clear();
     state.apply_action_id = null;
+    state.apply_operation_id = null;
     state.stage_apply_attempts = 0;
     state.apply_succeeded = false;
     state.apply_signature = "";
@@ -726,6 +752,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "apply") {
     clearVerification(state);
     state.apply_artifact_receipt = undefined;
+    state.apply_operation_id = null;
     state.apply_attempts += 1;
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
@@ -745,12 +772,6 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
       && state.contract.stage !== "report") state.contract.stage = "discover";
 }
 
-function resultSucceeded(result: ToolResult): boolean {
-  if (result.status !== "done") return false;
-  const body = objectValue(result.result_json);
-  return body.ok !== false && body.success !== false;
-}
-
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
   if (requireExplicit && !explicitVerificationV2(evidence)) return false;
   const observed = observedPostconditionValuesV2(evidence, { path: state.apply_call?.path });
@@ -760,6 +781,12 @@ function verificationMatches(state: TeammateLoopState, evidence: unknown, requir
 
 function accumulatedReadbackMatches(state: TeammateLoopState, evidence: unknown): boolean {
   if (!state.verification_has_substantive_readback) return false;
+  if (state.apply_call?.path === "/revit/duplicate-view") {
+    const request = objectValue(state.apply_call.raw_body);
+    if (request.withDetailing === true
+        && !duplicatedViewDetailingSatisfiedV2(Number(request.viewId), String(request.newName ?? ""), evidence,
+          createdViewIdsFromIdentitiesV2([...state.apply_target_tokens]))) return false;
+  }
   if (state.apply_expected_values.size > 0
       && ![...state.apply_expected_values].every(value => state.verification_observed_values.has(value))) return false;
   const applyIds = [...state.apply_target_tokens].filter(token => token.startsWith("id:"));
@@ -863,7 +890,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       // Admit same-call verification only when the primitive returns an explicit
       // verified/complete receipt (and, when present, the requested values). A
       // generic non-empty success payload must advance to a target-bound readback.
-      if (verificationMatches(state, evidence, true) || explicitDocumentOpenCompletion(pending, evidence)) {
+      const detailedDuplicate = pending.path === "/revit/duplicate-view"
+        && objectValue(pending.raw_body).withDetailing === true;
+      if ((!detailedDuplicate && verificationMatches(state, evidence, true))
+          || explicitDocumentOpenCompletion(pending, evidence)) {
         markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }
@@ -1052,8 +1082,12 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
   return { ...decision, assistant_message: `${decision.assistant_message || ""}${suffix}`.trim(), actions, teammate_loop_receipt: teammateReceipt };
 }
 
-export function beginTeammateLoopOwner(owner: object, req: ChatRequest): TeammateLoopOwnerLease {
+export function beginTeammateLoopOwner(owner: object, req: ChatRequest, options?: { canonicalSupervisionOnly: boolean }): TeammateLoopOwnerLease {
   const state = stateFor(req);
+  if (options?.canonicalSupervisionOnly && (!req.assignment_id || !req.assignment_run_id || !req.assignment_generation)) {
+    throw new Error("Canonical-only supervision requires a bound V2 assignment.");
+  }
+  state.canonical_supervision_only = options?.canonicalSupervisionOnly === true;
   ingestToolResults(state, req.tool_results);
   const lease = { owner, state, turn_id: null };
   const registry = statesByOwner.get(owner) ?? { unbound: new Set<TeammateLoopOwnerLease>(), by_turn: new Map<string, TeammateLoopOwnerLease>() };
@@ -1106,11 +1140,14 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
 
 export function teammateLoopIsConversationForOwner(owner: object, turnId: unknown): boolean { return ownerState(owner, turnId)?.contract.turn_kind === "conversation"; }
 
-export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown }): TeammateMcpGate {
+export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown },
+  canonicalSnapshot?: AssignmentSnapshotV2 | null): TeammateMcpGate {
   const state = ownerState(owner, params.turnId);
   if (!state) return { allowed: false, message: "[teammate_loop_missing] No active host teammate-loop contract exists for this Revit call." };
+  if (state.canonical_supervision_only && !canonicalSnapshot) return { allowed: false, message: "[assignment_kernel_v2_missing] Canonical-only supervision requires a current V2 snapshot." };
+  if (canonicalSnapshot && !state.canonical_supervision_only) reconcileCanonicalOutstandingVerification(state, canonicalSnapshot);
   const call = classifyDocumentedMcpCall(state, params.tool, params.arguments);
-  const reason = gateCall(state, call);
+  const reason = state.canonical_supervision_only ? null : gateCall(state, call);
   if (reason) {
     const recoverableEvidenceRead = reason === "evidence_selection_already_available"
       || reason === "identical_evidence_retrieval_must_be_corrected";
@@ -1119,6 +1156,8 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
     if (!recoverableEvidenceRead) state.contract.stage = needsInput ? "clarify" : "blocked";
     const remedy = needsInput
       ? " Grounding reads remain available. Call operator_request_clarification with missingFields=[\"replacement_text\"] and ask for the exact replacement wording; do not preview or apply a guessed value."
+      : reason === "pdf_route_requires_registered_source_workflow"
+        ? " Register the PDF against authoritative model landmarks and use the registered existing-conditions drafting workflow; generic XYZ routing cannot prove source alignment."
       : recoverableEvidenceRead
         ? " Use the retained result and continue to the bounded completion. Request pagination.next_start only when pagination.has_more is true."
       : "";
@@ -1127,25 +1166,6 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
   const actionId = `mcp:${state.pending.size + state.preview_action_ids.length + state.apply_attempts + state.verification_action_ids.length + 1}`;
   registerPending(state, actionId, call);
   return { allowed: true, call: { ...call, path: `${actionId}|${call.path}` }, state };
-}
-
-function mcpResultSucceeded(result: unknown): boolean {
-  const root = objectValue(result);
-  if (root.isError === true) return false;
-  const rootError = boundedString(root.error, 4_000);
-  if (rootError && root.ok !== true && root.success !== true) return false;
-  const content = Array.isArray(root.content) ? root.content : [];
-  for (const item of content) {
-    const text = boundedString(objectValue(item).text, 2_000_000);
-    if (!text) continue;
-    if (/^(?:RevitCourierError|OperatorToolUserError|Error):|^\[(?:teammate_loop_blocked|revit_tool_quarantined|assignment_(?:paused|blocked))\]/i.test(text.trim())) return false;
-    if (!text.startsWith("{") && !text.startsWith("[")) continue;
-    try {
-      const parsed = objectValue(JSON.parse(text));
-      if (parsed.ok === false || parsed.success === false) return false;
-    } catch {}
-  }
-  return true;
 }
 
 function recoveredLiveContextIdentity(result: unknown): { state: TeammateContextState; signature: string | null } | null {
@@ -1193,6 +1213,10 @@ export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, re
   if (succeeded && observedPath === "revit_tool_doc") {
     const documented = documentedToolRouteFromResult(result);
     if (documented) state.documented_tool_routes.set(documented.alias, documented.route);
+  }
+  if (state.canonical_supervision_only) {
+    state.pending.delete(actionId);
+    return null;
   }
   if (succeeded && (observedPath === "revit_get_context" || observedPath === "/revit/context")) {
     const identity = recoveredLiveContextIdentity(result);

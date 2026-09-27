@@ -108,6 +108,31 @@ test("both exact generic image routes retain native mapping and settlement while
   }
 });
 
+test("a floor-wide mapped inventory delivers pixels and grid/MEP anchors without flooding the agent with linked walls",()=>{
+  const path="/revit/export-visible-elements";
+  const native={...frame(),canonical_attempt_settlement:{...frame().canonical_attempt_settlement,path},
+    count:27,scanned:27,truncated:false,
+    items:[{elementId:101,categoryToken:"OST_Grids",geometry:{axis:"4"}},
+      {elementId:202,categoryToken:"OST_DuctCurves",geometry:{start:[0,0,0],end:[1,0,0]}},
+      ...Array.from({length:25},(_,index)=>({elementId:300+index,categoryToken:"OST_Walls",linked:true,
+        geometry:{vertices:"x".repeat(25000)}}))]};
+  const before=structuredClone(native);
+  const result=nativeViewImageContent("POST",path,native,()=>({ok:true,data:"mapped-pixels",mimeType:"image/jpeg"}));
+  assert.ok(result);assert.equal(result.content.length,2);
+  assert.deepEqual(result.content[1],{type:"image",data:"mapped-pixels",mimeType:"image/jpeg"});
+  const text=(result.content[0] as {text:string}).text;
+  const metadata=JSON.parse(text);
+  assert.ok(text.length<10000);
+  assert.deepEqual(metadata.items.map((item:any)=>item.elementId),[101,202]);
+  assert.deepEqual(metadata.mapping,native.mapping);
+  assert.deepEqual(metadata.canonical_attempt_settlement,native.canonical_attempt_settlement);
+  assert.equal(metadata.agent_projection.native_item_count,27);
+  assert.equal(metadata.agent_projection.omitted_by_category.OST_Walls,25);
+  assert.equal(metadata.agent_projection.items_complete,false);
+  assert.match(metadata.agent_projection.instruction,/before asserting absence/);
+  assert.deepEqual(native,before);
+});
+
 test("generic image delivery never reads arbitrary routes or mismatched native outcomes",()=>{
   const noRead=()=>{throw Error("No image file may be read for this route or result");};
   for(const [method,path] of [["GET","/revit/export-view-frame"],["POST","/revit/get-parameters"],
@@ -126,5 +151,27 @@ test("generic image delivery never reads arbitrary routes or mismatched native o
     }
     const failed=nativeViewImageContent("POST",path,{...frame(),status:"Blocked"},noRead);
     assert.equal(failed?.content.length,1);
+  }
+});
+
+
+test("visible-region capture delivers native pixels and observed viewport provenance without a placement mapping",()=>{
+  const route="/revit/export-image" as const;
+  const native={viewId:42,activeViewId:42,viewName:"L4",exportMode:"visible_region",widthPx:2048,heightPx:1200,
+    path:"artifacts/captures/visible-unique.png",timestamp:"2026-09-26T09:02:27.429Z",
+    viewport:{source:"UIDocument.ActiveView/UIView.GetZoomCorners",viewId:42,viewType:"FloorPlan",
+      zoomCornersXyz:[[-10,20,40],[12,-5,40]],coordinateUnits:"feet",displayPlaneOnly:true,placementMappingAvailable:false},
+    canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:route}};
+  for (const deliver of [captureImageContent,(value:any,path:any,reader:any)=>nativeViewImageContent("POST",path,value,reader)!]) {
+    let reads=0;
+    const result=deliver(native,route,(file:string)=>{reads++;assert.equal(file,native.path);return {ok:true as const,data:"viewport-pixels",mimeType:"image/png" as const};});
+    assert.equal(reads,1);assert.deepEqual(result.content[1],{type:"image",data:"viewport-pixels",mimeType:"image/png"});
+    const metadata=JSON.parse((result.content[0] as {text:string}).text);
+    assert.deepEqual(metadata.viewport,native.viewport);assert.equal(metadata.exportMode,"visible_region");
+    assert.equal(metadata.mapping,undefined);assert.equal(metadata.image_delivery.available,true);
+    assert.deepEqual(metadata.canonical_attempt_settlement,native.canonical_attempt_settlement);
+    const rejected=deliver({...native,error:"The active viewport changed during export"},route,()=>{throw Error("Failed export cannot deliver pixels");});
+    assert.equal(rejected.content.length,1);
+    assert.equal(JSON.parse((rejected.content[0] as {text:string}).text).image_delivery.available,false);
   }
 });

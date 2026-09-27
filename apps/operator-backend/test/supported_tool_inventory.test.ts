@@ -7,7 +7,7 @@ import { isAllowlisted } from "../src/allowlist.js";
 import { sendNativeBridgeRequest } from "../src/brains/native_revit_transport.js";
 import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 import { SUPPORTED_NATIVE_ROUTES, SUPPORTED_MCP_ALIASES, SUPPORTED_TOOL_INVENTORY_HASH,
-  isSupportedNativeTool, isSupportedNativeTransport, isSupportedToolRoute,
+  isSupportedNativeTransport, isSupportedToolRoute,
   UnsupportedProductToolError } from "../src/capabilities/supported_tool_inventory.js";
 
 const root = findRepoRoot(process.cwd());
@@ -17,13 +17,19 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
-  assert.equal(implemented.length, 216);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 102);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 95);
+  assert.equal(implemented.length, 217);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 107);
+  assert.equal(isSupportedToolRoute("POST", "/revit/connect-existing-mep-branch"), true);
+  assert.equal(isSupportedToolRoute("POST", "/revit/model-health"), true);
+  assert.equal(isSupportedToolRoute("POST", "/revit/existing-conditions-mep-draft-workflow"), true,
+    "The source-registered stage executor must be transport-admitted.");
+  assert.equal(isSupportedNativeTransport("POST", "/revit/linked-room-boundaries"), true);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 97);
+  assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
-  const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
-  assert.equal(excluded.length, 114);
+  const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
+  assert.equal(excluded.length, 109);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;
@@ -47,6 +53,10 @@ test("supported transport separates standalone and internal executors without au
   assert.equal(isSupportedNativeTransport("POST", "/revit/certified/sheets/count"), false);
   assert.equal(isSupportedNativeTransport("POST", "/revit/dynamic-runtime/bootstrap"), true);
   assert.equal(isSupportedToolRoute("POST", "/revit/dynamic-runtime/bootstrap"), false);
+  assert.equal(isSupportedNativeTransport("POST", "/revit/computer-use-guard"), true);
+  assert.equal(isSupportedToolRoute("POST", "/revit/computer-use-guard"), false);
+  assert.equal(isAllowlisted("POST", "/revit/computer-use-guard"), false);
+  assert.equal(isSupportedNativeTransport("GET", "/revit/computer-use-guard"), false);
   assert.equal(isSupportedNativeTransport("GET", "/revit/dynamic-runtime/bootstrap"), false);
   assert.equal(isSupportedNativeTransport("POST", "/revit/dynamic-runtime/arbitrary-new-route"), false);
   for (const route of ["create-view", "duplicate-sheet", "set-parameter", "get-parameters"])

@@ -33,6 +33,51 @@ function createClient(root: string, statePath: string, tracePath: string, extraE
   });
 }
 
+test("app-server launches an explicit codex.exe path even when an npm shim candidate exists", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows executable resolver boundary");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-explicit-codex-launch-"));
+  const appData = path.join(root, "appdata");
+  const explicit = path.join(root, "isolated", "codex.exe");
+  const npmCandidate = path.join(appData, "npm", "node_modules", "@openai", "codex-win32-x64",
+    "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe");
+  fs.mkdirSync(path.dirname(explicit), { recursive: true });
+  fs.mkdirSync(path.dirname(npmCandidate), { recursive: true });
+  fs.copyFileSync(process.execPath, explicit);
+  fs.writeFileSync(npmCandidate, "invalid shim fixture");
+  const tracePath = path.join(root, "trace.jsonl");
+  const client = new CodexAppServer({
+    cwd: root, codexHome: path.join(root, ".codex"),
+    spawnEnv: { ...process.env, APPDATA: appData, OPERATOR_CODEX_BIN: explicit,
+      CODEX_FIXTURE_STATE_PATH: path.join(root, "state.json"), CODEX_FIXTURE_TRACE_PATH: tracePath },
+    commandPrefixArgs: [fixturePath()]
+  });
+  try {
+    await client.ensureStarted();
+    const thread = await client.startThread({ cwd: root, sandbox: "read-only", approvalPolicy: "never" });
+    assert.ok(thread.thread.id);
+    assert.match(fs.readFileSync(tracePath, "utf8"), /"method":"initialize"/);
+  } finally {
+    await client.stopAndWait();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("matching provider notifications keep an active turn alive through completion", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-progress-completion-"));
+  const client = createClient(root, path.join(root, "state.json"), path.join(root, "trace.jsonl"), { CODEX_FIXTURE_PROGRESS_TURN: "1" });
+  try {
+    await client.ensureStarted();
+    const thread = await client.startThread({ cwd: root, sandbox: "read-only", approvalPolicy: "never" });
+    const turn = await client.startTurn({ threadId: thread.thread.id, input: [{ type: "text", text: "progress", text_elements: [] }] });
+    // The fixture emits progress before completion; leave room for Windows CI
+    // process scheduling while retaining a short bounded wall-clock assertion.
+    assert.deepEqual(await client.waitForTurnCompleted({ threadId: thread.thread.id, turnId: turn.turn.id, timeoutMs: 100, maxWallMs: 1500 }), { status: "completed", interrupted: false });
+  } finally {
+    await client.stopAndWait();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server lifecycle initializes once, resumes persisted threads, and interrupts before later tools", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-app-server-lifecycle-"));
   const statePath = path.join(root, "state.json");

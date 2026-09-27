@@ -45,3 +45,22 @@ test("runtime memory isolation binds the actual store and preserves ordered lear
   assert.equal(getRevitToolContractMemoryAttestation().effective_source, "default");
   assert.throws(() => observeGeneralRevitCampaignMemory(health(), flags), /runtime_unattested/);
 });
+
+test("paired campaigns can attest separate fresh stores with identical initial content", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-paired-memory-"));
+  const prior = process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+  t.after(() => { if (prior === undefined) delete process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+    else process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = prior; fs.rmSync(root, { recursive: true, force: true }); });
+  const empty = JSON.stringify({ version: "revit-operator.tool-contract-memory.v1",
+    pending_failures: [], failure_receipts: [], corrections: [], quarantines: [] });
+  const hash = crypto.createHash("sha256").update(empty).digest("hex");
+  for (const name of ["baseline", "candidate"]) {
+    const target = path.join(root, `${name}.json`);
+    fs.writeFileSync(target, empty);
+    process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = target;
+    const flags = { tool_contract_memory_policy: "isolated_campaign_initial_empty_ordered_adaptation",
+      tool_contract_memory_path: target, tool_contract_memory_initial_sha256: hash };
+    const health = { ok: true, backend: { status: "ok", tool_contract_memory: getRevitToolContractMemoryAttestation() } };
+    assert.doesNotThrow(() => assertGeneralRevitCampaignMemoryStart(health, flags));
+  }
+});

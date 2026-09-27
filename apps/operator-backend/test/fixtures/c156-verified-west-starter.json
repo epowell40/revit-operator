@@ -1,0 +1,738 @@
+{
+  "source": "C156 retained Assignment Kernel Unit404 west starter",
+  "current_binding": {
+    "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+    "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+    "generation": 1,
+    "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+    "principal_id": "local:shared-token",
+    "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+  },
+  "apply_id": "opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b",
+  "read_id": "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a",
+  "operations": {
+    "opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b": {
+      "schema": "revit-operator.operation/v2",
+      "operation_id": "opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b",
+      "binding": {
+        "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+        "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+        "generation": 1,
+        "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "work_unit_id": "work-primary",
+      "capability_id": "native:POST:/revit/existing-conditions-mep-draft-workflow",
+      "requested_effect": "apply",
+      "purpose": "work",
+      "operation_role": "child",
+      "fulfillment_role": "delegated_task_execution",
+      "delegation_authority_id": "delegation:opv2_b90ca3baaa496af378c850894c6bb8e06e309829b857af2a5067566c5fd75f3e",
+      "parent_operation_id": "opv2_b90ca3baaa496af378c850894c6bb8e06e309829b857af2a5067566c5fd75f3e",
+      "root_operation_id": "opv2_b90ca3baaa496af378c850894c6bb8e06e309829b857af2a5067566c5fd75f3e",
+      "blocks_parent_settlement": true,
+      "request_identity": {
+        "capability_id": "native:POST:/revit/existing-conditions-mep-draft-workflow",
+        "method": "POST",
+        "path": "/revit/existing-conditions-mep-draft-workflow",
+        "request_signature": "b7bd093a16965570ee04ffb43b64b625dd38b52dad9ba81b1fed217160c47f19"
+      },
+      "advances_criterion_ids": [
+        "criterion-f96c0e52719d530e4da1"
+      ],
+      "eligible_criterion_ids": [
+        "criterion-f96c0e52719d530e4da1"
+      ],
+      "resolves_gap_ids": [
+        "criterion:criterion-f96c0e52719d530e4da1",
+        "work-plan:scope"
+      ],
+      "target": {
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+        "semantic_scope": {
+          "target_0": "ducttypeid:139186",
+          "target_1": "id:1363433",
+          "target_2": "id:139186",
+          "target_3": "id:404-west-supply-starter",
+          "target_4": "path:/revit/create-mep-route",
+          "target_5": "sourceobservationid:404-west-supply-starter",
+          "target_6": "targetviewid:1363433",
+          "target_7": "viewid:1363433"
+        }
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/existing-conditions-mep-draft-workflow",
+        "body": {
+          "inputFingerprintSha256": "8b4a5c3f2c8b53e0584485f96959c884c2677bcf7a97ed74a11fce495220c31a",
+          "stageKey": "operation:registered-route:404-west-supply-starter",
+          "priorActionOutputs": [],
+          "operations": [
+            {
+              "action_key": "registered-route:404-west-supply-starter",
+              "path": "/revit/create-mep-route",
+              "depends_on": [],
+              "apply_body": {
+                "kind": "duct",
+                "points": [
+                  {
+                    "x": -33.059176333333326,
+                    "y": 15.305324524934385,
+                    "z": 40.168061023622045
+                  },
+                  {
+                    "x": -33.04125698584549,
+                    "y": 18.843627103430237,
+                    "z": 40.168061023622045
+                  }
+                ],
+                "viewId": 1363433,
+                "levelName": "L4",
+                "systemType": "Supply Air",
+                "sizePolicy": "explicit_required",
+                "elevationPolicy": "explicit_required",
+                "routingMode": "polyline",
+                "connectSegments": true,
+                "connectToExisting": true,
+                "requireExistingEndpointConnections": false,
+                "requiredExistingEndpoint": "start",
+                "expectedExistingStartOwnerId": 1543471,
+                "externalConnectionToleranceFt": 0.01,
+                "verify": true,
+                "ductShape": "round",
+                "ductSize": "8\"",
+                "diameter": "8\"",
+                "ductTypeId": 139186
+              },
+              "expected_created_min": 1,
+              "expected_created_max": 1
+            }
+          ],
+          "dryRun": false,
+          "verify": true,
+          "maximumCreatedElements": 1,
+          "targetViewId": 1363433,
+          "applyTargetViewPhase": true,
+          "requireAllCreatedElementsVisibleInTargetView": true
+        }
+      },
+      "admission_state": "admitted",
+      "dispatch_state": "dispatched",
+      "persistent_effect": "applied",
+      "settlement_state": "settled",
+      "observation_ids": [
+        "obsv2_2e2b6b0ea6b2012ba120f7effe8800597890999ce4db408f8afb474a8a779362"
+      ],
+      "verification_operation_ids": [
+        "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a"
+      ],
+      "opened_at": "2026-09-25T19:51:30.333Z",
+      "deadline_at": "2026-09-25T19:55:30.333Z",
+      "dispatch_started_at": "2026-09-25T19:51:30.540Z",
+      "dispatch_authority": "native",
+      "dispatched_at": "2026-09-25T19:51:30.540Z",
+      "result": {
+        "schema": "revit-operator.operation-result/v2",
+        "result_id": "resultv2_d8242f997a2d1b27e1b63677913620ebfbd538d05dd6e5eb3040b9935b357caa",
+        "operation_id": "opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b",
+        "binding": {
+          "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+          "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+          "generation": 1,
+          "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "native_transaction_state": "committed",
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/existing-conditions-mep-draft-workflow/v2",
+        "observation_required": true,
+        "affected_target_identities": [
+          "element_id:1543517"
+        ],
+        "raw_payload_hash": "96474311b1f60aed04707c5cfcf2d34a2cd7d3469757af2703fc4d32af1f8998",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "bc7b765c1f98a2681fdfab3914884e227d0e0d334ae03ee34151484cce4b81a0",
+            "byte_count": 4655
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "96474311b1f60aed04707c5cfcf2d34a2cd7d3469757af2703fc4d32af1f8998",
+            "byte_count": 4006
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "receipt_id": "2048e5111e352c557b7b5c6a6800ff70fd3e2a43fe09ed5f0c60fb70d8eb47e9",
+        "native_correlation_id": "2048e5111e352c557b7b5c6a6800ff70fd3e2a43fe09ed5f0c60fb70d8eb47e9",
+        "request_identity": {
+          "capability_id": "native:POST:/revit/existing-conditions-mep-draft-workflow",
+          "method": "POST",
+          "path": "/revit/existing-conditions-mep-draft-workflow",
+          "request_signature": "b7bd093a16965570ee04ffb43b64b625dd38b52dad9ba81b1fed217160c47f19"
+        },
+        "completed_at": "2026-09-25T19:51:30.749Z"
+      },
+      "observation_commit_attempts": 0,
+      "settled_at": "2026-09-25T19:51:30.749Z"
+    },
+    "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a": {
+      "schema": "revit-operator.operation/v2",
+      "operation_id": "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a",
+      "binding": {
+        "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+        "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+        "generation": 1,
+        "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "work_unit_id": "work-verification",
+      "capability_id": "revit_call_tool",
+      "requested_effect": "read",
+      "purpose": "verification",
+      "operation_role": "root",
+      "fulfillment_role": "verification",
+      "delegation_authority_id": "delegation:opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a",
+      "blocks_parent_settlement": false,
+      "request_identity": {
+        "capability_id": "revit_call_tool",
+        "method": "POST",
+        "path": "/revit/get-connectors",
+        "request_signature": "e39cd85925cdbb00e850afb4d76530e8e07b780301279f77baa2e28bf35c9b6b"
+      },
+      "advances_criterion_ids": [],
+      "eligible_criterion_ids": [],
+      "resolves_gap_ids": [
+        "criterion:criterion-f96c0e52719d530e4da1",
+        "verification:opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b"
+      ],
+      "target": {
+        "target_id": "id:1543517",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+        "semantic_scope": {
+          "target_0": "elementid:1543517",
+          "target_1": "id:1543517"
+        }
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/get-connectors",
+        "body": {
+          "elementIds": [
+            1543517
+          ],
+          "includeVerificationParameters": true,
+          "includeAllRefs": true,
+          "includeCoordinateSystem": true,
+          "onlyOpenPhysicalConnectors": false,
+          "maxConnectorsPerElement": 512
+        }
+      },
+      "admission_state": "admitted",
+      "dispatch_state": "dispatched",
+      "persistent_effect": "none",
+      "settlement_state": "settled",
+      "observation_ids": [
+        "obsv2_e81c1f2a280211831801a3b1a1b1a87178255210bd5f1eaa3a4bb227ff348287"
+      ],
+      "verification_operation_ids": [],
+      "verification_of_operation_id": "opv2_6aec2e25df33bdf831ca66707c0b9161ca913546963cd0bb709fa2f936404e8b",
+      "opened_at": "2026-09-25T19:51:41.943Z",
+      "deadline_at": "2026-09-25T19:55:41.943Z",
+      "dispatch_started_at": "2026-09-25T19:51:42.089Z",
+      "dispatch_authority": "native",
+      "dispatched_at": "2026-09-25T19:51:42.089Z",
+      "result": {
+        "schema": "revit-operator.operation-result/v2",
+        "result_id": "resultv2_44c458dfa2a27c332dbd4b7ae2dc44bde3cedf00274c917c934ef04a0081b3ce",
+        "operation_id": "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a",
+        "binding": {
+          "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+          "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+          "generation": 1,
+          "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "native_transaction_state": "not_applicable",
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/get-connectors/v2",
+        "observation_required": true,
+        "affected_target_identities": [],
+        "raw_payload_hash": "6bae220947b91137d056e2969258ac7922ae1d5693f2e8ceb9d776522d257a9c",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "0e45307e48fb7327f2ff2cb67634b2fb3461a1edcb7e5156f6d848bc7a595c57",
+            "byte_count": 5160
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "6bae220947b91137d056e2969258ac7922ae1d5693f2e8ceb9d776522d257a9c",
+            "byte_count": 4565
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "receipt_id": "6217a6b0889b3ba164533ba3ffc8314241c9e41336d5e6539f24ac462f5c9ca3",
+        "native_correlation_id": "6217a6b0889b3ba164533ba3ffc8314241c9e41336d5e6539f24ac462f5c9ca3",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-connectors",
+          "request_signature": "e39cd85925cdbb00e850afb4d76530e8e07b780301279f77baa2e28bf35c9b6b"
+        },
+        "completed_at": "2026-09-25T19:51:42.288Z"
+      },
+      "observation_commit_attempts": 0,
+      "settled_at": "2026-09-25T19:51:42.288Z"
+    }
+  },
+  "observations": {
+    "obsv2_e81c1f2a280211831801a3b1a1b1a87178255210bd5f1eaa3a4bb227ff348287": {
+      "schema": "revit-operator.observation/v2",
+      "observation_id": "obsv2_e81c1f2a280211831801a3b1a1b1a87178255210bd5f1eaa3a4bb227ff348287",
+      "operation_id": "opv2_b23ca56b64f847d00077632264fc06e9467f3ef438bcf42a69b6ad7cb304495a",
+      "fulfillment_role": "verification",
+      "evidence_class": "verification",
+      "capability_id": "revit_call_tool",
+      "eligible_criterion_ids": [],
+      "binding": {
+        "assignment_id": "8521574c-c7d1-4357-9e8a-d04af3fe6f08",
+        "run_id": "chat:9206b09d-e91a-46fb-8380-bb765b764fd9",
+        "generation": 1,
+        "session_id": "561c71ab-bd28-4039-ad5c-dedf65514d75",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "authority": "native-host",
+      "result_schema_id": "operator-native/POST:/revit/get-connectors/v2",
+      "raw_payload_ref": "evidence:ev1_eThpI6A9N4SORMBgf9Jkzeau1NyDjDWd",
+      "raw_payload_hash": "6bae220947b91137d056e2969258ac7922ae1d5693f2e8ceb9d776522d257a9c",
+      "payload_provenance": {
+        "schema": "revit-operator.payload-provenance/v2",
+        "source": {
+          "algorithm": "sha256",
+          "representation": "utf8_json_bytes",
+          "canonicalization_version": null,
+          "digest": "0e45307e48fb7327f2ff2cb67634b2fb3461a1edcb7e5156f6d848bc7a595c57",
+          "byte_count": 5160
+        },
+        "normalized": {
+          "algorithm": "sha256",
+          "representation": "canonical_json",
+          "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+          "digest": "6bae220947b91137d056e2969258ac7922ae1d5693f2e8ceb9d776522d257a9c",
+          "byte_count": 4565
+        },
+        "transformation_id": "revit-operator.native-result-control-extraction",
+        "transformation_version": "1"
+      },
+      "facts": [
+        {
+          "fact_id": "control.result_available",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.domain_succeeded",
+          "fact_class": "control",
+          "value": true
+        },
+        {
+          "fact_id": "control.native_call_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.payload_hash",
+          "fact_class": "control",
+          "value": "6bae220947b91137d056e2969258ac7922ae1d5693f2e8ceb9d776522d257a9c"
+        },
+        {
+          "fact_id": "control.field.status",
+          "fact_class": "control",
+          "value": "Ok"
+        },
+        {
+          "fact_id": "control.field.requested_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.scanned_element_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.failed_element_count",
+          "fact_class": "control",
+          "value": 0
+        },
+        {
+          "fact_id": "control.field.matched_element_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.total_scanned_connector_count",
+          "fact_class": "control",
+          "value": 2
+        },
+        {
+          "fact_id": "control.field.physically_connected_connector_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.open_physical_connector_count",
+          "fact_class": "control",
+          "value": 1
+        },
+        {
+          "fact_id": "control.field.connector_scan_truncated_element_count",
+          "fact_class": "control",
+          "value": 0
+        },
+        {
+          "fact_id": "control.field.filter",
+          "fact_class": "control",
+          "value": "allConnectors"
+        },
+        {
+          "fact_id": "verification.postcondition_satisfied",
+          "fact_class": "verification",
+          "value": true
+        }
+      ],
+      "target_scope": {},
+      "observed_at": "2026-09-25T19:51:42.288Z",
+      "verification_relevance": [
+        "verification"
+      ]
+    }
+  },
+  "retained_read_payload": {
+    "status": "Ok",
+    "requestedCount": 1,
+    "scannedElementCount": 1,
+    "failedElementCount": 0,
+    "matchedElementCount": 1,
+    "totalScannedConnectorCount": 2,
+    "physicallyConnectedConnectorCount": 1,
+    "openPhysicalConnectorCount": 1,
+    "connectorScanTruncatedElementCount": 0,
+    "results": [
+      {
+        "id": 1543517,
+        "ok": true,
+        "category": "OST_DuctCurves",
+        "name": "Tees",
+        "typeId": 139186,
+        "typeName": "Tees",
+        "createdPhaseId": 21885,
+        "systemName": "Mechanical Supply Air 3",
+        "connectorCount": 2,
+        "returnedConnectorCount": 2,
+        "openPhysicalConnectorCount": 1,
+        "connectorScanTruncated": false,
+        "connectors": [
+          {
+            "index": 0,
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.04125698584549,
+              18.843627103430237,
+              40.168061023622045
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": false,
+            "systemClassification": "SupplyAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.04125698584549,
+                18.843627103430237,
+                40.168061023622045
+              ],
+              "basisX": [
+                0.99998717621893,
+                -0.0050643259858408115,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                0.005064325985840811,
+                0.9999871762189299,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543519,
+                "ownerCategory": "OST_DuctSystem",
+                "isMepSystem": true,
+                "isPhysicalElement": false,
+                "connectorId": 1,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "Logical",
+                "domain": "DomainUndefined",
+                "shape": "Invalid",
+                "size": null,
+                "coordinateSystem": null,
+                "origin": null,
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [],
+            "physicalConnectionCount": 0,
+            "isPhysicallyConnected": false
+          },
+          {
+            "index": 1,
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -33.059176333333326,
+              15.305324524934385,
+              40.168061023622045
+            ],
+            "domain": "DomainHvac",
+            "shape": "Round",
+            "connectorType": "End",
+            "direction": "Bidirectional",
+            "isConnected": true,
+            "systemClassification": "SupplyAir",
+            "electrical": {
+              "systemType": null,
+              "voltageInternal": null,
+              "poles": null,
+              "apparentLoadInternal": null,
+              "trueLoadInternal": null,
+              "powerFactor": null,
+              "loadClassification": null
+            },
+            "size": {
+              "kind": "round",
+              "radiusFt": 0.3333333333333333,
+              "diameterFt": 0.6666666666666666
+            },
+            "coordinateSystem": {
+              "origin": [
+                -33.059176333333326,
+                15.305324524934385,
+                40.168061023622045
+              ],
+              "basisX": [
+                -0.99998717621893,
+                0.0050643259858408115,
+                0
+              ],
+              "basisY": [
+                0,
+                0,
+                -1
+              ],
+              "basisZ": [
+                -0.005064325985840811,
+                -0.9999871762189299,
+                0
+              ]
+            },
+            "connectedTo": [
+              {
+                "ownerId": 1543471,
+                "ownerCategory": "OST_MechanicalEquipment",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -33.059176333333326,
+                    15.305324524934385,
+                    40.168061023622045
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -33.059176333333326,
+                  15.305324524934385,
+                  40.168061023622045
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectedTo": [
+              {
+                "ownerId": 1543471,
+                "ownerCategory": "OST_MechanicalEquipment",
+                "isMepSystem": false,
+                "isPhysicalElement": true,
+                "connectorId": 2,
+                "connectorIdBasis": "revit_native_connector_id",
+                "connectorType": "End",
+                "domain": "DomainHvac",
+                "shape": "Round",
+                "size": {
+                  "kind": "round",
+                  "radiusFt": 0.3333333333333333,
+                  "diameterFt": 0.6666666666666666
+                },
+                "coordinateSystem": {
+                  "origin": [
+                    -33.059176333333326,
+                    15.305324524934385,
+                    40.168061023622045
+                  ],
+                  "basisX": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "basisY": [
+                    0,
+                    0,
+                    -1
+                  ],
+                  "basisZ": [
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                "origin": [
+                  -33.059176333333326,
+                  15.305324524934385,
+                  40.168061023622045
+                ],
+                "isConnectedTo": true
+              }
+            ],
+            "physicalConnectionCount": 1,
+            "isPhysicallyConnected": true
+          }
+        ],
+        "flexGeometry": null
+      }
+    ],
+    "warnings": [],
+    "filter": "allConnectors",
+    "verificationParameters": {
+      "schema": "revit-operator.duct-verification-parameters/v1",
+      "fields": [
+        "System Classification",
+        "Reference Level",
+        "Width",
+        "Height",
+        "Diameter"
+      ],
+      "items": [
+        {
+          "id": 1543517,
+          "parameters": {
+            "System Classification": "Supply Air",
+            "Reference Level": "1362791",
+            "Diameter": "0.66666666666666663"
+          },
+          "parameterDetails": [
+            {
+              "name": "System Classification",
+              "value": "Supply Air",
+              "valueString": "Supply Air",
+              "nativeName": "System Classification",
+              "storageType": "String",
+              "isReadOnly": true,
+              "parameterId": -1140325
+            },
+            {
+              "name": "Reference Level",
+              "value": "1362791",
+              "valueString": "L4",
+              "nativeName": "Reference Level",
+              "storageType": "ElementId",
+              "isReadOnly": false,
+              "parameterId": -1114000
+            },
+            {
+              "name": "Diameter",
+              "value": "0.66666666666666663",
+              "valueString": "8\"",
+              "nativeName": "Diameter",
+              "storageType": "Double",
+              "isReadOnly": false,
+              "parameterId": -1114103
+            }
+          ],
+          "missingFields": [
+            "Width",
+            "Height"
+          ]
+        }
+      ]
+    }
+  }
+}

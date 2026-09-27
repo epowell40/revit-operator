@@ -25,6 +25,42 @@ continue to bind to a versioned, tenant-qualified digest of the authenticated
 principal. Omitting the V2 flag is only appropriate when intentionally
 replaying the historical V1 lifecycle.
 
+## Native-UI developer beta profile
+
+An explicitly selected local profile lets new document-bound V2 tasks use the
+bounded Codex backend executor from the ordinary composer without adding each
+session to an experiment allowlist. Configure the backend process only:
+
+```dotenv
+OPERATOR_LOCAL_EXECUTOR_PROFILE=codex_v2_advisory_v1
+REVIT_OPERATOR_MODE=development
+OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory
+OPERATOR_BRAIN=codex
+OPERATOR_ASSIGNMENT_KERNEL_V2=1
+OPERATOR_AUTH_MODE=shared_token
+OPERATOR_API_BASE_URL=http://127.0.0.1:7007
+OPERATOR_HOSTED_ENABLED=false
+```
+
+Use the existing authenticated local shared token; do not commit it. Keep
+services on loopback and do not pass these backend profile values into the
+Revit process. Selection requires the existing ready development/laboratory
+profile. The default `local` mode alone does not enable it; hosted principals,
+remote origins and hosted mode/flags cannot select it. Outside this explicit
+profile, existing routing and experiment allowlists remain unchanged.
+
+The authenticated backend advertises `local_executor` for executor selection.
+It is not a CLI/provider readiness check or native write authorization. Use
+the supported pinned Codex CLI and the existing deterministic and actual Revit
+UI qualification steps before claiming the profile qualified.
+
+New assignments keep their policy, document binding and bounded cumulative
+budgets in the existing journal. Disabling the profile later does not rewrite
+saved assignments. Pause, steering and checkpoint follow-up use that same task;
+explicit Pause stays paused until Resume. Completion checkpoints remain
+unverified claims. Native admission, transaction settlement and unknown-effect
+reconciliation remain enforced. The profile is opt-in and changes no defaults.
+
 Public-core validation commonly includes:
 
 ```powershell
@@ -41,12 +77,61 @@ local gate before the consolidated push. Changes that affect the add-in,
 Sidecar, operations, or user-visible behavior also require a real local Revit UI
 test against an authorized disposable fixture.
 
-Raw test count does not prove cross-process coherence. Before a live candidate,
+## Disposable local experiments
+
+Explicitly opt into this lane for a concrete, time-bounded hypothesis on an
+authorized disposable sample. It does not qualify a release. Keep one Revit
+mutation owner, a fixed task, the original failed trace and an independent
+inspection of the resulting model. Measure delivered work and intervention.
+
+For each changed experiment, build only the affected components and run their
+focused failing-before/neighboring tests plus:
+
+```powershell
+./scripts/run_local_experiment_smoke.ps1 -DisposableExperiment `
+  -BackendTest existing_conditions_registered_route_connector_snap.test.ts `
+  -RevitYear 2024
+```
+
+The runner builds the owning composition's backend and runs existing mandatory
+authorization/document-binding, effect/transaction, unknown-retry and
+pause/cancel tests, plus selected native safety classes for the specified Revit
+runtime. `-BackendTest` takes additional relevant filenames; `-NativeTestClass`
+adds affected native classes. Test changed MCP/Desktop or other components
+separately. `-ListTests` lists the selection without running it. The runner
+does not launch, install, deploy, contact a model, or check a live fixture.
+
+Before live work, retain source revisions and the working-tree patch/untracked
+source, actual runtime/model settings, installed payload hashes and process
+paths, and source PDF/fixture hashes in the existing local run directory. A
+dirty tree is allowed for an experiment; its SHA alone is insufficient.
+Runtime-required trust/policy checks remain enforced; never bypass stale
+certification or label experimental output qualified.
+
+Verify the exact disposable host via native health. Linked-model experiments
+must include one loaded exact-sibling Architectural RVT, verified by canonical
+path and source identity after reopening, not just its display name. Retain
+that readback. Preserve hidden grading data outside drafting inputs. Inspect
+actual geometry and connections, and reconcile unknown effects before retry.
+Pause/cancel must let an already running native transaction settle. Release
+persistent computer-capture ownership between inspection and timed work.
+
+Both complete historical frontiers belong at a coherent batch checkpoint,
+before claiming that slice is regression-clean, rather than before every
+disposable geometry experiment. Preserve failures immediately and add reusable
+regressions plus neighboring boundary coverage by that checkpoint. The lane
+does not permit customer/production models, hosted testing or publication;
+keep loopback services and native authorization, exact-document checks,
+transaction truth and durable operation records intact.
+
+## Batch and release qualification
+
+Raw test count does not prove cross-process coherence. Before a qualification candidate,
 the machine-readable `scripts/release_frontier.v1.json` selects historical
 failure families across backend, MCP, and native boundaries; every family must
 name at least two tests that actually execute in this public composition. Add a
 new generic replay and neighboring boundary coverage whenever live testing
-finds a new failure family. Run the frontier first, the complete private
+finds a new failure family. Run the frontier at the coherent batch checkpoint, the complete private
 integration gate once from stable source, and the real Revit UI last.
 
 The live capability runner also verifies every candidate-envelope identity it

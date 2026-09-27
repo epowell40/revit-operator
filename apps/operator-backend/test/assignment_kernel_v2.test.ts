@@ -566,6 +566,38 @@ test("all supported transport wrappers unwrap to one exact OperationResultV2", (
   assert.throws(() => unwrapOperationResultV2({ transport: "legacy_mcp_text", content: [{ type: "text", text: JSON.stringify({ payload: { operation_result_v2: nativeResult } }) }] }), /wrap exactly one/);
 });
 
+test("invalid optional input diagnostics retain bounded originals without changing a host no-dispatch core", () => {
+  const core = { ...result({}), status: "failed_before_dispatch", dispatch_state: "not_dispatched",
+    persistent_effect: "none", native_transaction_state: "not_applicable", authority: "operator-mcp-transport",
+    observation_required: false } as OperationResultV2;
+  const malformed: unknown[] = [null, ["not a diagnostic"], { unexpected: "x".repeat(40_000) }];
+  const cyclic: any = {}; cyclic.loop = cyclic; malformed.push(cyclic);
+  for (const diagnostic of malformed) {
+    const decoded = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: {
+      operation_result_v2: { ...core, input_schema_gap: diagnostic, diagnostics: ["existing host detail"] }
+    } });
+    assert.equal(decoded.input_schema_gap, undefined);
+    const { diagnostics, ...effectCore } = decoded;
+    assert.deepEqual(effectCore, core);
+    assert.equal(diagnostics?.[0], "existing host detail");
+    const retained = JSON.parse(diagnostics![1]!);
+    assert.equal(retained.schema, "revit-operator.rejected-result-diagnostic/v1");
+    if (diagnostic === cyclic) assert.equal(retained.serialization_failed, true);
+    else {
+      assert.equal(retained.sha256, canonicalPayloadHashV2(diagnostic));
+      assert.equal(retained.original_length, canonicalJsonV2(diagnostic).length);
+      assert.ok(retained.json.length <= 32_768);
+      assert.equal(retained.truncated, canonicalJsonV2(diagnostic).length > 32_768);
+    }
+  }
+  const bad = { ...core, input_schema_gap: null };
+  assert.throws(() => unwrapOperationResultV2({ transport: "generic_mcp", structured_content: { operation_result_v2: bad } }), /Input-schema/);
+  assert.throws(() => unwrapOperationResultV2({ transport: "legacy_mcp_text", content: [{ type: "text", text: JSON.stringify({ operation_result_v2: bad }) }] }), /Input-schema/);
+  assert.throws(() => unwrapOperationResultV2({ transport: "typed_mcp", structured_content: {
+    operation_result_v2: { ...bad, authority: "model" }
+  } }), /Input-schema/);
+});
+
 test("transport choice produces the same operation and snapshot projection", () => {
   const snapshots = (["direct_native", "typed_mcp", "generic_mcp", "courier", "dynamic_runtime"] as const).map((transport) => {
     const journal = createJournal();
@@ -901,6 +933,26 @@ test("apply completion requires a committed native result and task-level criteri
     .map((gap) => gap.gap_id), ["verification:operation-2"]);
 });
 
+test("unknown-effect admission permits read-only discovery but rejects writes disguised as reconciliation", () => {
+  const assignment = spec("apply");
+  assignment.work_units = [...assignment.work_units, { ...assignment.work_units[0]!, work_unit_id: "read", requested_effect: "read" },
+    { ...assignment.work_units[0]!, work_unit_id: "preview", requested_effect: "preview" }];
+  const journal = createJournal(assignment);
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
+  for (const purpose of ["discovery", "evidence_read", "reconciliation"] as const) {
+    const read = { ...operation("read", purpose), operation_id: `read-${purpose}`, work_unit_id: "read" };
+    journal.append(event(journal, { event_type: "operation_admitted", operation: read }));
+    assert.deepEqual(journal.snapshot().unresolved_unknown_operation_ids, ["operation-1"]);
+  }
+  for (const effect of ["preview", "apply"] as const) {
+    const unsafe = { ...operation(effect, "reconciliation"), operation_id: `unsafe-${effect}`,
+      work_unit_id: effect === "preview" ? "preview" : "work-1" };
+    assert.throws(() => journal.append(event(journal, { event_type: "operation_admitted", operation: unsafe })),
+      (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_unknown_effect_requires_reconciliation");
+  }
+});
+
 test("the kernel rejects effect-mismatched task eligibility unless desired-state equivalence is explicit", () => {
   const previewSpec: AssignmentSpecV2 = {
     ...spec("preview"),
@@ -1155,4 +1207,65 @@ test("retry admission requires a settled no-effect predecessor and typed materia
   assert.throws(() => journal.append(event(journal, { event_type: "operation_admitted", operation: retry })), (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_retry_basis_missing");
   const accepted = journal.append(event(journal, { event_type: "operation_admitted", operation: { ...retry, retry_basis: "corrected_admission" } }));
   assert.equal(accepted.operations["operation-2"].retry_of_operation_id, "operation-1");
+});
+
+test('journal shared snapshots keep branch appends and public values isolated', () => {
+  const parent = createJournal(), branch = parent.fork(), sibling = branch.fork();
+  const before = parent.snapshot();
+  const next = event(branch, {event_type: 'work_unit_state_changed', work_unit_id: 'work-1', state: 'active', reason: 'Branch advances independently.'});
+  const returned = branch.append(next);
+  next.actor = 'caller mutation';
+  returned.spec.criteria[0]!.requirement = 'caller mutation';
+  const exposed = branch.events() as AssignmentEventV2[];
+  exposed[0]!.actor = 'caller mutation';
+  const serialized = branch.serializedSnapshot(), parsed = JSON.parse(serialized);
+  parsed.current_binding.generation = 999;
+  assert.deepEqual(parent.snapshot(), before);
+  assert.deepEqual(sibling.snapshot(), before);
+  assert.deepEqual(branch.snapshot(), reduceAssignmentEventsV2(branch.events()));
+  assert.equal(branch.serializedSnapshot(), serialized);
+  assert.equal(serialized, JSON.stringify(branch.snapshot()));
+  parent.append(event(parent, {event_type: 'work_unit_state_changed', work_unit_id: 'work-1', state: 'retained', reason: 'Parent retains its own work.'}));
+  assert.equal(branch.snapshot().work_unit_states['work-1'], 'active');
+  assert.equal(parent.snapshot().work_unit_states['work-1'], 'retained');
+  assert.deepEqual(sibling.snapshot(), before);
+});
+
+test('a late rejected fork append preserves accepted snapshot and clarification bookkeeping', () => {
+  const parent = createJournal(spec('apply', true));
+  parent.append(event(parent, {event_type: 'input_requested', variable_id: 'replacement_text', clarification_id: 'late-failure', question: 'Replacement?'}));
+  const branch = parent.fork(), before = branch.snapshot(), history = branch.events();
+  const failed = event(branch, {event_type: 'input_supplied', variable_id: 'replacement_text', clarification_id: 'late-failure', value: {failValueClone: true}});
+  const clone = globalThis.structuredClone;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => {
+      // This value clone occurs after the reducer deletes its clarification Map entry.
+      if ((value as {failValueClone?: boolean})?.failValueClone) throw new Error('late value clone failure');
+      return clone(value, options);
+    }) as typeof structuredClone;
+    assert.throws(() => branch.append(failed), /late value clone failure/);
+  } finally { globalThis.structuredClone = clone; }
+  assert.deepEqual(branch.snapshot(), before);
+  assert.deepEqual(branch.events(), history);
+  assert.deepEqual(parent.snapshot(), before);
+  for (const [journal, value] of [[branch, 'Branch'], [parent, 'Parent']] as const) {
+    journal.append(event(journal, {event_type: 'input_supplied', variable_id: 'replacement_text', clarification_id: 'late-failure', value}));
+    assert.equal(journal.snapshot().input_values.replacement_text, value);
+  }
+});
+
+test('fork and immutable serialization avoid deep clones while preserving exact cache accounting', () => {
+  const journal = createJournal(), events = journal.events();
+  const clone = globalThis.structuredClone; let copies = 0;
+  try {
+    globalThis.structuredClone = ((value: unknown, options?: Parameters<typeof structuredClone>[1]) => { copies++; return clone(value, options); }) as typeof structuredClone;
+    journal.fork(); journal.serializedSnapshot();
+  } finally { globalThis.structuredClone = clone; }
+  assert.equal(copies, 0);
+  const bytes = Buffer.byteLength(JSON.stringify(events)) + Buffer.byteLength(JSON.stringify(journal.snapshot()));
+  const exact = createContentVerifiedJournalV2({maxBytes: bytes}); exact.open(events);
+  assert.deepEqual(exact.stats(), {entries: 1, bytes});
+  const smaller = createContentVerifiedJournalV2({maxBytes: bytes - 1}); smaller.open(events);
+  assert.deepEqual(smaller.stats(), {entries: 0, bytes: 0});
+  assert.throws(() => new AssignmentJournalV2().serializedSnapshot(), /first V2 event/);
 });

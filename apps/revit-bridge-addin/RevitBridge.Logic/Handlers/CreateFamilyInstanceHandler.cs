@@ -120,21 +120,18 @@ namespace RevitBridge.Logic.Handlers
                     // Some level-based native overloads add the level elevation to
                     // the supplied Z. Our request coordinates are absolute model feet.
                     // Read the actual insertion and correct it inside the same transaction.
-                    if (targetView == null)
+                    var requested = new[] { point.X, point.Y, point.Z };
+                    var actual = new[] { observedPoint.X, observedPoint.Y, observedPoint.Z };
+                    if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested, actual))
                     {
-                        var requested = new[] { point.X, point.Y, point.Z };
-                        var actual = new[] { observedPoint.X, observedPoint.Y, observedPoint.Z };
-                        if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested, actual))
-                        {
-                            var delta = RevitBridge.Common.AbsolutePlacementCorrection.Delta(requested, actual);
-                            ElementTransformUtils.MoveElement(doc, instance.Id, new XYZ(delta[0], delta[1], delta[2]));
-                            doc.Regenerate();
-                            observedPoint = (instance.Location as LocationPoint)?.Point
-                                ?? throw new InvalidOperationException("Created family location disappeared after placement correction.");
-                            if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested,
-                                new[] { observedPoint.X, observedPoint.Y, observedPoint.Z }))
-                                throw new InvalidOperationException("Native family placement did not reach the requested model-space point.");
-                        }
+                        var delta = RevitBridge.Common.AbsolutePlacementCorrection.Delta(requested, actual);
+                        ElementTransformUtils.MoveElement(doc, instance.Id, new XYZ(delta[0], delta[1], delta[2]));
+                        doc.Regenerate();
+                        observedPoint = (instance.Location as LocationPoint)?.Point
+                            ?? throw new InvalidOperationException("Created family location disappeared after placement correction.");
+                        if (!RevitBridge.Common.AbsolutePlacementCorrection.Matches(requested,
+                            new[] { observedPoint.X, observedPoint.Y, observedPoint.Z }))
+                            throw new InvalidOperationException("Native family placement did not reach the requested model-space point.");
                     }
 
                     if (dryRun)

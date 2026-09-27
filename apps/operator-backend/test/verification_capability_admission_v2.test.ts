@@ -48,6 +48,41 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.deepEqual(capable.provided_semantic_outputs, ["text_note.value"]);
 });
 
+test("duplicate-view keeps the source contextual and verifies only the new view identity", () => {
+  const apply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/duplicate-view" };
+  const source = operationTargetSelectorV2({ operation: apply,
+    value: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true },
+    fallback_target_tokens: ["id:1363433"] });
+  assert.deepEqual(source.principal_target_tokens, []);
+  assert(source.contextual_scope_tokens.includes("id:1363433"));
+  const created = operationTargetSelectorV2({ operation: apply,
+    value: { viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY" } });
+  assert(created.principal_target_tokens.includes("id:1542917"));
+  assert(!created.principal_target_tokens.includes("id:1363433"));
+  const read = operationTargetSelectorV2({ operation: { ...apply, path: "/revit/views" },
+    value: { request: { viewIds: [1542917] }, views: [{ id: 1542917, name: "M-COORDINATION COPY" }] } });
+  assert.deepEqual(read.principal_target_tokens, ["id:1542917"]);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/get-context" } }).admissible, false);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/views" } }).admissible, false);
+  assert.equal(verificationCapabilityAdmissionV2({ apply, verification: { ...apply, path: "/revit/view-owned-detailing" } }).admissible, true);
+  const withoutDetailing = { ...apply, arguments: { method: "POST", path: "/revit/duplicate-view",
+    body: { viewId: 1363433, withDetailing: false } } };
+  assert.equal(verificationCapabilityAdmissionV2({ apply: withoutDetailing,
+    verification: { ...apply, path: "/revit/views" } }).admissible, true);
+});
+
+test("view-owned detailing selects requested view identities for single and paired readback", () => {
+  const operation = { capability_id: "revit_call_tool", method: "POST", path: "/revit/view-owned-detailing" };
+  const committed = { target: {}, result: { affected_target_identities: ["element_id:1542984"] } } as any;
+  for (const request of [{ viewId: 1542984 }, { viewIds: [1363433, 1542984], limit: 2000 }]) {
+    const selected = operationTargetSelectorV2({ operation, value: request });
+    assert(selected.principal_target_tokens.includes("id:1542984"));
+    assert(operationMatchesTargetIdentityV2(committed, selected.principal_target_tokens));
+  }
+  const sourceOnly = operationTargetSelectorV2({ operation, value: { viewIds: [1363433] } });
+  assert(!operationMatchesTargetIdentityV2(committed, sourceOnly.principal_target_tokens));
+});
+
 test("parameter mutation verification requires a reviewed parameter-value readback", () => {
   const genericApply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/set-parameter" };
   const incapable = verificationCapabilityAdmissionV2({

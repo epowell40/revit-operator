@@ -267,7 +267,22 @@ function writeJson(filePath: string, value: unknown): void {
     fs.closeSync(handle);
     handle = null;
     if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
-    fs.renameSync(tempPath, filePath);
+    // Windows can hold a reader's destination handle briefly while a large
+    // goal journal is being inspected. Preserve the same temp and backup and
+    // retry only that transient replace; never generate a second revision.
+    const retryDelaysMs = [0, 25, 75, 150];
+    for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
+      if (retryDelaysMs[attempt]) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelaysMs[attempt]);
+      }
+      try {
+        fs.renameSync(tempPath, filePath);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt === retryDelaysMs.length - 1 || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "")) throw error;
+      }
+    }
   } finally {
     if (handle !== null) fs.closeSync(handle);
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);

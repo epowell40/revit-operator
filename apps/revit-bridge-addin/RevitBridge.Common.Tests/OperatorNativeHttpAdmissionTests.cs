@@ -112,6 +112,7 @@ namespace RevitBridge.Common.Tests
             var refreshed = VerifyResponse(request, refreshedValues, expectedRuntimeMode: "development", useProductionAuthority: true);
             var authorizer = new CountingAuthorizer(refreshed);
             var clockCalls = 0;
+            OperatorNativeHttpAuthorizationReceipt? captured = null;
 
             var body = await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
                 authorizer,
@@ -119,11 +120,15 @@ namespace RevitBridge.Common.Tests
                 request,
                 "{\"max\":25}",
                 CancellationToken.None,
-                () => clockCalls++ == 0 ? initial.ExpiresAtUtc.AddMilliseconds(1) : DateTimeOffset.UtcNow);
+                () => clockCalls++ == 0 ? initial.ExpiresAtUtc.AddMilliseconds(1) : DateTimeOffset.UtcNow,
+                consumedReceipt: value => captured = value);
 
             Assert.Equal("{\"max\":25}", body);
             Assert.Equal(1, authorizer.Calls);
             Assert.Equal("final", authorizer.LastStage);
+            Assert.Same(refreshed, captured);
+            Assert.False(captured!.TryConsume(request, DateTimeOffset.UtcNow, out var replayCode, out _));
+            Assert.Equal("CERTIFICATION_DIRECT_AUTHORIZATION_REPLAY", replayCode);
         }
 
         [Fact]
@@ -200,17 +205,20 @@ namespace RevitBridge.Common.Tests
             var request = Prepare("POST", "/revit/replace-text-note", sourceBody);
             var receipt = Verify(request, canonicalPolicyBody);
             var authorizer = new CountingAuthorizer(receipt);
+            OperatorNativeHttpAuthorizationReceipt? captured = null;
 
             var dispatchBody = await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
                 authorizer,
                 receipt,
                 request,
                 canonicalPolicyBody,
-                CancellationToken.None);
+                CancellationToken.None,
+                consumedReceipt: value => captured = value);
 
             Assert.Equal(sourceBody, dispatchBody);
             Assert.NotEqual(canonicalPolicyBody, dispatchBody);
             Assert.Equal(0, authorizer.Calls);
+            Assert.Same(receipt, captured);
             using var document = JsonDocument.Parse(dispatchBody);
             Assert.Equal("Chase for Electrical Conduit\r", document.RootElement.GetProperty("expectedOldText").GetString());
         }

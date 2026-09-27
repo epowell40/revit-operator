@@ -25,6 +25,7 @@ namespace RevitBridge.Logic.Handlers
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+            TextNoteTextCanonicalizer.ValidateRequestTextLengths(p.newText, p.expectedOldText);
             if (p.textNoteId == 0) throw new InvalidOperationException("set-text-note-text.textNoteId is required.");
             var nextText = TextNoteTextCanonicalizer.Normalize(p.newText ?? "");
 

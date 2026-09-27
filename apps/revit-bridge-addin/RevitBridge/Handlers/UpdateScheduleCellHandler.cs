@@ -135,6 +135,7 @@ namespace RevitBridge.Handlers
                 {
                     status = visibleRowFound ? "Blocked" : "Not Found",
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     blockedReason,
                     clarificationQuestion,
                     schedulesScanned = schedules.Count,
@@ -152,6 +153,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "Ambiguous",
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     blockedReason = "The requested row and field resolved to multiple schedule-backed parameters; no write was attempted.",
                     schedulesScanned = schedules.Count,
                     candidateCount = candidates.Count,
@@ -171,6 +173,7 @@ namespace RevitBridge.Handlers
                     {
                         status = "Blocked",
                         applied = false,
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
                         blockedReason = $"The resolved target is a type parameter shared by {affectedInstances}{(affectedInstances >= 51 ? "+" : "")} instances; a one-row update would change other elements.",
                         candidate = BuildCandidateEvidence(candidate),
                         affectedInstanceCount = affectedInstances,
@@ -187,6 +190,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "Blocked",
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     blockedReason = "The current scheduled value does not match the expected old value; no write was attempted.",
                     schedulesScanned = schedules.Count,
                     candidateCount = 1,
@@ -202,6 +206,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "Blocked",
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     blockedReason = "The resolved schedule field is read-only.",
                     candidate = BuildCandidateEvidence(candidate),
                     issues
@@ -224,8 +229,13 @@ namespace RevitBridge.Handlers
                     proposedRaw = ReadRawValue(parameter);
                     proposedDisplay = ReadDisplayValue(parameter);
                 }
-                if (isDryRun || !setSucceeded) transaction.RollBack();
-                else transaction.Commit();
+                if (isDryRun || !setSucceeded)
+                {
+                    if (transaction.RollBack() != TransactionStatus.RolledBack)
+                        throw new InvalidOperationException("Revit did not confirm the schedule-cell rollback.");
+                }
+                else if (transaction.Commit() != TransactionStatus.Committed)
+                    throw new InvalidOperationException("Revit did not confirm the schedule-cell commit.");
             }
 
             if (!setSucceeded)
@@ -234,6 +244,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "Blocked",
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>()),
                     blockedReason = setError ?? "Revit rejected the requested schedule value.",
                     candidate = BuildCandidateEvidence(candidate),
                     before = new { raw = beforeRaw, display = beforeDisplay },
@@ -249,6 +260,7 @@ namespace RevitBridge.Handlers
                     status = "Dry Run",
                     dryRun = true,
                     applied = false,
+                    transaction = OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>()),
                     changed,
                     candidate = BuildCandidateEvidence(candidate),
                     before = new { raw = beforeRaw, display = beforeDisplay },
@@ -269,6 +281,7 @@ namespace RevitBridge.Handlers
                 status = verified ? "Applied and Verified" : "Applied With Verification Failure",
                 dryRun = false,
                 applied = true,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { ElementIdCompat.GetValue(candidate.TargetParameter.Owner.Id) }),
                 changed,
                 verified,
                 verificationFailedCount = verified ? 0 : 1,

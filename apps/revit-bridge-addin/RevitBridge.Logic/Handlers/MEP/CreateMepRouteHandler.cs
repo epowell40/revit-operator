@@ -9,6 +9,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Logic.Handlers;
 
 namespace RevitBridge.Logic.Handlers.MEP
 {
@@ -43,6 +44,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool connectSegments { get; set; } = true;
             public bool connectToExisting { get; set; } = false;
             public bool requireExistingEndpointConnections { get; set; } = false;
+            public string? requiredExistingEndpoint { get; set; }
+            public long? expectedExistingStartOwnerId { get; set; }
+            public long? expectedExistingEndOwnerId { get; set; }
             public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public bool dryRun { get; set; } = true;
@@ -175,6 +179,11 @@ namespace RevitBridge.Logic.Handlers.MEP
                     return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = ex.Message, warnings });
                 }
             }
+            if (!MepRouteEndpointContract.TryResolve(p.connectToExisting, p.requireExistingEndpointConnections,
+                p.requiredExistingEndpoint, p.expectedExistingStartOwnerId, p.expectedExistingEndOwnerId, out var requiredEndpoint))
+            {
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = "A requiredExistingEndpoint must name start, end, or both, enable connectToExisting, and supply the exact expected existing owner ID for each required end.", warnings });
+            }
 
             MEPSystemType? sysType = kind == "conduit" ? null : MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
             MepRoutingUtil.DuctTypeResolution? ductTypeResolution = kind == "duct"
@@ -220,10 +229,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             var fittingIds = new List<long>();
             var internalConnectionFailures = 0;
             var jointPlans = MepRouteJointPlanner.PlanJoints(segmentSizeTexts);
+            var nativeFailures = new List<CapturedFailure>();
 
             using (var tx = new Transaction(doc, p.dryRun ? "Create MEP Route (Dry Run)" : "Create MEP Route"))
             {
                 tx.Start();
+                tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, nativeFailures, rollbackOnErrors: true, deleteWarnings: false));
                 try
                 {
                     for (var i = 0; i < resolvedPoints.Count - 1; i++)
@@ -354,32 +365,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var excludedOwnerIds = new HashSet<long>(createdIds);
                         var toleranceFt = Math.Max(1e-4, Math.Min(1.0, p.externalConnectionToleranceFt));
                         var externalEndpointFailures = 0;
-                        TryConnectExternalEndpoint(
-                            doc,
-                            created[0],
-                            resolvedPoints[0],
-                            "start",
-                            excludedOwnerIds,
-                            toleranceFt,
-                            connectionAttempts,
-                            fittingIds,
-                            ref externalEndpointFailures);
-                        TryConnectExternalEndpoint(
-                            doc,
-                            created[created.Count - 1],
-                            resolvedPoints[resolvedPoints.Count - 1],
-                            "end",
-                            excludedOwnerIds,
-                            toleranceFt,
-                            connectionAttempts,
-                            fittingIds,
-                            ref externalEndpointFailures);
+                        if (requiredEndpoint.Length == 0 || requiredEndpoint == "start" || requiredEndpoint == "both")
+                            TryConnectExternalEndpoint(doc, created[0], resolvedPoints[0], "start", excludedOwnerIds,
+                                toleranceFt, p.expectedExistingStartOwnerId, MepRoutingUtil.SystemTypeService(sysType), connectionAttempts, fittingIds, ref externalEndpointFailures);
+                        if (requiredEndpoint.Length == 0 || requiredEndpoint == "end" || requiredEndpoint == "both")
+                            TryConnectExternalEndpoint(doc, created[created.Count - 1], resolvedPoints[resolvedPoints.Count - 1], "end", excludedOwnerIds,
+                                toleranceFt, p.expectedExistingEndOwnerId, MepRoutingUtil.SystemTypeService(sysType), connectionAttempts, fittingIds, ref externalEndpointFailures);
                         doc.Regenerate();
 
                         if (externalEndpointFailures > 0)
                         {
                             var message = $"Could not physically connect {externalEndpointFailures} route endpoint(s) to compatible existing connectors within {toleranceFt:G6} ft.";
-                            if (p.requireExistingEndpointConnections) throw new InvalidOperationException(message);
+                            if (p.requireExistingEndpointConnections || requiredEndpoint.Length > 0) throw new InvalidOperationException(message);
                             warnings.Add(message);
                         }
                     }
@@ -415,7 +412,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                     var completionStatus = p.dryRun ? tx.RollBack() : tx.Commit();
                     var expectedStatus = p.dryRun ? TransactionStatus.RolledBack : TransactionStatus.Committed;
                     if (completionStatus != expectedStatus)
-                        throw new InvalidOperationException($"Native route transaction returned {completionStatus}, expected {expectedStatus}.");
+                    {
+                        return Task.FromResult<object>(new
+                        {
+                            status = "Blocked",
+                            error = $"Native route transaction returned {completionStatus}, expected {expectedStatus}.",
+                            blockCode = nativeFailures.Count > 0 ? "native_revit_failure" : "native_transaction_uncommitted",
+                            dryRun = p.dryRun,
+                            plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
+                            attemptedCreatedElementIds = createdIds,
+                            attemptedCreatedFittingIds = fittingIds,
+                            nativeFailures,
+                            connectionAttempts,
+                            warnings,
+                            rolledBack = completionStatus == TransactionStatus.RolledBack,
+                            transaction = OperatorNativeTransactionReceipt.FromObservedStatus(completionStatus.ToString(), createdIds.Concat(fittingIds))
+                        });
+                    }
                     var transaction = OperatorNativeTransactionReceipt.FromObservedStatus(completionStatus.ToString(), createdIds.Concat(fittingIds));
                     var result = new
                     {
@@ -462,6 +475,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         internalConnectionsVerified = !p.connectSegments || internalConnectionFailures == 0,
                         openConnectorCount,
                         warnings,
+                        nativeFailures,
                         rolledBack = p.dryRun
                     };
 
@@ -480,6 +494,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         createdElementIds = new List<long>(),
                         plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
                         warnings,
+                        nativeFailures,
                         rolledBack = observedStatus == TransactionStatus.RolledBack,
                         transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observedStatus.ToString(), createdIds.Concat(fittingIds))
                     });
@@ -508,6 +523,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             string endpointName,
             ISet<long> excludedOwnerIds,
             double toleranceFt,
+            long? expectedOwnerId,
+            string? requestedSystemType,
             List<object> connectionAttempts,
             List<long> fittingIds,
             ref int failureCount)
@@ -528,7 +545,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return;
             }
 
-            var external = MepRoutingUtil.FindClosestCompatibleOpenConnector(doc, routeConnector, excludedOwnerIds, toleranceFt, out var distanceFt);
+            var external = MepRoutingUtil.FindClosestCompatibleOpenConnector(doc, routeConnector, excludedOwnerIds, toleranceFt, out var distanceFt, expectedOwnerId);
             if (external == null || external.Owner == null)
             {
                 failureCount++;
@@ -540,9 +557,30 @@ namespace RevitBridge.Logic.Handlers.MEP
                     connected = false,
                     method = "compatible_existing_connector_not_found",
                     toleranceFt,
-                    error = "No physically open compatible existing connector was found near the route endpoint."
+                    expectedOwnerId,
+                    error = "No physically open compatible connector on the expected existing owner was found near the route endpoint."
                 });
                 return;
+            }
+
+            var existingService = MepRoutingUtil.ConnectorService(external);
+            if (!string.IsNullOrWhiteSpace(requestedSystemType) &&
+                !MepConnectorServicePolicy.AreCompatible(requestedSystemType, existingService))
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    externalOwnerId = ElementIdCompat.GetValue(external.Owner.Id),
+                    connected = false,
+                    method = "service_mismatch",
+                    requestedSystemType,
+                    existingService,
+                    error = "The existing connector service differs from the requested route service."
+                });
+                throw new InvalidOperationException($"Existing connector service {existingService} differs from requested route service {requestedSystemType}.");
             }
 
             long? fittingId = null;

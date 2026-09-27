@@ -117,6 +117,32 @@ test("settled task failures are measurable, but lost receipts and model drift st
   assert.equal(valid.model_call_receipts[0]!.tokens.total_tokens, 120);
 });
 
+test("GPT-6 Sol exact usage can settle a measured campaign case", () => {
+  const valid = measuredTrace();
+  valid.model_call_receipts[0]!.model = "gpt-6-sol";
+  const sol = { agent_model: "gpt-6-sol", agent_reasoning_effort: "medium" };
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(valid, sol));
+  assert.equal(finishGeneralRevitCampaignCase(valid, null, sol), null);
+  const missingCostBucket = structuredClone(valid);
+  delete (missingCostBucket.model_call_receipts[0]!.tokens as Record<string, unknown>).cached_input_tokens;
+  assert.throws(() => assertGeneralRevitCaseMeasurement(missingCostBucket, sol), /cost_incomplete/);
+});
+
+test("baseline8-shaped clarification retains an uncertified first request instead of borrowing continuation receipts", () => {
+  const continuation = measuredTrace();
+  const first = createProviderUsageLedgerV1();
+  first.begin("session", "clarification");
+  const uncertified = { ...continuation, case_id: "r01_text_note_edit",
+    provider_usage_turns: [first.snapshot([]), ...continuation.provider_usage_turns] };
+  assert.throws(() => assertGeneralRevitCaseMeasurement(uncertified, requested), /provider_coverage_incomplete:r01_text_note_edit/);
+  first.observe("session", "clarification", { provider_turn_usage: {
+    schema: "revit-operator.provider-turn-usage/v1", session_id: "session", message_id: "clarification",
+    thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+  } });
+  const certified = { ...uncertified, provider_usage_turns: [first.snapshot([]), ...continuation.provider_usage_turns] };
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(certified, requested));
+});
+
 test("final export restore failure persists to a reloadable checkpoint and incomplete report", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-final-checkpoint-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

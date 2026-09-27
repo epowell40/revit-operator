@@ -64,6 +64,15 @@ export function evidenceIsKnownNoEffectFailure(
 ): boolean {
   const root = recordValue(evidence);
   if (root.request_dispatched === false && root.outcome_unknown !== true) return true;
+  const envelope = recordValue(root.structuredContent);
+  const operation = recordValue(envelope.operation_result_v2);
+  if (envelope.schema === "revit-operator.assignment-kernel-mcp-result/v2"
+      && operation.schema === "revit-operator.operation-result/v2"
+      && operation.status === "failed_before_dispatch"
+      && operation.dispatch_state === "not_dispatched"
+      && operation.persistent_effect === "none"
+      && operation.native_transaction_state === "not_applicable"
+      && operation.authority === "operator-mcp-transport") return true;
   const texts: string[] = [];
   let structuredNoDispatch = false;
   const visit = (value: unknown, depth = 0): void => {

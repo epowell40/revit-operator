@@ -970,6 +970,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   );
   assert.equal(applyAfterPreflight.requestedEffect, "apply");
   assert.equal(classifyAutoGoalRequest(
+    "Continue drafting the connected Supply Air route in Unit 404. A single dry run does not complete this requested route."
+  ).requestedEffect, "apply");
+  assert.equal(classifyAutoGoalRequest(
+    "Preview the Unit 404 Supply Air route, then leave the model unchanged until I review it."
+  ).requestedEffect, "preview");
+  assert.equal(classifyAutoGoalRequest(
     "Preflight changing every HRU Mark to ERU, but do not apply or save anything."
   ).requestedEffect, "preview");
   assert.equal(classifyAutoGoalRequest(
@@ -2868,5 +2874,31 @@ test("goal JSON uses revisions and recovers the last complete copy after primary
     const recovered = getGoal(created.id);
     assert.equal(recovered?.id, created.id);
     assert.equal(recovered?.revision, 1);
+  });
+});
+
+test("goal journal survives a transient Windows replace lock after a committed native edit", () => {
+  withWorkspace(() => {
+    const created = setAgentGoal("session-transient-rename", {
+      title: "Connected duct", objective: "Verify a committed tee.", acceptance_criteria: ["Keep the goal journal readable."]
+    });
+    const original = fs.renameSync;
+    let attempts = 0;
+    try {
+      fs.renameSync = ((source: fs.PathLike, destination: fs.PathLike) => {
+        if (String(destination).endsWith("goal.json") && attempts++ === 0) {
+          const error = new Error("simulated transient Windows sharing violation") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        return original(source, destination);
+      }) as typeof fs.renameSync;
+      const updated = updateGoal(created.id, { progress_summary: "Native branch applied; independent readback retained." });
+      assert.equal(updated.revision, 2);
+      assert.equal(getGoal(created.id)?.progress_summary, updated.progress_summary);
+      assert.equal(attempts, 2);
+    } finally {
+      fs.renameSync = original;
+    }
   });
 });

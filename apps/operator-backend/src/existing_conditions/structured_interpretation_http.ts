@@ -83,7 +83,8 @@ export async function handleStructuredExistingConditionsInterpretationHttp(
       bounded_summary: "Registered source-bound existing-conditions geometry to an authoritative Revit view frame.",
       relationships: [
         { evidence_id: result.interpretation_evidence_id, relation: "derived_from" },
-        { evidence_id: result.frame_evidence_id, relation: "derived_from" }
+        { evidence_id: result.frame_evidence_id, relation: "derived_from" },
+        { evidence_id: result.landmark_evidence_id, relation: "derived_from" }
       ],
       raw: result
     });

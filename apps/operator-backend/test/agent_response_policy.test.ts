@@ -14,6 +14,7 @@ import {
 } from "../src/agent_response_policy.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import { __testOnlyFinalizeOpenAiResponseForRequest } from "../src/brains/openai_brain.js";
+import { getOperatorAgentBaseInstructions } from "../src/brains/codex_brain.js";
 
 const repoRoot = path.resolve(process.cwd(), "..");
 
@@ -71,13 +72,13 @@ test("agent response policy requires natural acknowledgement instead of routine 
 
 test("backend prompts do not force Plan-prefixed action turns", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
-  const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const codexInstructions = getOperatorAgentBaseInstructions();
 
   assert.doesNotMatch(openAiBrain, /start with:\s*\\"Plan:/i);
   assert.doesNotMatch(openAiBrain, /If you need to act,\s*start with/i);
-  assert.doesNotMatch(codexBrain, /start with:\s*\\"Plan:/i);
+  assert.doesNotMatch(codexInstructions, /start with:\s*"?Plan:/i);
   assert.match(openAiBrain, /AGENT_RESPONSE_STYLE_LINES/);
-  assert.match(codexBrain, /AGENT_RESPONSE_STYLE_LINES/);
+  for (const line of AGENT_RESPONSE_STYLE_LINES) assert.ok(codexInstructions.includes(line));
 });
 
 test("per-turn teammate contract classifies representative conversation, navigation, inspection, and mutation requests", () => {
@@ -168,6 +169,29 @@ test("Codex settles the durable Assignment before publishing turn completion", (
   assert.match(codexBrain, /canonical_assignment_outcome: canonicalAssignmentOutcome/);
   assert.doesNotMatch(codexBrain, /const canonicalAssignmentOutcome = !assignmentKernelV2/);
   assert.match(codexBrain, /if \(!progression\.prompt\)[\s\S]*canonicalAssignmentOutcomeForBinding\([\s\S]*canonical_assignment_outcome: canonicalAssignmentOutcome/);
+});
+
+test("a V2 clarification that stops before the provider reports explicit no-start usage", () => {
+  const source = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const start = source.indexOf("if (!progression.prompt)");
+  const end = source.indexOf("assignmentProgressTurnStart = progression.snapshot", start);
+  assert.ok(start >= 0 && end > start);
+  const clarificationReturn = source.slice(start, end);
+  assert.match(clarificationReturn, /provider_turn_usage:\s*\{[\s\S]*?session_id:\s*req\.session_id,\s*message_id:\s*req\.message_id,[\s\S]*?thread_id:\s*null,\s*turn_id:\s*null,\s*disposition:\s*"not_started",\s*raw_response_ids:\s*\[\]/);
+  assert.match(clarificationReturn, /assignment_snapshot_v2:\s*progression\.snapshot/);
+  assert.match(clarificationReturn, /canonical_assignment_outcome:\s*canonicalAssignmentOutcome/);
+});
+
+test("a provider connection failure before turn/start reports exact no-start usage", () => {
+  const source = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const helperStart = source.indexOf("const stopBeforeProvider = (");
+  const helperEnd = source.indexOf("const requestBackendAuth =", helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.match(helper, /provider_turn_usage:\s*\{[\s\S]*?session_id:\s*req\.session_id,\s*message_id:\s*req\.message_id,[\s\S]*?thread_id:\s*null,\s*turn_id:\s*null,\s*disposition:\s*"not_started"(?: as const)?,\s*raw_response_ids:\s*\[\]/);
+  assert.doesNotMatch(helper, /phase\s*!==\s*"provider_start"/);
+  const connectionFailure = source.slice(source.indexOf('if (error instanceof CodexInstructionBindingError) return instructionBindingStop(error);', helperEnd), source.indexOf("providerReceiptRecorder =", helperEnd));
+  assert.match(connectionFailure, /return stopBeforeProvider\([\s\S]*?"provider_start"/);
 });
 
 test("pre-model redline routing uses async recovery bridge", () => {

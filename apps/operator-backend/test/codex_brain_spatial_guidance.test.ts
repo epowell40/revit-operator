@@ -52,13 +52,13 @@ test("certified Codex threads are isolated from MCP and Revit turn runtimes", ()
 
 test("executable Codex turns bind backend auth before provider start and clean the lease", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "src", "brains", "codex_brain.ts"), "utf8");
-  const start = source.indexOf("export async function decideCodexStreaming");
+  const start = source.indexOf("async function decideCodexSingleTurn");
   const end = source.indexOf("\nexport ", start + 10);
   const body = source.slice(start, end > start ? end : undefined);
   const authGuard = body.indexOf("if (threadProfile.startRevitTurnRuntime && !backendAuth)");
   const leaseOpen = body.indexOf("beginBackendAuthLease(req.session_id, backendAuth!)");
-  const providerStart = body.indexOf("return await activeClient.startBoundTurn({");
-  const fallbackStart = body.indexOf("start = await c.startBoundTurn({");
+  const providerStart = body.indexOf("activeClient.startBoundTurn({");
+  const fallbackStart = body.indexOf("c.startBoundTurn({");
   const leaseCleanup = body.lastIndexOf("endBackendAuthLease(backendAuthLease)");
   assert.ok(authGuard >= 0 && authGuard < providerStart, "missing auth must stop before provider call 1");
   assert.ok(leaseOpen > authGuard && leaseOpen < providerStart, "the turn-scoped auth lease must open before provider call 1");

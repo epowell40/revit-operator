@@ -3,6 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { recentCommandEvents, __closeForTests } from "../src/memory/sqlite_store.js";
 import { createCodexTurnModelTelemetry } from "../src/brains/codex_turn_model_telemetry.js";
 
 test("resumed thread usage remains a bounded snapshot and cannot invent provider calls or free cache writes", () => {
@@ -71,5 +72,34 @@ test("Codex compaction telemetry is turn-bound, deduplicated and cannot imperson
     if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previous;
     // SQLite may retain an open Windows handle; keep this disposable test root.
+  }
+});
+
+test("compaction start diagnostics require real lifecycle identity and never infer duration or provider usage", () => {
+  const prior = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-compaction-start-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    let receipts = 0;
+    const telemetry = createCodexTurnModelTelemetry({ sessionId: "compaction-start", threadId: "thread", turnId: "turn",
+      settings: { model: "gpt-6-astra", reasoning_effort: "medium" }, startedAtUtc: "2026-09-27T00:00:00Z", onReceipt: () => receipts++ });
+    const emit = (method: string, id: unknown, turnId = "turn", threadId = "thread") => telemetry.observe({ method, threadId, params: { turnId, item: { type: "contextCompaction", id } } });
+    emit("item/started", "foreign", "old"); emit("item/started", "foreign", "turn", "other"); emit("item/started", " ");
+    emit("item/started", "a"); emit("item/started", "a");
+    assert.deepEqual(telemetry.compactions, []);
+    assert.deepEqual(recentCommandEvents("compaction-start", "codex.context_compaction.started"), [{ thread_id: "thread", turn_id: "turn", item_id: "a", started_after_provider_calls: 0 }]);
+    emit("item/completed", "a"); emit("item/completed", "a"); emit("item/started", "a");
+    emit("item/completed", "completion-only"); emit("item/started", "completion-only");
+    assert.deepEqual(telemetry.compactions, ["a", "completion-only"]);
+    assert.equal(recentCommandEvents("compaction-start", "codex.context_compaction.started").length, 1);
+    const completed = recentCommandEvents("compaction-start", "codex.context_compaction.completed") as Record<string, unknown>[];
+    assert.equal(completed.length, 2);
+    assert.ok(completed.every(item => !Object.hasOwn(item, "duration_ms") && item.completed_after_provider_calls === 0));
+    assert.equal(receipts, 0); assert.deepEqual(telemetry.receipts, []); assert.equal(telemetry.usageSnapshot(), null);
+    assert.deepEqual(telemetry.finish("message", "interrupted").raw_response_ids, []);
+  } finally {
+    __closeForTests();
+    if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = prior;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

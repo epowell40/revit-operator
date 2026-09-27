@@ -239,6 +239,16 @@ test("Astra pricing uses exact token buckets and the long context threshold", ()
   }
 });
 
+test("GPT-6 Sol pricing uses exact token buckets and the long context threshold", () => {
+  for (const [input, expected] of [[272000, 0.53425], [272001, 1.064504]] as const) {
+    const summary = aggregateModelCallReceipts([receipt({ model: "gpt-6-sol", requested_model: "gpt-6-sol", reasoning_effort: "medium",
+      tokens: { input_tokens: input, cached_input_tokens: 10000, cache_write_input_tokens: 500, output_tokens: 800, reasoning_output_tokens: 400, total_tokens: input + 800 } })]);
+    assert.equal(summary.cost_status, "estimated_from_exact_provider_tokens");
+    assert.ok(Math.abs(Number(summary.cost_usd) - expected) < 0.0000001, String(summary.cost_usd));
+    assert.equal(summary.long_context_call_count, input > 272000 ? 1 : 0);
+  }
+});
+
 test("benchmark telemetry recovers every provider call from the exact V2 publication ledger", () => {
   const calls = Object.fromEntries([1, 2, 3].map((index) => [`resp_${index}`, providerCall(`resp_${index}`, {
     admitted_at: `2026-09-02T00:00:0${index}.000Z`,

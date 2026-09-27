@@ -1,0 +1,1152 @@
+{
+  "source": {
+    "goal_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+    "sha256": "5ffa9ba408365bf03325173c3856afcc2375dc78a2d1d2a457ec1c5d9c0b270b"
+  },
+  "spec": {
+    "schema": "revit-operator.assignment-spec/v2",
+    "binding": {
+      "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+      "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+      "generation": 1,
+      "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "source_user_request": "Without changing anything, check the current model and tell me how many duct segments, duct fittings, and heat recovery units are in it. Also confirm that the Architectural link is loaded from the same folder as the host.",
+    "requested_effect": "read",
+    "semantic_evidence_contract": "revit-operator.semantic-evidence-contract/v2",
+    "result_delivery_required": true,
+    "result_assessment_required": true,
+    "criteria": [
+      {
+        "criterion_id": "criterion-f96c0e52719d530e4da1",
+        "requirement": "The requested Revit outcome is completed and verified with evidence from this assignment.",
+        "required": true,
+        "semantic_fact_requirements": [
+          "task.result_available",
+          "collection.complete",
+          "collection.total"
+        ],
+        "evidence_policy": {
+          "schema": "revit-operator.criterion-evidence-policy/v2",
+          "allowed_evidence_classes": [
+            "task_result"
+          ],
+          "allowed_fulfillment_roles": [
+            "delegated_task_execution"
+          ],
+          "allowed_fact_classes": [
+            "domain"
+          ],
+          "allowed_capability_ids": [],
+          "allowed_result_schema_ids": [],
+          "required_fact_ids": [
+            "task.result_available",
+            "collection.complete",
+            "collection.total"
+          ],
+          "require_native_dispatch": true,
+          "require_current_generation": true
+        },
+        "accepted_evaluator_authority_ids": [
+          "operator-runtime"
+        ],
+        "accepted_observation_authority_ids": [
+          "native-host",
+          "dynamic-runtime",
+          "operator-evidence-store"
+        ]
+      }
+    ],
+    "input_variables": [],
+    "work_units": [
+      {
+        "work_unit_id": "work-primary",
+        "requested_effect": "read",
+        "execution_class": "analysis",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [],
+        "independently_useful": true,
+        "safe_to_retain": true,
+        "rollback_scope": "none"
+      },
+      {
+        "work_unit_id": "work-evidence",
+        "requested_effect": "read",
+        "execution_class": "analysis",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [],
+        "independently_useful": false,
+        "safe_to_retain": true,
+        "rollback_scope": "none"
+      }
+    ],
+    "authorization_policy_id": "operator-default",
+    "created_at": "2026-09-26T01:19:20.848Z"
+  },
+  "cases": [
+    {
+      "request": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_931fc553875a8db62097aeeb6d2b78964582fb204aeb8c1ee59e62f730acee8a",
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-primary",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "work",
+        "operation_role": "root",
+        "fulfillment_role": "delegated_task_execution",
+        "delegation_authority_id": "delegation:opv2_931fc553875a8db62097aeeb6d2b78964582fb204aeb8c1ee59e62f730acee8a",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "request_signature": "1cfd0500d90d85655ee460985285cf5bbb9b6789467ca515a8296ba0020d518a"
+        },
+        "advances_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "eligible_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "resolves_gap_ids": [
+          "criterion:criterion-f96c0e52719d530e4da1",
+          "result:delivery"
+        ],
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "requireKnownPath": true,
+          "body": {
+            "categories": [
+              "OST_DuctCurves",
+              "OST_DuctFitting",
+              "OST_MechanicalEquipment"
+            ],
+            "physicalElementsOnly": true,
+            "topLevelInstancesOnly": true,
+            "limit": 5000
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "not_dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "open",
+        "observation_ids": [],
+        "verification_operation_ids": [],
+        "opened_at": "2026-09-26T01:19:31.610Z",
+        "deadline_at": "2026-09-26T01:23:31.610Z"
+      },
+      "result": {
+        "schema": "revit-operator.operation-result/v2",
+        "result_id": "resultv2_5e647a11f8371bbc95646abdadfe81acd5cf7693b4510af85b35c57eb7bcf265",
+        "operation_id": "opv2_931fc553875a8db62097aeeb6d2b78964582fb204aeb8c1ee59e62f730acee8a",
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "native_transaction_state": "not_applicable",
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-elements/v2",
+        "observation_required": true,
+        "affected_target_identities": [],
+        "raw_payload_hash": "3cc67f6e0dddf303b2471f679a875fc923253c44d50f0ccca5768f902e14595f",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "bf4a3e6f3dfe1a8bd2f06845efae026e66867a7bbc004580027f03eeb82afd57",
+            "byte_count": 4842
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "3cc67f6e0dddf303b2471f679a875fc923253c44d50f0ccca5768f902e14595f",
+            "byte_count": 4248
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "receipt_id": "cb92ca63f8d46733a4497f3b30bb65761a48d9f50129c1bf7be35665722bd9fe",
+        "native_correlation_id": "cb92ca63f8d46733a4497f3b30bb65761a48d9f50129c1bf7be35665722bd9fe",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "request_signature": "1cfd0500d90d85655ee460985285cf5bbb9b6789467ca515a8296ba0020d518a"
+        },
+        "completed_at": "2026-09-26T01:19:31.675Z"
+      },
+      "payload": {
+        "status": "Ok",
+        "scope": {
+          "kind": "Document",
+          "viewIds": [],
+          "sheetId": null
+        },
+        "count": 7,
+        "elementIds": [
+          1542960,
+          1542964,
+          1542980,
+          1542983,
+          1542986,
+          1542989,
+          1542991
+        ],
+        "categoryFilterApplied": true,
+        "resolvedCategories": [
+          {
+            "requested": "OST_DuctCurves",
+            "categoryId": -2008000,
+            "name": "Ducts",
+            "builtInToken": "OST_DuctCurves"
+          },
+          {
+            "requested": "OST_DuctFitting",
+            "categoryId": -2008010,
+            "name": "Duct Fittings",
+            "builtInToken": "OST_DuctFitting"
+          },
+          {
+            "requested": "OST_MechanicalEquipment",
+            "categoryId": -2001140,
+            "name": "Mechanical Equipment",
+            "builtInToken": "OST_MechanicalEquipment"
+          }
+        ],
+        "textFilterApplied": false,
+        "textSearch": null,
+        "identityFilterApplied": false,
+        "identityTerms": [],
+        "physicalElementsOnlyApplied": true,
+        "topLevelInstancesOnlyApplied": true,
+        "identityAcronymExpansionApplied": false,
+        "identityAcronyms": [],
+        "identitySeedCategoryIds": [],
+        "identityExpansionCount": 0,
+        "geometryIncluded": false,
+        "items": [
+          {
+            "elementId": 1542960,
+            "typeId": 1365172,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Mechanical Equipment",
+            "builtInCategory": "OST_MechanicalEquipment",
+            "name": "Heat Recovery Unit (HRU)",
+            "familyName": "HeatRecoveryUnit",
+            "typeName": "Heat Recovery Unit (HRU)",
+            "mark": "HRU404",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542964,
+            "typeId": 139186,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Ducts",
+            "builtInCategory": "OST_DuctCurves",
+            "name": "Tees",
+            "familyName": "Round Duct",
+            "typeName": "Tees",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542980,
+            "typeId": 139186,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Ducts",
+            "builtInCategory": "OST_DuctCurves",
+            "name": "Tees",
+            "familyName": "Round Duct",
+            "typeName": "Tees",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542983,
+            "typeId": 139186,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Ducts",
+            "builtInCategory": "OST_DuctCurves",
+            "name": "Tees",
+            "familyName": "Round Duct",
+            "typeName": "Tees",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542986,
+            "typeId": 139186,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Ducts",
+            "builtInCategory": "OST_DuctCurves",
+            "name": "Tees",
+            "familyName": "Round Duct",
+            "typeName": "Tees",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542989,
+            "typeId": 693820,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Duct Fittings",
+            "builtInCategory": "OST_DuctFitting",
+            "name": "1.5 D",
+            "familyName": "Round Elbow",
+            "typeName": "1.5 D",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1542991,
+            "typeId": 693820,
+            "levelId": 1362791,
+            "hostId": null,
+            "category": "Duct Fittings",
+            "builtInCategory": "OST_DuctFitting",
+            "name": "1.5 D",
+            "familyName": "Round Elbow",
+            "typeName": "1.5 D",
+            "mark": null,
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          }
+        ],
+        "sheetRegionFilterApplied": false,
+        "sheetRegionCount": 0,
+        "truncated": false,
+        "scanCapReached": false,
+        "identityExpansionScanCapReached": false,
+        "itemsComplete": true,
+        "warnings": []
+      },
+      "observation": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_d21b6f6c1310fc1bbbedf2a996e5285f285193bfc09345a55edc2bb7e54bea8e",
+        "operation_id": "opv2_931fc553875a8db62097aeeb6d2b78964582fb204aeb8c1ee59e62f730acee8a",
+        "fulfillment_role": "delegated_task_execution",
+        "evidence_class": "task_result",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-elements/v2",
+        "raw_payload_ref": "evidence:ev1_YhRFi2JkRk3kEbs0UNkjlv_-TUip6GZu",
+        "raw_payload_hash": "3cc67f6e0dddf303b2471f679a875fc923253c44d50f0ccca5768f902e14595f",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "bf4a3e6f3dfe1a8bd2f06845efae026e66867a7bbc004580027f03eeb82afd57",
+            "byte_count": 4842
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "3cc67f6e0dddf303b2471f679a875fc923253c44d50f0ccca5768f902e14595f",
+            "byte_count": 4248
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "3cc67f6e0dddf303b2471f679a875fc923253c44d50f0ccca5768f902e14595f"
+          },
+          {
+            "fact_id": "task.result_available",
+            "fact_class": "domain",
+            "value": true
+          },
+          {
+            "fact_id": "model.content_observed",
+            "fact_class": "domain",
+            "value": true,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.complete",
+            "fact_class": "domain",
+            "value": true,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.total",
+            "fact_class": "domain",
+            "value": 7,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.mode",
+            "fact_class": "domain",
+            "value": "list",
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "control.field.status",
+            "fact_class": "control",
+            "value": "Ok"
+          },
+          {
+            "fact_id": "control.field.count",
+            "fact_class": "control",
+            "value": 7
+          },
+          {
+            "fact_id": "control.field.category_filter_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.text_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.text_search",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.identity_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.physical_elements_only_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.top_level_instances_only_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.identity_acronym_expansion_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.identity_expansion_count",
+            "fact_class": "control",
+            "value": 0
+          },
+          {
+            "fact_id": "control.field.geometry_included",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.sheet_region_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.sheet_region_count",
+            "fact_class": "control",
+            "value": 0
+          },
+          {
+            "fact_id": "control.field.truncated",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.scan_cap_reached",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.identity_expansion_scan_cap_reached",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-09-26T01:19:31.675Z",
+        "verification_relevance": [
+          "task_result"
+        ]
+      }
+    },
+    {
+      "request": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_6b870442c90e2e3224339d86e3ea04fda2f7dd087b29461a9d0dd24c24136d13",
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-primary",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "work",
+        "operation_role": "root",
+        "fulfillment_role": "delegated_task_execution",
+        "delegation_authority_id": "delegation:opv2_6b870442c90e2e3224339d86e3ea04fda2f7dd087b29461a9d0dd24c24136d13",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "request_signature": "6f3604dc14e666cc096ab72de7412505b1b1b85e9b8c2e2da84a4ff0e8b51361"
+        },
+        "advances_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "eligible_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "resolves_gap_ids": [
+          "result:delivery"
+        ],
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "requireKnownPath": true,
+          "body": {
+            "category": "OST_RvtLinks",
+            "physicalElementsOnly": true,
+            "topLevelInstancesOnly": true,
+            "limit": 500
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "not_dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "open",
+        "observation_ids": [],
+        "verification_operation_ids": [],
+        "opened_at": "2026-09-26T01:19:55.722Z",
+        "deadline_at": "2026-09-26T01:23:55.722Z"
+      },
+      "result": {
+        "schema": "revit-operator.operation-result/v2",
+        "result_id": "resultv2_2a71ffe82ea083a398714f039b1e254542cde522d0663aaad0a69b1aac44a9ac",
+        "operation_id": "opv2_6b870442c90e2e3224339d86e3ea04fda2f7dd087b29461a9d0dd24c24136d13",
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "native_transaction_state": "not_applicable",
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-elements/v2",
+        "observation_required": true,
+        "affected_target_identities": [],
+        "raw_payload_hash": "04b19aed42b24bcec1afb43f489f81c629bace1e2fdd1118d0279cabd1fbd35d",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "bddef3558b3b26c6842fe9d0007a4d5b03491d7a4c7fbc932e6e94f140f5d819",
+            "byte_count": 4649
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "04b19aed42b24bcec1afb43f489f81c629bace1e2fdd1118d0279cabd1fbd35d",
+            "byte_count": 4055
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "receipt_id": "08da3f2ff50d3ca93ca0d6679f737a65290f92c2dfa846000b22cea8d6d2eb44",
+        "native_correlation_id": "08da3f2ff50d3ca93ca0d6679f737a65290f92c2dfa846000b22cea8d6d2eb44",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-elements",
+          "request_signature": "6f3604dc14e666cc096ab72de7412505b1b1b85e9b8c2e2da84a4ff0e8b51361"
+        },
+        "completed_at": "2026-09-26T01:20:03.749Z"
+      },
+      "payload": {
+        "status": "Ok",
+        "scope": {
+          "kind": "Document",
+          "viewIds": [],
+          "sheetId": null
+        },
+        "count": 6,
+        "elementIds": [
+          1362429,
+          1363938,
+          1364213,
+          1364219,
+          1367754,
+          1525764
+        ],
+        "categoryFilterApplied": true,
+        "resolvedCategories": [
+          {
+            "requested": "OST_RvtLinks",
+            "categoryId": -2001352,
+            "name": "RVT Links",
+            "builtInToken": "OST_RvtLinks"
+          }
+        ],
+        "textFilterApplied": false,
+        "textSearch": null,
+        "identityFilterApplied": false,
+        "identityTerms": [],
+        "physicalElementsOnlyApplied": true,
+        "topLevelInstancesOnlyApplied": true,
+        "identityAcronymExpansionApplied": false,
+        "identityAcronyms": [],
+        "identitySeedCategoryIds": [],
+        "identityExpansionCount": 0,
+        "geometryIncluded": false,
+        "items": [
+          {
+            "elementId": 1362429,
+            "typeId": 1362428,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Architectural.rvt : Architecture : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Architectural.rvt",
+            "mark": "1",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1363938,
+            "typeId": 1363937,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Structural.rvt : Structure : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Structural.rvt",
+            "mark": "2",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1364213,
+            "typeId": 1364212,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Facades.rvt : Facade : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Facades.rvt",
+            "mark": "3",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1364219,
+            "typeId": 1364218,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Plumbing.rvt : 4 : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Plumbing.rvt",
+            "mark": "4",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1367754,
+            "typeId": 1367753,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Electrical.rvt : 6 : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Electrical.rvt",
+            "mark": "6",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          },
+          {
+            "elementId": 1525764,
+            "typeId": 1525763,
+            "levelId": null,
+            "hostId": null,
+            "category": "RVT Links",
+            "builtInCategory": "OST_RvtLinks",
+            "name": "Snowdon Towers Sample Site.rvt : 7 : location <Not Shared>",
+            "familyName": "Linked Revit Model",
+            "typeName": "Snowdon Towers Sample Site.rvt",
+            "mark": "7",
+            "superComponentId": null,
+            "isNested": false,
+            "identityMatch": null,
+            "identityParameterEvidence": null,
+            "matchedText": null,
+            "matchedTextNormalized": null,
+            "matchedTextSource": null,
+            "matchedParameterName": null,
+            "ownerViewId": null,
+            "sourceViewId": null,
+            "geometry": null
+          }
+        ],
+        "sheetRegionFilterApplied": false,
+        "sheetRegionCount": 0,
+        "truncated": false,
+        "scanCapReached": false,
+        "identityExpansionScanCapReached": false,
+        "itemsComplete": true,
+        "warnings": []
+      },
+      "observation": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_f1879893bf76d146d2e966a2f2a60134f72e2582a712c1da07a35dcb43b3cfdf",
+        "operation_id": "opv2_6b870442c90e2e3224339d86e3ea04fda2f7dd087b29461a9d0dd24c24136d13",
+        "fulfillment_role": "delegated_task_execution",
+        "evidence_class": "task_result",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "binding": {
+          "assignment_id": "8dd07969-73f9-4c19-a5c9-6a2e0b18ecac",
+          "run_id": "chat:cef86eb7-a7a3-461a-af56-1c901c008a07",
+          "generation": 1,
+          "session_id": "cd6ab0a5-663e-47c0-b3c8-00d982ab0dde",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-elements/v2",
+        "raw_payload_ref": "evidence:ev1_VfxX3lZ8BFP6lteTulnR39rflJERcuaf",
+        "raw_payload_hash": "04b19aed42b24bcec1afb43f489f81c629bace1e2fdd1118d0279cabd1fbd35d",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "bddef3558b3b26c6842fe9d0007a4d5b03491d7a4c7fbc932e6e94f140f5d819",
+            "byte_count": 4649
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "04b19aed42b24bcec1afb43f489f81c629bace1e2fdd1118d0279cabd1fbd35d",
+            "byte_count": 4055
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "04b19aed42b24bcec1afb43f489f81c629bace1e2fdd1118d0279cabd1fbd35d"
+          },
+          {
+            "fact_id": "task.result_available",
+            "fact_class": "domain",
+            "value": true
+          },
+          {
+            "fact_id": "model.content_observed",
+            "fact_class": "domain",
+            "value": true,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.complete",
+            "fact_class": "domain",
+            "value": true,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.total",
+            "fact_class": "domain",
+            "value": 6,
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "collection.mode",
+            "fact_class": "domain",
+            "value": "list",
+            "dimensions": {
+              "route": "/revit/find-elements"
+            }
+          },
+          {
+            "fact_id": "control.field.status",
+            "fact_class": "control",
+            "value": "Ok"
+          },
+          {
+            "fact_id": "control.field.count",
+            "fact_class": "control",
+            "value": 6
+          },
+          {
+            "fact_id": "control.field.category_filter_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.text_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.text_search",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.identity_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.physical_elements_only_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.top_level_instances_only_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.identity_acronym_expansion_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.identity_expansion_count",
+            "fact_class": "control",
+            "value": 0
+          },
+          {
+            "fact_id": "control.field.geometry_included",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.sheet_region_filter_applied",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.sheet_region_count",
+            "fact_class": "control",
+            "value": 0
+          },
+          {
+            "fact_id": "control.field.truncated",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.scan_cap_reached",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.identity_expansion_scan_cap_reached",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-09-26T01:20:03.749Z",
+        "verification_relevance": [
+          "task_result"
+        ]
+      }
+    }
+  ],
+  "evaluation": {
+    "criterion_id": "criterion-f96c0e52719d530e4da1",
+    "status": "uncertain",
+    "basis": "observation",
+    "supporting_operation_ids": [
+      "opv2_6b870442c90e2e3224339d86e3ea04fda2f7dd087b29461a9d0dd24c24136d13",
+      "opv2_931fc553875a8db62097aeeb6d2b78964582fb204aeb8c1ee59e62f730acee8a",
+      "opv2_b2953119400e670ce1c47f252844cee79010243312022e471ae21280cd1bbc09"
+    ],
+    "supporting_facts": [
+      {
+        "observation_id": "obsv2_d21b6f6c1310fc1bbbedf2a996e5285f285193bfc09345a55edc2bb7e54bea8e",
+        "fact_id": "task.result_available"
+      },
+      {
+        "observation_id": "obsv2_d21b6f6c1310fc1bbbedf2a996e5285f285193bfc09345a55edc2bb7e54bea8e",
+        "fact_id": "collection.complete"
+      },
+      {
+        "observation_id": "obsv2_d21b6f6c1310fc1bbbedf2a996e5285f285193bfc09345a55edc2bb7e54bea8e",
+        "fact_id": "collection.total"
+      },
+      {
+        "observation_id": "obsv2_f1879893bf76d146d2e966a2f2a60134f72e2582a712c1da07a35dcb43b3cfdf",
+        "fact_id": "task.result_available"
+      },
+      {
+        "observation_id": "obsv2_f1879893bf76d146d2e966a2f2a60134f72e2582a712c1da07a35dcb43b3cfdf",
+        "fact_id": "collection.complete"
+      },
+      {
+        "observation_id": "obsv2_f1879893bf76d146d2e966a2f2a60134f72e2582a712c1da07a35dcb43b3cfdf",
+        "fact_id": "collection.total"
+      },
+      {
+        "observation_id": "obsv2_eb17b3282d1623d03c5537904cb979c5c1151c5276bf726cdca7505d45f21a98",
+        "fact_id": "task.result_available"
+      }
+    ],
+    "evaluator_authority": "operator-runtime",
+    "reason": "Authoritative observations disagree for the same semantic fact identity.",
+    "evaluated_at": "2026-09-26T01:22:00.272Z"
+  },
+  "expected_query_scopes": [
+    "471cbd88e7d626d7719345c74ecdff667db968e8945aa722614e566e648761e6",
+    "5106a2091fdf59bf5b801b3f50fc6d0cde2336c89ff90ff2ed538e3f27990b0d"
+  ]
+}

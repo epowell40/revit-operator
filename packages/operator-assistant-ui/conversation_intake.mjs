@@ -1,9 +1,11 @@
 /** Fast conversational intake uses a model, not a text/keyword classifier.
- * Explicit task continuations and attachments keep their full agent lifecycle. */
+ * Explicit task continuations keep their full agent lifecycle. Attachment
+ * requests classify text permission here and always hand off for inspection. */
 export async function tryConversationIntake(body, { authorize, readContext, route, onHandoff, signal, observationTimeoutMs = 1000, progressDelayMs = 1500 }) {
   if (typeof body?.user_text !== "string" || !body.user_text.trim() || body.user_text.length > 16000
     || body.assignment_id || body.assignment_run_id || body.assignment_generation != null
-    || [body.attachments, body.user_attachments, body.pending_attachments, body.tool_results].some(items => Array.isArray(items) && items.length)) return null;
+    || (Array.isArray(body.tool_results) && body.tool_results.length)) return null;
+  const attachmentCount=[body.attachments,body.user_attachments,body.pending_attachments].reduce((n,items)=>n+(Array.isArray(items)?items.length:0),0);
   signal?.throwIfAborted();
   await authorize(body.session_id, signal);
   signal?.throwIfAborted();
@@ -23,9 +25,13 @@ export async function tryConversationIntake(body, { authorize, readContext, rout
     signal?.throwIfAborted();
     // Preserve the full original request. Never send a router summary as the
     // user's instruction, and never use caller-supplied model metadata.
-    const response = await route({ ...body, context: undefined, ui_observation: observation }, signal);
+    // Uploaded pixels can be megabytes and are untrusted data, not permission.
+    // Keep the original composer body untouched for the normal worker upload.
+    const response = await route({ ...body, context: undefined, attachments:undefined,user_attachments:undefined,pending_attachments:undefined,
+      intake_attachment_count:Math.min(1000,attachmentCount),ui_observation: observation }, signal);
     signal?.throwIfAborted();
     if(response?.routing_status!=="accepted" || !["answer","inspect","task"].includes(response?.route)) throw unavailable();
+    if(attachmentCount>0&&response.route!=="task")throw unavailable();
     if (response.route !== "answer") {
       onHandoff?.(response?.route === "inspect" ? "Let me check." : "I’ll work through that.");
       return null;

@@ -231,6 +231,7 @@ test("view visibility exposes a typed rollback-previewed Plan View Range setter"
 
 test("native API operation graph stays bounded, read-only, and request-ephemeral while supporting typed chaining", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
+  const graphArguments = addinFile(path.join("RevitBridge.Common", "OperatorNativeGraphArguments.cs"));
   const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
   const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
   assert.match(gateway, /InvokeReadOnlyOperations/);
@@ -238,7 +239,17 @@ test("native API operation graph stays bounded, read-only, and request-ephemeral
   assert.match(gateway, /get_property/);
   assert.match(gateway, /ResolveOperationTarget/);
   assert.match(gateway, /ResolveReadableProperty/);
-  assert.match(gateway, /argument \$ref/);
+  const argumentConversion = gateway.slice(gateway.indexOf("private static NativeGraphArgument ConvertOperationArgument"), gateway.indexOf("private static int ResolveBudget"));
+  assert.match(argumentConversion, /resolver\.Resolve\(value, targetType,[\s\S]*values\.TryGetValue\(id, out var referenced\)/);
+  assert.match(argumentConversion, /owners\.TryGetValue\(id, out var provenance\)/);
+  assert.match(graphArguments, /input\.EnumerateObject\(\)\.Count\(\) != 1 \|\| token\.ValueKind != JsonValueKind\.String/);
+  assert.match(graphArguments, /lookup\(id\) \?\? throw new InvalidOperationException\("Native graph reference was not found/);
+  assert.match(graphArguments, /converted == null \|\| !type\.IsInstanceOfType\(converted\)/);
+  assert.match(graphArguments, /MaxCollectionItems = 64/);
+  assert.match(graphArguments, /MaxDepth = 4/);
+  assert.match(graphArguments, /MaxNodes = 256/);
+  assert.match(graphArguments, /ValidateReferencedCollection\(converted, type, intrinsicOwner, depth\)/);
+  assert.match(gateway, /var argumentResolver = new OperatorNativeGraphArguments\(\)/);
   assert.match(gateway, /result_preview = OperationPreview\(raw\)/);
   assert.match(gateway, /deferred_enumeration = true/);
   assert.match(gateway, /maxOperationMs/);
@@ -250,7 +261,10 @@ test("native API operation graph stays bounded, read-only, and request-ephemeral
     /catch \(InvalidOperationException ex\)[\s\S]{0,600}throw new ArgumentException\(ex\.Message, ex\)/,
   );
   assert.match(gateway, /static_calls = true/);
-  assert.match(gateway, /descriptor\.RiskLevel != OperatorActionRisk\.Low/);
+  assert.match(gateway, /var graphMutating = descriptor\.MutatingHint && !descriptor\.DetachedGeometryFactory/);
+  assert.match(gateway, /var graphRisk = descriptor\.DetachedGeometryFactory \? OperatorActionRisk\.Low : descriptor\.RiskLevel/);
+  assert.match(gateway, /!mutationEnvelopeRequired && \(graphRisk != OperatorActionRisk\.Low \|\| graphMutating \|\| descriptor\.FreezeRiskHint\)/);
+  assert.match(gateway, /DetachedGeometryFactory = m is MethodInfo factory && OperatorNativeGeometryGraphPolicy\.IsDetachedFactory\(/);
   assert.match(gateway, /ephemeral_handles = true/);
   assert.match(gateway, /read_only = true/);
   assert.match(approval, /\/revit\/native-api-ops["\s,]+StringComparison\.OrdinalIgnoreCase\)\) return OperatorActionRisk\.Low/);
@@ -260,6 +274,7 @@ test("native API operation graph stays bounded, read-only, and request-ephemeral
 
 test("native API mutation graph uses a separate write-gated transaction envelope and rolls back out-of-scope effects", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
+  const graphArguments = addinFile(path.join("RevitBridge.Common", "OperatorNativeGraphArguments.cs"));
   const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
   const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
   const validator = addinFile(path.join("RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
@@ -280,7 +295,11 @@ test("native API mutation graph uses a separate write-gated transaction envelope
   assert.match(gateway, /transactionMode == "rollback" \|\| !ScopeDecision\.Allowed[\s\S]{0,700}GetSeverity\(\) == FailureSeverity\.Warning[\s\S]{0,120}DeleteWarning\(failure\)/);
   assert.doesNotMatch(gateway, /new TransactionGroup\(/);
   assert.match(gateway, /ValidateMutationOwnership/);
-  assert.match(gateway, /if \(!SameDocument\(operationOwner, activeDocument\)\)/);
+  assert.match(gateway, /ResolveOperationOwners\(operation\.target, targetObject, args, argumentOwners, valueOwners\)/);
+  assert.match(gateway, /ValidateMutationOwnership\(descriptor, operationOwners, transactionDocument!, id\)/);
+  assert.match(gateway, /OperatorNativeGraphArguments\.RequireActiveOwners\(owners, activeDocument,[\s\S]{0,180}SameDocument\(document, activeDoc\)/);
+  assert.match(graphArguments, /if \(all\.Count == 0\) throw new InvalidOperationException\("Native mutation could not prove active-document ownership/);
+  assert.match(graphArguments, /if \(all\.Any\(owner => !sameDocument\(owner, active\)\)\)/);
   assert.match(gateway, /UpdaterRegistry\.RegisterUpdater\(updater, document\)/);
   assert.match(gateway, /UpdaterRegistry\.AddTrigger\(updater\.GetUpdaterId\(\), document/);
   assert.match(gateway, /private static bool SameDocument[\s\S]{0,280}left\.Equals\(right\) \|\| right\.Equals\(left\)/);
@@ -291,7 +310,13 @@ test("native API mutation graph uses a separate write-gated transaction envelope
   assert.match(gateway, /Verified failure-processing rollback status/);
   assert.match(gateway, /transactionMode == "rollback" && transactionStatus != TransactionStatus\.RolledBack/);
   assert.match(gateway, /transactionMode == "commit" && transactionStatus != TransactionStatus\.Committed/);
-  assert.match(gateway, /Native mutation transaction cleanup could not be verified/);
+  const failureSettlement = gateway.slice(gateway.indexOf("catch (Exception originalError)"), gateway.indexOf("private static NativeMutationScopeUpdater RegisterMutationScopeUpdater"));
+  assert.match(failureSettlement, /if \(!mutationEnvelopeRequired\) throw/);
+  assert.match(failureSettlement, /OperatorNativeGraphFailureSettlement\.Capture\(originalError,[\s\S]*transaction\.GetStatus\(\)\.ToString\(\)/);
+  assert.match(failureSettlement, /transaction\.RollBack\(\)\.ToString\(\)/);
+  assert.match(failureSettlement, /OperatorNativeTransactionReceipt\.CommittedChanges\(/);
+  assert.match(graphArguments, /OperatorNativeTransactionReceipt\.FromObservedStatus\(status, Array\.Empty<long>\(\)\)/);
+  assert.match(failureSettlement, /for \(var i = ownedGeometry\.Count - 1; i >= 0; i--\)[\s\S]{0,90}ownedGeometry\[i\]\.Dispose\(\)/);
   assert.doesNotMatch(scopePolicy, /was rolled back/);
   assert.match(gateway, /ElementIdCompat\.GetValue/);
   assert.match(gateway, /ElementIdCompat\.Create/);

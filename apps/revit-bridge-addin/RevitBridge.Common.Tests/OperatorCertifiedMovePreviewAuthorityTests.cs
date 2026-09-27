@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -6,6 +9,60 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorCertifiedMovePreviewAuthorityTests
     {
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void NativeTransactionMetadataPreservesCertifiedMoveProofAndRejectsContradictions(bool preview)
+        {
+            var start = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('a', 64), preview ? "preview" : "apply", 0, 0, 0, 2, -0.5, 0.25);
+            var result = new Dictionary<string, object?>
+            {
+                ["status"] = preview ? "Dry Run" : "Moved", ["movedIds"] = new[] { 4821L },
+                ["skipped"] = Array.Empty<object>(), ["warnings"] = Array.Empty<string>(),
+                ["snapshots"] = new[] { new { id = 4821L,
+                    before = new { kind = "LocationPoint", pointXyz = new[] { 0d, 0d, 0d }, rotationRadians = 0d },
+                    after = new { kind = "LocationPoint", pointXyz = new[] { 2d, -0.5, 0.25 }, rotationRadians = 0d } } },
+                ["movedTogether"] = false, ["rolledBack"] = preview
+            };
+            using var legacy = JsonDocument.Parse(JsonSerializer.Serialize(result));
+            var hash = OperatorCertifiedMovePreviewAuthority.ComputeCertifiedMoveResultHash(legacy.RootElement);
+            result["success"] = true;
+            result["transaction"] = preview ? OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>()) : OperatorNativeTransactionReceipt.Committed(new[] { 4821L });
+            result["changeTracking"] = new { exhaustiveChangeInventory = true };
+            if (!preview) { result["applied"] = true; result["verified"] = true; result["ok"] = true; }
+            void Verify()
+            {
+                using var wire = JsonDocument.Parse(JsonSerializer.Serialize(result));
+                if (preview) OperatorCertifiedMovePreviewAuthority.RequirePreviewResult(wire.RootElement, 4821L, start);
+                else OperatorCertifiedMovePreviewAuthority.RequireApplyResult(wire.RootElement, 4821L, start);
+                Assert.Equal(hash, OperatorCertifiedMovePreviewAuthority.ComputeCertifiedMoveResultHash(wire.RootElement));
+                using var projected = JsonDocument.Parse(JsonSerializer.Serialize(
+                    OperatorCertifiedMovePreviewAuthority.ProjectCertifiedMoveWireResult(wire.RootElement)));
+                // Backend/MCP exact-key verifiers intentionally keep this legacy
+                // contract; richer ordinary responses must not leak into it.
+                Assert.Equal(new[] { "movedIds", "movedTogether", "rolledBack", "skipped", "snapshots", "status", "warnings" },
+                    projected.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal));
+                foreach (var point in new[] { "before", "after" })
+                    Assert.Equal(new[] { "kind", "pointXyz" }, projected.RootElement.GetProperty("snapshots")[0].GetProperty(point)
+                        .EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal));
+                Assert.Equal(hash, OperatorCertifiedMovePreviewAuthority.ComputeCertifiedMoveResultHash(projected.RootElement));
+            }
+            Verify();
+            var receipt = result["transaction"];
+            foreach (var wrong in new[] { OperatorNativeTransactionReceipt.Unknown("Pending"),
+                preview ? OperatorNativeTransactionReceipt.Committed(new[] { 4821L }) : OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>()) })
+            {
+                result["transaction"] = wrong;
+                Assert.Throws<OperatorNativeHttpAdmissionException>(Verify);
+            }
+            result["transaction"] = receipt;
+            result["success"] = false;
+            Assert.Throws<OperatorNativeHttpAdmissionException>(Verify);
+            result["success"] = true;
+            result["unreviewed"] = true;
+            Assert.Throws<OperatorNativeHttpAdmissionException>(Verify);
+        }
+
         [Fact]
         public void Snapshot_proof_requires_captured_start_plus_exact_sealed_vector()
         {

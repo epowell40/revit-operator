@@ -10,9 +10,15 @@ $ErrorActionPreference = "Stop"
 function Invoke-External([string]$Name, [scriptblock]$Action) {
   Write-Host ""
   Write-Host "== $Name =="
-  $global:LASTEXITCODE = 0
-  & $Action
-  if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE" }
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    $global:LASTEXITCODE = 0
+    & $Action
+    if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE" }
+  } finally {
+    $timer.Stop()
+    Write-Host ('FRONTIER_TIMING name="{0}" elapsed_seconds={1:N1}' -f $Name, $timer.Elapsed.TotalSeconds)
+  }
 }
 
 function Resolve-AppRoot([string]$Root, [string]$Name) {
@@ -21,6 +27,33 @@ function Resolve-AppRoot([string]$Root, [string]$Name) {
   $privateLayout = Join-Path $Root $Name
   if (Test-Path -LiteralPath $privateLayout -PathType Container) { return $privateLayout }
   return $null
+}
+
+function Get-JavaScriptTests($Manifest) {
+  # Optional in v1 so older manifests retain their existing behavior.
+  $property = $Manifest.PSObject.Properties["javascript_tests"]
+  if ($property) { return @($property.Value) }
+  return @()
+}
+
+function Resolve-JavaScriptTest([string]$Root, [string]$Entry) {
+  if ($Entry -cnotmatch '^(app|package)/([A-Za-z0-9._-]+)/(.+\.(?:mjs|cjs|js))$') {
+    throw "Invalid JavaScript frontier test reference: $Entry"
+  }
+  $kind, $name, $relative = $Matches[1], $Matches[2], $Matches[3]
+  if ($name -in @(".", "..") -or [System.IO.Path]::IsPathRooted($relative) -or $relative.Contains(":")) {
+    throw "JavaScript frontier test must stay within its app or package: $Entry"
+  }
+  $base = if ($kind -ceq "app") { Resolve-AppRoot $Root $name } else { Join-Path $Root "packages/$name" }
+  if (-not $base) { throw "JavaScript frontier app root is missing: $Entry" }
+  $base = [System.IO.Path]::GetFullPath($base)
+  $source = [System.IO.Path]::GetFullPath((Join-Path $base $relative))
+  $prefix = $base.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+  if (-not $source.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "JavaScript frontier test escapes its app or package: $Entry"
+  }
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "JavaScript frontier test is missing: $Entry" }
+  return $source
 }
 
 function Assert-ManifestCoverage($Manifest) {
@@ -33,6 +66,7 @@ function Assert-ManifestCoverage($Manifest) {
     desktop = @($Manifest.desktop_tests)
     dotnet = @($Manifest.dotnet_test_classes)
     dynamic = @($Manifest.dynamic_runtime_test_classes)
+    javascript = @(Get-JavaScriptTests $Manifest)
   }
   $ids = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
   foreach ($family in @($Manifest.failure_families)) {
@@ -69,6 +103,14 @@ function Invoke-Composition([string]$Root, [string]$Label) {
   $dotnetRoot = Resolve-AppRoot $Root "revit-bridge-addin"
   if (-not $backendRoot -or -not $mcpRoot) { throw "$Label backend or MCP source root is missing." }
 
+  $javascriptTests = @(Get-JavaScriptTests $manifest | ForEach-Object { Resolve-JavaScriptTest $Root ([string]$_) })
+  if ($javascriptTests.Count -gt 0) {
+    Invoke-External "$Label JavaScript frontier" {
+      Push-Location $Root
+      try { & node --test --test-concurrency=1 @javascriptTests } finally { Pop-Location }
+    }
+  }
+
   foreach ($testFile in @($manifest.backend_tests)) {
     $source = Join-Path $backendRoot "test/$testFile"
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label backend frontier test is missing: $testFile" }
@@ -78,8 +120,7 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     try {
       & npm run build
       if ($LASTEXITCODE -ne 0) { return }
-      $compiled = @($manifest.backend_tests | ForEach-Object { Join-Path "dist/test" ([string]$_).Replace(".ts", ".js") })
-      & node scripts/run-tests.mjs @compiled
+      & node scripts/run-tests.mjs --jobs=4 "--frontier-manifest=$manifestPath"
     } finally { Pop-Location }
   }
 
@@ -116,7 +157,12 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     $testProject = Join-Path $dotnetRoot "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj"
     $filter = @($manifest.dotnet_test_classes | ForEach-Object { "FullyQualifiedName~$_" }) -join '|'
     Invoke-External "$Label native frontier" {
-      & dotnet test $testProject -c Release --nologo --filter $filter
+      # The policy JSON is embedded into RevitBridge.Common while its matching
+      # hash is compiled from generated C#. An incremental multi-target build
+      # can leave one test TFM with new JSON and an old compiled constant.
+      & dotnet build $testProject -c Release --no-incremental --nologo --disable-build-servers -p:UseSharedCompilation=false -m:1
+      if ($LASTEXITCODE -ne 0) { return }
+      & dotnet test $testProject -c Release --no-build --nologo --filter $filter
     }
   }
 

@@ -11,6 +11,55 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorNativeTransportTests
     {
+        [Fact]
+        public void DirectCompletionScopeIsProvenBeforeAttestingTheActiveDocument()
+        {
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            var scope = server.IndexOf("OperatorNativeCompletionStore.SupportsActiveDocument(effectiveMethod, path, dispatchBody)", StringComparison.Ordinal);
+            var reserve = server.IndexOf("nativeCompletionStore.Reserve", StringComparison.Ordinal);
+            Assert.True(scope >= 0 && reserve > scope, "ActiveUIDocument cannot attest a family-session or arbitrary program target.");
+        }
+
+        [Fact]
+        public void DirectLateCompletionIsCapturedInsideTheNativeCallbackBeforeQueueRelease()
+        {
+            var before = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_COMPLETION_BEFORE_SOURCE");
+            var server = string.IsNullOrEmpty(before)
+                ? ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs")
+                : File.ReadAllText(before);
+            server = server.Replace("\r\n", "\n");
+            var callback = server.Substring(server.IndexOf("result = await _eventService.Run", StringComparison.Ordinal));
+            callback = callback.Substring(0, callback.IndexOf("localDeadline.Token,\n                                correlationId", StringComparison.Ordinal));
+            Assert.Contains("OperatorNativeCompletionCapture.Execute", callback);
+            Assert.Contains("OperatorNativeCompletionStore.SupportsRequestedEffect(requestedEffect)", callback);
+            Assert.Contains("effectiveMethod, path, correlationId, requestedEffect)", callback);
+            Assert.Contains("OperatorNativeCompletionStore.SupportsActiveDocument(effectiveMethod, path, dispatchBody)", callback);
+            Assert.Contains("app.ActiveUIDocument?.Document?.IsValidObject == true", callback);
+            Assert.Contains("document.Equals(app.ActiveUIDocument?.Document)", callback);
+            Assert.Contains("nativeCompletionStore.Lookup", server);
+            Assert.Contains("nativeReply.BodyJson", server);
+            var queue = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Services", "RevitEventService.cs");
+            Assert.True(queue.IndexOf("result = item.Action(app)", StringComparison.Ordinal)
+                < queue.IndexOf("WriteQueueWithIdle(\"released\"", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void HttpDialogGuardRetainsNativeAuthorizationInsideRevitApiQueue()
+        {
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            Assert.Contains("body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody", server);
+            Assert.Contains("result = await _eventService.Run", server);
+            Assert.Contains("nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();", server);
+            var direct = server.Substring(server.IndexOf("private static bool IsDirectDialogComputerUsePath", StringComparison.Ordinal));
+            direct = direct.Substring(0, direct.IndexOf("private static OperatorActionRisk GetRequestRisk", StringComparison.Ordinal));
+            Assert.DoesNotContain("/revit/computer-use-guard", direct);
+
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Handlers", "ComputerUseDialogHandlers.cs");
+            Assert.Contains("service.ArmGuard(request)", handler);
+            var guard = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorDialogComputerUse.cs");
+            Assert.DoesNotContain("_dispatcher.Invoke(() => ArmGuard(request))", guard);
+        }
+
         private const string Token = "0123456789abcdef0123456789abcdef";
         private const string RequestId = "fedcba9876543210fedcba9876543210";
         private static readonly DateTimeOffset Now = DateTimeOffset.FromUnixTimeMilliseconds(1785345600123);
@@ -192,10 +241,18 @@ namespace RevitBridge.Common.Tests
             var envelopeRead = server.IndexOf("var envelopeBytes = await ReadRequestBodyBytesAsync", StringComparison.Ordinal);
             var admission = server.IndexOf("var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync", StringComparison.Ordinal);
             var grant = server.IndexOf("OperatorWriteGrant.ValidateAndConsumeIfNeeded", StringComparison.Ordinal);
-            var secureResponse = server.IndexOf("OperatorNativeTransportHttpAdapter.CreateCertifiedResponse", StringComparison.Ordinal);
+            var secureResponse = server.LastIndexOf("OperatorNativeTransportHttpAdapter.CreateCertifiedResponse", StringComparison.Ordinal);
 
             Assert.True(outerValidation >= 0 && envelopeRead > outerValidation && secureOpen > envelopeRead
                 && admission > secureOpen && grant > admission && secureResponse > grant);
+            var lookupStart = server.IndexOf("if (protectedTransportRequest.Request.Path == OperatorNativeCompletionStore.LookupPath)", StringComparison.Ordinal);
+            var lookupEnd = server.IndexOf("if (protectedLaboratoryEvidence)", lookupStart, StringComparison.Ordinal);
+            var lookup = server.Substring(lookupStart, lookupEnd - lookupStart);
+            Assert.True(lookupStart > secureOpen && lookupEnd < admission);
+            Assert.Contains("nativeCompletionStore.Lookup(protectedTransportRequest)", lookup);
+            Assert.Contains("OperatorNativeTransportHttpAdapter.CreateCertifiedResponse", lookup);
+            Assert.DoesNotContain("_eventService.Run", lookup);
+            Assert.DoesNotContain("handler.Handle", lookup);
             Assert.Contains("bridge_transport.v1.json", server);
             Assert.Contains("req.Headers.AllKeys", server);
             Assert.Contains("protectedTransportRequest?.WriteGrant", server);
@@ -337,7 +394,8 @@ namespace RevitBridge.Common.Tests
                 StringComparison.Ordinal);
             Assert.True(explicitContract >= 0 && explicitContract < reflectionFallback);
             Assert.Contains("required: new[] { \"elementId\", \"newText\" }", introspection);
-            Assert.Contains("{ \"expectedOldText\", Str(maxLength: 200) }", introspection);
+            Assert.Contains("{ \"newText\", Str(minLength: 1, maxLength: 16_384) }", introspection);
+            Assert.Contains("{ \"expectedOldText\", Str(maxLength: 16_384) }", introspection);
             Assert.Contains("{ \"confirm\", Str(maxLength: 120) }", introspection);
         }
 
@@ -349,6 +407,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("APPLY 1 TEXT NOTE CHANGE", validator);
             Assert.Contains("BulkConfirmUtil.EqualsNormalized(received, expected)", validator);
             Assert.Contains("code: \"bulk_confirm_required\"", validator);
+            Assert.Contains("ValidateRequiredString(obj.Value, \"newText\", maxLen: 16_384", validator);
+            Assert.Contains("ValidateOptionalString(obj.Value, \"expectedOldText\", maxLen: 16_384", validator);
 
             var runner = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs");
             Assert.True(
@@ -361,7 +421,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("revit_replace_text_note", mcp);
             Assert.Contains("docId: z.string().max(64).optional()", mcp);
             Assert.Contains("familyDocumentId: z.string().max(64).optional()", mcp);
-            Assert.Contains("expectedOldText: z.string().max(200).optional()", mcp);
+            Assert.Contains("newText: z.string().min(1).max(16_384)", mcp);
+            Assert.Contains("expectedOldText: z.string().max(16_384).optional()", mcp);
             Assert.Contains("confirm: APPLY 1 TEXT NOTE CHANGE", mcp);
         }
 
@@ -689,6 +750,26 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("/revit/close-active-model", allowlist, StringComparison.Ordinal);
             var server = File.ReadAllText(Path.Combine(root, "RevitBridge", "Server", "RevitHttpServer.cs"));
             Assert.Contains("{ \"/revit/close-active-model\", new CloseActiveModelHandler() }", server, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ScheduleCellPreviewReturnsNativeTransactionTruthForNoMatchAndRollback()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "UpdateScheduleCellHandler.cs")).Replace("\r\n", "\n");
+            Assert.Contains("status = visibleRowFound ? \"Blocked\" : \"Not Found\",\n                    applied = false,\n                    transaction = OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
+            Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    applied = false,\n                    transaction = OperatorNativeTransactionReceipt.RolledBack", handler, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ConfigureScheduleReportsNoTransactionForPlanAndConfirmedCommitForApply()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "ConfigureScheduleHandler.cs")).Replace("\r\n", "\n");
+            Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
+            Assert.Contains("var applySummary = ApplyOperations(doc, schedule, p, out var transactionReceipt);", handler, StringComparison.Ordinal);
+            Assert.Contains("transaction = transactionReceipt,", handler, StringComparison.Ordinal);
+            Assert.Contains("if (tx.Commit() != TransactionStatus.Committed)", handler, StringComparison.Ordinal);
         }
 
         [Fact]

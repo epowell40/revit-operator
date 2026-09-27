@@ -35,7 +35,11 @@ export function startAutoGoalIfEligible(input: {
     return null;
   }
   const decision = classifyAutoGoalRequest(input.user_text);
-  if (intake && intake.route !== "answer" && intake.requested_effect === "read") {
+  if(intake&&intake.route!=="answer"&&intake.operation_scope) {
+    decision.requestedEffect=intake.operation_scope.requested_effect;
+    decision.shouldStart=true;
+    decision.signals.push("exact-message semantic operation scope");
+  } else if (intake && intake.route !== "answer" && intake.requested_effect === "read") {
     // An authenticated semantic read narrows admission even when the legacy
     // English-only fallback treats unfamiliar language as a mutation.
     decision.requestedEffect = "read";
@@ -76,7 +80,7 @@ export function startAutoGoalIfEligible(input: {
     work_budget: {
       mode: "auto_goal",
       source: input.source,
-      source_user_request: decision.objective,
+      source_user_request: intake?.operation_scope?input.user_text:decision.objective,
       ...(input.message_id ? { conversation_message_id: input.message_id } : {}),
       requested_effect: decision.requestedEffect,
       response_style: object(context.ui).response_style === "conversation" ? "conversation" : "evidence",

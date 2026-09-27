@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { retainAssignmentCompletionV2 } from "./assignmentCompletionOutbox.js";
+import { retainAssignmentCompletionV2, retainAssignmentNativeDispatchV1 } from "./assignmentCompletionOutbox.js";
+import type { NativePreparedDispatchV1 } from "./nativeTransport.js";
 import {
   canonicalPayloadJsonV2,
   payloadDigestV2,
@@ -12,7 +13,7 @@ import {
   assignmentKernelControlEvidenceFactsV2,
   isAssignmentKernelDurableControlEvidenceProducerV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
-import { createOperatorBackendClient } from "./operatorBackendClient.js";
+import { createOperatorBackendClient, OPERATION_HANDOFF_SCHEMA } from "./operatorBackendClient.js";
 import { previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 import { nativeReadEvidence } from "./nativeReadEvidence.js";
 
@@ -494,6 +495,18 @@ export async function markAssignmentKernelNativeRequestDispatchingV2(request: As
   call.state = "dispatching";
 }
 
+export function retainAssignmentKernelNativeDispatchV1(request: AssignmentKernelNativeRequestV2 | null, identity: NativePreparedDispatchV1): void {
+  const call = nativeCall(request);
+  if (!call || !["apply", "preview"].includes(call.lease.requested_effect)) return;
+  const document = call.lease.binding.document_fingerprint;
+  // Legacy/unbound work keeps its existing behavior and cannot gain recovery.
+  if (typeof document !== "string" || !/^[a-f0-9]{64}$/.test(document)) return;
+  if (identity.request_id !== call.request_id || identity.method !== call.method || identity.path !== call.path
+    || identity.method !== "POST" || !identity.body_present || identity.channel === "search") throw new Error("assignment_native_dispatch_identity_mismatch");
+  retainAssignmentNativeDispatchV1(call.lease, { ...identity, method: "POST", body_present: true,
+    channel: identity.channel, expected_document_fingerprint: document });
+}
+
 export async function recordAssignmentKernelNativeResultV2(
   method: string,
   path: string,
@@ -533,7 +546,8 @@ export async function recordAssignmentKernelNativeFailureV2(
   const errorRecord = object(error);
   const bridgeDetails = object(errorRecord.bridgeDetails);
   const phase = text(errorRecord.phase) || text(bridgeDetails.phase);
-  const outcomeUnknown = errorRecord.outcomeUnknown === true || errorRecord.outcome_unknown === true;
+  const outcomeUnknown = errorRecord.outcomeUnknown === true || errorRecord.outcome_unknown === true
+    || bridgeDetails.outcomeUnknown === true || bridgeDetails.outcome_unknown === true;
   const explicitlyNotDispatched = errorRecord.request_dispatched === false
     || bridgeDetails.request_dispatched === false
     || bridgeDetails.dispatched === false
@@ -577,6 +591,7 @@ function nativeDomainFailure(payload: unknown): boolean {
   const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
   return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
     || status === "failed" || status === "partialfailure" || status === "printfailed" || status === "blocked"
+    || status === "notfound" || status === "ambiguous"
     || status === "blockedrolledback" || status === "blockedrollbackfailed";
 }
 
@@ -753,7 +768,9 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const dispatched = dispatchState !== "not_dispatched";
   const outcomeUnknown = object(call.payload).outcome_unknown === true;
   const persistentEffect = text(settlement.effect_state)
-    || (transportFailed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
+    // A preview can commit child transactions before rolling back its outer
+    // group. A lost response does not establish that the rollback completed.
+    || (transportFailed && dispatched && call.lease.requested_effect !== "read" && outcomeUnknown ? "unknown" : "none");
   if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
   if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
   if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
@@ -1011,7 +1028,12 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       parent_operation_id: call.parent_operation_id,
       operation_role: call.operation_role,
       request_identity: call.lease.request_identity,
-      settlement_digest: sha256(call.settlement ?? null)
+      settlement_digest: sha256(call.settlement ?? null),
+      ...(object(call.settlement).schema === OPERATION_HANDOFF_SCHEMA
+        ? { settlement_digest_scope: "operation_handoff_v1" } : {}),
+      ...(Array.isArray(object(call.settlement).evidence_projections)
+        ? { evidence_projections: structuredClone(object(call.settlement).evidence_projections) }
+        : {})
     }));
   return {
     ...root,

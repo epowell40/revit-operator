@@ -30,6 +30,7 @@ import {
   markAssignmentKernelNativeRequestDispatchingV2,
   recordAssignmentKernelNativeFailureV2,
   recordAssignmentKernelNativeResultV2,
+  retainAssignmentKernelNativeDispatchV1,
 } from "./assignmentKernelV2.js";
 
 // Use localhost or environment variable
@@ -439,6 +440,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           : undefined;
         await markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequest);
         const result = await callNativeTransport({
+          beforeDispatch: identity => retainAssignmentKernelNativeDispatchV1(kernelNativeRequest, identity),
           operatorToken: token,
           method: upperMethod,
           path,

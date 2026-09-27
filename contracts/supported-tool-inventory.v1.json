@@ -72,6 +72,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/connect-existing-mep-branch"
+    },
+    {
+      "method": "POST",
       "path": "/revit/connect-mep-elements"
     },
     {
@@ -180,11 +184,19 @@
     },
     {
       "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow"
+    },
+    {
+      "method": "POST",
       "path": "/revit/find-elements"
     },
     {
       "method": "POST",
       "path": "/revit/find-text-notes"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/view-owned-detailing"
     },
     {
       "method": "POST",
@@ -224,6 +236,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/linked-room-boundaries"
+    },
+    {
+      "method": "POST",
       "path": "/revit/load-family"
     },
     {
@@ -237,6 +253,10 @@
     {
       "method": "POST",
       "path": "/revit/mep-route-workflow"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/model-health"
     },
     {
       "method": "POST",
@@ -415,8 +435,10 @@
     "operator_discover_capabilities",
     "operator_evaluate_assignment_criteria",
     "operator_manage_work_plan",
+    "operator_plan_existing_conditions_duct_continuation",
     "operator_plan_semantic_mep_route",
     "operator_register_existing_conditions_interpretation",
+    "operator_resume_existing_conditions_registration",
     "operator_record_execution_strategy",
     "operator_request_assignment_input",
     "operator_request_clarification",
@@ -509,6 +531,10 @@
     "workspace_rename_file"
   ],
   "internal_routes": [
+    {
+      "method": "POST",
+      "path": "/revit/computer-use-guard"
+    },
     {
       "method": "POST",
       "path": "/revit/dynamic-runtime/annotation-result-apply-v1"

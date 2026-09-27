@@ -641,10 +641,8 @@ namespace RevitBridge.Logic.Handlers
 
             try
             {
-                if (e.Location is LocationCurve lc && lc.Curve != null)
-                {
-                    return lc.Curve.Evaluate(0.5, true);
-                }
+                var curve = e is Grid grid ? grid.Curve : (e.Location as LocationCurve)?.Curve;
+                if (curve != null) return curve.Evaluate(0.5, true);
             }
             catch { }
 
@@ -706,9 +704,11 @@ namespace RevitBridge.Logic.Handlers
                     };
                 }
 
-                if (e.Location is LocationCurve lc && lc.Curve != null)
+                // Datum grids expose Grid.Curve, not LocationCurve. Their view
+                // bounding boxes describe bubbles/extents, not the axis to fit.
+                var curve = e is Grid grid ? grid.Curve : (e.Location as LocationCurve)?.Curve;
+                if (curve != null)
                 {
-                    var curve = lc.Curve;
                     var start = DatasetExportUtil.TransformPointToHost(linkInstance, curve.GetEndPoint(0));
                     var end = DatasetExportUtil.TransformPointToHost(linkInstance, curve.GetEndPoint(1));
                     XYZ? mid = null;
@@ -718,6 +718,8 @@ namespace RevitBridge.Logic.Handlers
                     {
                         kind = "curve",
                         lengthFt = curve.Length,
+                        curveType = curve.GetType().Name,
+                        isStraight = curve is Line,
                         start = BuildProjectedPoint(start, widthPx, heightPx, topLeft, topRight, bottomLeft),
                         end = BuildProjectedPoint(end, widthPx, heightPx, topLeft, topRight, bottomLeft),
                         midpoint = BuildProjectedPoint(mid, widthPx, heightPx, topLeft, topRight, bottomLeft)

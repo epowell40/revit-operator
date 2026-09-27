@@ -1,5 +1,5 @@
 import type { CodexAppServer } from "../codex/app_server.js";
-import type { DynamicToolSpec } from "../codex/generated/app_server_0_149_0/v2/DynamicToolSpec.js";
+import type { DynamicToolSpec } from "../codex/generated/app_server_0_157_0/v2/DynamicToolSpec.js";
 import { appendEvent, getCodexThreadId, setCodexThreadId, getCodexThreadCapabilities, bindCodexThreadCapabilities } from "../memory/sqlite_store.js";
 import { codexToolCatalogHash, codexCapabilityHandoff } from "./codex_tool_catalog.js";
 import type { AgentModelSettings } from "../speed_config.js";

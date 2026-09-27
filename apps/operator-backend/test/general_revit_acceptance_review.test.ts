@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import { benchmarkDataRoot } from "../src/benchmark/files.js";
 import { loadGeneralRevitCapabilityCorpus, validateGeneralRevitCapabilityCorpus } from "../src/benchmark/general_revit_capability_acceptance.js";
-import { buildGeneralRevitAcceptanceReviewPacket, summarizeGeneralRevitAcceptanceReview } from "../src/benchmark/general_revit_acceptance_review.js";
+import { buildGeneralRevitAcceptanceReviewPacket, reviewPacketForSettledCampaign, summarizeGeneralRevitAcceptanceReview } from "../src/benchmark/general_revit_acceptance_review.js";
 import { generalRevitProtocolManifestPathV2, loadGeneralRevitProtocolInputsV2 } from "../src/benchmark/protocol_v2_general_revit.js";
 import { markdownReport } from "../src/benchmark/general_revit_capability_report.js";
 
@@ -46,6 +46,11 @@ test("generic runtime verification cannot create an independently delivered grad
   assert.equal(summary.pending, 2);
   assert.match(markdownReport({ runtime_score_is_provisional: true }), /not the final task-delivery grade/);
   assert.throws(() => buildGeneralRevitAcceptanceReviewPacket("run-1", selected, [traces[0]!, traces[0]!]), /exactly one/);
+});
+
+test("a stopped pre-case campaign retains its first failure without requiring nonexistent review traces", () => {
+  assert.equal(reviewPacketForSettledCampaign("stopped-run", selected, [], false), null);
+  assert.throws(() => reviewPacketForSettledCampaign("complete-run", selected, [], true), /exactly one/);
 });
 
 test("review refuses changed source, removed criteria and unsupported completion", () => {

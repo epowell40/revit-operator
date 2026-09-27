@@ -88,18 +88,16 @@ namespace RevitBridge.Logic.Handlers
             var skipped = new List<object>();
             var snapshots = new List<object>();
 
-            var error = (string?)null;
-
-            using (var t = new Transaction(doc, p.dryRun ? "Move Elements (Dry Run)" : "Move Elements"))
-            {
-                t.Start();
-                try
+            var beforeById = new Dictionary<long, object>();
+            var failureGuard = new OperatorNativeFailureGuard();
+            bool pinRestorationFailed = false;
+            var response = NativeSingleTransaction.Execute(app, doc,
+                p.dryRun ? "Move Elements (Dry Run)" : "Move Elements", _ =>
                 {
                     if (p.moveTogether)
                     {
                         var elements = new List<Element>();
                         var elementIds = new List<ElementId>();
-                        var beforeById = new Dictionary<long, object>();
                         var repinAfterMove = new List<Element>();
 
                         foreach (var id in p.ids.Distinct())
@@ -157,7 +155,7 @@ namespace RevitBridge.Logic.Handlers
                             {
                                 var id = RevitBridge.Common.ElementIdCompat.GetValue(e.Id);
                                 try { e.Pinned = true; }
-                                catch { warnings.Add($"Element {id} was pinned before group move but could not be re-pinned."); }
+                                catch { pinRestorationFailed = true; warnings.Add($"Element {id} was pinned before group move but could not be re-pinned."); }
                             }
                         }
                     }
@@ -216,6 +214,7 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             var before = SnapshotLocation(e);
+                            beforeById[id] = before;
                             try
                             {
                                 ElementTransformUtils.MoveElement(doc, eid, vector);
@@ -234,7 +233,7 @@ namespace RevitBridge.Logic.Handlers
                                 if (!p.dryRun && wasPinned && unpinned)
                                 {
                                     try { e.Pinned = true; }
-                                    catch { warnings.Add($"Element {id} was pinned before move but could not be re-pinned."); }
+                                    catch { pinRestorationFailed = true; warnings.Add($"Element {id} was pinned before move but could not be re-pinned."); }
                                 }
                             }
 
@@ -246,68 +245,50 @@ namespace RevitBridge.Logic.Handlers
                         }
                     }
 
-                    if (p.dryRun)
+                    return new Dictionary<string, object?>
                     {
-                        t.RollBack();
-                        return Task.FromResult<object>(new
-                        {
-                            status = "Dry Run",
-                            movedIds,
-                            skipped,
-                            warnings,
-                            snapshots,
-                            movedTogether = p.moveTogether,
-                            rolledBack = true
-                        });
-                    }
+                        ["movedIds"] = movedIds.ToArray(), ["snapshots"] = snapshots.ToArray(),
+                        ["success"] = skipped.Count == 0 && !pinRestorationFailed
+                    };
+                }, disposition: p.dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
+                configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
 
-                    if (!bestEffort && skipped.Count > 0)
-                    {
-                        // All-or-nothing: treat any skip as failure.
-                        t.RollBack();
-                        return Task.FromResult<object>(new
-                        {
-                            status = "Failed",
-                            movedIds,
-                            skipped,
-                            warnings,
-                            snapshots,
-                            movedTogether = p.moveTogether,
-                            rolledBack = true,
-                            error = "allOrNothing: move rolled back due to failures."
-                        });
-                    }
+            // Posted geometry failures must not open a modal, including during
+            // preview rollback. The observed transaction still owns settlement.
+            response["capturedFailures"] = failureGuard.Failures;
+            response["failureRollbackRequested"] = failureGuard.RollbackRequested;
 
-                    t.Commit();
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Moved",
-                        movedIds,
-                        skipped,
-                        warnings,
-                        snapshots,
-                        movedTogether = p.moveTogether,
-                        rolledBack = false
-                    });
-                }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                    try { t.RollBack(); } catch { }
-                }
-            }
-
-            return Task.FromResult<object>(new
+            var receipt = (OperatorNativeTransactionReceipt)response["transaction"]!;
+            if (receipt.CommittedValue == true)
             {
-                status = p.dryRun ? "Dry Run" : "Failed",
-                movedIds,
-                skipped,
-                warnings,
-                snapshots,
-                movedTogether = p.moveTogether,
-                rolledBack = true,
-                error
-            });
+                // Replace transient snapshots with persisted native readback.
+                // A failed read cannot erase the commit or leave old snapshots
+                // masquerading as verified output.
+                response.Remove("snapshots");
+                OperatorNativeTransactionExecution.ReadCommitted(response, () =>
+                {
+                    var persisted = movedIds.Select(id =>
+                    {
+                        var element = doc.GetElement(ElementIdCompat.Create(id));
+                        if (element == null || !element.IsValidObject)
+                            throw new InvalidOperationException($"Move readback element {id} is unavailable after commit.");
+                        return new { id, before = beforeById[id], after = SnapshotLocation(element, requireKnown: true) };
+                    }).ToArray();
+                    return new Dictionary<string, object?> { ["snapshots"] = persisted };
+                });
+            }
+            var succeeded = response["success"] is bool passed && passed;
+            response["status"] = receipt.CommittedValue == true
+                ? (succeeded ? "Moved" : "Committed With Errors")
+                : (p.dryRun && receipt.Status == "rolled_back" && succeeded ? "Dry Run" : "Failed");
+            response["rolledBack"] = receipt.Status == "rolled_back" ? (bool?)true
+                : receipt.CommittedValue == true ? false : (bool?)null;
+            response["skipped"] = skipped;
+            response["warnings"] = warnings;
+            if (!response.ContainsKey("movedIds")) response["movedIds"] = Array.Empty<long>();
+            if (!response.ContainsKey("snapshots")) response["snapshots"] = Array.Empty<object>();
+            response["movedTogether"] = p.moveTogether;
+            return Task.FromResult<object>(response);
         }
 
         private static bool TryIsPinned(Element e, out bool pinned)
@@ -324,8 +305,27 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static object SnapshotLocation(Element e)
+        private static object SnapshotLocation(Element e, bool requireKnown = false)
         {
+            if (e is TextNote textNote)
+            {
+                // View-owned text can have neither a generic location nor a model box.
+                // Coord is its native text anchor, not a LocationPoint insertion point.
+                try
+                {
+                    var point = textNote.Coord;
+                    if (point != null)
+                    {
+                        var coordinates = new[] { point.X, point.Y, point.Z };
+                        if (coordinates.All(value => !double.IsNaN(value) && !double.IsInfinity(value)))
+                            return new { kind = "TextAnchor", pointXyz = coordinates };
+                    }
+                }
+                catch { }
+                if (requireKnown) throw new InvalidOperationException("Native text-note coordinate readback is unavailable.");
+                return new { kind = "Unknown" };
+            }
+
             try
             {
                 if (e.Location is LocationPoint lp)
@@ -334,7 +334,9 @@ namespace RevitBridge.Logic.Handlers
                     return new
                     {
                         kind = "LocationPoint",
-                        pointXyz = new[] { pt.X, pt.Y, pt.Z }
+                        pointXyz = new[] { pt.X, pt.Y, pt.Z },
+                        rotationRadians = lp.Rotation,
+                        rotationDegrees = lp.Rotation * (180.0 / Math.PI)
                     };
                 }
 
@@ -371,6 +373,7 @@ namespace RevitBridge.Logic.Handlers
             }
             catch { }
 
+            if (requireKnown) throw new InvalidOperationException("Native location readback is unavailable.");
             return new { kind = "Unknown" };
         }
 

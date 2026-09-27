@@ -26,11 +26,13 @@ import {
   type OperationResultV2,
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
+import { buildAssignmentKernelPublicationV2 } from "../src/assignments/assignment_kernel_v2_publication.js";
 import { finalCodexAssignmentMessageV2, codexAssignmentControllerStopMessage } from "../src/brains/codex_assignment_progress.js";
-import { deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
+import { criteriaPendingEvaluationV2, deriveProgressGapsV2 } from "../src/domain/assignment-kernel/progress/controller.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
 import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment-kernel/semantic_admissibility.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
+import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
 
 const binding: AssignmentBindingV2 = {
@@ -512,6 +514,30 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("ordinary long-running work permits three distinct correction epochs but stops at four", () => {
+  const j = journal();
+  let before = j.snapshot();
+  assert.equal(DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs, 4);
+  for (let index = 0; index < 4; index += 1) {
+    j.append(event(j, {
+      event_type: "provider_call_recorded",
+      call_id: `pdf-correction-${index}`,
+      provider: "openai",
+      model: "model",
+      reasoning_effort: "medium",
+      success: true
+    }));
+    const after = j.snapshot();
+    const epoch = buildProgressEpochV2({ before, after, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: `2026-08-26T20:00:0${index + 2}.000Z` });
+    assert.equal(epoch.genuine_progress, false);
+    j.append(event(j, { event_type: "progress_epoch_recorded", epoch }));
+    before = j.snapshot();
+    const decision = decideAssignmentProgressV2({ snapshot: before, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now: "2026-08-26T20:00:10.000Z" });
+    if (index < 3) assert.equal(decision.decision, "admit_reasoning_turn");
+    else assert.equal(decision.reason, "no_progress_budget_exhausted");
+  }
+});
+
 test("unknown mutation suppresses provider success even after dispatch settlement", () => {
   const j = journal();
   const snapshot = { ...j.snapshot(), unresolved_unknown_operation_ids: ["duplicate-view"] };
@@ -580,6 +606,121 @@ test("idle Assignments remain admissible days later without resetting their cumu
   assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, now), 0);
   assert.equal(decideAssignmentProgressV2({ snapshot, budget, now }).decision, "admit_reasoning_turn");
   assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...budget, max_provider_calls: 0 }, now }).reason, "provider_call_budget_exhausted");
+});
+
+test("C99 progress controller admits completion after a same-binding native route dry run at the ordinary call limit", () => {
+  const base = journal(false).snapshot();
+  const ready = { ...operation("route-preview"), requested_effect: "preview" as const,
+    operation_role: "root" as const, fulfillment_role: "supporting_control" as const,
+    settlement_state: "settled" as const, observation_ids: ["route-ready"],
+    result: { ...result("route-preview"), native_transaction_state: "rolled_back" as const } };
+  const observed = { ...observation("route-preview", "route-ready"),
+    facts: [{ fact_id: "control.field.status", fact_class: "control" as const, value: "DryRunReady" }] };
+  const calls = Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`call-${i}`, {
+    state: "completed", admitted_at: "2026-08-26T20:00:03.000Z",
+    completed_at: "2026-08-26T20:00:03.100Z", provider_duration_ms: 100,
+    usage: { total_tokens: 130_000 }
+  }]));
+  const snapshot = { ...base,
+    spec: { ...base.spec, requested_effect: "apply" as const },
+    work_plan: { schema: "revit-operator.assignment-work-plan/v2" as const, assumptions: [], items: [
+      { item_id: "branch", description: "Connect a duct branch", source_basis: "drawing", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [] },
+      { item_id: "inspect", kind: "inspection" as const, description: "Verify the connection", source_basis: "model", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [], depends_on: ["branch"] }
+    ] },
+    operations: { ...base.operations, [ready.operation_id]: ready },
+    observations: { ...base.observations, [observed.observation_id]: observed },
+    provider_calls: calls
+  } as unknown as typeof base;
+  const now = "2026-08-26T20:00:08.000Z";
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now }).reason,
+    "provider_call_budget_exhausted");
+  const extended = defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+  assert.equal(extended.max_provider_calls, 48);
+  assert.equal(extended.max_total_tokens, 6_000_000);
+  assert.match(deriveProgressGapsV2(snapshot).find(gap => gap.kind === "work_plan_required")!.reason,
+    /make the authorized matching apply call now/);
+  const decision = decideAssignmentProgressV2({ snapshot, budget: extended, now });
+  assert.equal(decision.decision, "admit_reasoning_turn", decision.reason);
+  const invalidated = { ...snapshot, input_invalidated_operation_ids: [ready.operation_id] };
+  assert.doesNotMatch(deriveProgressGapsV2(invalidated).find(gap => gap.kind === "work_plan_required")!.reason,
+    /matching apply call now/);
+});
+
+test("C120 progress controller preserves verified edit credit after steering invalidates its completion evidence", () => {
+  const base = journal(false).snapshot();
+  const edited = { ...operation("duct-edit"), requested_effect: "apply" as const,
+    persistent_effect: "applied" as const, settlement_state: "settled" as const,
+    opened_at: "2026-08-26T20:00:02.000Z",
+    request_identity: { method: "POST" as const, path: "/revit/duct", request_signature: "duct-edit-signature" },
+    verification_operation_ids: ["duct-read"],
+    result: { ...result("duct-edit"), native_transaction_state: "committed" as const,
+      affected_target_identities: ["element_id:42"] } };
+  const read = { ...operation("duct-read"), requested_effect: "read" as const,
+    purpose: "verification" as const, persistent_effect: "none" as const,
+    settlement_state: "settled" as const, verification_of_operation_id: "duct-edit",
+    target: { target_id: "id:42" }, observation_ids: ["duct-proof"],
+    result: { ...result("duct-read"), authority: "native-host" as const } };
+  const proof = { ...observation("duct-read", "duct-proof"),
+    facts: [{ fact_id: "verification.postcondition_satisfied", fact_class: "verification" as const, value: true }] };
+  const calls = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`call-${i}`, {
+    state: "completed", admitted_at: "2026-08-26T20:00:03.000Z",
+    completed_at: "2026-08-26T20:00:03.100Z", provider_duration_ms: 100,
+    usage: { total_tokens: 1000 }
+  }]));
+  const snapshot = { ...base, spec: { ...base.spec, requested_effect: "apply" as const },
+    work_plan: { schema: "revit-operator.assignment-work-plan/v2" as const, assumptions: [], items: [
+      { item_id: "first", description: "Connect first branch", source_basis: "drawing", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: ["duct-edit"] },
+      { item_id: "second", description: "Connect second branch", source_basis: "drawing", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [] }
+    ] }, operations: { ...base.operations, [edited.operation_id]: edited, [read.operation_id]: read },
+    observations: { ...base.observations, [proof.observation_id]: proof },
+    input_invalidated_operation_ids: [edited.operation_id], provider_calls: calls
+  } as unknown as typeof base;
+  const now = "2026-08-26T20:00:08.000Z";
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now }).reason,
+    "provider_call_budget_exhausted");
+  const extended = defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+  assert.equal(extended.max_provider_calls, 72);
+  assert.notEqual(decideAssignmentProgressV2({ snapshot, budget: extended, now }).reason,
+    "provider_call_budget_exhausted");
+});
+
+test("C106 wrapped native stage preview guides apply and survives the ordinary call limit", () => {
+  const base = journal(false).snapshot();
+  const route = "/revit/existing-conditions-mep-draft-workflow";
+  const parent = { ...operation("mcp-root"), capability_id: "revit_call_tool",
+    requested_effect: "preview" as const, operation_role: "root" as const,
+    request_identity: { method: "POST" as const, path: route, request_signature: "mcp-request" },
+    settlement_state: "settled" as const,
+    result: { ...result("mcp-root"), status: "completed_without_native_dispatch" as const,
+      dispatch_state: "not_dispatched" as const, native_transaction_state: "not_applicable" as const,
+      authority: "operator-mcp-transport" as const, observation_required: false } };
+  const child = { ...operation("native-stage"), requested_effect: "preview" as const,
+    operation_role: "child" as const, parent_operation_id: parent.operation_id,
+    root_operation_id: parent.operation_id,
+    request_identity: { method: "POST" as const, path: route, request_signature: "native-request" },
+    settlement_state: "settled" as const, observation_ids: ["stage-ready"],
+    result: { ...result("native-stage"), native_transaction_state: "rolled_back" as const } };
+  const observed = { ...observation("native-stage", "stage-ready"),
+    facts: [{ fact_id: "control.field.status", fact_class: "control" as const, value: "DryRunReady" }] };
+  const calls = Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`call-${i}`, {
+    state: "completed", admitted_at: "2026-08-26T20:00:03.000Z",
+    completed_at: "2026-08-26T20:00:03.100Z", provider_duration_ms: 100,
+    usage: { total_tokens: 130_000 }
+  }]));
+  const snapshot = { ...base, spec: { ...base.spec, requested_effect: "apply" as const },
+    work_plan: { schema: "revit-operator.assignment-work-plan/v2" as const, assumptions: [], items: [
+      { item_id: "branch", description: "Connect the duct", source_basis: "drawing", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [] },
+      { item_id: "inspect", kind: "inspection" as const, description: "Read connectors", source_basis: "model", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [], depends_on: ["branch"] }
+    ] }, operations: { ...base.operations, [parent.operation_id]: parent, [child.operation_id]: child },
+    observations: { ...base.observations, [observed.observation_id]: observed }, provider_calls: calls
+  } as unknown as typeof base;
+  const extended = defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+  assert.equal(extended.max_provider_calls, 48);
+  assert.match(deriveProgressGapsV2(snapshot).find(gap => gap.kind === "work_plan_required")!.reason,
+    /make the authorized matching apply call now/);
+  const wrongParent = structuredClone(snapshot);
+  wrongParent.operations[parent.operation_id]!.request_identity!.path = "/revit/other";
+  assert.equal(defaultAssignmentWorkBudgetV2(wrongParent, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls, 32);
 });
 
 test("execution time survives journal replay while completed work excludes the offline wait", () => {
@@ -1072,6 +1213,40 @@ function discoveryStep(before: ReturnType<AssignmentJournalV2["snapshot"]>, id: 
   return { ...before, operations: { ...before.operations, [id]: op }, observations: { ...before.observations, [obs.observation_id]: obs } };
 }
 
+test("multi-chunk apply keeps its generic result criterion open after the first model edit", () => {
+  const j = journal();
+  settleObservation(j);
+  const base = j.snapshot();
+  const original = base.operations["operation-inventory"]!;
+  const originalObservation = base.observations["observation-inventory"]!;
+  const originalCriterion = base.spec.criteria[0]!;
+  assert(originalCriterion.evidence_policy);
+  const criterion: AssignmentSpecV2["criteria"][number] = {
+    ...originalCriterion,
+    semantic_fact_requirements: ["task.result_available"],
+    evidence_policy: {
+      ...originalCriterion.evidence_policy,
+      required_fact_ids: ["task.result_available"]
+    }
+  };
+  const operation = { ...original, requested_effect: "apply" as const, persistent_effect: "applied" as const,
+    result: { ...original.result!, persistent_effect: "applied" as const, native_transaction_state: "committed" as const } };
+  const observation = { ...originalObservation,
+    facts: [{ fact_id: "task.result_available", fact_class: "domain" as const, value: true }] };
+  const snapshot: typeof base = { ...base,
+    spec: { ...base.spec, requested_effect: "apply" as const, work_plan_required: true, criteria: [criterion] },
+    operations: { ...base.operations, [operation.operation_id]: operation },
+    observations: { ...base.observations, [observation.observation_id]: observation },
+    work_plan: { schema: "revit-operator.assignment-work-plan/v2" as const, assumptions: [], items: [
+      { item_id: "equipment", description: "Place equipment", source_basis: "source", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [operation.operation_id] },
+      { item_id: "duct_network", description: "Connect the duct network", source_basis: "source", declared_at: "2026-08-26T20:00:00.000Z", operation_ids: [] }
+    ] }
+  };
+  assert.equal(observationAdmissibilityForCriterionV2({ snapshot, criterion, observation }).admissible, true);
+  assert.deepEqual(criteriaPendingEvaluationV2(snapshot), {});
+  assert.deepEqual(Object.keys(criteriaPendingEvaluationV2({ ...snapshot, spec: { ...snapshot.spec, work_plan_required: false }, work_plan: undefined })), [criterion.criterion_id]);
+});
+
 test("C59 retained interpretation and registration advance the open result gap once each", () => {
   const evidence = { evidence_id: `ev1_${"a".repeat(32)}`, content_hash: `sha256:${"b".repeat(64)}`, trust_level: "host_observed" };
   const interpretation = { schema_version: 1, source_binding_sha256: "c".repeat(64),
@@ -1242,4 +1417,90 @@ test("uncertain workbook effect never claims that a Revit model edit happened",(
   assert.match(message,/could not confirm.*requested change/);
   assert.match(message,/verify the result before retrying/);
   assert.doesNotMatch(message,/model edit|completed successfully/);
+});
+
+function advisoryHandoffJournal(proposal: { claimed_completed: string[]; remaining_work: string[]; uncertainties: string[] }) {
+  const j = new AssignmentJournalV2();
+  j.append(event(j, { event_type: "assignment_created", spec: { ...spec(), execution_policy: {
+    mode: "local_advisory_v1", selected_by: "trusted_local_host", session_id: binding.session_id,
+    document_fingerprint: binding.document_fingerprint!, max_turns: 8, max_provider_calls: 64,
+    max_operations: 128, max_total_tokens: 1_000_000, max_wall_clock_ms: 600_000
+  } } }));
+  j.append({ ...event(j, { event_type: "review_requested", review_id: "handoff-review", work_unit_ids: [],
+    reason: "User review", completion_proposal: proposal }), actor: "operator-work-plan" });
+  return j;
+}
+
+test("advisory handoff shows bounded whole items while canonical Details retains the complete proposal", () => {
+  const proposal = {
+    claimed_completed: ["Prepared the comparison table without changing source records.", "Saved the draft for review.", "Included the supplied appendix."],
+    remaining_work: ["Check the final figures.", "Review the appendix.", "Obtain the missing source."],
+    uncertainties: ["The latest figures are estimates, not confirmed values.", "Coverage excludes the missing source.", "The appendix date is unclear."]
+  };
+  const j = advisoryHandoffJournal(proposal), snapshot = j.snapshot();
+  const before = JSON.stringify(snapshot), events = structuredClone(j.events());
+  const message = finalCodexAssignmentMessageV2(snapshot, "Everything is verified.");
+  assert.match(message, /^Ready for review \(not independently verified\)\./);
+  assert.equal((message.match(/not independently verified/g) ?? []).length, 1);
+  const summary = message.split("\n\n## Details\n\n")[0]!;
+  for (const items of Object.values(proposal)) {
+    assert.ok(summary.includes(items[0]!)); assert.ok(summary.includes(items[1]!));
+    assert.ok(!summary.includes(items[2]!));
+    for (const item of items) assert.ok(message.includes(`- ${item}`), "full wording is retained below Details");
+  }
+  assert.match(message, /Full handoff in Details below\./);
+  assert.equal((summary.match(/1 more in Details/g) ?? []).length, 3);
+  assert.doesNotMatch(message, /Reported work:|Everything is verified/);
+  assert.equal(JSON.stringify(snapshot), before); assert.deepEqual(j.events(), events);
+  const publication = buildAssignmentKernelPublicationV2(j.snapshot());
+  for (const key of ["claimed_completed", "remaining_work", "uncertainties"] as const)
+    assert.deepEqual(publication.snapshot.completion_proposal![key], proposal[key]);
+  assert.equal(publication.snapshot.completion_proposal!.verified, false);
+  assert.equal(publication.snapshot.outcome, "awaiting_user_review"); assert.equal(publication.snapshot.terminal, false);
+});
+
+test("advisory handoff does not truncate a long item before its qualification or skip to a shorter later item", () => {
+  const long = "Prepared a provisional comparison using the retained inputs. ".repeat(8) + "This does not establish correctness or permission to publish.";
+  const proposal = { claimed_completed: [long, "Saved a copy."], remaining_work: [], uncertainties: [long] };
+  const snapshot = advisoryHandoffJournal(proposal).snapshot();
+  const message = finalCodexAssignmentMessageV2(snapshot, "All done.");
+  const summary = message.split("\n\n## Details\n\n")[0]!;
+  assert.doesNotMatch(summary, /Prepared a provisional|Saved a copy|All done/);
+  assert.match(summary, /Work: 2 items in Details/); assert.match(summary, /Newly reported uncertainty: 1 item in Details/);
+  assert.match(summary, /1 saved unfinished report remains/);
+  assert.ok(message.includes(long)); assert.ok(message.includes("Saved a copy."));
+  assert.ok(summary.length < 400); assert.deepEqual(snapshot.completion_proposal!.claimed_completed, proposal.claimed_completed);
+  assert.deepEqual(buildAssignmentKernelPublicationV2(snapshot).snapshot.completion_proposal!.uncertainties, [long]);
+});
+
+test("advisory handoff with no completed work does not invent success or certainty", () => {
+  const snapshot = advisoryHandoffJournal({ claimed_completed: [], remaining_work: ["Wait for the corrected source."], uncertainties: [] }).snapshot();
+  const message = finalCodexAssignmentMessageV2(snapshot, "Completed everything.");
+  assert.match(message, /No completed work was reported/); assert.match(message, /Wait for the corrected source/);
+  assert.doesNotMatch(message, /Completed everything|Nothing remains|No uncertainties|Work:/);
+  assert.equal(snapshot.terminal, false); assert.equal(snapshot.completion_proposal!.verified, false);
+});
+
+test("advisory handoff cannot hide unknown effects, Pause, failure, budget, missing input or unsettled work", () => {
+  const snapshot = advisoryHandoffJournal({ claimed_completed: ["Prepared the draft."], remaining_work: [], uncertainties: [] }).snapshot();
+  const cases: [string, Record<string, unknown>, RegExp][] = [
+    ["unknown", { unresolved_unknown_operation_ids: ["uncertain-change"] }, /could not confirm/],
+    ["pause", { execution_control: { state: "paused", command_id: "pause", changed_at: snapshot.spec.created_at } }, /Task paused/],
+    ["terminal failure", { terminal: true, outcome: "failed", terminal_reason: "execution_failed" }, /did not complete/],
+    ["terminal blocker", { terminal: true, outcome: "blocked", terminal_reason: "reconciliation_required" }, /did not complete/],
+    ["late failure", { execution_failure_ids: ["failed-call"] }, /stopped/],
+    ["work limit", { provider_budget_exhausted: true }, /limit/],
+    ["blocker", { progress_blocker: { code: "operation_budget_exhausted", gap_ids: [], recorded_at: snapshot.spec.created_at } }, /stopped/],
+    ["input", { outcome: "awaiting_user_input", pending_input_variable_ids: ["source"], clarifications: {
+      source: { clarification_id: "source", variable_id: "source", question: "Which source should I use?", requested_at: snapshot.spec.created_at }
+    } }, /Which source should I use/],
+    ["native settling", { in_flight_operation_ids: ["native"], quiescent: false }, /settling/],
+    ["provider settling", { in_flight_provider_call_ids: ["provider"], quiescent: false }, /settling/]
+  ];
+  for (const [name, change, expected] of cases) {
+    const state = { ...structuredClone(snapshot), ...change } as typeof snapshot, before = JSON.stringify(state);
+    const message = finalCodexAssignmentMessageV2(state, "Everything completed successfully.");
+    assert.match(message, expected, name); assert.doesNotMatch(message, /Ready for review|Prepared the draft|Everything completed successfully/, name);
+    assert.equal(JSON.stringify(state), before, name);
+  }
 });

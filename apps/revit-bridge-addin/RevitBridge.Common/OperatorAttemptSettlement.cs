@@ -195,6 +195,8 @@ namespace RevitBridge.Common
                 var applied = OperatorAttemptSettlement.Applied(method, path, "certified_native_apply_receipt", "native_receipt", receiptRefs: new[] { receiptRef });
                 return applied;
             }
+            if (TryExistingConditionsStageSettlement(root, effect, method, path, out var stageSettlement))
+                return stageSettlement!;
             if (TryTransactionSettlement(root, out var transactionStatus, out var committed, out var affected))
             {
                 if (transactionStatus == "not_started")
@@ -212,6 +214,149 @@ namespace RevitBridge.Common
                 return OperatorAttemptSettlement.Applied(method, path, "native_transaction_committed", "native_transaction", affected);
             }
             return OperatorAttemptSettlement.Unknown(effect, method, path, "native_handler_returned_without_authoritative_settlement", "native_host");
+        }
+
+        private static bool TryExistingConditionsStageSettlement(JsonElement root, string effect, string method,
+            string path, out OperatorAttemptSettlement? settlement)
+        {
+            settlement = null;
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase)
+                || root.ValueKind != JsonValueKind.Object) return false;
+            bool IsTrue(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
+            bool IsFalse(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.False;
+            bool EmptyArray(string name) => root.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.Array && value.GetArrayLength() == 0;
+            if (!root.TryGetProperty("schema", out var schema) || schema.GetString() != "operator.existing_conditions_mep_draft_workflow.v1"
+                || !root.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.String
+                || !IsTrue("rollbackVerified") || !IsTrue("atomic")
+                || !EmptyArray("residualCreatedElementIds")) return false;
+            // The child may reject a missing explicit duct type before opening
+            // its own transaction. The outer stage still proves its rollback;
+            // require every root and child effect list empty before crediting
+            // this as no effect, never as a successful preview.
+            if (effect == "preview" && status.GetString() == "Blocked"
+                && IsTrue("dryRun") && IsTrue("transactionGroupRolledBack")
+                && EmptyArray("createdElementIds") && EmptyArray("transientCreatedElementIds")
+                && EmptyArray("operations") && EmptyArray("operationOutputs")
+                && root.TryGetProperty("operationCount", out var branchCount) && branchCount.TryGetInt32(out var zeroBranchCount) && zeroBranchCount == 0
+                && root.TryGetProperty("priorActionOutputCount", out var branchPrior) && branchPrior.TryGetInt32(out var zeroBranchPrior) && zeroBranchPrior == 0
+                && root.TryGetProperty("stageKey", out var branchStage) && branchStage.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("error", out var branchError) && branchError.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("failedOperation", out var branchFailed) && branchFailed.ValueKind == JsonValueKind.Object
+                && branchFailed.TryGetProperty("actionKey", out var branchAction) && branchAction.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(branchAction.GetString())
+                && branchStage.GetString() == "operation:" + branchAction.GetString()
+                && branchFailed.TryGetProperty("path", out var branchPath) && branchPath.GetString() == "/revit/connect-mep-branch"
+                && branchFailed.TryGetProperty("createdElementIds", out var branchCreated) && branchCreated.ValueKind == JsonValueKind.Array && branchCreated.GetArrayLength() == 0
+                && branchFailed.TryGetProperty("transientCreatedElementIds", out var branchTransient) && branchTransient.ValueKind == JsonValueKind.Array && branchTransient.GetArrayLength() == 0
+                && branchFailed.TryGetProperty("response", out var branchResponse) && branchResponse.ValueKind == JsonValueKind.Object
+                && branchResponse.TryGetProperty("status", out var branchStatus) && branchStatus.GetString() == "Blocked"
+                && branchResponse.TryGetProperty("dryRun", out var branchDryRun) && branchDryRun.ValueKind == JsonValueKind.False
+                && branchResponse.TryGetProperty("rolledBack", out var branchRolledBack) && branchRolledBack.ValueKind == JsonValueKind.True
+                && branchResponse.TryGetProperty("kind", out var branchKind) && branchKind.GetString() == "duct"
+                && branchResponse.TryGetProperty("error", out var branchChildError) && branchChildError.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(branchChildError.GetString())
+                && branchError.GetString() == "operation_failed:" + branchAction.GetString() + ":" + branchChildError.GetString()
+                && new[] { "splitMainSegmentIds", "createdBranchElementIds", "createdFittingIds" }
+                    .All(name => branchResponse.TryGetProperty(name, out var ids) && ids.ValueKind == JsonValueKind.Array && ids.GetArrayLength() == 0))
+            {
+                settlement = OperatorAttemptSettlement.None(effect, method, path, "verified_native_rollback", "native_rollback", requestDispatched: true);
+                return true;
+            }
+            if (effect == "preview" && status.GetString() == "Blocked"
+                && IsTrue("dryRun") && IsTrue("transactionGroupRolledBack")
+                && EmptyArray("createdElementIds") && EmptyArray("transientCreatedElementIds")
+                && EmptyArray("operations") && EmptyArray("operationOutputs")
+                && root.TryGetProperty("operationCount", out var preflightCount) && preflightCount.TryGetInt32(out var zeroPreflightCount) && zeroPreflightCount == 0
+                && root.TryGetProperty("priorActionOutputCount", out var preflightPrior) && preflightPrior.TryGetInt32(out var zeroPreflightPrior) && zeroPreflightPrior == 0
+                && root.TryGetProperty("stageKey", out var preflightStage) && preflightStage.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("error", out var preflightError) && preflightError.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("failedOperation", out var preflightFailed) && preflightFailed.ValueKind == JsonValueKind.Object
+                && preflightFailed.TryGetProperty("actionKey", out var preflightAction) && preflightAction.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(preflightAction.GetString())
+                && preflightStage.GetString() == "operation:" + preflightAction.GetString()
+                && preflightFailed.TryGetProperty("path", out var preflightPath) && preflightPath.GetString() == "/revit/create-mep-route"
+                && preflightFailed.TryGetProperty("createdElementIds", out var preflightCreated) && preflightCreated.ValueKind == JsonValueKind.Array && preflightCreated.GetArrayLength() == 0
+                && preflightFailed.TryGetProperty("transientCreatedElementIds", out var preflightTransient) && preflightTransient.ValueKind == JsonValueKind.Array && preflightTransient.GetArrayLength() == 0
+                && preflightFailed.TryGetProperty("response", out var preflightResponse) && preflightResponse.ValueKind == JsonValueKind.Object
+                && preflightResponse.TryGetProperty("status", out var preflightStatus) && preflightStatus.GetString() == "Blocked"
+                && preflightResponse.TryGetProperty("error", out var preflightChildError) && preflightChildError.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(preflightChildError.GetString())
+                && preflightError.GetString() == "operation_failed:" + preflightAction.GetString() + ":" + preflightChildError.GetString()
+                && preflightResponse.TryGetProperty("transaction", out var preflightTransaction) && preflightTransaction.ValueKind == JsonValueKind.Object
+                && preflightTransaction.TryGetProperty("status", out var preflightTxStatus) && preflightTxStatus.GetString() == "not_started"
+                && preflightTransaction.TryGetProperty("committed", out var preflightCommitted) && preflightCommitted.ValueKind == JsonValueKind.False
+                && new[] { "added_element_ids", "modified_element_ids", "deleted_element_ids", "affected_element_ids" }
+                    .All(name => preflightTransaction.TryGetProperty(name, out var ids) && ids.ValueKind == JsonValueKind.Array && ids.GetArrayLength() == 0))
+            {
+                settlement = OperatorAttemptSettlement.None(effect, method, path, "native_transaction_not_started", "native_transaction", requestDispatched: true);
+                return true;
+            }
+            // A rejected child route can have transient affected IDs even after
+            // Revit rolls its transaction back. The outer group and child receipt
+            // together must prove that none survived before retry is permitted.
+            if (effect == "preview" && status.GetString() == "Blocked"
+                && IsTrue("dryRun") && IsTrue("transactionGroupRolledBack")
+                && EmptyArray("createdElementIds") && EmptyArray("transientCreatedElementIds")
+                && EmptyArray("operations") && EmptyArray("operationOutputs")
+                && root.TryGetProperty("operationCount", out var blockedCount)
+                && blockedCount.ValueKind == JsonValueKind.Number && blockedCount.TryGetInt32(out var zeroCount) && zeroCount == 0
+                && root.TryGetProperty("priorActionOutputCount", out var priorCount)
+                && priorCount.ValueKind == JsonValueKind.Number && priorCount.TryGetInt32(out var zeroPrior) && zeroPrior == 0
+                && root.TryGetProperty("stageKey", out var stageKey) && stageKey.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("error", out var blockedError) && blockedError.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("failedOperation", out var failed) && failed.ValueKind == JsonValueKind.Object
+                && failed.TryGetProperty("actionKey", out var actionKey) && actionKey.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(actionKey.GetString())
+                && stageKey.GetString() == "operation:" + actionKey.GetString()
+                && (blockedError.GetString() ?? "").StartsWith("operation_failed:" + actionKey.GetString() + ":", StringComparison.Ordinal)
+                && failed.TryGetProperty("path", out var childPath) && childPath.ValueKind == JsonValueKind.String
+                && childPath.GetString() == "/revit/create-mep-route"
+                && failed.TryGetProperty("createdElementIds", out var childCreated)
+                && childCreated.ValueKind == JsonValueKind.Array && childCreated.GetArrayLength() == 0
+                && failed.TryGetProperty("transientCreatedElementIds", out var childTransient)
+                && childTransient.ValueKind == JsonValueKind.Array && childTransient.GetArrayLength() == 0
+                && failed.TryGetProperty("response", out var child) && child.ValueKind == JsonValueKind.Object
+                && child.TryGetProperty("status", out var childStatus) && childStatus.GetString() == "Blocked"
+                && child.TryGetProperty("error", out var childError) && childError.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(childError.GetString())
+                && blockedError.GetString() == "operation_failed:" + actionKey.GetString() + ":" + childError.GetString()
+                && child.TryGetProperty("dryRun", out var childDryRun) && childDryRun.ValueKind == JsonValueKind.False
+                && child.TryGetProperty("rolledBack", out var childRollback) && childRollback.ValueKind == JsonValueKind.True
+                && child.TryGetProperty("createdElementIds", out var responseCreated)
+                && responseCreated.ValueKind == JsonValueKind.Array && responseCreated.GetArrayLength() == 0
+                && child.TryGetProperty("transaction", out var transaction) && transaction.ValueKind == JsonValueKind.Object
+                && transaction.TryGetProperty("status", out var transactionStatus) && transactionStatus.GetString() == "rolled_back"
+                && transaction.TryGetProperty("committed", out var transactionCommitted) && transactionCommitted.ValueKind == JsonValueKind.False
+                && transaction.TryGetProperty("added_element_ids", out var added) && added.ValueKind == JsonValueKind.Array && added.GetArrayLength() == 0
+                && transaction.TryGetProperty("modified_element_ids", out var modified) && modified.ValueKind == JsonValueKind.Array && modified.GetArrayLength() == 0
+                && transaction.TryGetProperty("deleted_element_ids", out var deleted) && deleted.ValueKind == JsonValueKind.Array && deleted.GetArrayLength() == 0)
+            {
+                settlement = OperatorAttemptSettlement.None(effect, method, path, "verified_native_rollback", "native_rollback", requestDispatched: true);
+                return true;
+            }
+            if (!root.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Null
+                || !root.TryGetProperty("operationCount", out var count) || count.ValueKind != JsonValueKind.Number
+                || !count.TryGetInt32(out var operationCount) || operationCount < 1
+                || !root.TryGetProperty("createdElementIds", out var created) || created.ValueKind != JsonValueKind.Array
+                || !root.TryGetProperty("transientCreatedElementIds", out var transient) || transient.ValueKind != JsonValueKind.Array)
+                return false;
+            var preview = effect == "preview" && status.GetString() == "DryRunReady"
+                && IsTrue("dryRun") && IsTrue("transactionGroupRolledBack")
+                && created.GetArrayLength() == 0 && transient.GetArrayLength() > 0;
+            var apply = effect == "apply" && status.GetString() == "Applied"
+                && IsFalse("dryRun") && IsFalse("transactionGroupRolledBack")
+                && created.GetArrayLength() > 0 && transient.GetArrayLength() == 0;
+            if (!preview && !apply) return false;
+            var ids = (preview ? transient : created).EnumerateArray().ToArray();
+            if (ids.Any(id => id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var value) || value <= 0)
+                || ids.Select(id => id.GetInt64()).Distinct().Count() != ids.Length) return false;
+            settlement = preview
+                ? OperatorAttemptSettlement.None(effect, method, path, "verified_native_rollback", "native_rollback", requestDispatched: true)
+                : OperatorAttemptSettlement.Applied(method, path, "native_transaction_committed", "native_transaction",
+                    ids.Select(id => $"element_id:{id.GetInt64()}").ToArray());
+            return true;
         }
 
         private static bool TryCertifiedReceipt(JsonElement root, out string phase, out string receiptRef)

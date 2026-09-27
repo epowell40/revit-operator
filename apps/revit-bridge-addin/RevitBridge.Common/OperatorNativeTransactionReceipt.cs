@@ -73,6 +73,15 @@ namespace RevitBridge.Common
                 AffectedElementIds.Concat(modified), AddedElementIds, DeletedElementIds);
         }
 
+        public OperatorNativeTransactionReceipt WithNativeDeletedElements(IEnumerable<long> deletedElementIds)
+        {
+            if (Status != "committed" || CommittedValue != true)
+                throw new InvalidOperationException("Deleted identities require a confirmed native commit.");
+            var deleted = Normalize(deletedElementIds);
+            return new OperatorNativeTransactionReceipt(Status, true, ModifiedElementIds,
+                AffectedElementIds.Concat(deleted), AddedElementIds, DeletedElementIds.Concat(deleted));
+        }
+
         public static OperatorNativeTransactionReceipt RolledBack(IEnumerable<long> affectedElementIds)
             => new OperatorNativeTransactionReceipt("rolled_back", false, Array.Empty<long>(), affectedElementIds);
 

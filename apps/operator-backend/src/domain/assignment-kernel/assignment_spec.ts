@@ -56,11 +56,13 @@ export interface AssignmentSpecV2 {
   source_user_request: string;
   requested_effect: RequestedEffectV2;
   semantic_evidence_contract?: "revit-operator.semantic-evidence-contract/v2";
+  interpreted_scope?: import("./operation_scope.js").BoundInterpretedScopeV1;
   /** A generic read must deliver selected evidence values before it can finish. */
   result_delivery_required?: boolean;
   /** Requested analysis remains a separate obligation after artifact verification. */
   result_assessment_required?: boolean;
   work_plan_required?: boolean;
+  execution_policy?: import("./execution_policy.js").LocalAdvisoryExecutionPolicyV1;
   criteria: readonly AssignmentCriterionSpecV2[];
   input_variables: readonly AssignmentInputVariableV2[];
   work_units: readonly AssignmentWorkUnitSpecV2[];

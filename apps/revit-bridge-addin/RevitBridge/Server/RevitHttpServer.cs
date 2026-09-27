@@ -34,6 +34,8 @@ namespace RevitBridge.Server
         private readonly RevitEventService _eventService;
         private readonly IOperatorNativeHttpAuthorizer _nativeHttpAuthorizer;
         private readonly OperatorNativeTransportReplayCache _nativeTransportReplayCache = new OperatorNativeTransportReplayCache();
+        private readonly object _nativeCompletionGate = new object();
+        private OperatorNativeCompletionStore? _nativeCompletionStore;
         private bool _isRunning;
         private string _activeUrl = "";
         private string _nativeTransportEpoch = "";
@@ -89,6 +91,7 @@ namespace RevitBridge.Server
                 { "/revit/capture-screenshare", new RevitBridge.Logic.Handlers.CaptureScreenshareHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },
+                { "/revit/view-owned-detailing", new RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler() },
                 { "/revit/delete", new DeleteElementsHandler() },
                 { "/revit/set-parameter", new SetParameterHandler() },
                 { "/revit/create-sheet", new CreateSheetHandler() },
@@ -704,6 +707,20 @@ namespace RevitBridge.Server
                         req.Headers.AllKeys,
                         DateTimeOffset.UtcNow,
                         _nativeTransportReplayCache);
+                    if (protectedTransportRequest.Request.Path == OperatorNativeCompletionStore.LookupPath)
+                    {
+                        // Internal authenticated evidence read: no mutation authorization, grant,
+                        // tool registry dispatch or Revit queue admission is performed here.
+                        var nativeCompletionStore = CompletionStore(operatorToken);
+                        var completion = nativeCompletionStore.Lookup(protectedTransportRequest);
+                        var reply = OperatorNativeTransportHttpAdapter.CreateCertifiedResponse(operatorToken,
+                            protectedTransportRequest, completion.StatusCode, completion.BodyJson, DateTimeOffset.UtcNow);
+                        resp.StatusCode = reply.OuterStatusCode;
+                        resp.ContentType = reply.ContentType;
+                        await resp.OutputStream.WriteAsync(reply.BodyUtf8, 0, reply.BodyUtf8.Length);
+                        resp.Close();
+                        return;
+                    }
                     if (protectedLaboratoryEvidence)
                     {
                         if (protectedTransportRequest.LaboratoryEvidence == null)
@@ -913,6 +930,9 @@ namespace RevitBridge.Server
                 {
                     string body = requestBody;
 
+                    if (string.Equals(path, "/revit/replace-text-note", StringComparison.OrdinalIgnoreCase))
+                        TextNoteTextCanonicalizer.ValidateReplacementRequestTextLengths(body);
+
                     // This destination check is read-only and precedes the
                     // native queue. An invalid export path has no file effect.
                     if (path == "/revit/export-elements-xlsx")
@@ -962,13 +982,15 @@ namespace RevitBridge.Server
                                     OperatorCertifiedMoveExecutionStart? executionStart = null;
                                     OperatorCertifiedMoveExecutionStart? laboratoryMoveExecutionStart = null;
                                     OperatorCertifiedFamilyExecutionContext? executionContext = null;
+                                    OperatorNativeHttpAuthorizationReceipt? completionAuthorization = null;
                                     if (capturedEffectiveRequest != null && capturedRequiresCertifiedAuthorization)
                                     {
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,
                                             capturedBody,
                                             localDeadline.Token,
-                                            capturedDeploymentGeneralAgentFinalReceipt).GetAwaiter().GetResult();
+                                            capturedDeploymentGeneralAgentFinalReceipt,
+                                            receipt => completionAuthorization = receipt).GetAwaiter().GetResult();
                                         executionContext = capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission == null
                                             ? null
                                             : OperatorCertifiedFamilyExecutionContext.Direct(capturedEffectiveRequest);
@@ -986,6 +1008,8 @@ namespace RevitBridge.Server
                                             protectedTransportRequest.LaboratoryEvidence!,
                                             dispatchBody);
                                     }
+                                    object InvokeNative()
+                                    {
                                     object nativeResult;
                                     try
                                     {
@@ -1025,6 +1049,29 @@ namespace RevitBridge.Server
                                         }
                                     }
                                     return certifiedResult;
+                                    }
+                                    if (protectedTransportRequest != null && !protectedLaboratoryEvidence
+                                        && OperatorNativeCompletionStore.SupportsRequestedEffect(requestedEffect) && completionAuthorization?.IsDeploymentGeneralAgent == true
+                                        && capturedEffectiveRequest?.CertificationEnvelope == null
+                                        && OperatorNativeCompletionStore.SupportsActiveDocument(effectiveMethod, path, dispatchBody)
+                                        && app.ActiveUIDocument?.Document?.IsValidObject == true)
+                                    {
+                                        var document = app.ActiveUIDocument?.Document;
+                                        if (document == null || !document.IsValidObject)
+                                            throw new InvalidOperationException("Native completion requires the current document before dispatch.");
+                                        var nativeCompletionStore = CompletionStore(operatorToken);
+                                        var reservation = nativeCompletionStore.Reserve(protectedTransportRequest, completionAuthorization,
+                                            dispatchBody, CompletionDocument(document));
+                                        // This owner runs even after the caller TCS is canceled, before
+                                        // item.Action returns and RevitEventService releases its slot.
+                                        return OperatorNativeCompletionCapture.Execute(nativeCompletionStore, reservation,
+                                            () => new OperatorNativeCompletionReply(200, JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                                                InvokeNative(), requestedEffect, effectiveMethod, path, attemptId: correlationId))),
+                                            () => document.IsValidObject && document.Equals(app.ActiveUIDocument?.Document)
+                                                ? CompletionDocument(document) : null,
+                                            effectiveMethod, path, correlationId, requestedEffect);
+                                    }
+                                    return InvokeNative();
                                 },
                                 localDeadline.Token,
                                 correlationId,
@@ -1035,7 +1082,12 @@ namespace RevitBridge.Server
                             throw deadline.ClassifyCancellation(ex, correlationId);
                         }
                     }
-                    responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                    if (result is OperatorNativeCompletionReply nativeReply)
+                    {
+                        statusCode = nativeReply.StatusCode;
+                        responseText = nativeReply.BodyJson;
+                    }
+                    else responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
                         result, requestedEffect, effectiveMethod, path, attemptId: correlationId));
                 }
                 else
@@ -1224,7 +1276,8 @@ namespace RevitBridge.Server
             OperatorNativeHttpRequest effectiveRequest,
             string expectedCanonicalBody,
             CancellationToken cancellationToken,
-            OperatorNativeHttpAuthorizationReceipt? preauthorizedFinalReceipt = null)
+            OperatorNativeHttpAuthorizationReceipt? preauthorizedFinalReceipt = null,
+            Action<OperatorNativeHttpAuthorizationReceipt>? consumedReceipt = null)
         {
             var finalReceipt = preauthorizedFinalReceipt
                 ?? await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
@@ -1234,7 +1287,26 @@ namespace RevitBridge.Server
                 finalReceipt,
                 effectiveRequest,
                 expectedPolicyBody,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken, consumedReceipt: consumedReceipt).ConfigureAwait(false);
+        }
+
+        private OperatorNativeCompletionStore CompletionStore(string token)
+        {
+            lock (_nativeCompletionGate)
+            {
+                if (_nativeCompletionStore == null || _nativeCompletionStore.Epoch != _nativeTransportEpoch
+                    || _nativeCompletionStore.TokenHash != OperatorNativeCompletionStore.Hash(token))
+                    _nativeCompletionStore = new OperatorNativeCompletionStore(token, _nativeTransportEpoch);
+                return _nativeCompletionStore;
+            }
+        }
+
+        private static OperatorNativeCompletionDocument CompletionDocument(Autodesk.Revit.DB.Document document)
+        {
+            var uniqueId = document.ProjectInformation?.UniqueId;
+            return new OperatorNativeCompletionDocument(
+                OperatorRevitBatchBinding.ComputeProjectFingerprint(document.Title, document.PathName, uniqueId),
+                OperatorNativeDocumentSessionAuthority.GetSessionId(document));
         }
 
         private static async Task<byte[]> ReadRequestBodyBytesAsync(HttpListenerRequest request, int maximumBytes)
@@ -1272,8 +1344,7 @@ namespace RevitBridge.Server
         private static bool IsDirectDialogComputerUsePath(string path)
         {
             return string.Equals(path, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/revit/computer-use-guard", StringComparison.OrdinalIgnoreCase);
+                string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase);
         }
 
         private static OperatorActionRisk GetRequestRisk(string method, string path, string body)

@@ -1,0 +1,30 @@
+{
+  "status": "Rotated",
+  "rotatedIds": [
+    1542959
+  ],
+  "skipped": [],
+  "warnings": [],
+  "snapshots": [
+    {
+      "id": 1542959,
+      "before": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -32.25,
+          12.946,
+          40.1666666667
+        ]
+      },
+      "after": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -32.25,
+          12.946,
+          40.1666666667
+        ]
+      }
+    }
+  ],
+  "rolledBack": false
+}

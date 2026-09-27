@@ -37,7 +37,13 @@ export function assignmentUserPauseV2(value: unknown): AssignmentUserPauseV2 | n
     return pending.length === 0 && reviews.length > 0 ? "awaiting_user_review" : null;
   }
   if (snapshot.outcome !== "awaiting_user_input" || pending.length === 0) return null;
-  const variables = record(snapshot.spec).input_variables;
+  const declared = record(snapshot.spec).input_variables;
+  const discovered = Object.entries(record(snapshot.discovered_inputs)).map(([id, value]) => {
+    const variable = record(record(value).variable);
+    return variable.variable_id === id && variable.required === true && variable.sensitive === false
+      && variable.value_state === "needs_input" ? variable : null;
+  });
+  const variables = Array.isArray(declared) && !discovered.includes(null) ? [...declared, ...discovered] : null;
   const clarifications = Object.values(record(snapshot.clarifications)).map(record);
   if (!Array.isArray(variables) || pending.some(id =>
     !variables.some(value => record(value).variable_id === id)

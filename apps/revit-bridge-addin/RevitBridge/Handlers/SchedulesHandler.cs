@@ -140,6 +140,7 @@ namespace RevitBridge.Handlers
             var details = includeFields ? BuildFieldDetails(doc, schedule) : null;
             var table = includeData ? BuildTableData(schedule, p) : null;
             var filterDefinitions = BuildFilterDefinitions(doc, schedule, out var filterDefinitionsComplete);
+            var sortGroupDefinitions = BuildSortGroupDefinitions(doc, schedule, out var sortGroupDefinitionsComplete);
             var appearance = BuildAppearance(schedule);
             var settings = BuildSettings(schedule);
 
@@ -151,10 +152,59 @@ namespace RevitBridge.Handlers
                 fields = details,
                 filterDefinitions,
                 filterDefinitionsComplete,
+                sortGroupDefinitions,
+                sortGroupDefinitionsComplete,
                 appearance,
                 settings,
                 table
             };
+        }
+
+        private static List<object> BuildSortGroupDefinitions(Document doc, ViewSchedule schedule, out bool complete)
+        {
+            var definitions = new List<object>();
+            complete = true;
+            var definition = schedule.Definition;
+            int count;
+            try { count = definition.GetSortGroupFieldCount(); }
+            catch { complete = false; return definitions; }
+
+            for (var index = 0; index < count; index++)
+            {
+                try
+                {
+                    var sortGroup = definition.GetSortGroupField(index);
+                    ScheduleField? field = null;
+                    try { field = definition.GetField(sortGroup.FieldId); }
+                    catch { }
+                    var sortOrder = TryGetPropertyText(sortGroup, "SortOrder");
+                    var ascending = sortOrder == null ? (bool?)null :
+                        sortOrder.Equals("Ascending", StringComparison.OrdinalIgnoreCase) ? true :
+                        sortOrder.Equals("Descending", StringComparison.OrdinalIgnoreCase) ? false : (bool?)null;
+                    var fieldName = field == null ? null : ReadFieldName(field, doc);
+                    if (fieldName == null || ascending == null) complete = false;
+                    definitions.Add(new
+                    {
+                        index,
+                        fieldId = sortGroup.FieldId.IntegerValue,
+                        field = fieldName,
+                        ascending,
+                        showHeader = TryGetBoolProperty(sortGroup, "ShowHeader"),
+                        showFooter = TryGetBoolProperty(sortGroup, "ShowFooter"),
+                        showBlankLine = TryGetBoolProperty(sortGroup, "ShowBlankLine"),
+                        showFooterCount = TryGetBoolProperty(sortGroup, "ShowFooterCount"),
+                        showFooterTitle = TryGetBoolProperty(sortGroup, "ShowFooterTitle"),
+                        readable = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    complete = false;
+                    definitions.Add(new { index, readable = false, error = ex.Message });
+                }
+            }
+
+            return definitions;
         }
 
         private static List<object> BuildFilterDefinitions(

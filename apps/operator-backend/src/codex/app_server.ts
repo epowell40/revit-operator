@@ -3,20 +3,20 @@ import readline from "node:readline";
 import { CodexTurnCompletions } from "./turn_completions.js";
 import { CodexInstructionBindingError, assertConfiguredBenchmarkInstructions, assertHostInstructionBinding, hostInstructionBinding, type HostInstructionBinding, type SuppliedInstructions } from "./instruction_binding.js";
 import { evaluateCodexCliVersion, resolveCodexExecutable, type CodexVersionCompatibility } from "./app_server_compatibility.js";
-import type { InitializeParams } from "./generated/app_server_0_149_0/InitializeParams.js";
-import type { InitializeResponse } from "./generated/app_server_0_149_0/InitializeResponse.js";
-import type { ThreadResumeParams } from "./generated/app_server_0_149_0/v2/ThreadResumeParams.js";
-import type { ThreadResumeResponse } from "./generated/app_server_0_149_0/v2/ThreadResumeResponse.js";
-import type { ThreadStartParams } from "./generated/app_server_0_149_0/v2/ThreadStartParams.js";
-import type { ThreadStartResponse } from "./generated/app_server_0_149_0/v2/ThreadStartResponse.js";
-import type { TurnCompletedNotification } from "./generated/app_server_0_149_0/v2/TurnCompletedNotification.js";
-import type { TurnInterruptParams } from "./generated/app_server_0_149_0/v2/TurnInterruptParams.js";
-import type { TurnInterruptResponse } from "./generated/app_server_0_149_0/v2/TurnInterruptResponse.js";
-import type { TurnSteerParams } from "./generated/app_server_0_149_0/v2/TurnSteerParams.js";
-import type { TurnSteerResponse } from "./generated/app_server_0_149_0/v2/TurnSteerResponse.js";
-import type { TurnStartParams } from "./generated/app_server_0_149_0/v2/TurnStartParams.js";
-import type { TurnStartResponse } from "./generated/app_server_0_149_0/v2/TurnStartResponse.js";
-import type { TurnStatus } from "./generated/app_server_0_149_0/v2/TurnStatus.js";
+import type { InitializeParams } from "./generated/app_server_0_157_0/InitializeParams.js";
+import type { InitializeResponse } from "./generated/app_server_0_157_0/InitializeResponse.js";
+import type { ThreadResumeParams } from "./generated/app_server_0_157_0/v2/ThreadResumeParams.js";
+import type { ThreadResumeResponse } from "./generated/app_server_0_157_0/v2/ThreadResumeResponse.js";
+import type { ThreadStartParams } from "./generated/app_server_0_157_0/v2/ThreadStartParams.js";
+import type { ThreadStartResponse } from "./generated/app_server_0_157_0/v2/ThreadStartResponse.js";
+import type { TurnCompletedNotification } from "./generated/app_server_0_157_0/v2/TurnCompletedNotification.js";
+import type { TurnInterruptParams } from "./generated/app_server_0_157_0/v2/TurnInterruptParams.js";
+import type { TurnInterruptResponse } from "./generated/app_server_0_157_0/v2/TurnInterruptResponse.js";
+import type { TurnSteerParams } from "./generated/app_server_0_157_0/v2/TurnSteerParams.js";
+import type { TurnSteerResponse } from "./generated/app_server_0_157_0/v2/TurnSteerResponse.js";
+import type { TurnStartParams } from "./generated/app_server_0_157_0/v2/TurnStartParams.js";
+import type { TurnStartResponse } from "./generated/app_server_0_157_0/v2/TurnStartResponse.js";
+import type { TurnStatus } from "./generated/app_server_0_157_0/v2/TurnStatus.js";
 
 type JsonRpcId = number | string;
 type JsonRpcRequest = { id: number; method: string; params: unknown };
@@ -338,6 +338,8 @@ export class CodexAppServer {
         if (n.method === "turn/completed") {
           this.turnCompletions.observe(n.params?.threadId, n.params?.turn?.id,
             n.params?.turn?.status, n.params?.turn?.error?.message);
+        } else if (n.method === "turn/started" || n.method.startsWith("item/")) {
+          this.turnCompletions.observeProgress(n.params?.threadId, n.params?.turnId ?? n.params?.turn?.id);
         }
 
         // Convenience: hoist common fields used for routing.
@@ -513,7 +515,7 @@ export class CodexAppServer {
     return this.requestTyped<TurnSteerParams, TurnSteerResponse>("turn/steer", params);
   }
 
-  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
+  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     return this.turnCompletions.wait(opts);
   }
 }

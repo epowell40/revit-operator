@@ -23,7 +23,7 @@ test("Sidecar never drops a mixed instruction and preserves auth, timeout, expli
   let reads=0;const progress:string[]=[];
   const deps={onHandoff:(text:string)=>progress.push(text),authorize:async()=>{},readContext:async()=>{reads++;return {ok:false};},route:async(body:any)=>{assert.equal(body.user_text,prompt);return {route:"task",routing_status:"accepted",assistant_message:null};}};
   assert.equal(await tryConversationIntake(original,deps),null);assert.deepEqual(original,{user_text:prompt,session_id:"owned",message_id:"one"});
-  for(const extra of [{attachments:[{}]},{assignment_id:"task"},{assignment_generation:0},{tool_results:[{}]}])
+  for(const extra of [{assignment_id:"task"},{assignment_generation:0},{tool_results:[{}]}])
     assert.equal(await tryConversationIntake({...original,...extra},deps),null);
   assert.equal(reads,1);
   assert.deepEqual(progress,["I’ll work through that."],"Only a real handoff emits its progress message");
@@ -35,6 +35,18 @@ test("Sidecar never drops a mixed instruction and preserves auth, timeout, expli
   assert.equal(signal?.aborted,true);
   await assert.rejects(tryConversationIntake(original,{...deps,route:async()=>{throw Error("Router unavailable");}}),/no model work has started/);
   await assert.rejects(tryConversationIntake(original,{...deps,route:async()=>({route:"answer",routing_status:"accepted",assistant_message:"Unsaved",history_saved:false})}),/no model work has started/);
+});
+
+test("attachment intake sends text authority and a count, preserving the full worker payload",async()=>{
+  const original={session_id:"owned",message_id:"source",user_text:"Ask how to represent the device, then draw it.",pending_attachments:[{name:"plan.pdf",data:"x".repeat(100_000)}]};
+  let count=0;
+  const deps={authorize:async()=>{},readContext:async()=>({ok:false}),route:async(request:any)=>{
+    count++;assert.equal(request.user_text,original.user_text);assert.equal(request.intake_attachment_count,1);
+    assert.equal(request.pending_attachments,undefined);assert.ok(JSON.stringify(request).length<1000);
+    return {route:"task",routing_status:"accepted"};
+  }};
+  assert.equal(await tryConversationIntake(original,deps),null);assert.equal(count,1);assert.equal(original.pending_attachments[0].data.length,100_000);
+  await assert.rejects(tryConversationIntake(original,{...deps,route:async()=>({route:"answer",routing_status:"accepted",assistant_message:"Done",history_saved:true})}),/no model work has started/);
 });
 
 test("C56 unresolved classification never falls through to worker dispatch; slow accepted decisions remain usable and cancellable",async()=>{

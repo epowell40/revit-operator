@@ -1,6 +1,8 @@
+import { selectLocalAdvisoryPolicy, trustedLocalExperimentHost } from "./local_advisory_policy.js";
 import { createHash } from "node:crypto";
 import { requiresDurableWorkPlan } from "./work_plan_intent.js";
 import { retainedIntakeDecision } from "../conversation_intake.js";
+import { operationScopeRequestHash, type BoundInterpretedScopeV1 } from "../domain/assignment-kernel/operation_scope.js";
 import { requestedWorkbookAssessment } from "../artifact_export_intent.js";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -73,7 +75,7 @@ function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly str
 function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
   const intake = requestedEffect(goal) === "read" ? retainedIntakeDecision({
     session_id: goal.related_session_id ?? "", message_id: text(goal.work_budget?.conversation_message_id, 200),
-    user_text: goal.objective
+    user_text: typeof goal.work_budget?.source_user_request==="string"?goal.work_budget.source_user_request:goal.objective
   }) : null;
   const semanticRead = intake && intake.route !== "answer" && intake.requested_effect === "read" ? intake.read_evidence : null;
   // A trusted semantic handoff owns the type of read evidence. A word such as
@@ -108,9 +110,9 @@ function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
   };
 }
 
-function inputs(goal: GoalRecord): AssignmentInputVariableV2[] {
+function inputs(goal: GoalRecord, scope?: BoundInterpretedScopeV1): AssignmentInputVariableV2[] {
   const sourceRequest = text(goal.work_budget?.source_user_request, 20_000) || goal.objective;
-  const declared = strings(goal.work_budget?.required_user_inputs);
+  const declared = [...strings(goal.work_budget?.required_user_inputs),...(scope?.scope.prerequisites.map(p=>p.variable_id)??[])];
   // An executable preview needs the same authenticated desired state as the
   // later apply. Read-only explanation and inspection requests remain exempt.
   const detected = requestedEffect(goal) !== "read" ? missingOpaqueMutationInputs(sourceRequest) : [];
@@ -186,14 +188,26 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     principal_id: principalId,
     ...(documentFingerprint ? { document_fingerprint: documentFingerprint } : {})
   };
+  const executionPolicy = selectLocalAdvisoryPolicy(binding);
   const effect = requestedEffect(input.goal);
-  const inputVariables = inputs(input.goal);
+  // Re-fetch the exact authenticated intake receipt. Work-budget/client hints
+  // cannot smuggle interpreted authority into a newly created Assignment.
+  const messageId=text(input.goal.work_budget?.conversation_message_id,200);
+  const exactSource=typeof input.goal.work_budget?.source_user_request==="string"?input.goal.work_budget.source_user_request:input.goal.objective;
+  const intake=exactSource.trim()===input.goal.objective?retainedIntakeDecision({session_id:sessionId,message_id:messageId,user_text:exactSource}):null;
+  const interpretedScope:BoundInterpretedScopeV1|undefined=intake?.operation_scope?{
+    source_message_id:messageId,source_request_sha256:operationScopeRequestHash(exactSource),scope:structuredClone(intake.operation_scope)
+  }:undefined;
+  if(interpretedScope&&interpretedScope.scope.requested_effect!==effect)throw Error("assignment_kernel_v2_interpreted_effect_mismatch");
+  const inputVariables = inputs(input.goal,interpretedScope);
   const criterionSpecs = criteria(input.goal);
   return {
     schema: ASSIGNMENT_SPEC_V2_SCHEMA,
     binding,
-    source_user_request: input.goal.objective,
+    source_user_request: interpretedScope?exactSource:input.goal.objective,
     requested_effect: effect,
+    ...(interpretedScope?{interpreted_scope:interpretedScope}:{}),
+    ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
     ...(effect === "apply" && requiresDurableWorkPlan(input.goal.objective) ? { work_plan_required: true } : {}),
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
     ...(effect === "read"
@@ -272,6 +286,7 @@ export function assignmentKernelV2ForBinding(input: Readonly<{
   const goal = getGoal(input.assignment_id);
   const snapshot = goal ? getAssignmentKernelSnapshotV2(goal.id) : null;
   if (!goal || !snapshot) return null;
+  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) return null;
   const requestPrincipalId = getRequestAssignmentPrincipalId();
   if (requestPrincipalId && !requestMatchesAssignmentPrincipalId(
     snapshot.current_binding.principal_id,

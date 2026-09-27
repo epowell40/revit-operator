@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
 import { combinedDuctVerificationParametersV2, pendingDuctVerificationRequestV2, DUCT_VERIFICATION_PARAMETERS_SCHEMA } from "../src/verification/combined_duct_verification_v2.js";
 
 const scenario = () => {
@@ -45,4 +46,35 @@ test("next inspection never invents targets, authorizes writes or uses unknown/u
     (s:any)=>s.result.affected_target_identities=Array.from({length:501},(_,i)=>"element_id:"+(i+1)),
     (s:any)=>s.request_identity.path="/revit/create-family-instance"
   ]){const next=structuredClone(f.subject);change(next);assert.equal(pendingDuctVerificationRequestV2(next),null);}
+});
+
+test("C107 committed registered single-route stage offers exact combined connector inspection",()=>{
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c107-registered-stage-route-verification.json","utf8"));
+  const base=scenario(),subject:any={...base.subject,
+    input:f.input,request_identity:{path:"/revit/existing-conditions-mep-draft-workflow"},
+    result:{...base.subject.result,affected_target_identities:f.apply.createdElementIds.map((id:number)=>`element_id:${id}`)}};
+  const request=pendingDuctVerificationRequestV2(subject)!;
+  assert.deepEqual(request.body.elementIds,f.apply.createdElementIds);
+  const preview=structuredClone(subject);preview.persistent_effect="none";
+  assert.equal(pendingDuctVerificationRequestV2(preview),null);
+  const multi=structuredClone(subject);multi.input.body.operations.push(structuredClone(multi.input.body.operations[0]));
+  assert.equal(pendingDuctVerificationRequestV2(multi),null);
+  const read={...base.read,input:request},snapshot:any={current_binding:base.snapshot.current_binding,operations:{applied:subject,inspection:read}};
+  const result:any={operation_id:"inspection"};
+  assert.deepEqual(combinedDuctVerificationParametersV2(snapshot,subject,result,f.connectors),f.connectors.verificationParameters);
+  read.input.body.elementIds=[...request.body.elementIds].reverse().slice(1);
+  assert.equal(combinedDuctVerificationParametersV2(snapshot,subject,result,f.connectors),null);
+});
+
+test("C128 committed registered tee requests a complete native read of every created duct and fitting", () => {
+  const f=JSON.parse(fs.readFileSync("test/fixtures/c128-registered-tee-verification.json","utf8"));
+  const base=scenario(), subject:any={...base.subject,input:f.input,
+    request_identity:{path:"/revit/existing-conditions-mep-draft-workflow"},
+    result:{...base.subject.result,affected_target_identities:f.affected_target_identities}};
+  const request=pendingDuctVerificationRequestV2(subject)!;
+  assert.deepEqual(request.body.elementIds,f.apply.createdElementIds);
+  const read={...base.read,input:request}, snapshot:any={current_binding:base.snapshot.current_binding,operations:{applied:subject,inspection:read}};
+  assert.deepEqual(combinedDuctVerificationParametersV2(snapshot,subject,{operation_id:"inspection"} as any,f.connectors),f.connectors.verificationParameters);
+  const wrong=structuredClone(subject);wrong.input.body.operations[0].path="/revit/create-family-instance";
+  assert.equal(pendingDuctVerificationRequestV2(wrong),null);
 });

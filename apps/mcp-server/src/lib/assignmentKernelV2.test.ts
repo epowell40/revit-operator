@@ -4,6 +4,53 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+test("requested family parameters are verified inside native placement instead of silently skipped", () => {
+  const source = readFileSync(process.env.OPERATOR_PLACEMENT_HANDLER_SOURCE_FOR_TEST
+    ?? new URL("../../../revit-bridge-addin/RevitBridge.Logic/Handlers/PlaceFamiliesHandler.cs", import.meta.url), "utf8");
+  assert.ok(source.includes("ApplyRequestedParameters(doc, fi, instData.parameters, instResult, apply: true)"));
+  assert.ok(source.includes("VerifyRequestedParameters(fi, parameterExpectations, instResult, afterCommit: false)"));
+  assert.ok(source.includes("public bool success => PlacementParameterValues.ResultSucceeded(status, failedCount, parameterVerificationFailedCount)"));
+});
+
+test("Save As transport preserves exact nontransactional file proof and document transitions without rebinding", async () => {
+  const route = "/revit/save-as", filePath = "C:/fixture/Unit-HVAC-Draft.rvt";
+  const body = { filePath, overwrite: false, dryRun: false };
+  const before = { session_id: "native-before-save", project_fingerprint: "a".repeat(64), path: "C:/fixture/source.rvt" };
+  const after = { ...before, session_id: "native-after-save", path: filePath };
+  const complete = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: route, phase: "apply", status: "complete",
+    expected_output_paths: [filePath], expected_export_calls: 1, export_calls: [true],
+    outputs: [{ path: filePath, size_bytes: 18739200, sha256: "b".repeat(64), fresh_output: true, stable_read: true }],
+    save_document: { native_save_returned: true, same_document: true, before, after,
+      document_session_changed: true, document_path_changed: true, project_binding_changed: false } };
+  for (const variant of ["complete", "blocked", "uncertain", "legacy"] as const) {
+    const applied = variant === "complete", blocked = variant === "blocked";
+    const receipt = blocked ? { ...complete, status: "not_started", expected_output_paths: [], expected_export_calls: 0,
+      export_calls: [], outputs: [], save_document: undefined, save_io_not_started: true, not_started_reason: "save_preflight_failed" }
+      : variant === "uncertain" ? { ...complete, status: "unverified", outputs: [{ ...complete.outputs[0], stable_read: false }] } : complete;
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        status: applied || variant === "legacy" ? "Success" : "Blocked", path: filePath, overwrite: false, compact: false, maximumBackups: 3, saveAsCentral: false,
+        ...(variant === "legacy" ? {} : { ok: applied, artifact_receipt: receipt }),
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+          effect_state: applied ? "applied" : blocked ? "none" : "unknown", effect_authority: applied || blocked ? "native_receipt" : "native_host",
+          effect_reason: applied ? "native_artifact_export_completed" : blocked ? "native_artifact_export_not_started" : "native_artifact_export_unverified",
+          request_dispatched: true, affected_target_identities: applied ? ["artifact_path:" + filePath] : [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, applied ? "applied" : blocked ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, applied || blocked ? "not_applicable" : "unknown");
+    assert.equal(nativeArtifactResultEffectV2(result), applied ? "applied" : blocked ? "none" : null);
+    if (applied) {
+      assert.deepEqual(result.native_artifact_receipt.save_document, complete.save_document);
+      assert.deepEqual(result.binding, binding);
+      assert.notEqual(result.binding.session_id, after.session_id);
+    }
+  }
+});
 test("missing create-similar host is correctable only with authoritative not-started receipt", async () => {
   const route="/revit/create-similar-from-instance",body={exemplarElementId:1464223,placements:[{pointXyz:[-37.2,-2.7,42.32152230971508],label:"HRU403"}],levelName:"L4",dryRun:false};
   for(const confirmed of [true,false]) {
@@ -79,6 +126,85 @@ test("single-duct and route previews preserve rollback authority and typed proof
   }
 });
 
+test("C81 family placement preview settles with typed proof; mismatched placement stays blocked without replay", async () => {
+  const route = "/revit/create-family-instance";
+  const body = { familyName: "HeatRecoveryUnit", typeName: "Heat Recovery Unit (HRU)", levelName: "L4",
+    x: -34.4, y: -7.5, z: 41.1666666667, rotationDegrees: 0, dryRun: true };
+  const native = { status: "Dry Run", dryRun: true, requestedCount: 1, familyName: "HeatRecoveryUnit",
+    symbolName: "Heat Recovery Unit (HRU)", levelName: "L4", targetView: null,
+    planned: [{ index: 0, x: -34.4, y: -7.5, z: 41.1666666667, rotationDegrees: 0 }],
+    transaction: { status: "rolled_back", committed: false, modified_element_ids: [], affected_element_ids: [],
+      added_element_ids: [], deleted_element_ids: [] } };
+  for (const altered of [false, true]) {
+    const payload = structuredClone(native);
+    if (altered) payload.planned[0]!.x = -31.4;
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        ...payload, canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+          effect_state: "none", effect_authority: "native_rollback",
+          effect_reason: "verified_native_rollback", request_dispatched: true,
+          affected_target_identities: []
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, altered ? "failed_after_dispatch" : "succeeded");
+    assert.equal(result.persistent_effect, "none");
+    assert.equal(result.native_transaction_state, "rolled_back");
+    assert.equal(result.result_semantic_gap?.reason_code, altered ? "preview_result_contract_invalid" : undefined);
+    assert.equal(result.result_semantic_gap?.native_replay_allowed, altered ? false : undefined);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+      fact.fact_id === "task.preview_valid" && fact.value === true), !altered);
+  }
+});
+
+test("C81 bulk family preview retains native rollback authority and rejects mismatched spatial readback", async () => {
+  const route = "/revit/place-families";
+  const body = { levelName: "L4", viewId: 1363433, familySymbolId: 1365172,
+    instances: [{ x: -37.4, y: -5.6, z: 44.1666667, coordinateMode: "absolute_model", rotationDegrees: 0 }], dryRun: true };
+  const row = { index: 0, status: "planned", elementId: null, reason: "dryRun: rolled back",
+    coordinateMode: "absolute_model", requestedLocationX: -37.4, requestedLocationY: -5.6,
+    requestedLocationZ: 44.1666667, absoluteModelCorrectionDistanceFt: 0,
+    absoluteModelLocationVerified: true, familySymbolId: 1365172, hostElementId: null,
+    linkedHostElementId: null, locationX: -37.4, locationY: -5.6, locationZ: 44.1666667,
+    inTargetViewCollector: true, viewSpecificBoundingBoxAvailable: true,
+    bboxMinX: -39.1, bboxMinY: -7.9, bboxMinZ: 44.1666667,
+    bboxMaxX: -35.6, bboxMaxY: -3.2, bboxMaxZ: 45.2, warnings: [] };
+  const native = { status: "Planned", familyPlacementType: "OneLevelBased", requiresExplicitHost: false,
+    unhostedWorkPlanePlacementAllowed: false, placedCount: 0, skippedCount: 0, failedCount: 0,
+    selectedWorksetId: null, selectedWorksetName: null, elementIds: [], results: [row], warnings: [], error: null,
+    transaction: { status: "rolled_back", committed: false, modified_element_ids: [], affected_element_ids: [],
+      added_element_ids: [], deleted_element_ids: [] } };
+  for (const altered of [false, true]) {
+    const payload = structuredClone(native);
+    if (altered) payload.results[0]!.locationY = -3.6;
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        ...payload, canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+          effect_state: "none", effect_authority: "native_rollback",
+          effect_reason: "verified_native_rollback", request_dispatched: true,
+          affected_target_identities: []
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, altered ? "failed_after_dispatch" : "succeeded");
+    assert.equal(result.persistent_effect, "none");
+    assert.equal(result.native_transaction_state, "rolled_back");
+    assert.equal(result.result_semantic_gap?.reason_code, altered ? "preview_result_contract_invalid" : undefined);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+      fact.fact_id === "task.preview_valid" && fact.value === true), !altered);
+  }
+});
+
 test("blocked MEP trial is a failed operation with its authoritative rollback, while missing transaction truth stays unknown", async () => {
   for (const confirmed of [false, true]) {
     const body = { kind: "duct", points: [{ xyz: [-26.62, -12.05, 42.125] }, { xyz: [13.79, -12.05, 42.125] }],
@@ -111,7 +237,7 @@ test("blocked MEP trial is a failed operation with its authoritative rollback, w
 import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
-import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2, operationInputSchemaGapErrorV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 test("queued native cancellation and started timeout retain distinct mutation authority", async () => {
   for (const started of [false, true]) {
@@ -400,6 +526,35 @@ import {
   recordAssignmentKernelNativeFailureV2,
   runWithAssignmentKernelV2
 } from "./assignmentKernelV2.js";
+
+for (const effect of ["preview", "apply", "read"] as const) {
+  for (const shape of ["direct", "bridgeDetails", "before_dispatch"] as const) {
+    test(`native ${effect} timeout ${shape} preserves uncertain transaction outcome`, async () => {
+      const route = effect === "read" ? "/revit/context" : "/revit/connect-existing-mep-branch";
+      const method = effect === "read" ? "GET" : "POST";
+      const body = effect === "read" ? undefined : { connectionMode: "air_terminal_on_duct", kind: "duct",
+        mainElementId: 1542960, branchElementId: 1543055, branchConnectorId: 1,
+        expectedBranchOriginXyz: [-33.01663333329998, 30.49999999999997, 41.18892769033334], dryRun: effect === "preview" };
+      const details = { request_dispatched: shape !== "before_dispatch", outcome_unknown: shape !== "before_dispatch",
+        phase: shape === "before_dispatch" ? "pre_dispatch" : "revit_external_event" };
+      const error = { status: 408, code: "revit_action_deadline_elapsed_outcome_unknown",
+        ...(shape === "bridgeDetails" ? { bridgeDetails: details } : details) };
+      const decorated = await runWithAssignmentKernelV2(meta(effect, "work", { method, path: route, body }), async () => {
+        const request = await beginAssignmentKernelNativeRequestV2(method, route, body, { classified_effect: effect });
+        await markAssignmentKernelNativeRequestDispatchingV2(request);
+        await recordAssignmentKernelNativeFailureV2(request, error);
+        return decorateAssignmentKernelMcpResultV2({ isError: true, content: [] }, "revit_call_tool") as any;
+      });
+      const result = decorated.structuredContent.operation_result_v2;
+      const unknown = effect !== "read" && shape !== "before_dispatch";
+      assert.equal(result.status, shape === "before_dispatch" ? "failed_before_dispatch" : "failed_after_dispatch");
+      assert.equal(result.persistent_effect, unknown ? "unknown" : "none");
+      assert.equal(result.native_transaction_state, unknown ? "unknown" : "not_applicable");
+      assert.equal(result.observation_required, false);
+      assert.equal(decorated.structuredContent.observation, undefined);
+    });
+  }
+}
 
 for (const collation of [undefined, true, false]) test(`driver print conditional Collate ${collation} getter HTTP failure remains unknown without synthetic completion`, async () => {
   const body = { viewIds: [1420963], printToFile: true, dryRun: false,
@@ -707,6 +862,166 @@ test("plan-only view response cannot manufacture native rollback or preview comp
     assert.equal(result.persistent_effect, effect);
     assert.equal(result.error_code, "native_preview_execution_unproven");
     assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid" && f.value === true), false);
+  }
+});
+
+test("retained C105 native stage receipt settles a real rollback preview in Assignment V2", async () => {
+  const fixture = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c105-registered-stage-preview.json", import.meta.url), "utf8"));
+  const route = "/revit/existing-conditions-mep-draft-workflow", body = fixture.request;
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      ...fixture.payload, canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+        effect_state: "none", effect_authority: "native_rollback",
+        effect_reason: "verified_native_rollback", request_dispatched: true,
+        affected_target_identities: []
+      }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "task.preview_valid" && fact.value === true), true);
+});
+
+test("C109 blocked registered route remains a failed no-effect attempt without preview credit", async () => {
+  const payload = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c109-registered-stage-blocked-rollback.json", import.meta.url), "utf8"));
+  const route = "/revit/existing-conditions-mep-draft-workflow";
+  const body = { stageKey: payload.stageKey, inputFingerprintSha256: payload.inputFingerprintSha256,
+    dryRun: true, operations: [{ action_key: payload.failedOperation.actionKey, path: "/revit/create-mep-route" }] };
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      ...payload, canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+        effect_state: "none", effect_authority: "native_rollback",
+        effect_reason: "verified_native_rollback", request_dispatched: true,
+        affected_target_identities: []
+      }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(result.error_code, "native_domain_operation_failed");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "task.preview_valid" && fact.value === true), false);
+});
+
+test("C138 blocked interior tee is a failed no-effect preview and can be replanned", async () => {
+  const payload = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c138-registered-branch-blocked-rollback.json", import.meta.url), "utf8"));
+  const route = "/revit/existing-conditions-mep-draft-workflow";
+  const body = { stageKey: payload.stageKey, inputFingerprintSha256: payload.inputFingerprintSha256,
+    dryRun: true, operations: [{ action_key: payload.failedOperation.actionKey, path: "/revit/connect-mep-branch" }] };
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      ...payload, canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+        effect_state: "none", effect_authority: "native_rollback",
+        effect_reason: "verified_native_rollback", request_dispatched: true,
+        affected_target_identities: []
+      }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(result.error_code, "native_domain_operation_failed");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "task.preview_valid" && fact.value === true), false);
+});
+
+test("C115 registered route type preflight is no-effect and permits correction without preview credit", async () => {
+  const payload = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c114-registered-stage-preflight-not-started.json", import.meta.url), "utf8"));
+  const route = "/revit/existing-conditions-mep-draft-workflow";
+  const body = { stageKey: payload.stageKey, inputFingerprintSha256: payload.inputFingerprintSha256,
+    dryRun: true, operations: [{ action_key: payload.failedOperation.actionKey, path: "/revit/create-mep-route" }] };
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      ...payload, canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+        effect_state: "none", effect_authority: "native_transaction",
+        effect_reason: "native_transaction_not_started", request_dispatched: true,
+        affected_target_identities: []
+      }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "not_started");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "task.preview_valid" && fact.value === true), false);
+});
+
+test("schedule-cell no-match preflight retains no effect without claiming an executed preview", async () => {
+  const body = { scheduleId: 1488968, rowKey: "HRU202", rowField: "Mark",
+    targetField: "Supply Air Pressure Drop", value: "0.10 in. w.g.", apply: false, dryRun: true };
+  const decorated = await runWithAssignmentKernelV2(meta("preview", "work", {
+    method: "POST", path: "/revit/update-schedule-cell", body
+  }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/update-schedule-cell", body, { classified_effect: "preview" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/update-schedule-cell", {
+      status: "Not Found", applied: false, candidateCount: 0,
+      blockedReason: "No unique editable schedule-backed cell matched the requested row and field.",
+      transaction: { status: "not_started", affectedElementIds: [] },
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1",
+        attempt_id: "schedule-no-match", requested_effect: "preview", effect_state: "none",
+        effect_authority: "native_transaction", effect_reason: "native_transaction_not_started",
+        request_dispatched: true }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "not_started");
+  assert.equal(result.error_code, "native_domain_operation_failed");
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) =>
+    f.fact_id === "task.preview_valid" && f.value === true), false);
+});
+
+test("configure-schedule apply needs confirmed native commit to settle persistence", async () => {
+  const body = { scheduleId: 1488968, addFields: ["Supply Air Pressure Drop"], dryRun: false };
+  for (const confirmed of [false, true]) {
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", {
+      method: "POST", path: "/revit/configure-schedule", body
+    }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/configure-schedule", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/configure-schedule", {
+        status: "Success", dryRun: false, schedule: { id: 1488968, name: "Equipment Schedule" },
+        ...(confirmed ? { transaction: { status: "committed", committed: true, modified_element_ids: [1488968], affected_element_ids: [1488968] } } : {}),
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1", attempt_id: `configure-${confirmed}`,
+          requested_effect: "apply", effect_state: confirmed ? "applied" : "unknown",
+          effect_authority: confirmed ? "native_transaction" : "native_host",
+          effect_reason: confirmed ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+          request_dispatched: true, affected_target_identities: confirmed ? ["element_id:1488968"] : []
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, confirmed ? "applied" : "unknown");
+    assert.equal(result.native_transaction_state, confirmed ? "committed" : "unknown");
+    assert.deepEqual(result.affected_target_identities ?? [], confirmed ? ["element_id:1488968"] : []);
   }
 });
 
@@ -1219,6 +1534,52 @@ test("pre-dispatch schema rejection becomes a structured no-effect correction ga
   assert.equal((decorated as any).structuredContent.observation, undefined);
 });
 
+test("retained placement schema alternative crosses the real MCP boundary without claiming native dispatch", async () => {
+  const fixture = JSON.parse(readFileSync(path.resolve(process.cwd(), "../operator-backend/test/fixtures/unit403-predispatch-schema-gap.json"), "utf8"));
+  const request = fixture.request;
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", request), async () =>
+    decorateAssignmentKernelMcpResultV2({ isError: true, content: [], structuredContent: {
+      schema: "revit-operator.mcp-pre-dispatch-failure.v1", code: "mcp_request_validation_failed",
+      phase: "request_validation", request_dispatched: false, outcome_unknown: false,
+      method: request.method, path: request.path,
+      input_schema_id: fixture.input_schema_gap.input_schema_id,
+      input_schema_digest: fixture.input_schema_gap.input_schema_digest,
+      validation_issues: fixture.input_schema_gap.issues
+    } }, "revit_call_tool") as any);
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.authority, "operator-mcp-transport");
+  assert.equal(result.status, "failed_before_dispatch");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.dispatch_state, "not_dispatched");
+  assert.equal(result.observation_required, false);
+  assert.equal(operationInputSchemaGapErrorV2(result.input_schema_gap, result), null);
+  assert.deepEqual(result.input_schema_gap.issues, fixture.input_schema_gap.issues);
+  assert.equal(decorated.structuredContent.observation, undefined);
+});
+
+test("a predispatch-looking diagnostic cannot erase an actual dispatched native attempt without settlement", async () => {
+  const request = { method: "POST" as const, path: "/revit/place-families", body: { dryRun: false, instances: [] } };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", request), async () => {
+    const native = await beginAssignmentKernelNativeRequestV2(request.method, request.path, request.body, { classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(native);
+    await recordAssignmentKernelNativeResultV2(request.method, request.path, {
+      status: "Success", code: "mcp_request_validation_failed",
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        request_dispatched: true, effect_state: "unknown", effect_authority: "native_host",
+        effect_reason: "native_handler_returned_without_authoritative_settlement" }
+    }, native);
+    return decorateAssignmentKernelMcpResultV2({ content: [], structuredContent: {
+      schema: "revit-operator.mcp-pre-dispatch-failure.v1", code: "mcp_request_validation_failed",
+      request_dispatched: false, validation_issues: [{ field_path: "body", expected_type: "object", actual_type: "null" }]
+    } }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.authority, "native-host");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.persistent_effect, "unknown");
+  assert.equal(result.input_schema_gap, undefined);
+});
+
 test("native request correlation is derived from the canonical Operation and survives result settlement", async () => {
   const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/schedules" }), async () => {
     const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/schedules");
@@ -1359,7 +1720,12 @@ test("typed MCP parent retains controller identity while its exact native action
     async markDispatch() {},
     async settle(lease: any, result: any) {
       settled.push({ lease, result });
-      return { operation_id: lease.operation_id, settled: true };
+      return { operation_id: lease.operation_id, settled: true,
+        evidence_projections: [{ schema: "revit-operator.evidence-projection.v1",
+          source: `assignment_kernel_v2:${lease.capability_id}`,
+          assignment_id: lease.binding.assignment_id, run_id: lease.binding.run_id,
+          generation: lease.binding.generation, attempt_id: lease.operation_id,
+          evidence_id: "ev1_native_child" }] };
     }
   };
   const decorated = await runWithAssignmentKernelV2(meta(), async () => {
@@ -1389,6 +1755,7 @@ test("typed MCP parent retains controller identity while its exact native action
   assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
   assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "native-child-1");
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].evidence_projections[0].attempt_id, "native-child-1");
   assert.equal(decorated.structuredContent.observation, undefined);
 });
 
@@ -1905,4 +2272,248 @@ test('C47 Failed family placement remains a failed operation and preserves indep
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,confirmed?'none':'unknown');
   assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state,confirmed?'rolled_back':'unknown');
  }
+});
+
+test("tag-elements retained plain Dry Run and transaction-status neighbors preserve native effect truth", async () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/tag-elements-dry-run-plain.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.payload.status, "Dry Run");
+  assert.equal(fixture.payload.transaction, undefined);
+  assert.equal(fixture.payload.plannedToTag, 10);
+  for (const variant of ["retained_plain", "not_started", "repair_rolled_back", "committed", "pending", "malformed_effect", "preview_commit"] as const) {
+    const apply = variant === "committed";
+    const requested = apply ? "apply" : "preview";
+    const body = { ...fixture.input.body, dryRun: !apply };
+    const notStarted = variant === "not_started", rolledBack = variant === "repair_rolled_back";
+    const effect = apply || variant === "preview_commit" ? "applied" : notStarted || rolledBack ? "none" : variant === "malformed_effect" ? "unrecognized" : "unknown";
+    const payload = {
+      ...structuredClone(fixture.payload),
+      ...(notStarted ? { previewExecuted: false, applied: false, transaction: { status: "not_started", committed: false, affected_element_ids: [] } } : {}),
+      ...(rolledBack ? { previewExecuted: true, applied: false, transaction: { status: "rolled_back", committed: false, affected_element_ids: [] } } : {}),
+      ...(apply ? { status: "Success", dryRun: false, applied: true, tagIds: [10101], transaction: { status: "committed", committed: true, affected_element_ids: [10101] } } : {}),
+      ...(variant === "pending" ? { transaction: { status: "pending", committed: null, affected_element_ids: [] } } : {}),
+      canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: requested,
+        effect_state: effect, effect_authority: rolledBack ? "native_rollback" : apply || notStarted || variant === "preview_commit" ? "native_transaction" : "native_host",
+        effect_reason: rolledBack ? "verified_native_rollback" : notStarted ? "native_transaction_not_started" : apply || variant === "preview_commit" ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+        request_dispatched: true, affected_target_identities: apply ? ["element_id:10101"] : []
+      }
+    };
+    const invoke = () => runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: fixture.input.path, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", fixture.input.path, body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", fixture.input.path, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    if (variant === "malformed_effect" || variant === "preview_commit") {
+      await assert.rejects(invoke, variant === "malformed_effect" ? /native_effect_invalid/ : /effect_exceeds_operation/);
+      continue;
+    }
+    const decorated = await invoke();
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, effect, variant);
+    assert.equal(result.native_transaction_state, apply ? "committed" : notStarted ? "not_started" : rolledBack ? "rolled_back" : "unknown", variant);
+    assert.deepEqual(result.affected_target_identities, apply ? ["element_id:10101"] : [], variant);
+    // Planning without a transaction is known no-effect, but cannot claim a successfully exercised preview.
+    if (notStarted || variant === "retained_plain" || variant === "pending") {
+      assert.equal(result.status, "failed_after_dispatch", variant);
+      assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true), false, variant);
+    }
+    if (apply) assert.equal(result.status, "succeeded");
+  }
+});
+
+test("family requested-parameter failure preserves partial, rolled-back and unknown effects", async () => {
+  const route = "/revit/place-families";
+  const body = { familySymbolId: 101, levelName: "L4", behavior: "bestEffort", dryRun: false,
+    instances: [{ x: 0, y: 0, z: 0, parameters: { "Duct Radius": '4"' } },
+      { x: 1, y: 0, z: 0, parameters: { "Duct Radius": "unparseable" } }] };
+  for (const variant of ["partial", "readback_failed", "rolled_back", "unknown"] as const) {
+    const applied = variant === "partial" || variant === "readback_failed";
+    const rollback = variant === "rolled_back";
+    const affected = applied ? ["element_id:201", "element_id:202"] : [];
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        status: applied ? "PlacedWithErrors" : "Failed", success: false,
+        placedCount: applied ? 1 : 0, failedCount: variant === "partial" ? 1 : 0,
+        parameterVerificationFailedCount: variant === "readback_failed" ? 1 : 0,
+        elementIds: applied ? [201] : [],
+        transaction: { status: applied ? "committed" : rollback ? "rolled_back" : "Pending",
+          committed: applied ? true : rollback ? false : null,
+          affected_element_ids: applied ? [201, 202] : [], added_element_ids: applied ? [201, 202] : [],
+          modified_element_ids: [], deleted_element_ids: [] },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+          effect_state: applied ? "applied" : rollback ? "none" : "unknown",
+          effect_authority: applied ? "native_transaction" : rollback ? "native_rollback" : "native_host",
+          effect_reason: applied ? "native_transaction_committed" : rollback ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement",
+          request_dispatched: true, affected_target_identities: affected }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, applied ? "applied" : rollback ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, applied ? "committed" : rollback ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities, affected);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some(
+      (fact: any) => fact.fact_id === "task.result_available" && fact.value === true), false);
+  }
+});
+
+import { retainAssignmentKernelNativeDispatchV1 } from "./assignmentKernelV2.js";
+import { readNativeCompletionDispatchV1 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+
+for (const requestedEffect of ["apply", "preview"] as const)
+test(`native dispatch mapping ${requestedEffect} survives timeout and stays bound to the exact lease`, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-native-dispatch-"));
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT, previousKey = process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const key = completionOutboxKeyV2(root); process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = key;
+  const body = { ids: [42], mode: "vector", vectorX: 0, vectorY: 0, vectorZ: 1, dryRun: requestedEffect === "preview" }, route = "/revit/move-elements";
+  const metadata = structuredClone(meta(requestedEffect, "work", { method: "POST", path: route, body }));
+  metadata[ASSIGNMENT_KERNEL_V2_META_KEY].binding.document_fingerprint = "a".repeat(64);
+  const lease = metadata[ASSIGNMENT_KERNEL_V2_META_KEY];
+  try {
+    const result = await runWithAssignmentKernelV2(metadata, async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requestedEffect });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      const native = { request_id: request!.request_id, request_nonce_sha256: `sha256:${"b".repeat(64)}`, server_epoch: Buffer.alloc(32, 2).toString("base64url"),
+        method: "POST", path: route, body_present: true, source_body_sha256: `sha256:${"c".repeat(64)}`,
+        channel: "generic_call" as const, alias: "revit_call_tool", transport_receipt_sha256: `sha256:${"d".repeat(64)}` };
+      retainAssignmentKernelNativeDispatchV1(request, native);
+      retainAssignmentKernelNativeDispatchV1(request, native);
+      assert.equal(readNativeCompletionDispatchV1(root, key, lease)!.native.request_id, request!.request_id);
+      assert.throws(() => retainAssignmentKernelNativeDispatchV1(request, { ...native, request_nonce_sha256: `sha256:${"e".repeat(64)}` }), /result_conflict/);
+      assert.throws(() => retainAssignmentKernelNativeDispatchV1(request, { ...native, request_id: "f".repeat(64) }), /identity_mismatch/);
+      await recordAssignmentKernelNativeFailureV2(request, { phase: "response", request_dispatched: true, outcome_unknown: true });
+      return decorateAssignmentKernelMcpResultV2({ isError: true, content: [] }, "revit_call_tool") as any;
+    });
+    const retained = readNativeCompletionDispatchV1(root, key, lease)!;
+    assert.equal(result.structuredContent.operation_result_v2.native_correlation_id, retained.native.request_id);
+    assert.equal(result.structuredContent.operation_result_v2.persistent_effect, "unknown");
+    assert.ok(readCompletionOutboxV2(root, key, lease));
+    assert.throws(() => readNativeCompletionDispatchV1(root, "0".repeat(64), lease), /signature_invalid/);
+    assert.equal(readNativeCompletionDispatchV1(root, key, { ...lease, binding: { ...lease.binding, generation: 2 } }), null);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousKey === undefined) delete process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY; else process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = previousKey;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+for (const compact of [false, true])
+test(`compact child handoff digest declares its scope without changing evidence or native uncertainty (${compact})`, async () => {
+  let settlement: any;
+  const edge = {
+    async openChild(input: any) { return { ...meta("apply")[ASSIGNMENT_KERNEL_V2_META_KEY], operation_id: "handoff-child",
+      capability_id: input.capability_id, operation_role: "child", parent_operation_id: "operation-1", root_operation_id: "operation-1",
+      fulfillment_role: "supporting_control", eligible_criterion_ids: [], blocks_parent_settlement: true,
+      request_identity: { capability_id: input.capability_id, method: input.method, path: input.path, request_signature: "handoff-request" } } as any; },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      assert.equal(result.structuredContent.operation_result_v2.persistent_effect, "unknown");
+      settlement = { ok: true, operation_id: lease.operation_id, evidence_refs: [], evidence_projections: [
+        { evidence_id: "ev1_handoff", attempt_id: lease.operation_id, result: { uncertainty: "native result unavailable" } }],
+        ...(compact ? { schema: "revit-operator.operation-handoff/v1", result_id: result.structuredContent.operation_result_v2.result_id }
+          : { assignment_snapshot_v2: { full_history: ["retained legacy snapshot"] } }) };
+      return settlement;
+    }
+  };
+  const decorated: any = await runWithAssignmentKernelV2(meta("apply"), async () => {
+    const child = await beginAssignmentKernelNativeRequestV2("POST", "/revit/rotate-elements", { elementIds: [41], angleDegrees: 90 },
+      { operation_role: "child", classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(child);
+    await recordAssignmentKernelNativeFailureV2(child, { message: "Native connection lost", request_dispatched: true, outcome_unknown: true });
+    return decorateAssignmentKernelMcpResultV2({ isError: true, content: [] }, "inventory.read");
+  }, edge);
+  const child = decorated.structuredContent.child_operation_results_v2[0];
+  assert.equal(child.operation_id, "handoff-child");
+  assert.equal(child.parent_operation_id, "operation-1");
+  assert.equal(child.settlement_digest, payloadDigestV2(settlement).digest);
+  assert.deepEqual(child.evidence_projections, settlement.evidence_projections);
+  assert.equal(child.settlement_digest_scope, compact ? "operation_handoff_v1" : undefined);
+  assert.equal(Object.hasOwn(child, "settlement_digest_scope"), compact);
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none", "child effects do not fabricate parent native dispatch");
+  assert.equal(decorated.structuredContent.observation, undefined);
+});
+
+
+test("move short-line failure preserves observed rollback and never infers no effect from preview or diagnostics", async () => {
+  const route = "/revit/move-elements";
+  for (const requested of ["preview", "apply"] as const)
+  for (const state of ["rolled_back", "pending", "missing"] as const) {
+    const rolledBack = state === "rolled_back", effect = rolledBack ? "none" : "unknown";
+    const body = { ids: [41, 42], mode: "vector", vectorX: 0, vectorY: 0, vectorZ: 1,
+      moveTogether: true, behavior: "allOrNothing", dryRun: requested === "preview" };
+    const payload = { status: "Failed", success: false, error: "Line is too short.",
+      movedIds: [], snapshots: [], skipped: [], warnings: [], movedTogether: true,
+      failureRollbackRequested: true, rolledBack: rolledBack ? true : null,
+      capturedFailures: [{ severity: "Error", message: "Line is too short.", elementIds: [41, 42],
+        failureDefinitionId: "native-short-line", captureErrors: [] }],
+      ...(state === "missing" ? {} : { transaction: { status: state, committed: rolledBack ? false : null,
+        affected_element_ids: [], added_element_ids: [], modified_element_ids: [], deleted_element_ids: [] } }),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: requested,
+        method: "POST", path: route, effect_state: effect,
+        effect_authority: rolledBack ? "native_rollback" : "native_host",
+        effect_reason: rolledBack ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement",
+        request_dispatched: true, affected_target_identities: [] } };
+    const decorated: any = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool");
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, effect, `${requested}/${state}`);
+    assert.equal(result.native_transaction_state, rolledBack ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities, []);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+      ["task.result_available", "task.preview_valid"].includes(fact.fact_id) && fact.value === true), false);
+  }
+});
+
+test("reroute planning and observed apply receipts preserve effect separately from preview authority", async () => {
+  const route = "/revit/reroute-mep-route-segment";
+  for (const operation of ["offset", "size_transition"] as const)
+  for (const variant of ["plain_plan", "not_started", "blocked", "committed", "readback_failed", "rolled_back", "pending", "visual_unsettled", "preview_commit"] as const) {
+    const preview = ["plain_plan", "not_started", "preview_commit"].includes(variant);
+    const requested = preview ? "preview" : "apply";
+    const applied = ["committed", "readback_failed", "preview_commit"].includes(variant);
+    const notStarted = ["not_started", "blocked"].includes(variant), rolledBack = variant === "rolled_back";
+    const effect = applied ? "applied" : notStarted || rolledBack ? "none" : "unknown";
+    const body = { hostElementId: 42, operation, apply: !preview, dryRun: preview,
+      ...(operation === "offset" ? { split1ChainageFt: 2, split2ChainageFt: 8, offsetVector: { x: 0, y: 0, z: 1 } }
+        : { transitionChainageFt: 5, upstreamDiameter: '6"', downstreamDiameter: '8"' }) };
+    const affected = applied ? ["element_id:42", "element_id:52"] : [];
+    const nativeState = applied ? "committed" : notStarted ? "not_started" : rolledBack ? "rolled_back" : "unknown";
+    const payload = { status: preview ? "Dry Run" : applied ? "Rerouted" : "Blocked", dryRun: preview,
+      ...(variant === "readback_failed" || variant === "blocked" || rolledBack || variant === "visual_unsettled"
+        ? { success: false, error: "native verification or mutation did not complete" } : {}),
+      ...(notStarted ? { previewExecuted: false } : {}),
+      ...(variant === "plain_plan" ? {} : { transaction: { status: nativeState, committed: applied ? true : notStarted || rolledBack ? false : null } }),
+      ...(variant === "visual_unsettled" ? { nativeStages: { route: { status: "committed", committed: true }, visual: { transaction: { status: "pending", committed: null } } } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: requested,
+        effect_state: effect, effect_authority: rolledBack ? "native_rollback" : applied || notStarted ? "native_transaction" : "native_host",
+        effect_reason: rolledBack ? "verified_native_rollback" : notStarted ? "native_transaction_not_started"
+          : applied ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+        request_dispatched: true, affected_target_identities: affected } };
+    const invoke = () => runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    if (variant === "preview_commit") { await assert.rejects(invoke, /effect_exceeds_operation/); continue; }
+    const decorated = await invoke(), result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, effect, `${operation}/${variant}`);
+    assert.equal(result.native_transaction_state, nativeState, variant);
+    assert.equal(result.status, variant === "committed" ? "succeeded" : "failed_after_dispatch", variant);
+    assert.deepEqual(result.affected_target_identities, affected, variant);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some(
+      (fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true), false);
+    if (notStarted && preview) assert.equal(result.error_code, "native_preview_execution_unproven");
+  }
 });

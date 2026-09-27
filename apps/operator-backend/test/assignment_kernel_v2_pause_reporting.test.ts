@@ -13,6 +13,7 @@ import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js
 import { sha256Value } from "../src/benchmark/protocol_v2_hash.js";
 import type { GeneralRevitCapabilityCase } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { assignmentUserPauseV2 } from "../src/work_packets/assignment_kernel_v2_pause.js";
+import { assertGeneralRevitCaseSettled } from "../src/benchmark/general_revit_export_isolation.js";
 import { markdownReport } from "../src/benchmark/general_revit_capability_report.js";
 
 // Retained actual UI pause: no replacement wording, no provider invocation and
@@ -115,6 +116,32 @@ test("a renewed input request reports the current unresolved question", () => {
   assert.equal(assignmentUserPauseV2(snapshot), "awaiting_user_input");
   assert(packet(snapshot).issues.some(issue => issue.user_action_required === "Which approved wording replaces the earlier text?"));
   assert(!packet(snapshot).issues.some(issue => issue.user_action_required === "Earlier question"));
+});
+
+test("a discovered input creates a safe recorded pause that can advance an isolated benchmark case", () => {
+  const snapshot = pausedSnapshot();
+  const variable = snapshot.spec.input_variables[0]!;
+  snapshot.spec = { ...snapshot.spec, input_variables: [] };
+  snapshot.discovered_inputs = { [variable.variable_id]: {
+    variable, dependent_work_unit_ids: ["work-primary"]
+  } };
+  assert.equal(assignmentUserPauseV2(snapshot), "awaiting_user_input");
+  assert.equal(packet(snapshot).status, "awaiting_clarification");
+  assert.doesNotThrow(() => assertGeneralRevitCaseSettled({ ...trace(snapshot),
+    context_supplied: { session_id: snapshot.current_binding.session_id } }));
+  const missing = structuredClone(snapshot);
+  missing.discovered_inputs = {};
+  assert.equal(assignmentUserPauseV2(missing), null);
+  const missingTrace = trace(snapshot);
+  missingTrace.tool_results.durable_assignment_kernel_v2.assignments[0]!.snapshot = missing;
+  assert.throws(() => assertGeneralRevitCaseSettled({ ...missingTrace,
+    context_supplied: { session_id: missing.current_binding.session_id } }), /requires_exact_settled/);
+  const mismatched = structuredClone(snapshot);
+  mismatched.discovered_inputs = { wrong_id: snapshot.discovered_inputs![variable.variable_id]! };
+  assert.equal(assignmentUserPauseV2(mismatched), null);
+  const sensitive = structuredClone(snapshot);
+  sensitive.discovered_inputs![variable.variable_id]!.variable.sensitive = true;
+  assert.equal(assignmentUserPauseV2(sensitive), null);
 });
 
 test("a pause after a completed provider call retains the real usage and is not a no-invocation case", () => {

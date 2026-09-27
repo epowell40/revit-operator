@@ -1,8 +1,36 @@
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+
 type Fact = { fact_id: string; fact_class: "domain"; value: string | number | boolean; dimensions?: Record<string,string> };
 const object = (value:unknown):Record<string,any> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string,any> : {};
 const text = (value:unknown) => typeof value === "string" ? value.trim() : "";
 const count = (value:unknown):value is number => Number.isSafeInteger(value) && Number(value)>=0;
 const fact = (id:string,value:Fact["value"],route:string):Fact => ({fact_id:id,fact_class:"domain",value,dimensions:{route}});
+
+/** Counts compare only within an effective query. Never use result values or
+ * operation IDs: either would hide genuinely conflicting repeated reads.
+ * Project FindElementsHandler.Params filters, excluding ignored JSON fields
+ * and presentation limits. Update this projection with new native filters. */
+function elementQueryScope(body:Record<string,any>):string {
+  const scope:Record<string,unknown>={};
+  const terms=(values:unknown[],max=Infinity)=>[...new Set(values.map(value=>text(value).toLowerCase()).filter(Boolean))].slice(0,max).sort();
+  scope.categories=terms([body.category,...(Array.isArray(body.categories)?body.categories:[])]);
+  scope.identityTerms=terms(Array.isArray(body.identityTerms)?body.identityTerms:[],8);
+  for(const key of ['nameContains','typeNameContains','familyNameContains','markContains','textContains'])scope[key]=text(body[key]).toLowerCase();
+  for(const key of ['physicalElementsOnly','topLevelInstancesOnly','expandIdentityAcronymsInParameters'])scope[key]=body[key]===true;
+  scope.viewId=Number.isSafeInteger(body.viewId)&&body.viewId>0?body.viewId:null;
+  scope.sheetNumber=scope.viewId===null?text(body.sheetNumber).toLowerCase():'';
+  if(scope.sheetNumber){
+    scope.includeSheetElements=body.includeSheetElements===true;
+    scope.includeViewportElements=body.includeViewportElements!==false;
+    scope.sheetRegions=Array.isArray(body.sheetRegions)?body.sheetRegions.map(value=>{
+      const region=object(value);
+      return {minU:Math.min(region.minU,region.maxU),minV:Math.min(region.minV,region.maxV),
+        maxU:Math.max(region.minU,region.maxU),maxV:Math.max(region.minV,region.maxV)};
+    }).sort((a,b)=>a.minU-b.minU||a.minV-b.minV||a.maxU-b.maxU||a.maxV-b.maxV):[];
+    scope.regionPaddingFt=typeof body.regionPaddingFt==='number'?Math.max(0,Math.min(2,body.regionPaddingFt)):0;
+  }
+  return payloadDigestV2({schema:'revit-operator.find-elements-query-scope/v1',query:scope}).digest;
+}
 
 function consistentCount(root:Record<string,any>,names:string[]):number|null {
   const values=names.filter(name=>Object.hasOwn(root,name)).map(name=>root[name]);
@@ -17,7 +45,8 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
   const content=()=>[fact("model.content_observed",true,path)];
   const complete=(total:number,mode:"count"|"list"):Fact[]=>[
     fact("collection.complete",true,path),fact("collection.total",total,path),fact("collection.mode",mode,path)
-  ];
+  ].map(value=>path==='/revit/find-elements'
+    ? {...value,dimensions:{...value.dimensions,query_scope:elementQueryScope(body)}} : value);
   if(path==="/revit/sheets") {
     const requestedAction=text(body.action).toLowerCase() || "list";
     const action=requestedAction==="detail"?"detail":body.countOnly===true?"count":requestedAction;
@@ -58,6 +87,47 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
     if(root.itemsComplete===true && root.truncated===false && root.scanCapReached===false && root.identityExpansionScanCapReached===false)
       return [...content(),...complete(root.count,"list")];
     return root.count>0 ? content() : [];
+  }
+  if(path==="/revit/view-owned-detailing") {
+    const requested=Array.isArray(body.viewIds)?body.viewIds:(body.viewId===undefined?[]:[body.viewId]);
+    if(root.schema!=="revit-operator.view-owned-detailing/v1" || root.scope!=="exact_owner_view"
+      || body.viewId!==undefined && body.viewIds!==undefined
+      || requested.length<1 || requested.length>2 || requested.some((id:unknown)=>!Number.isSafeInteger(id)||Number(id)<=0)
+      || new Set(requested).size!==requested.length || !Array.isArray(root.requestedViewIds)
+      || JSON.stringify(root.requestedViewIds)!==JSON.stringify(requested)
+      || !Array.isArray(root.views) || root.views.length!==requested.length
+      || typeof root.viewsComplete!=="boolean")return [];
+    let total=0,hasContent=false,allComplete=true;
+    for(let index=0;index<requested.length;index++){
+      const inventory=object(root.views[index]),view=object(inventory.view),items=inventory.items;
+      if(view.id!==requested[index] || !text(view.uniqueId) || !text(view.name) || !text(view.viewType)
+        || !Array.isArray(items) || !Number.isSafeInteger(inventory.limit) || inventory.limit<1
+        || inventory.limit>5000 || !count(inventory.totalOwnedCount) || !count(inventory.annotationCount)
+        || !count(inventory.returnedCount) || inventory.returnedCount!==items.length
+        || inventory.returnedCount>inventory.limit
+        || inventory.annotationCount>inventory.totalOwnedCount || inventory.returnedCount>inventory.totalOwnedCount
+        || !count(inventory.unreadableCount) || !count(inventory.unclassifiedCount)
+        || !count(inventory.incompleteTextCount) || !count(inventory.incompleteSignatureCount)
+        || typeof inventory.truncated!=="boolean"
+        || typeof inventory.itemsComplete!=="boolean"
+        || inventory.unreadableCount+inventory.returnedCount>inventory.totalOwnedCount
+        || items.some((item:unknown)=>{const row=object(item);return !Number.isSafeInteger(row.elementId)
+          || row.elementId<=0 || row.ownerViewId!==view.id || !text(row.uniqueId)
+          || !text(row.className) || typeof row.isAnnotation!=="boolean"
+          || typeof row.semanticSignatureComplete!=="boolean"
+          || row.semanticSignatureComplete && !/^sha256:[a-f0-9]{64}$/.test(text(row.semanticSignature));})
+        || new Set(items.map((item:unknown)=>object(item).elementId)).size!==items.length)return [];
+      total+=inventory.totalOwnedCount;
+      hasContent ||=inventory.returnedCount>0;
+      allComplete &&=inventory.itemsComplete===true && inventory.truncated===false
+        && inventory.unreadableCount===0 && inventory.unclassifiedCount===0
+        && inventory.incompleteTextCount===0 && inventory.incompleteSignatureCount===0
+        && inventory.returnedCount===inventory.totalOwnedCount
+        && items.every((item:unknown)=>object(item).semanticSignatureComplete===true)
+        && inventory.annotationCount===items.filter((item:unknown)=>object(item).isAnnotation===true).length;
+    }
+    if(root.viewsComplete!==allComplete)return [];
+    return allComplete?[...content(),...complete(total,"list")]:hasContent?content():[];
   }
   // A targeted native object read can answer its attributes without a second
   // inventory request. These receipts establish observation, never enumeration

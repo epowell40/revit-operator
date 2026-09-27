@@ -410,13 +410,15 @@ namespace RevitBridge.Common
             OperatorNativeHttpRequest request,
             string expectedCanonicalBodyJson,
             CancellationToken cancellationToken,
-            Func<DateTimeOffset>? utcNow = null)
+            Func<DateTimeOffset>? utcNow = null,
+            Action<OperatorNativeHttpAuthorizationReceipt>? consumedReceipt = null)
         {
             if (authorizer == null) throw new ArgumentNullException(nameof(authorizer));
             var clock = utcNow ?? (() => DateTimeOffset.UtcNow);
             try
             {
                 RequireFreshOneUse(receipt, request, clock(), expectedCanonicalBodyJson);
+                consumedReceipt?.Invoke(receipt!);
                 return request.BodyJson;
             }
             catch (OperatorNativeHttpAdmissionException error) when (
@@ -431,6 +433,7 @@ namespace RevitBridge.Common
                 // fail-closed.
                 var refreshed = await authorizer.AuthorizeAsync(request, cancellationToken, "final").ConfigureAwait(false);
                 RequireFreshOneUse(refreshed, request, clock(), expectedCanonicalBodyJson);
+                consumedReceipt?.Invoke(refreshed);
                 return request.BodyJson;
             }
         }

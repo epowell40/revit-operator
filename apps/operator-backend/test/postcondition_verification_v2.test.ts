@@ -95,6 +95,54 @@ test("view creation verifies requested name and scale without sheet uppercasing"
   }
 });
 
+test("duplicate-view requires the requested new name from a native view observation", () => {
+  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: false } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "M-COORDINATION COPY" }] }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1363433, name: "Source" }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "Wrong name" }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { request: { viewId: 1542917, newName: "M-COORDINATION COPY" } }), false);
+});
+
+test("duplicate-view with detailing requires exact independent source and copy inventory", () => {
+  const input = { path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { views: [{ id: 1542917, name: "M-COORDINATION COPY" }] }), false);
+  const owned = (id: number, elementId: number) => ({ view: { id, name: id === 1363433 ? "L4" : "M-COORDINATION COPY", viewType: "FloorPlan" },
+    totalOwnedCount: 1, returnedCount: 1, annotationCount: 1, truncated: false,
+    unreadableCount: 0, unclassifiedCount: 0, incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+    items: [{ elementId, ownerViewId: id, isAnnotation: true, semanticSignature: `sha256:${"a".repeat(64)}`, semanticSignatureComplete: true }] });
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view",
+    requestedViewIds: [1363433, 1542917], viewsComplete: true, views: [owned(1363433, 11), owned(1542917, 22)] },
+    { affected_target_identities: ["view_id:1542917"] }), true);
+});
+
+test("complete large copied-view inventories verify without the generic field traversal budget", () => {
+  const sourceId = 1363433;
+  const targetId = 1542984;
+  const inventory = (id: number, name: string) => ({
+    view: { id, name, viewType: "FloorPlan" }, limit: 1000,
+    totalOwnedCount: 96, returnedCount: 96, annotationCount: 96,
+    truncated: false, unreadableCount: 0, unclassifiedCount: 0,
+    incompleteTextCount: 0, incompleteSignatureCount: 0, itemsComplete: true,
+    items: Array.from({ length: 96 }, (_, index) => ({
+      elementId: id + index + 1, ownerViewId: id, isAnnotation: true,
+      semanticSignature: `sha256:${index.toString(16).padStart(64, "0")}`,
+      semanticSignatureComplete: true,
+      uniqueId: `sample-${id}-${index}`, className: "TextNote", category: "Text Notes",
+      builtInCategory: "OST_TextNotes", categoryType: "Annotation", comparisonExcluded: false,
+      name: `Sample note ${index}`, typeId: 100 + index, typeUniqueId: `sample-type-${index}`, visibleText: `Sample note ${index}`,
+      textComplete: true, semanticGeometryKey: `sample-geometry-${index}`, boundingBox: null, curve: null
+    }))
+  });
+  const input = { path: "/revit/duplicate-view", body: { viewId: sourceId, newName: "M-COORDINATION COPY", withDetailing: true } };
+  const read = { schema: "revit-operator.view-owned-detailing/v1", scope: "exact_owner_view",
+    requestedViewIds: [sourceId, targetId], viewsComplete: true,
+    views: [inventory(sourceId, "L4"), inventory(targetId, "M-COORDINATION COPY")] };
+  const contract = { path: "/revit/duplicate-view", affected_target_identities: [`element_id:${targetId}`] };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read, contract), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, views: [read.views[0], { ...read.views[1], view: { ...read.views[1].view, name: "WRONG" } }] }, contract), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read, { ...contract, affected_target_identities: [] }), false);
+});
+
 test("posting project close after browser focus restoration is not proof that the document closed", () => {
   const input = { method: "POST", path: "/revit/close-active-model", body: { discardUnsavedChanges: true } };
   for (const restoredGraphicalFocus of [false, true]) {
@@ -240,6 +288,21 @@ test("change-list verification binds each parameter value to its requested eleme
   }), false);
 });
 
+test("unit-formatted native parameter details verify the requested target and field", () => {
+  const apply = { path: "/revit/set-parameter", body: { changes: [
+    { elementId: 1365188, parameterName: "Supply Air Pressure Drop", value: "0.10 in-wg" }
+  ], apply: true } };
+  const item = (id: number, name = "Supply Air Pressure Drop", valueString = "0.10 in-wg") => ({
+    id,
+    parameters: { [name]: "7.5846432" },
+    parameterDetails: [{ name, value: "7.5846432", valueString, storageType: "Double" }]
+  });
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188)] }, { path: "/revit/set-parameter" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365189)] }, { path: "/revit/set-parameter" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188, "Return Air Pressure Drop")] }, { path: "/revit/set-parameter" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, { items: [item(1365188, "Supply Air Pressure Drop", "0.08 in-wg")] }, { path: "/revit/set-parameter" }), false);
+});
+
 test("TextNote newline semantics require an explicit admitted TextNote operation contract", () => {
   const expected = "ISSUE\nVERIFY";
   const observed = { items: [{ elementId: 1478627, text: "ISSUE\rVERIFY\r" }] };
@@ -364,6 +427,27 @@ test("schedule field and settings verification consume only the typed detail con
     schedule: { id: 1543072 },
     table: { body: { rows: [{ name: "Count", showGrandTotals: true, filterBySheet: false }] } }
   }, { path: "/revit/configure-schedule" }), false);
+});
+test("schedule sort and group verification requires the complete ordered native definition", () => {
+  const input = {
+    scheduleId: 1488968,
+    replaceSortGroup: true,
+    sortGroup: [
+      { field: "Level", ascending: true, showHeader: true, showBlankLine: false },
+      { field: "Family", ascending: true, showHeader: false, showBlankLine: false },
+      { field: "Type", ascending: true, showHeader: false, showBlankLine: false }
+    ]
+  };
+  const read = {
+    status: "Ok", action: "detail", schedule: { id: 1488968 },
+    sortGroupDefinitionsComplete: true,
+    sortGroupDefinitions: input.sortGroup.map((item, index) => ({ index, ...item, readable: true }))
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read, { path: "/revit/configure-schedule" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitions: [...read.sortGroupDefinitions].reverse() }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitions: read.sortGroupDefinitions.map((item, index) => index === 0 ? { ...item, showBlankLine: true } : item) }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, sortGroupDefinitionsComplete: false }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { schedule: { id: 1488968 }, metadata: { request: read } }, { path: "/revit/configure-schedule" }), false);
 });
 test("visibility properties require successful native get on the exact returned view", () => {
   const input = { path: "/revit/visibility", body: JSON.stringify({ action: "set_scale", viewId: 1363433, scale: 96 }) };

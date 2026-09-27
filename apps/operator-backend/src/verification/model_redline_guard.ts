@@ -6,6 +6,8 @@ import {
   type ToolResult
 } from "../contracts.js";
 import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v2_factory.js";
+import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 
 const REDLINE_CONTEXT_RE = /\b(redline|mark[\s-]*up|marked|pick\s*up|pickup|attachment|attached|pdf)\b/i;
 const MODEL_OBJECT_RE =
@@ -222,7 +224,27 @@ function toolResultIsSuccessfulModelWrite(result: ToolResult): boolean {
 
 function hasModelWriteEvidence(req: ChatRequest): boolean {
   const results = Array.isArray(req.tool_results) ? req.tool_results : [];
-  return results.some(toolResultIsSuccessfulModelWrite);
+  return results.some(toolResultIsSuccessfulModelWrite) || persistedModelWriteIds(req).length > 0;
+}
+
+function persistedModelWriteIds(req: ChatRequest): string[] {
+  if (!req.assignment_id || !req.assignment_run_id || !Number.isSafeInteger(req.assignment_generation)
+      || Number(req.assignment_generation) < 1) return [];
+  const snapshot = assignmentKernelV2ForBinding({ session_id: req.session_id,
+    assignment_id: req.assignment_id, run_id: req.assignment_run_id,
+    generation: Number(req.assignment_generation) })?.snapshot;
+  if (!snapshot) return [];
+  return appliedModelWriteIdsFromOperations(snapshot.operations);
+}
+
+export function appliedModelWriteIdsFromOperations(operations: AssignmentSnapshotV2["operations"]): string[] {
+  const identities = Object.values(operations).flatMap(operation => {
+    if (operation.requested_effect !== "apply" || operation.persistent_effect !== "applied"
+        || operation.result?.status !== "succeeded" || operation.result.native_transaction_state !== "committed"
+        || !MODEL_WRITE_PATHS.has(normalizePath(operation.request_identity?.path))) return [];
+    return (operation.result.affected_target_identities ?? []).filter(identity => /^element_id:\d+$/.test(identity));
+  });
+  return [...new Set(identities)];
 }
 
 function hasPassingVisualGateEvidence(req: ChatRequest): boolean {
@@ -242,11 +264,14 @@ function buildBlockedModeledRedlineResponse(): ChatResponse {
   };
 }
 
-function buildBlockedUnverifiedRedlineResponse(): ChatResponse {
+function buildBlockedUnverifiedRedlineResponse(appliedIds: string[] = []): ChatResponse {
+  const applied = appliedIds.length > 0
+    ? `The model write committed for ${appliedIds.map(identity => identity.replace("element_id:", "element ")).join(", ")}. `
+    : "The model write returned element IDs. ";
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message:
-      "I stopped this redline pickup before completion because the model write evidence does not include a passing visual verification gate. " +
+      applied + "I cannot claim the redline pickup complete because the evidence does not include a passing visual verification gate. " +
       "For redline pickup, created or modified element IDs are necessary but not sufficient: the workflow must also compare the redline, before/after view evidence, intended action, and observed element location, then return a `pass` gate. " +
       "If the gate is `fail`, `uncertain`, or missing, the correct result is to continue verification or report the blocker rather than claim completion.",
     actions: []
@@ -282,7 +307,7 @@ export function enforceModeledRedlineGuard(req: ChatRequest, decision: ChatRespo
   const hasReadOnlyDiscoveryAction = actions.some(action =>
     READ_ONLY_DISCOVERY_PATHS.has(normalizePath(action.path))
   );
-  if (!hasModelWriteAction && hasReadOnlyDiscoveryAction && messageClaimsCompletion(message)) {
+  if (!hasModelWriteAction && !hasWriteEvidence && hasReadOnlyDiscoveryAction && messageClaimsCompletion(message)) {
     return {
       ...decision,
       assistant_message:
@@ -295,7 +320,7 @@ export function enforceModeledRedlineGuard(req: ChatRequest, decision: ChatRespo
       : buildBlockedModeledRedlineResponse();
   }
   if (!hasModelWriteAction && hasWriteEvidence && !hasPassingVisualGateEvidence(req) && messageClaimsCompletion(message)) {
-    return buildBlockedUnverifiedRedlineResponse();
+    return buildBlockedUnverifiedRedlineResponse(persistedModelWriteIds(req));
   }
 
   return decision;

@@ -15,6 +15,8 @@ namespace RevitBridge.Common.Tests
 
             Assert.Contains("id=\"\"agentModel\"\"", html);
             Assert.Contains("gpt-5.6-luna", html);
+            Assert.Contains("<option value=\"\"gpt-6-astra\"\">GPT-6 Astra</option>", html);
+            Assert.Contains("<option value=\"\"gpt-5.6-sol\"\" selected>GPT-5.6 Sol</option>", html);
             Assert.Contains("<option value=\"\"max\"\">Max</option>", html);
             Assert.Contains("agent_model: agentModel", html);
             Assert.Contains("agent_reasoning_effort: agentEffort", html);

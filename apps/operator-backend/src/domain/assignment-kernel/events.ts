@@ -11,6 +11,14 @@ import type { AssignmentResultDeliveryV2 } from "./result_delivery.js";
 
 export const ASSIGNMENT_EVENT_V2_SCHEMA = "revit-operator.assignment-event/v2" as const;
 
+export type AdvisoryCheckpointContinuationV1 = Readonly<{
+  command_id: string;
+  expected_control_command_id: string | null;
+  document_fingerprint: string;
+  direction_variable_id: string;
+  direction_text: string;
+}>;
+
 export interface AssignmentEventEnvelopeV2 {
   schema: typeof ASSIGNMENT_EVENT_V2_SCHEMA;
   event_id: string;
@@ -61,10 +69,13 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
   | { event_type: "result_delivered"; delivery: AssignmentResultDeliveryV2 }
   | { event_type: "work_plan_declared"; declaration: import("./work_plan.js").WorkPlanDeclarationV2 }
+  | { event_type: "advisory_followup_disposition_recorded"; disposition: import("./advisory_followups.js").AdvisoryFollowupDispositionV2 }
+  | { event_type: "work_plan_item_claimed"; item_id: string; operation_ids: readonly string[] }
   | { event_type: "work_plan_item_completed"; item_id: string; operation_ids: readonly string[]; inspection?: import("./work_plan.js").WorkPlanInspectionV2 }
-  | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string }
-  | { event_type: "review_resolved"; review_id: string; decision: string }
+  | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string; completion_proposal?: import("./execution_policy.js").AdvisoryCompletionProposalV1 }
+  | { event_type: "review_resolved"; review_id: string; decision: string; continuation?: AdvisoryCheckpointContinuationV1 }
   | { event_type: "reconciliation_recorded"; operation_id: OperationIdV2; resolved_effect: "none" | "applied"; observation_ids: readonly ObservationIdV2[] }
+  | { event_type: "native_completion_reconciled"; operation_id: OperationIdV2; completion: NonNullable<OperationV2["native_completion_reconciliation"]> }
   | { event_type: "outcome_derived"; outcome: AssignmentOutcomeV2; reason: string }
   | { event_type: "assignment_terminal"; outcome: Exclude<AssignmentOutcomeV2, "active" | "awaiting_user_input" | "awaiting_user_review">; reason: string }
 );

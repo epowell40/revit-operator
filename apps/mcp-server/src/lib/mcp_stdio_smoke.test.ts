@@ -14,6 +14,12 @@ import {
   NATIVE_TRANSPORT_VERSION
 } from "./nativeTransport.js";
 import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
+import { preflightKnownGenericToolBody } from "./genericToolPreflight.js";
+
+// Match the existing source-mode stdio convention while keeping compiled frontier runs unchanged.
+const mcpServerArgs = import.meta.url.endsWith(".ts")
+  ? ["--loader", "ts-node/esm", path.join(process.cwd(), "src", "server.ts")]
+  : [path.join(process.cwd(), "dist", "server.js")];
 
 const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -25,7 +31,9 @@ const certifiedSafeNonRevitAliases = [
   "operator_manage_work_plan",
   "operator_request_assignment_input",
   "operator_plan_semantic_mep_route",
+  "operator_plan_existing_conditions_duct_continuation",
   "operator_register_existing_conditions_interpretation",
+  "operator_resume_existing_conditions_registration",
   "operator_record_execution_strategy",
   "operator_request_clarification",
   "operator_retrieve_evidence",
@@ -171,7 +179,7 @@ async function listToolsForExposureEnv(exposureEnv: Record<string, string>): Pro
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-exposure-stdio-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(process.cwd(), "dist", "server.js")],
+    args: mcpServerArgs,
     cwd: process.cwd(),
     env: {
       ...env,
@@ -226,7 +234,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 95, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 97, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -398,7 +406,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(process.cwd(), "dist", "server.js")],
+    args: mcpServerArgs,
     cwd: process.cwd(),
     env: {
       ...env,
@@ -435,7 +443,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 95, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, 97, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
   const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
   assert.equal((connectorSchema.properties?.includeVerificationParameters as any)?.type, "boolean");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
@@ -464,6 +472,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_runtime_probe",
     "operator_plan_semantic_mep_route",
     "operator_register_existing_conditions_interpretation",
+    "operator_resume_existing_conditions_registration",
     "operator_record_execution_strategy",
     "operator_request_clarification",
     "operator_evaluate_assignment_criteria",
@@ -488,6 +497,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(directionSchema.minItems, 2);
   assert.equal(directionSchema.maxItems, 2);
   assert.equal(directionSchema.items.type, "number", "MCP transport must not publish tuple items that Codex rejects at thread start");
+  const registrationSchema = tools.tools.find(tool => tool.name === "operator_register_existing_conditions_interpretation")!.inputSchema as any;
+  const gridIdsSchema = registrationSchema.properties.controls.items.properties.nativeGridElementIds;
+  assert.equal(gridIdsSchema.type, "array");
+  assert.equal(gridIdsSchema.minItems, 2);
+  assert.equal(gridIdsSchema.maxItems, 2);
+  assert.equal(gridIdsSchema.items.type, "integer", "The actual MCP tools/list schema must be accepted by Codex dynamic tools");
+  const handoffSchema = tools.tools.find(tool => tool.name === "operator_resume_existing_conditions_registration")!.inputSchema as any;
+  assert.equal(handoffSchema.properties.originRegistrationEvidenceId.type, "string");
+  assert.equal(handoffSchema.properties.currentLandmarkObservationId.type, "string");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const retrievalTool = tools.tools.find(tool => tool.name === "operator_retrieve_evidence")!;
   assert.match(retrievalTool.description!, /pagination.next_start/);
@@ -562,6 +580,17 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(discoveryPayload.exposureMode, "general");
   assert.equal(discoveryPayload.runtimeMode, "development");
   assert.equal(discoveryPayload.status, "available");
+  assert.equal(names.has("operator_run_dynamic_revit_program"), true);
+  assert.equal(discoveryPayload.executionSubstrates.length, 1);
+  assert.equal(discoveryPayload.executionSubstrates[0].execution.tool, "operator_run_dynamic_revit_program");
+  assert.equal(discoveryPayload.executionSubstrates[0].admission.authorizationGranted, false);
+  const connectedDiscovery = await withTimeout(client.callTool({
+    name: "operator_discover_capabilities",
+    arguments: { need: "Inspect model elements geometry and execute C# Revit program for connected HVAC drafting", maxResults: 3 }
+  }), "discovering connected drafting substrate");
+  const connectedDiscoveryPayload = JSON.parse((connectedDiscovery as any).content[0].text);
+  assert.ok(connectedDiscoveryPayload.capabilities.length <= 3);
+  assert.deepEqual(connectedDiscoveryPayload.executionSubstrates, discoveryPayload.executionSubstrates);
   assert.ok(discoveryPayload.capabilities.some((capability: any) =>
     capability.method === "GET" && capability.path === "/revit/context"));
   for (const name of ["revit_repair_mep_connectors", "revit_dry_run_repair_mep_connectors"]) {
@@ -697,7 +726,7 @@ test("compiled MCP preserves native result selections and rejects malformed read
   const port = await listen(backend);
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-result-delivery-stdio-"));
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
-  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
+  const transport = new StdioClientTransport({ command: process.execPath, args: mcpServerArgs, cwd: process.cwd(),
     env: { ...env, OPERATOR_API_BASE_URL: `http://127.0.0.1:${port}`, OPERATOR_AUTH_MODE: "shared_token", OPERATOR_TOKEN: "test-only",
       OPERATOR_WORKSPACE_ROOT: workspace, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }, stderr: "pipe" });
   transport.stderr?.on("data", () => {});
@@ -773,7 +802,7 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(process.cwd(), "dist", "server.js")],
+    args: mcpServerArgs,
     cwd: process.cwd(),
     env: {
       ...env,
@@ -946,7 +975,7 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(process.cwd(), "dist", "server.js")],
+    args: mcpServerArgs,
     cwd: process.cwd(),
     env: {
       ...env,
@@ -998,6 +1027,14 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   assert.equal(listedNames.includes("titleblock_update_text"), false, "The non-revit bridge alias must not bypass certified visibility.");
   assert.equal(listedNames.includes("operator_test_unbound_mcp_alias"), false, "An unbound alias registered through registerTool must fail closed.");
   assert.equal(listedNames.includes("revit_observe_model"), false, "The laboratory-only observation alias must not leak into certified tools/list.");
+
+  assert.equal(listedNames.includes("operator_run_dynamic_revit_program"), false);
+  const certifiedDiscovery = await withTimeout(client.callTool({
+    name: "operator_discover_capabilities",
+    arguments: { need: "inspect the current Revit context", maxResults: 1 }
+  }), "checking discovery matches the certified callable frontier");
+  assert.deepEqual(JSON.parse((certifiedDiscovery as any).content[0].text).executionSubstrates, []);
+  assert.equal(bridgeRequests, 0, "Certified discovery must not probe or activate the dynamic runtime.");
 
   const blockedObservation = await withTimeout(client.callTool({
     name: "revit_observe_model",
@@ -1062,7 +1099,7 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(process.cwd(), "dist", "server.js")],
+    args: mcpServerArgs,
     cwd: process.cwd(),
     env: {
       ...env,
@@ -1144,6 +1181,7 @@ test("compiled typed task handlers preserve native fulfillment while previews an
   const children: any[] = [];
   const settlements: any[] = [];
   const nativeRequests: string[] = [];
+  const nativeBodies: any[] = [];
   const backend = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -1170,6 +1208,7 @@ test("compiled typed task handlers preserve native fulfillment while previews an
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
     nativeRequests.push(req.url!);
+    nativeBodies.push(input);
     const write = req.url === "/revit/set-parameter" || req.url === "/revit/replace-text-note";
     const preview = write && input.apply !== true;
     const payload = req.url === "/revit/set-parameter"
@@ -1177,7 +1216,7 @@ test("compiled typed task handlers preserve native fulfillment while previews an
           verificationPerformed: !preview, verificationFailedCount: 0, writeFailedCount: 0, changedElementIds: [1380354],
           diffs: [{ elementId: 1380354, parameterName: "Comments", ok: true, changed: true,
             before: { value: null }, after: { value: "UI CHECK" } }] }
-      : req.url === "/revit/replace-text-note" ? { elementId: 42, updated: true, newText: "Coordination issue" }
+      : req.url === "/revit/replace-text-note" ? { elementId: 42, updated: true, newText: input.newText }
       : req.url === "/revit/sheets" ? { items: [{ id: 42, number: "M001" }], total: 1 }
       : { path: "/revit/set-parameter", request: { changes: [] } };
     res.setHeader("content-type", "application/json");
@@ -1191,7 +1230,7 @@ test("compiled typed task handlers preserve native fulfillment while previews an
   const bridgePort = await listen(bridge);
   fs.writeFileSync(path.join(workspace, "write_grant.json"), JSON.stringify({ token: "test-only", expires_at_utc: new Date(Date.now()+60_000).toISOString() }));
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string,string] => typeof entry[1] === "string"));
-  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
+  const transport = new StdioClientTransport({ command: process.execPath, args: mcpServerArgs, cwd: process.cwd(),
     env: { ...env, OPERATOR_API_BASE_URL: `http://127.0.0.1:${backendPort}`, REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
       OPERATOR_AUTH_MODE: "shared_token", OPERATOR_TOKEN: "test-only", OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: "1" }, stderr: "pipe" });
@@ -1199,14 +1238,25 @@ test("compiled typed task handlers preserve native fulfillment while previews an
   const client = new Client({ name: "typed-fulfillment-stdio", version: "1.0.0" }, { capabilities: {} });
   t.after(async () => { await client.close(); await transport.close(); await closeServer(backend); await closeServer(bridge); fs.rmSync(workspace,{recursive:true,force:true}); });
   await withTimeout(client.connect(transport), "connecting typed fulfillment MCP");
+  const noteTool = (await client.listTools()).tools.find(tool => tool.name === "revit_replace_text_note");
+  assert.ok(noteTool, "the published note tool must remain discoverable");
+  const noteContract = { method: "POST", path: "/revit/replace-text-note", request_schema: noteTool.inputSchema };
+  const longNote = "Draft limitations — field verification required.\n".repeat(8);
+  const oldLongNote = "Previous coordination note.\r\n".repeat(12);
   const scenarios = [
     { tool: "revit_set_parameters", effect: "apply", role: "delegated_task_execution", args: { apply: true, changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK", expectedOldValue: "" }] } },
     { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: "Coordination issue", apply: true } },
+    { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: longNote, expectedOldText: oldLongNote, apply: true } },
+    { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: "x".repeat(16_384), expectedOldText: "y".repeat(16_384), apply: true } },
     { tool: "revit_list_sheets", effect: "read", role: "delegated_task_execution", args: { action: "list" } },
     { tool: "revit_set_parameters", effect: "preview", role: "supporting_control", args: { dryRun: true, changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK" }] } },
     { tool: "revit_tool_doc", effect: "read", role: "supporting_control", args: { method: "POST", path: "/revit/set-parameter" } }
   ];
   for (const scenario of scenarios) {
+    if (scenario.tool === "revit_replace_text_note") {
+      assert.equal(preflightKnownGenericToolBody(noteContract, scenario.args), null,
+        "preflight must accept the actual published contract for a complete drawing note");
+    }
     const countBefore = nativeRequests.length;
     parent = { schema: "revit-operator.assignment-kernel-operation-context/v2", assignment_id: binding.assignment_id, binding,
       operation_id: `parent-${countBefore}`, root_operation_id: `parent-${countBefore}`, capability_id: scenario.tool,
@@ -1219,6 +1269,10 @@ test("compiled typed task handlers preserve native fulfillment while previews an
     const result = await client.callTool({ name: scenario.tool, arguments: scenario.args, _meta: { "revit-operator/assignment-kernel-v2": parent } });
     assert.notEqual(result.isError, true, JSON.stringify(result));
     assert.equal(nativeRequests.length, countBefore+1, "one typed call must dispatch its native action exactly once");
+    if (scenario.tool === "revit_replace_text_note") {
+      assert.equal(nativeBodies.at(-1).newText, scenario.args.newText, "note text must reach native dispatch without truncation");
+      assert.equal(nativeBodies.at(-1).expectedOldText, scenario.args.expectedOldText, "the full old-text precondition must survive dispatch");
+    }
     assert.equal(children.at(-1).fulfillment_role, scenario.role, scenario.tool);
     assert.deepEqual(children.at(-1).eligible_criterion_ids, parent.eligible_criterion_ids);
     const observation = settlements.at(-1).mcp_result.structuredContent.observation;
@@ -1231,5 +1285,18 @@ test("compiled typed task handlers preserve native fulfillment while previews an
     } else {
       assert.equal(rootResult.status, "completed_without_native_dispatch", "the abstract parent cannot invent another native action");
     }
+  }
+  for (const args of [
+    { elementId: 42, newText: "", apply: true },
+    { elementId: 42, newText: "x".repeat(16_385), apply: true },
+    { elementId: 42, newText: "Valid note", expectedOldText: "y".repeat(16_385), apply: true }
+  ]) {
+    const requestCount = nativeRequests.length;
+    const rejected = preflightKnownGenericToolBody(noteContract, args);
+    assert.equal(rejected?.request_dispatched, false);
+    assert.equal(rejected?.outcome_unknown, false);
+    const result = await client.callTool({ name: "revit_replace_text_note", arguments: args });
+    assert.equal(result.isError, true, "invalid note lengths must be rejected before native execution");
+    assert.equal(nativeRequests.length, requestCount);
   }
 });

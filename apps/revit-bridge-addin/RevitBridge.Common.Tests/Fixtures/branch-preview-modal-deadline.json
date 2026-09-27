@@ -1,0 +1,46 @@
+{
+  "provenance": {
+    "source": "advisory-gui-session-events.jsonl",
+    "event_id": 202226,
+    "observed_at": "2026-09-26T03:56:08.117Z",
+    "note": "Exact request and bridge failure retained. Warning text transcribed from root actual Revit GUI; native failing IDs were not captured by the old handler."
+  },
+  "request": {
+    "method": "POST",
+    "path": "/revit/connect-existing-mep-branch",
+    "body": {
+      "connectionMode": "air_terminal_on_duct",
+      "kind": "duct",
+      "mainElementId": 1542960,
+      "branchElementId": 1543055,
+      "branchConnectorId": 1,
+      "expectedBranchOriginXyz": [
+        -33.01663333329998,
+        30.49999999999997,
+        41.18892769033334
+      ],
+      "dryRun": true
+    }
+  },
+  "bridge_failure": {
+    "schema": "revit-operator.revit-bridge-failure.v1",
+    "ok": false,
+    "code": "revit_bridge_http_error",
+    "transport_code": "revit_bridge_http_error",
+    "bridge_code": "revit_action_deadline_elapsed_outcome_unknown",
+    "phase": "revit_external_event",
+    "retryable": false,
+    "request_dispatched": true,
+    "outcome_unknown": true,
+    "method": "POST",
+    "path": "/revit/connect-existing-mep-branch",
+    "status": 408,
+    "correlation_id": "3e7ea50f83ce49bcb7391ec088fdff1c606c73867cd697ea8fee90f6877ff6c1",
+    "error": "[revit_bridge_http_error] POST /revit/connect-existing-mep-branch received HTTP 408: {\"ok\":false,\"error\":\"The Revit action exceeded its bounded_read local deadline of 60000 ms; the outcome is unknown.\",\"code\":\"revit_action_deadline_elapsed_outcome_unknown\",\"retryable\":false,\"phase\":\"revit_external_event\",\"host_health\":\"unavailable\",\"opens_circuit\":true,\"request_dispatched\":true,\"outcome_unknown\":true,\"correlation_id\":\"3e7ea50f83ce49bcb7391ec088fdff1c606c73867cd697ea8fee90f6877ff6c1\",\"deadline_class\":\"bounded_read\",\"deadline_ms\":60000,\"canonical_attempt_settlement\":{\"schema\":\"revit-operator.native-attempt-settlement.v1\",\"assignment_id\":null,\"attempt_id\":\"3e7ea50f83ce49bcb7391ec088fdff1c606c73867cd697ea8fee90f6877ff6c1\",\"run_id\":null,\"generation\":null,\"requested_effect\":\"preview\",\"method\":\"POST\",\"path\":\"/revit/connect-existing-mep-branch\",\"action_signature\":null,\"target_fingerprint\":null,\"request_dispatched\":true,\"effect_state\":\"unknown\",\"effect_reason\":\"revit_action_deadline_elapsed_outcome_unknown\",\"effect_authority\":\"native_host\",\"affected_target_identities\":[],\"receipt_refs\":[],\"evidence_refs\":[],\"settled_at_utc\":\"2026-09-26T03:56:06.9444797+00:00\"}} retryable=false outcome_unknown=true."
+  },
+  "gui_warning": {
+    "message": "There are identical instances in the same place. This will result in double counting in schedules.",
+    "elementIds": [],
+    "failureDefinitionId": null
+  }
+}

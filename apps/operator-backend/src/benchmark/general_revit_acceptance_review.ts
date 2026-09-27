@@ -46,6 +46,13 @@ export type AcceptanceReviewPacket = {
   cases: AcceptanceReviewCase[];
 };
 
+/** A stopped campaign has no complete case set to hand to an independent reviewer. */
+export function reviewPacketForSettledCampaign(
+  runId: string, selectedCases: GeneralRevitCapabilityCase[], traces: RecordValue[], complete: boolean
+): AcceptanceReviewPacket | null {
+  return complete ? buildGeneralRevitAcceptanceReviewPacket(runId, selectedCases, traces) : null;
+}
+
 export function buildGeneralRevitAcceptanceReviewPacket(
   runId: string, selectedCases: GeneralRevitCapabilityCase[], traces: RecordValue[]
 ): AcceptanceReviewPacket | null {

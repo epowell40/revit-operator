@@ -5,12 +5,37 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
 namespace RevitBridge.Logic.Handlers
 {
+    internal static class PlacementParameterValues
+    {
+        internal static double ParseDouble(string value, Func<string, double?> parseFormatted)
+        {
+            // Keep this handler's legacy numeric interpretation before consulting document display units.
+            if (!double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var number))
+            {
+                var parsed = parseFormatted(value);
+                if (!parsed.HasValue) throw new FormatException("Revit could not parse the value using this parameter's units.");
+                number = parsed.Value;
+            }
+            if (double.IsNaN(number) || double.IsInfinity(number)) throw new FormatException("Value must be finite.");
+            return number;
+        }
+
+        internal static bool MatchesDouble(double actual, double expected)
+            => !double.IsNaN(actual) && !double.IsInfinity(actual)
+                && !double.IsNaN(expected) && !double.IsInfinity(expected)
+                && Math.Abs(actual - expected) < 1e-9;
+
+        internal static bool ResultSucceeded(string status, int failedCount, int verificationFailedCount)
+            => (status == "Placed" || status == "Planned") && failedCount == 0 && verificationFailedCount == 0;
+    }
+
     public class PlaceFamiliesHandler : IRequestHandler
     {
         public class PlacementRequest
@@ -70,6 +95,10 @@ namespace RevitBridge.Logic.Handlers
             public bool? hostVerified { get; set; }
             public long? levelId { get; set; }
             public bool? levelVerified { get; set; }
+            public string? levelIdBasis { get; set; }
+            public string? placementBasis { get; set; }
+            public long? supportPlaneElementId { get; set; }
+            public double? rotationRadians { get; set; }
             public long? ownerViewId { get; set; }
             public double? locationX { get; set; }
             public double? locationY { get; set; }
@@ -83,6 +112,29 @@ namespace RevitBridge.Logic.Handlers
             public double? bboxMaxY { get; set; }
             public double? bboxMaxZ { get; set; }
             public List<string> warnings { get; set; } = new List<string>();
+            public List<RequestedParameterEvidence> parameterResults { get; set; } = new List<RequestedParameterEvidence>();
+            public bool? parameterVerificationSucceeded { get; set; }
+        }
+
+        public sealed class RequestedParameterEvidence
+        {
+            public string name { get; set; } = "";
+            public string requested { get; set; } = "";
+            public string? storageType { get; set; }
+            public object? before { get; set; }
+            public object? expectedInternalValue { get; set; }
+            public object? actual { get; set; }
+            public bool preCommitVerified { get; set; }
+            public bool? postCommitVerified { get; set; }
+            public string? error { get; set; }
+        }
+
+        private sealed class RequestedParameterExpectation
+        {
+            public long ParameterId { get; set; }
+            public StorageType StorageType { get; set; }
+            public object Value { get; set; } = null!;
+            public RequestedParameterEvidence Evidence { get; set; } = null!;
         }
 
         private sealed class HostFacePlacement
@@ -104,9 +156,15 @@ namespace RevitBridge.Logic.Handlers
         {
             public OperatorNativeTransactionReceipt transaction { get; set; } = OperatorNativeTransactionReceipt.NotStarted();
             public string status { get; set; } = "Unknown";
+            public int parameterVerificationFailedCount { get; set; }
+            public bool success => PlacementParameterValues.ResultSucceeded(status, failedCount, parameterVerificationFailedCount);
             public string? familyPlacementType { get; set; }
             public bool requiresExplicitHost { get; set; }
             public bool unhostedWorkPlanePlacementAllowed { get; set; }
+            public object? changeTracking { get; set; }
+            public IReadOnlyList<OperatorCapturedNativeFailure> capturedFailures { get; set; } = Array.Empty<OperatorCapturedNativeFailure>();
+            public bool failureRollbackRequested { get; set; }
+            public List<long> supportPlaneElementIds { get; set; } = new List<long>();
             public int placedCount { get; set; }
             public int skippedCount { get; set; }
             public int failedCount { get; set; }
@@ -123,12 +181,23 @@ namespace RevitBridge.Logic.Handlers
             var p = JsonSerializer.Deserialize<PlacementRequest>(jsonData) ?? throw new Exception("Invalid request body.");
             var doc = app.ActiveUIDocument.Document;
             var result = new PlacementResult();
+            var parameterReadbackTargets = new List<(long id, InstanceResult result, List<RequestedParameterExpectation> expectations)>();
 
+            var inventory = new OperatorNativeChangeInventory(doc);
+            var failureGuard = new OperatorNativeFailureGuard();
+            void Changed(object sender, DocumentChangedEventArgs args) => inventory.Observe(() => args.GetDocument(),
+                () => args.GetAddedElementIds().Select(ElementIdCompat.GetValue),
+                () => args.GetModifiedElementIds().Select(ElementIdCompat.GetValue),
+                () => args.GetDeletedElementIds().Select(ElementIdCompat.GetValue));
+            app.Application.DocumentChanged += Changed;
+            try
+            {
             using (Transaction t = new Transaction(doc, "Batch Place Families"))
             {
                 t.Start();
                 try
                 {
+                    NativeNonInteractiveFailureHandling.Configure(t, failureGuard);
                     bool bestEffort = string.Equals(p.behavior, "bestEffort", StringComparison.OrdinalIgnoreCase);
                     bool useIdempotency = p.idempotency?.enabled ?? false;
                     double toleranceFt = Math.Max(0.0, p.idempotency?.toleranceFt ?? 0.0);
@@ -218,6 +287,8 @@ namespace RevitBridge.Logic.Handlers
                         var instData = p.instances[i];
                         var instResult = new InstanceResult { index = i };
 
+                        var coordinates = new[] { instData.x, instData.y, instData.z };
+                        AbsolutePlacementCorrection.Delta(coordinates, coordinates); // finite XYZ before native geometry
                         XYZ point = new XYZ(instData.x, instData.y, instData.z);
                         var instanceLevel = defaultLevel;
                         if (!string.IsNullOrWhiteSpace(instData.levelName))
@@ -228,13 +299,11 @@ namespace RevitBridge.Logic.Handlers
                             }
                         }
 
-                        bool usesAbsoluteModelCoordinates = string.Equals(
-                            instData.coordinateMode,
-                            "absolute_model",
-                            StringComparison.OrdinalIgnoreCase);
-                        instResult.coordinateMode = usesAbsoluteModelCoordinates
-                            ? "absolute_model"
-                            : "legacy_level_offset";
+                        bool generatedWorkPlane = unhostedWorkPlanePlacementAllowed && !instData.hostElementId.HasValue;
+                        if (generatedWorkPlane && p.instances.Count > 200)
+                            throw new ArgumentException("Provisional work-plane placement is limited to 200 instances per request.");
+                        instResult.coordinateMode = FamilyPlacementContract.ResolveCoordinateMode(instData.coordinateMode, generatedWorkPlane);
+                        bool usesAbsoluteModelCoordinates = instResult.coordinateMode == "absolute_model";
                         instResult.requestedLocationX = point.X;
                         instResult.requestedLocationY = point.Y;
                         instResult.requestedLocationZ = point.Z;
@@ -250,6 +319,8 @@ namespace RevitBridge.Logic.Handlers
 
                         using var instanceScope = new SubTransaction(doc);
                         instanceScope.Start();
+                        ReferencePlane? generatedSupport = null;
+                        var parameterExpectations = new List<RequestedParameterExpectation>();
                         try
                         {
                             if (instData.linkedHostElementId.HasValue && (!instData.hostElementId.HasValue || instData.linkedHostElementId.Value <= 0))
@@ -297,20 +368,34 @@ namespace RevitBridge.Logic.Handlers
                                     if (match.existingElementId.HasValue)
                                     {
                                         var existing = (FamilyInstance)doc.GetElement(ToElementId(match.existingElementId.Value));
-                                        if (resolvedFace != null && HostedPlacementUtil.ReadInstanceLevelId(existing) != ElementIdCompat.GetValue(instanceLevel!.Id))
+                                        if ((resolvedFace != null || generatedWorkPlane) && HostedPlacementUtil.ReadInstanceLevelId(existing) != ElementIdCompat.GetValue(instanceLevel!.Id))
                                             throw new Exception("The matching hosted instance does not retain the requested level; reconcile it before retrying placement.");
+                                        parameterExpectations = ApplyRequestedParameters(doc, existing, instData.parameters, instResult, apply: false);
+                                        VerifyRequestedParameters(existing, parameterExpectations, instResult, afterCommit: false);
                                         PopulateNativeReadback(doc, targetView, existing, instResult);
                                         instResult.hostElementId = instData.hostElementId;
                                         instResult.linkedHostElementId = instData.linkedHostElementId;
                                         instResult.hostVerified = instData.hostElementId.HasValue ? true : (bool?)null;
                                         instResult.levelId = HostedPlacementUtil.ReadInstanceLevelId(existing);
-                                        instResult.levelVerified = resolvedFace != null ? true : (bool?)null;
+                                        instResult.levelVerified = resolvedFace != null || generatedWorkPlane ? true : (bool?)null;
+                                        if (generatedWorkPlane)
+                                        {
+                                            var existingPoint = TryGetLocationPoint(existing);
+                                            if (existingPoint == null || !AbsolutePlacementCorrection.Matches(coordinates, new[] { existingPoint.X, existingPoint.Y, existingPoint.Z }))
+                                                throw new Exception("The matching provisional instance does not retain exact requested XYZ; reconcile it before retrying placement.");
+                                            instResult.absoluteModelLocationVerified = true;
+                                            instResult.placementBasis = "existing_instance_readback";
+                                        }
                                     }
+                                    if (!match.existingElementId.HasValue && instData.parameters?.Count > 0)
+                                        throw new Exception("A same-request duplicate cannot establish requested parameter identity; reconcile the duplicate instance.");
                                     instResult.status = "skipped";
                                     instResult.elementId = match.existingElementId;
                                     instResult.reason = "idempotent: matching instance exists within tolerance";
                                     if (instanceScope.Commit() != TransactionStatus.Committed)
                                         throw new Exception("Idempotent placement scope did not settle.");
+                                    if (!p.dryRun && match.existingElementId.HasValue && parameterExpectations.Count > 0)
+                                        parameterReadbackTargets.Add((match.existingElementId.Value, instResult, parameterExpectations));
                                     result.skippedCount++;
                                     result.results.Add(instResult);
                                     continue;
@@ -357,6 +442,17 @@ namespace RevitBridge.Logic.Handlers
 
                                     instResult.warnings.Add($"Host placement failed; falling back to non-hosted/level-hosted. {ex.Message}");
                                 }
+                            }
+
+                            if (fi == null && generatedWorkPlane)
+                            {
+                                generatedSupport = CreateHorizontalSupportPlane(doc, targetView, instanceLevel!, point);
+                                resolvedFace = ResolveClosestHostFace(generatedSupport, point, null);
+                                var placed = PlaceOnResolvedHostFace(doc, resolvedFace, symbol);
+                                fi = placed.Instance;
+                                actualPlacementPoint = placed.ProjectedPoint;
+                                instResult.placementBasis = "generated_horizontal_reference_plane";
+                                instResult.warnings.Add("Provisional generated support plane; no architectural ceiling hosting is claimed.");
                             }
 
                             if (fi == null)
@@ -417,7 +513,7 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             if (usesAbsoluteModelCoordinates &&
-                                !instData.hostElementId.HasValue &&
+                                !instData.hostElementId.HasValue && resolvedFace == null &&
                                 familyPlacementType != FamilyPlacementType.ViewBased)
                             {
                                 instResult.absoluteModelCorrectionDistanceFt =
@@ -436,16 +532,11 @@ namespace RevitBridge.Logic.Handlers
                                 RotateAboutZ(doc, fi.Id, actualPlacementPoint, instData.rotationDegrees.Value);
                             }
 
-                            if (instData.parameters != null)
-                            {
-                                foreach (var kvp in instData.parameters)
-                                {
-                                    SetParameter(fi, kvp.Key, kvp.Value);
-                                }
-                            }
+                            parameterExpectations = ApplyRequestedParameters(doc, fi, instData.parameters, instResult, apply: true);
 
                             SetParameter(fi, "ROS_AutoGenerated", "1");
                             doc.Regenerate();
+                            VerifyRequestedParameters(fi, parameterExpectations, instResult, afterCommit: false);
                             PopulateNativeReadback(doc, targetView, fi, instResult);
                             if (resolvedFace != null)
                             {
@@ -459,7 +550,8 @@ namespace RevitBridge.Logic.Handlers
                             }
                             if (resolvedFace != null)
                             {
-                                if (!MatchesExplicitHost(fi, instData.hostElementId!.Value, instData.linkedHostElementId)
+                                var expectedHostId = generatedSupport == null ? instData.hostElementId!.Value : ElementIdCompat.GetValue(generatedSupport.Id);
+                                if (!MatchesExplicitHost(fi, expectedHostId, instData.linkedHostElementId)
                                     || !instResult.locationX.HasValue || !instResult.locationY.HasValue || !instResult.locationZ.HasValue
                                     || !AbsolutePlacementCorrection.Matches(
                                         new[] { actualPlacementPoint.X, actualPlacementPoint.Y, actualPlacementPoint.Z },
@@ -469,6 +561,14 @@ namespace RevitBridge.Logic.Handlers
                                     throw new Exception("Linked-face placement did not retain the exact host and projected model-space point after regeneration.");
                                 }
                                 instResult.absoluteModelLocationVerified = true;
+                                if (generatedSupport != null)
+                                {
+                                    FamilyPlacementContract.VerifySupportedPlacement(coordinates,
+                                        new[] { instResult.locationX!.Value, instResult.locationY!.Value, instResult.locationZ!.Value },
+                                        ElementIdCompat.GetValue(instanceLevel!.Id), instResult.levelId, expectedHostId,
+                                        MatchesExplicitHost(fi, expectedHostId, null) ? expectedHostId : (long?)null);
+                                    instResult.hostVerified = true;
+                                }
                             }
                             if (familyPlacementType == FamilyPlacementType.ViewBased && targetView != null &&
                                 (instResult.ownerViewId != ElementIdCompat.GetValue(targetView.Id) ||
@@ -496,6 +596,15 @@ namespace RevitBridge.Logic.Handlers
                                 instResult.elementId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Id);
                                 result.elementIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(fi.Id));
                                 result.placedCount++;
+                                if (parameterExpectations.Count > 0)
+                                    parameterReadbackTargets.Add((ElementIdCompat.GetValue(fi.Id), instResult, parameterExpectations));
+                                if (generatedSupport != null)
+                                {
+                                    var supportId = ElementIdCompat.GetValue(generatedSupport.Id);
+                                    result.supportPlaneElementIds.Add(supportId);
+                                    instResult.supportPlaneElementId = supportId;
+                                    instResult.hostElementId = supportId;
+                                }
                             }
 
                             result.results.Add(instResult);
@@ -530,6 +639,23 @@ namespace RevitBridge.Logic.Handlers
                         var observed = t.Commit();
                         result.transaction = OperatorNativeTransactionReceipt.FromObservedStatus(observed.ToString(), result.elementIds);
                         if (observed != TransactionStatus.Committed) throw new Exception("Family placement commit was not confirmed.");
+                        result.transaction = inventory.CommittedReceipt().WithNativeCreatedElements(result.elementIds.Concat(result.supportPlaneElementIds));
+                        // A post-commit mismatch is a failed intent with known committed effects, never a rollback claim.
+                        foreach (var target in parameterReadbackTargets)
+                        {
+                            try
+                            {
+                                var committedElement = doc.GetElement(ToElementId(target.id));
+                                VerifyRequestedParameters(committedElement, target.expectations, target.result, afterCommit: true);
+                            }
+                            catch (Exception verificationError)
+                            {
+                                target.result.parameterVerificationSucceeded = false;
+                                target.result.reason = verificationError.Message;
+                                result.parameterVerificationFailedCount++;
+                                result.status = "PlacedWithErrors";
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -538,20 +664,49 @@ namespace RevitBridge.Logic.Handlers
                     result.error = ex.Message;
                     try { if (t.GetStatus() == TransactionStatus.Started) t.RollBack(); } catch { }
                     result.transaction = OperatorNativeTransactionReceipt.FromObservedStatus(t.GetStatus().ToString(), result.elementIds);
+                    if (t.GetStatus() == TransactionStatus.Committed)
+                        result.transaction = inventory.CommittedReceipt().WithNativeCreatedElements(result.elementIds.Concat(result.supportPlaneElementIds));
                     if (t.GetStatus() == TransactionStatus.RolledBack)
                     {
                         result.placedCount = 0;
                         result.elementIds.Clear();
+                        result.supportPlaneElementIds.Clear();
                         foreach (var item in result.results.Where(item => item.status == "created"))
                         {
                             item.status = "rolled_back";
                             item.elementId = null;
+                            if (item.supportPlaneElementId.HasValue) item.hostElementId = null;
+                            item.supportPlaneElementId = null;
                         }
                     }
                 }
             }
 
+            }
+            finally { app.Application.DocumentChanged -= Changed; }
+            result.changeTracking = inventory.Diagnostics();
+            result.capturedFailures = failureGuard.Failures;
+            result.failureRollbackRequested = failureGuard.RollbackRequested;
+            result.warnings.AddRange(failureGuard.Failures.Select(failure => failure.severity + ": " + failure.message));
             return Task.FromResult<object>(result);
+        }
+
+        private static ReferencePlane CreateHorizontalSupportPlane(Document doc, View? targetView, Level level, XYZ point)
+        {
+            // Keep support model-wide; never create it owned by a sheet/drafting view.
+            var plan = targetView is ViewPlan supplied && !supplied.IsTemplate && supplied.GenLevel?.Id == level.Id
+                ? supplied : new FilteredElementCollector(doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
+                    .FirstOrDefault(view => !view.IsTemplate && view.GenLevel?.Id == level.Id);
+            if (plan == null) throw new Exception("Provisional work-plane placement requires an existing plan view on the requested level.");
+            var support = doc.Create.NewReferencePlane(point - XYZ.BasisX, point + XYZ.BasisX, XYZ.BasisY, plan);
+            if (support == null) throw new Exception("Revit did not create the provisional support plane.");
+            doc.Regenerate();
+            var actual = support.GetPlane();
+            if (Math.Abs(Math.Abs(actual.Normal.Normalize().DotProduct(XYZ.BasisZ)) - 1.0) > 1e-7
+                || Math.Abs((point - actual.Origin).DotProduct(actual.Normal.Normalize())) > 1e-7)
+                throw new Exception("Native support plane is not horizontal at the requested model elevation.");
+            support.Name = "Operator provisional support " + ElementIdCompat.GetValue(support.Id);
+            return support;
         }
 
         private static void PopulateNativeReadback(
@@ -561,6 +716,8 @@ namespace RevitBridge.Logic.Handlers
             InstanceResult result)
         {
             result.familySymbolId = ElementIdCompat.GetValue(instance.GetTypeId());
+            result.levelId = HostedPlacementUtil.ReadInstanceLevelId(instance);
+            result.levelIdBasis = result.levelId.HasValue ? "native_effective_level" : null;
             try
             {
                 var ownerViewId = instance.OwnerViewId;
@@ -580,6 +737,7 @@ namespace RevitBridge.Logic.Handlers
                     result.locationX = locationPoint.Point.X;
                     result.locationY = locationPoint.Point.Y;
                     result.locationZ = locationPoint.Point.Z;
+                    result.rotationRadians = locationPoint.Rotation;
                 }
             }
             catch
@@ -851,6 +1009,127 @@ namespace RevitBridge.Logic.Handlers
                 throw new Exception($"Workset verification failed for element {ElementIdCompat.GetValue(element.Id)}.");
         }
 
+        private static List<RequestedParameterExpectation> ApplyRequestedParameters(
+            Document doc, Element element, Dictionary<string, string>? requested, InstanceResult result, bool apply)
+        {
+            var expected = new List<RequestedParameterExpectation>();
+            if (requested == null || requested.Count == 0) return expected;
+            result.parameterVerificationSucceeded = false;
+            foreach (var item in requested)
+            {
+                var evidence = new RequestedParameterEvidence { name = item.Key, requested = item.Value };
+                result.parameterResults.Add(evidence);
+                try
+                {
+                    var parameter = ResolveRequestedParameter(element, item.Key);
+                    if (parameter.IsReadOnly) throw new Exception("Parameter is read-only.");
+                    evidence.storageType = parameter.StorageType.ToString();
+                    evidence.before = ParameterValueUtil.SnapshotForWire(parameter);
+                    var value = ParseRequestedParameterValue(doc, parameter, item.Value);
+                    evidence.expectedInternalValue = value;
+                    var expectation = new RequestedParameterExpectation
+                    {
+                        ParameterId = ElementIdCompat.GetValue(parameter.Id),
+                        StorageType = parameter.StorageType,
+                        Value = value,
+                        Evidence = evidence
+                    };
+                    expected.Add(expectation);
+                    if (RequestedParameterMatches(parameter, expectation)) continue;
+                    if (!apply) throw new Exception("The existing instance does not have the requested value; reconcile it before retrying placement.");
+                    bool accepted;
+                    switch (parameter.StorageType)
+                    {
+                        case StorageType.Double: accepted = parameter.Set((double)value); break;
+                        case StorageType.Integer: accepted = parameter.Set((int)value); break;
+                        case StorageType.String: accepted = parameter.Set((string)value); break;
+                        case StorageType.ElementId: accepted = parameter.Set(ElementIdCompat.Create((long)value)); break;
+                        default: throw new Exception("Unsupported parameter storage type.");
+                    }
+                    if (!accepted) throw new Exception("Revit rejected the requested value (Set returned false).");
+                }
+                catch (Exception error)
+                {
+                    evidence.error = error.Message;
+                    throw new Exception($"Requested parameter '{item.Key}' failed: {error.Message}", error);
+                }
+            }
+            return expected;
+        }
+
+        private static Parameter ResolveRequestedParameter(Element element, string name)
+        {
+            if (element == null) throw new Exception("Element could not be re-resolved.");
+            var matches = element.GetParameters(name);
+            if (matches == null || matches.Count == 0) throw new Exception("Requested parameter was not found.");
+            if (matches.Count != 1) throw new Exception("Requested parameter name is ambiguous.");
+            return matches[0];
+        }
+
+        private static object ParseRequestedParameterValue(Document doc, Parameter parameter, string value)
+        {
+            switch (parameter.StorageType)
+            {
+                case StorageType.String: return value;
+                case StorageType.Integer:
+                    if (int.TryParse(value, out var integer)) return integer;
+                    throw new Exception("Invalid integer value.");
+                case StorageType.ElementId:
+                    // Preserve this handler's existing range and numeric interpretation.
+                    if (long.TryParse(value, out var id) && id >= int.MinValue && id <= int.MaxValue) return id;
+                    throw new Exception("Invalid element identifier.");
+                case StorageType.Double:
+                    return PlacementParameterValues.ParseDouble(value, formatted =>
+                    {
+                        var spec = parameter.Definition?.GetDataType();
+                        return spec != null && UnitFormatUtils.TryParse(doc.GetUnits(), spec, formatted, out var parsed)
+                            ? (double?)parsed : null;
+                    });
+                default: throw new Exception("Unsupported parameter storage type.");
+            }
+        }
+
+        private static bool RequestedParameterMatches(Parameter parameter, RequestedParameterExpectation expected)
+        {
+            if (parameter.StorageType != expected.StorageType || ElementIdCompat.GetValue(parameter.Id) != expected.ParameterId)
+                throw new Exception("Parameter identity or storage type changed.");
+            switch (expected.StorageType)
+            {
+                case StorageType.String: return string.Equals(parameter.AsString() ?? "", (string)expected.Value, StringComparison.Ordinal);
+                case StorageType.Integer: return parameter.AsInteger() == (int)expected.Value;
+                case StorageType.ElementId: return ElementIdCompat.GetValue(parameter.AsElementId()) == (long)expected.Value;
+                case StorageType.Double:
+                    return PlacementParameterValues.MatchesDouble(parameter.AsDouble(), (double)expected.Value);
+                default: throw new Exception("Unsupported parameter storage type.");
+            }
+        }
+
+        private static void VerifyRequestedParameters(
+            Element element, List<RequestedParameterExpectation> expected, InstanceResult result, bool afterCommit)
+        {
+            if (expected.Count == 0) return;
+            result.parameterVerificationSucceeded = false;
+            foreach (var item in expected)
+            {
+                try
+                {
+                    var parameter = ResolveRequestedParameter(element, item.Evidence.name);
+                    item.Evidence.actual = ParameterValueUtil.SnapshotForWire(parameter);
+                    if (!RequestedParameterMatches(parameter, item)) throw new Exception("Numeric/typed readback did not match the requested value.");
+                    if (afterCommit) item.Evidence.postCommitVerified = true;
+                    else item.Evidence.preCommitVerified = true;
+                }
+                catch (Exception error)
+                {
+                    if (afterCommit) item.Evidence.postCommitVerified = false;
+                    item.Evidence.error = error.Message;
+                    throw new Exception($"Requested parameter '{item.Evidence.name}' verification failed: {error.Message}", error);
+                }
+            }
+            result.parameterVerificationSucceeded = true;
+        }
+
+        // Existing optional internal marker behavior is retained. User parameters use the verified path above.
         private void SetParameter(Element e, string name, string value)
         {
             Parameter param = e.LookupParameter(name);
@@ -877,4 +1156,3 @@ namespace RevitBridge.Logic.Handlers
         }
     }
 }
-

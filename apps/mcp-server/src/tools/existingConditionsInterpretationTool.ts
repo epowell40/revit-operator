@@ -94,7 +94,7 @@ export function registerExistingConditionsInterpretationTool(
 ): unknown {
   return registerTool(
     "operator_validate_existing_conditions_interpretation",
-    "Bind a structured whole-sheet plus regional-detail interpretation to PDF pages in the current task. Validates source accounting and maps regional UV geometry into full-page coordinates. Read-only: it never creates or changes Revit elements.",
+    "Bind a structured whole-sheet plus regional-detail interpretation to PDF pages in the current task. Every source mark and primitive must use a region_detail viewKey, not the sheet_context viewKey. A visible mark cited by a primitive must have disposition_status candidate and list that primitive ID; use unresolved only for a mark with no modeled primitive, an empty primitive_ids array, and a reason. An annotation may represent a legible note while its implied route, size, or elevation remains unresolved in claims/open_questions. Coordinates of a regional primitive are local UV within that detail crop. Validates source accounting and maps regional UV geometry into full-page coordinates. Read-only: it never creates or changes Revit elements.",
     existingConditionsInterpretationInputSchema,
     input => handleExistingConditionsInterpretation(input, validator)
   );

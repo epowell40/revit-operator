@@ -358,3 +358,267 @@ test("rejects staged snap actions that differ beyond dryRun", () => {
     /staged_actions_diverge/
   );
 });
+
+test("explains a nearby open connector with a conflicting system instead of hiding it as a generic miss", () => {
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) row.systemName = "Mechanical Exhaust Air 1";
+  const receipt = planRegisteredRouteConnectorSnapV1(candidate(), { native_connector_readback: readback });
+  assert.equal(receipt.status, "deferred");
+  assert.ok(receipt.blockers.includes("start_endpoint_system_type_mismatch"));
+  assert.equal(receipt.endpoint_diagnostics?.[0]?.endpoint, "start");
+  assert.equal(receipt.endpoint_diagnostics?.[0]?.requested_system_type, "Supply Air");
+  assert.deepEqual(receipt.endpoint_diagnostics?.[0]?.nearby_open_connector_systems, ["Mechanical Exhaust Air 1"]);
+  assert.equal(receipt.dry_run_action, null);
+  assert.equal(receipt.apply_action, null);
+});
+
+test("a registered PDF duct with one surviving anchor stages an exact one-sided continuation", () => {
+  const input = {
+    ...candidate(),
+    required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`,
+    deferred_far_end_reason: "Continue the visible main in the next bounded chunk"
+  };
+  const registered = {
+    schema_version: 1,
+    native_write_allowed: false,
+    package_id: input.package_id,
+    native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{
+      primitive_id: input.primitive_id,
+      source_mark_ids: ["mark-1"],
+      kind: "route_segment",
+      model_points: input.points,
+      model_endpoints: [
+        { endpoint_key: "a", point: input.points[0], boundary: "internal", outward_direction_xy: [-1, 0] },
+        { endpoint_key: "b", point: input.points[1], boundary: "sheet_continuation", continuation_key: "next-main", outward_direction_xy: [1, 0] }
+      ]
+    }]
+  };
+  const readback = connectorReadback();
+  readback.results.pop();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  });
+  assert.equal(receipt.status, "ready");
+  assert.deepEqual(receipt.endpoint_snaps.map(snap => snap.endpoint), ["start"]);
+  assert.equal(receipt.apply_action?.body.requiredExistingEndpoint, "start");
+  assert.equal(receipt.apply_action?.body.expectedExistingStartOwnerId, 101);
+  assert.equal(receipt.apply_action?.body.requireExistingEndpointConnections, false);
+  assert.equal(receipt.far_end_obligation?.source_endpoint_key, "b");
+  assert.equal(receipt.far_end_obligation?.boundary, "sheet_continuation");
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.endpoint_key, "registered-route:route-1:b");
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.output, "route_end");
+  assert.deepEqual(workflow.operations[0]?.continuation_endpoints?.[0]?.direction_xyz, [1, 0, 0]);
+});
+
+test("C95 registered continuation aligns its first leg to the exact surviving duct connector axis", () => {
+  const points = [
+    { x: -46.62679403126029, y: -10.55 },
+    { x: -46.62679403126029, y: -25.954684036939113 },
+    { x: -41.90091509642558, y: -25.954684036939113 },
+    { x: -41.90091509642558, y: -30.19788394251492 }
+  ];
+  const input = { ...candidate(), package_id: "M104-unit403", primitive_id: "supply-continuation",
+    points, view_id: 1363433, level_name: "L4", elevation_z_ft: 40.16806102362584,
+    system_type: "SupplyAir", size: '4 in', required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Visible terminal remains ambiguous" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id,
+    native_view_id: input.view_id, registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["M104-supply-403"],
+      kind: "route_segment", model_points: points, model_endpoints: [
+        { endpoint_key: "near", point: points[0], boundary: "internal", outward_direction_xy: [0, 1] },
+        { endpoint_key: "far", point: points[3], boundary: "internal", outward_direction_xy: [0, -1] }
+      ] }] };
+  const readback = { status: "Ok", results: [{ id: 1543123, category: "OST_DuctCurves",
+    systemName: "Mechanical Supply Air 1", connectors: [{ index: 0, connectorId: 1,
+      connectorIdBasis: "revit_native_connector_id", origin: [-46.62, -10.55, 40.16806102362584],
+      domain: "DomainHvac", systemClassification: "SupplyAir", shape: "Round",
+      size: { diameterFt: 1 / 3 }, coordinateSystem: { basisZ: [0, -1, 0] }, physicalConnectionCount: 0 }] }] };
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.snapped_points[0]?.x, -46.62);
+  assert.equal(receipt.snapped_points[1]?.x, -46.62);
+  assert.equal(receipt.snapped_points[1]?.y, points[1]!.y);
+  assert.equal(receipt.apply_action?.body.expectedExistingStartOwnerId, 1543123);
+  assert.equal(receipt.apply_action?.body.requireExistingEndpointConnections, false);
+});
+
+test("C160 two-point registered continuation follows the observed open duct tangent within drawing tolerance", () => {
+  const points = [
+    { x: -33.04930087045224, y: 18.839397083343584 },
+    { x: -33.04930087045224, y: 38.917316367126475 }
+  ];
+  const input = { ...candidate(), package_id: "unit404_supply", primitive_id: "sa404north",
+    points, view_id: 1363433, level_name: "L4", elevation_z_ft: 40.168061023622045,
+    system_type: "Supply Air", size: '8"', required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Source-visible far end remains open" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id,
+    native_view_id: input.view_id, registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["west8"],
+      kind: "route_segment", model_points: points, model_endpoints: [
+        { endpoint_key: "near", point: points[0], boundary: "internal", outward_direction_xy: [0, -1] },
+        { endpoint_key: "far", point: points[1], boundary: "internal", outward_direction_xy: [0, 1] }
+      ] }] };
+  const axis = [0.005064325985840811, 0.9999871762189299, 0];
+  const readback = { results: [{ id: 1543517, category: "OST_DuctCurves", systemName: "Mechanical Supply Air 3",
+    connectors: [{ index: 0, connectorId: 1, connectorIdBasis: "revit_native_connector_id",
+      origin: [-33.04125698584549, 18.843627103430237, input.elevation_z_ft], domain: "DomainHvac",
+      systemClassification: "SupplyAir", shape: "Round", size: { diameterFt: 2 / 3 },
+      coordinateSystem: { basisZ: axis }, physicalConnectionCount: 0 }] }] };
+  const context = { native_connector_readback: readback, registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 };
+  const receipt = planRegisteredRouteConnectorSnapV1(input, context);
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.endpoint_snaps[0]?.owner_element_id, 1543517);
+  const [start, end] = receipt.snapped_points;
+  assert.ok(Math.abs((end!.x - start!.x) / (end!.y - start!.y) - axis[0] / axis[1]) < 1e-8,
+    "a physical straight join needs the observed connector tangent, not just a coincident endpoint");
+  assert.ok(Math.hypot(end!.x - points[1]!.x, end!.y - points[1]!.y) < 0.15);
+  assert.equal(receipt.dry_run_action?.body.expectedExistingStartOwnerId, 1543517);
+
+  const farOutsideTolerance = { ...input, points: [points[0]!, { x: -33.25, y: points[1]!.y }] };
+  const farRegistered = { ...registered, registered_primitives: [{ ...registered.registered_primitives[0]!,
+    model_points: farOutsideTolerance.points, model_endpoints: [registered.registered_primitives[0]!.model_endpoints[0]!,
+      { ...registered.registered_primitives[0]!.model_endpoints[1]!, point: farOutsideTolerance.points[1] }] }] };
+  const refused = planRegisteredRouteConnectorSnapV1(farOutsideTolerance, { ...context, registered_interpretation: farRegistered as any });
+  assert.equal(refused.status, "deferred", "do not silently move a source endpoint beyond the small tangent correction");
+  assert.ok(refused.blockers.includes("start_endpoint_tangent_alignment_exceeds_source_tolerance"));
+});
+
+test("C88 registered duct continuation accepts a perpendicular open end for a native elbow dry run", () => {
+  const start = { x: -32.61666628365218, y: -0.3942000617747965 };
+  const points = [start, { x: -32.61666659114684, y: -12.70908375767317 },
+    { x: -25.462490928194185, y: -12.709083936308275 },
+    { x: -25.4624912606661, y: -26.02428378050155 }];
+  const input = { ...candidate(), package_id: "unit403-m104-existing-conditions-v3", primitive_id: "route-exhaust-4",
+    points, view_id: 1363433, level_name: "L4", elevation_z_ft: 40.16806102362584,
+    system_type: "Exhaust Air", size: "4\"", required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Visible route continues" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id,
+    native_view_id: input.view_id, registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["m104-exhaust-4"],
+      kind: "route_segment", model_points: points, model_endpoints: [
+        { endpoint_key: "near", point: points[0], boundary: "internal", outward_direction_xy: [0, 1] },
+        { endpoint_key: "far", point: points[3], boundary: "view_boundary", outward_direction_xy: [0, -1] }
+      ] }] };
+  const readback = { results: [{ id: 1542972, category: "Ducts", systemName: "Mechanical Exhaust Air 1",
+    connectors: [{ index: 0, connectorId: 1, connectorIdBasis: "revit_native_connector_id",
+      origin: [-32.61666666666666, -0.39419947506562, 40.16806102362584], domain: "DomainHvac",
+      shape: "Round", size: { diameterFt: 1 / 3 }, coordinateSystem: { basisZ: [1, 0, 0] },
+      physicalConnectionCount: 0 }] }] };
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.endpoint_snaps[0]?.owner_element_id, 1542972);
+  assert.equal(receipt.dry_run_action?.body.expectedExistingStartOwnerId, 1542972);
+  assert.deepEqual(receipt.snapped_points[1], { x: points[1]!.x, y: points[1]!.y, z: input.elevation_z_ft });
+  assert.equal(receipt.dry_run_action?.body.dryRun, true);
+  assert.equal(receipt.apply_action?.body.dryRun, false);
+});
+
+test("C91 HRU403 continuation uses the open port's SupplyAir classification despite its Exhaust Air equipment network", () => {
+  const points = [
+    { x: -38.28694841855402, y: -3.3910839850530863 },
+    { x: -38.28694841855402, y: -0.39648401638066844 },
+    { x: -45.49841663644558, y: -0.39648401638066844 },
+    { x: -45.49841663644558, y: -9.502083921123727 }
+  ];
+  const input = { ...candidate(), package_id: "m104_u403_existing_conditions_v1", primitive_id: "route_4in_nw",
+    points, view_id: 1363433, level_name: "L4", elevation_z_ft: 40.16806102362584,
+    system_type: "Supply Air", size: '4"', required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Visible route continues" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id,
+    native_view_id: input.view_id, registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["mark_4in_nw"],
+      kind: "route_segment", model_points: points, model_endpoints: [
+        { endpoint_key: "near", point: points[0], boundary: "internal", outward_direction_xy: [0, -1] },
+        { endpoint_key: "far", point: points[3], boundary: "internal", outward_direction_xy: [0, -1] }
+      ] }] };
+  const readback = { results: [{ id: 1542960, category: "Mechanical Equipment",
+    systemName: "Mechanical Exhaust Air 1", connectors: [{ index: 0, connectorId: 1,
+      connectorIdBasis: "revit_native_connector_id", origin: [-38.283333333333324, -3.394199475065615, 40.16806102362584],
+      domain: "DomainHvac", systemClassification: "SupplyAir", shape: "Round", size: { diameterFt: 1 / 3 },
+      coordinateSystem: { basisZ: [0, 1, 0] }, physicalConnectionCount: 0 }] }] };
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 });
+  assert.equal(receipt.status, "ready");
+  assert.deepEqual(receipt.blockers, []);
+  assert.equal(receipt.endpoint_snaps[0]?.owner_element_id, 1542960);
+  assert.equal(receipt.endpoint_snaps[0]?.connector_system_classification, "SupplyAir");
+  const wrongSystem = planRegisteredRouteConnectorSnapV1({ ...input, system_type: "Exhaust Air" }, {
+    native_connector_readback: readback, registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  });
+  assert.equal(wrongSystem.status, "deferred");
+  assert.deepEqual(wrongSystem.blockers, ["start_endpoint_system_type_mismatch"]);
+  assert.deepEqual(wrongSystem.endpoint_diagnostics?.[0]?.nearby_open_connector_systems, ["SupplyAir"]);
+  assert.equal(wrongSystem.apply_action, null);
+});
+
+test("a duct continuation still rejects a connector facing backward from its first leg", () => {
+  const readback = connectorReadback();
+  (readback.results[0] as any).connectors[0].coordinateSystem.basisZ = [-1, 0, 0];
+  const receipt = planRegisteredRouteConnectorSnapV1(candidate(), { native_connector_readback: readback });
+  assert.equal(receipt.status, "deferred");
+  assert.ok(receipt.blockers.includes("start_endpoint_has_no_compatible_open_connector"));
+});
+
+test("one-sided PDF continuation rejects altered geometry and missing registration evidence", () => {
+  const input = { ...candidate(), required_existing_endpoint: "start" as const,
+    registration_evidence_id: `ev1_${"d".repeat(32)}`, deferred_far_end_reason: "Continue later" };
+  const registered = { schema_version: 1, native_write_allowed: false, package_id: input.package_id, native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["mark-1"],
+      kind: "route_segment", model_points: [{ x: 10.1, y: 20.1 }, { x: 16, y: 20.1 }],
+      model_endpoints: [{ endpoint_key: "a", point: input.points[0], boundary: "internal" },
+        { endpoint_key: "b", point: { x: 16, y: 20.1 }, boundary: "internal" }] }] };
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(), registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  }), /registered_route_snap_source_geometry_mismatch/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback()
+  }), /registered_route_snap_authoritative_registration_required/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(), registered_interpretation: registered as any,
+    registered_interpretation_sha256: "f".repeat(64)
+  }), /registered_route_snap_registration_hash_mismatch/);
+  assert.throws(() => planRegisteredRouteConnectorSnapV1(input, {
+    native_connector_readback: connectorReadback(),
+    registered_interpretation: { ...registered, registration: { verified: true, source_evidence_sha256: "f".repeat(64) } } as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256
+  }), /registered_route_snap_registration_identity_mismatch/);
+});
+
+test("a source-bound end anchor declares the exact owner and leaves the source start open", () => {
+  const input = { ...candidate(), required_existing_endpoint: "end" as const,
+    registration_evidence_id: `ev1_${"e".repeat(32)}`, deferred_far_end_reason: "Main continues west" };
+  const registered = { schema_version: 1, native_write_allowed: false,
+    package_id: input.package_id, native_view_id: input.view_id,
+    registration: { verified: true, source_evidence_sha256: input.source_interpretation_sha256 },
+    registered_primitives: [{ primitive_id: input.primitive_id, source_mark_ids: ["mark-1"],
+      kind: "route_segment", model_points: input.points,
+      model_endpoints: [{ endpoint_key: "west", point: input.points[0], boundary: "view_boundary", outward_direction_xy: [-1, 0] },
+        { endpoint_key: "east", point: input.points[1], boundary: "internal", outward_direction_xy: [1, 0] }] }] };
+  const readback = connectorReadback();
+  readback.results.shift();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback,
+    registered_interpretation: registered as any,
+    registered_interpretation_sha256: input.registration_receipt_sha256 });
+  assert.equal(receipt.status, "ready");
+  assert.deepEqual(receipt.endpoint_snaps.map(snap => snap.endpoint), ["end"]);
+  assert.equal(receipt.apply_action?.body.expectedExistingEndOwnerId, 202);
+  assert.equal(receipt.apply_action?.body.requiredExistingEndpoint, "end");
+  assert.equal(receipt.far_end_obligation?.source_endpoint_key, "west");
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.output, "route_start");
+});

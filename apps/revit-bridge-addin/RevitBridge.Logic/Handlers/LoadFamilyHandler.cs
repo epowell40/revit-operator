@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -41,6 +42,9 @@ namespace RevitBridge.Logic.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope => HandleCore(app, jsonData, enterNativeScope)));
+
+        private object HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? throw new Exception("Invalid request body.");
             if (string.IsNullOrWhiteSpace(p.filePath)) throw new Exception("filePath is required.");
@@ -51,37 +55,34 @@ namespace RevitBridge.Logic.Handlers
             var doc = app.ActiveUIDocument.Document;
             if (doc.IsFamilyDocument) throw new Exception("Active document is a family document. Open a project document (.rvt) to load families.");
 
-            using (var t = new Transaction(doc, "Load Family"))
+            var beforeIds = new FilteredElementCollector(doc).OfClass(typeof(Family)).Cast<Family>()
+                .SelectMany(family => family.GetFamilySymbolIds().Select(ElementIdCompat.GetValue)
+                    .Concat(new[] { ElementIdCompat.GetValue(family.Id) })).ToHashSet();
+            long familyId = 0;
+            bool loaded = false;
+            enterNativeScope();
+            var result = NativeSingleTransaction.Execute(app, doc, "Load Family", nativeCreated =>
             {
-                t.Start();
-                try
+                loaded = doc.LoadFamily(filePath, new FamilyLoadOptions(p.overwriteParameterValues), out Family family);
+                if (family == null) throw new Exception("Revit did not return a Family after loading.");
+                familyId = ElementIdCompat.GetValue(family.Id);
+                foreach (var id in family.GetFamilySymbolIds().Select(ElementIdCompat.GetValue).Concat(new[] { familyId }))
+                    if (!beforeIds.Contains(id)) nativeCreated.Add(id);
+                return new Dictionary<string, object?>
                 {
-                    bool loaded = doc.LoadFamily(filePath, new FamilyLoadOptions(p.overwriteParameterValues), out Family family);
-                    if (family == null) throw new Exception("Revit did not return a Family after loading.");
-
-                    var symbols = family.GetFamilySymbolIds()
-                        .Select(id => doc.GetElement(id))
-                        .OfType<FamilySymbol>()
-                        .Select(s => new { id = RevitBridge.Common.ElementIdCompat.GetValue(s.Id), name = s.Name })
-                        .ToList();
-
-                    t.Commit();
-
-                    return Task.FromResult<object>(new
-                    {
-                        status = loaded ? "Loaded" : "AlreadyLoaded",
-                        loaded,
-                        familyId = RevitBridge.Common.ElementIdCompat.GetValue(family.Id),
-                        familyName = family.Name,
-                        symbols
-                    });
-                }
-                catch
-                {
-                    t.RollBack();
-                    throw;
-                }
-            }
+                    ["loaded"] = loaded, ["familyId"] = familyId, ["familyName"] = family.Name
+                };
+            });
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var family = doc.GetElement(ElementIdCompat.Create(familyId)) as Family
+                    ?? throw new InvalidOperationException("Loaded family did not survive native commit.");
+                var symbols = family.GetFamilySymbolIds().Select(id => doc.GetElement(id)).OfType<FamilySymbol>()
+                    .Select(symbol => new { id = ElementIdCompat.GetValue(symbol.Id), name = symbol.Name }).ToList();
+                return new Dictionary<string, object?> { ["familyName"] = family.Name, ["symbols"] = symbols };
+            });
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, loaded ? "Loaded" : "AlreadyLoaded");
+            return result;
         }
     }
 }

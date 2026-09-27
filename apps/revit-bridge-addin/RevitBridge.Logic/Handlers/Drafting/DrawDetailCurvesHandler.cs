@@ -45,9 +45,13 @@ namespace RevitBridge.Logic.Handlers.Drafting
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope).GetAwaiter().GetResult()));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            var doc = app.ActiveUIDocument.Document;
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
 
             if (p.viewId <= 0) throw new InvalidOperationException("draw-detail-curves.viewId is required.");
             var view = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.viewId)) as View;
@@ -95,9 +99,12 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     throw new InvalidOperationException($"Frame {frameId} belongs to viewId={frame.viewId}, but request.viewId={p.viewId}.");
             }
 
-            using (var t = new Transaction(doc, dryRun ? "Draw Detail Curves (dry run)" : "Draw Detail Curves"))
+            var createdIds = new List<long>();
+            var failureGuard = new OperatorNativeFailureGuard();
+            enterNativeScope();
+            var response = NativeSingleTransaction.Execute(app, doc,
+                dryRun ? "Draw Detail Curves (dry run)" : "Draw Detail Curves", nativeCreated =>
             {
-                t.Start();
 
                 var requestedStyleName = (p.lineStyleName ?? "").Trim();
                 if (requestedStyleName.Length == 0)
@@ -117,10 +124,10 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     else
                     {
                         style = EnsureLineStyle(doc, p.lineStyleCreate, styleWarnings, out styleCreated);
+                        if (styleCreated && style != null) nativeCreated.Add(ElementIdCompat.GetValue(style.Id));
                     }
                 }
 
-                var createdIds = new List<long>();
                 var warnings = new List<string>();
                 var segmentsCreated = 0;
                 var maximumCreatedCurveViewPlaneDistanceFt = 0.0;
@@ -136,8 +143,9 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         if (a.IsAlmostEqualTo(b)) { warnings.Add("Skipped zero-length line."); continue; }
                         var line = Line.CreateBound(a, b);
                         var dc = CreateDetailCurve(doc, view, line, style);
+                        createdIds.Add(ElementIdCompat.GetValue(dc.Id));
+                        nativeCreated.Add(ElementIdCompat.GetValue(dc.Id));
                         UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
-                        createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                         segmentsCreated++;
                     }
                     else if (kind == "polyline")
@@ -154,8 +162,9 @@ namespace RevitBridge.Logic.Handlers.Drafting
                             if (prev.IsAlmostEqualTo(pxyz)) { prev = pxyz; continue; }
                             var seg = Line.CreateBound(prev, pxyz);
                             var dc = CreateDetailCurve(doc, view, seg, style);
+                            createdIds.Add(ElementIdCompat.GetValue(dc.Id));
+                            nativeCreated.Add(ElementIdCompat.GetValue(dc.Id));
                             UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
-                            createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                             segmentsCreated++;
                             prev = pxyz;
                         }
@@ -169,8 +178,9 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         if (a.IsAlmostEqualTo(b)) throw new InvalidOperationException("arc start/end cannot be the same.");
                         var arc = Arc.Create(a, b, c);
                         var dc = CreateDetailCurve(doc, view, arc, style);
+                        createdIds.Add(ElementIdCompat.GetValue(dc.Id));
+                        nativeCreated.Add(ElementIdCompat.GetValue(dc.Id));
                         UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
-                        createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                         segmentsCreated++;
                     }
                     else
@@ -185,53 +195,47 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         $"Created DetailCurve geometry is {maximumCreatedCurveViewPlaneDistanceFt:R} ft off the target view plane.");
                 }
 
-                if (dryRun)
+                object lineStyle = dryRun
+                    ? new { requested = requestedStyleName.Length == 0 ? null : requestedStyleName,
+                        createRequested = p.lineStyleCreate != null,
+                        willCreate = p.lineStyleCreate != null && style == null, warnings = styleWarnings }
+                    : new { requested = requestedStyleName.Length == 0 ? null : requestedStyleName,
+                        resolved = style?.GraphicsStyleCategory?.Name, created = styleCreated };
+                var result = new Dictionary<string, object?>
                 {
-                    t.RollBack();
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Dry Run",
-                        dryRun = true,
-                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                        viewType = view.ViewType.ToString(),
-                        levelName = (view as ViewPlan)?.GenLevel?.Name,
-                        projectedToViewPlane = projectToViewPlane,
-                        maximumCreatedCurveViewPlaneDistanceFt,
-                        createdCount = createdIds.Count,
-                        segmentsCreated,
-                        lineStyle = new
-                        {
-                            requested = requestedStyleName.Length == 0 ? null : requestedStyleName,
-                            createRequested = p.lineStyleCreate != null,
-                            willCreate = p.lineStyleCreate != null && style == null,
-                            warnings = styleWarnings
-                        },
-                        warnings = warnings.Concat(styleWarnings).ToArray()
-                    });
+                    ["dryRun"] = dryRun, ["previewExecuted"] = dryRun,
+                    ["viewId"] = ElementIdCompat.GetValue(view.Id), ["viewType"] = view.ViewType.ToString(),
+                    ["levelName"] = (view as ViewPlan)?.GenLevel?.Name,
+                    ["projectedToViewPlane"] = projectToViewPlane,
+                    ["maximumCreatedCurveViewPlaneDistanceFt"] = maximumCreatedCurveViewPlaneDistanceFt,
+                    ["createdCount"] = createdIds.Count, ["segmentsCreated"] = segmentsCreated,
+                    ["lineStyle"] = lineStyle, ["warnings"] = warnings.Concat(styleWarnings).ToArray()
+                };
+                if (!dryRun) result["detailCurveIds"] = createdIds.ToArray();
+                return result;
+            }, disposition: dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
+                configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
+            OperatorNativeTransactionExecution.ReadCommitted(response, () =>
+            {
+                var distance = 0.0;
+                foreach (var id in createdIds)
+                {
+                    var curve = doc.GetElement(ElementIdCompat.Create(id)) as DetailCurve
+                        ?? throw new InvalidOperationException($"DetailCurve {id} disappeared after commit.");
+                    if (curve.OwnerViewId != view.Id) throw new InvalidOperationException($"DetailCurve {id} has a different owner view.");
+                    UpdateMaximumViewPlaneDistance(view, curve, ref distance);
                 }
-
-                t.Commit();
-                return Task.FromResult<object>(new
-                {
-                    status = "Success",
-                    dryRun = false,
-                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                    viewType = view.ViewType.ToString(),
-                    levelName = (view as ViewPlan)?.GenLevel?.Name,
-                    projectedToViewPlane = projectToViewPlane,
-                    maximumCreatedCurveViewPlaneDistanceFt,
-                    detailCurveIds = createdIds,
-                    createdCount = createdIds.Count,
-                    segmentsCreated,
-                    lineStyle = new
-                    {
-                        requested = requestedStyleName.Length == 0 ? null : requestedStyleName,
-                        resolved = style?.GraphicsStyleCategory?.Name,
-                        created = styleCreated
-                    },
-                    warnings = warnings.Concat(styleWarnings).ToArray()
-                });
-            }
+                if (projectToViewPlane && distance > 1e-7)
+                    throw new InvalidOperationException("Committed DetailCurve geometry is off the target view plane.");
+                return new Dictionary<string, object?> { ["detailCurveIds"] = createdIds.ToArray(),
+                    ["maximumCreatedCurveViewPlaneDistanceFt"] = distance };
+            });
+            response["nativeFailures"] = failureGuard.Failures;
+            // Persisted values are evidence; this handler does not certify all requested semantics.
+            response.Remove("verified");
+            response.Remove("ok");
+            response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Success");
+            return Task.FromResult<object>(response);
         }
 
         private static XYZ ResolvePoint(DraftPoint point, string frameId, View view, bool projectToViewPlane)

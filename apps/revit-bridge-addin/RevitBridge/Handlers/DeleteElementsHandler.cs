@@ -25,6 +25,10 @@ namespace RevitBridge.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(RevitBridge.Logic.Handlers.NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope)));
+
+        private object HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var doc = app.ActiveUIDocument.Document;
@@ -70,61 +74,32 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            using (Transaction trans = new Transaction(doc, "Delete Elements"))
+            var impacted = new List<long>();
+            var requested = ids.OrderBy(x => x).ToList();
+            enterNativeScope();
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Delete Elements", _ =>
             {
-                trans.Start();
-                
-                ICollection<ElementId> deletedIds = null;
-                try 
+                impacted = doc.Delete(elementIds).Select(ElementIdCompat.GetValue).Distinct().OrderBy(x => x).ToList();
+                return new Dictionary<string, object?>
                 {
-                    deletedIds = doc.Delete(elementIds);
-                }
-                catch
+                    ["dryRun"] = isDryRun, ["requestedCount"] = requested.Count,
+                    ["impactedCount"] = impacted.Count, ["requestedIds"] = requested,
+                    ["impactedIds"] = impacted, ["dependentIds"] = impacted.Except(requested).ToList(),
+                    ["requestedDetails"] = requestedDetails, ["requiredConfirm"] = requiredConfirm,
+                    ["confirmReceived"] = confirmReceived
+                };
+            }, disposition: isDryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
+                nativeDeletedElements: () => impacted);
+            if (!isDryRun)
+                OperatorNativeTransactionExecution.ReadCommitted(result, () =>
                 {
-                    // If deletion fails, we can't report what would be deleted.
-                    trans.RollBack();
-                    throw;
-                }
-
-                var impacted = deletedIds?.Select(x => RevitBridge.Common.ElementIdCompat.GetValue(x)).Distinct().OrderBy(x => x).ToList() ?? new List<long>();
-                var requested = ids.OrderBy(x => x).ToList();
-                var dependent = impacted.Except(requested).ToList();
-
-                if (apply)
-                {
-                    trans.Commit();
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Deleted",
-                        dryRun = false,
-                        requestedCount = requested.Count,
-                        impactedCount = impacted.Count,
-                        requestedIds = requested,
-                        impactedIds = impacted,
-                        dependentIds = dependent,
-                        requestedDetails,
-                        requiredConfirm,
-                        confirmReceived
-                    });
-                }
-                else
-                {
-                    trans.RollBack();
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Dry Run",
-                        dryRun = true,
-                        requestedCount = requested.Count,
-                        impactedCount = impacted.Count,
-                        requestedIds = requested,
-                        impactedIds = impacted,
-                        dependentIds = dependent,
-                        requestedDetails,
-                        requiredConfirm,
-                        confirmReceived
-                    });
-                }
-            }
+                    var survivors = impacted.Where(id => doc.GetElement(ElementIdCompat.Create(id)) != null).ToList();
+                    if (survivors.Count > 0)
+                        throw new InvalidOperationException("Committed deletion readback still contains impacted elements: " + string.Join(",", survivors));
+                    return new Dictionary<string, object?> { ["deletionVerified"] = true };
+                });
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Deleted");
+            return result;
         }
     }
 }

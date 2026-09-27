@@ -65,13 +65,24 @@ export interface OperationV2 {
   persistent_effect: PersistentEffectV2;
   settlement_state: OperationSettlementStateV2;
   result?: OperationResultV2;
+  /** Later receipt proof; the original timeout result remains immutable. */
+  native_completion_reconciliation?: import("@revitoperator/assignment-kernel-v2-contracts").NativeCompletionReconciliationV1;
+  /** Derived only from retained native diagnostics; never accepted at admission. */
+  native_failure_context?: import("./native_failure_context.js").NativeFailureContextV1;
   observation_commit?: ObservationCommitInputV2;
   observation_commit_attempts?: number;
   observation_ids: readonly ObservationIdV2[];
   verification_operation_ids: readonly OperationIdV2[];
   verification_of_operation_id?: OperationIdV2;
   retry_of_operation_id?: OperationIdV2;
-  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered";
+  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered" | "committed_target_change";
+  retry_after_operation_id?: OperationIdV2;
+  /** A new same-document save after a later committed edit; not a write retry. */
+  checkpoint_of_operation_id?: OperationIdV2;
+  checkpoint_after_operation_id?: OperationIdV2;
+  /** Reducer-derived ordering; never accepted from an admission proposal. */
+  admitted_assignment_version?: number;
+  settled_assignment_version?: number;
   reconciliation_of_operation_id?: OperationIdV2;
   opened_at: string;
   dispatch_started_at?: string;
@@ -133,24 +144,7 @@ export interface OperationResultSemanticGapV2 {
   native_replay_allowed: false;
 }
 
-export interface OperationInputSchemaIssueV2 {
-  field_path: string;
-  expected_type: string;
-  actual_type: string;
-  safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
-  correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
-  expected_constraint: Readonly<{
-    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds";
-    type?: string;
-    allowed_values?: readonly (string | number | boolean | null)[];
-    minimum?: number;
-    maximum?: number;
-    min_length?: number;
-    max_length?: number;
-    min_items?: number;
-    max_items?: number;
-  }>;
-}
+export type OperationInputSchemaIssueV2 = import("@revitoperator/assignment-kernel-v2-contracts").OperationInputSchemaIssueV2;
 
 export interface OperationInputSchemaGapV2 {
   schema: typeof OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA;

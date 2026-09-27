@@ -22,9 +22,89 @@ function fixture(count=0): any {
 test("C43 broad work gets bounded planning credit; ordinary short work keeps its budget",()=>{
   const s=fixture(); assert.equal(assignmentWorkAllowanceV2(s).provider_calls,64);
   assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_total_tokens,8_000_000);
-  for(const change of [(s:any)=>s.spec.requested_effect="read",(s:any)=>s.spec.work_plan_required=false,(s:any)=>delete s.work_plan]){
+  for(const change of [(s:any)=>s.spec.requested_effect="read",(s:any)=>delete s.work_plan]){
     const n=structuredClone(s);change(n);assert.equal(defaultAssignmentWorkBudgetV2(n,ordinary),ordinary);assert.equal(absoluteAssignmentWorkCallLimitV2(n),64);
   }
+});
+
+test("C85 retained two-edit plan keeps working when initial classifier missed broad scope",()=>{
+  const s=fixture();
+  s.spec.work_plan_required=false;
+  s.work_plan.items.push({item_id:"inspect",kind:"inspection",declared_at:"2026-09-16T00:00:00Z"});
+  assert.deepEqual(assignmentWorkAllowanceV2(s),{broad:true,verified_changes:0,provider_calls:64});
+  assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_provider_calls,64);
+  assert.equal(absoluteAssignmentWorkCallLimitV2(s),64);
+  for (const change of [
+    (n:any)=>n.work_plan.items[1].kind="inspection",
+    (n:any)=>n.work_plan.items.splice(1,1),
+    (n:any)=>n.spec.requested_effect="read"
+  ]) {
+    const n=structuredClone(s); change(n);
+    assert.equal(assignmentWorkAllowanceV2(n).broad,false,"a single edit or read-only plan keeps the ordinary budget");
+    assert.equal(defaultAssignmentWorkBudgetV2(n,ordinary).max_provider_calls,ordinary.max_provider_calls);
+  }
+});
+
+test("C99 one-edit task earns a bounded completion window after an exact native ready dry run",()=>{
+  const s=fixture();
+  s.work_plan.items[1].kind="inspection";
+  s.operations.preview={operation_id:"preview",binding:s.current_binding,requested_effect:"preview",
+    operation_role:"root",settlement_state:"settled",observation_ids:["preview-observation"],
+    result:{binding:s.current_binding,authority:"native-host",status:"succeeded",native_transaction_state:"rolled_back"}};
+  s.observations["preview-observation"]={operation_id:"preview",binding:s.current_binding,
+    authority:"native-host",facts:[{fact_id:"control.field.status",fact_class:"control",value:"DryRunReady"}]};
+  assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_provider_calls,48);
+  assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_reasoning_turns,48);
+  assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_total_tokens,6_000_000);
+  assert.equal(absoluteAssignmentWorkCallLimitV2(s),64);
+  for(const change of [
+    (n:any)=>n.operations.preview.result.status="failed_after_dispatch",
+    (n:any)=>n.operations.preview.result.native_transaction_state="committed",
+    (n:any)=>n.operations.preview.result.authority="model",
+    (n:any)=>n.operations.preview.result.binding={...n.current_binding,generation:2},
+    (n:any)=>n.operations.preview.binding={...n.current_binding,generation:2},
+    (n:any)=>n.observations["preview-observation"].facts[0].value="Blocked",
+    (n:any)=>n.observations["preview-observation"].authority="model",
+    (n:any)=>n.observations["preview-observation"].binding={...n.current_binding,generation:2},
+    (n:any)=>n.spec.requested_effect="read"
+  ]){const n=structuredClone(s);change(n);assert.equal(defaultAssignmentWorkBudgetV2(n,ordinary).max_provider_calls,ordinary.max_provider_calls);}
+  const duplicate=structuredClone(s);
+  duplicate.operations.preview2={...duplicate.operations.preview,operation_id:"preview2"};
+  assert.equal(defaultAssignmentWorkBudgetV2(duplicate,ordinary).max_provider_calls,48);
+});
+test("C106 generic MCP native child earns the one-edit window only through its exact root",()=>{
+  const s=fixture();
+  s.work_plan.items[1].kind="inspection";
+  const path="/revit/existing-conditions-mep-draft-workflow";
+  s.operations.parent={operation_id:"parent",binding:s.current_binding,capability_id:"revit_call_tool",
+    requested_effect:"preview",operation_role:"root",settlement_state:"settled",request_identity:{path}};
+  s.operations.preview={operation_id:"preview",binding:s.current_binding,requested_effect:"preview",
+    operation_role:"child",parent_operation_id:"parent",root_operation_id:"parent",
+    request_identity:{path},settlement_state:"settled",observation_ids:["preview-observation"],
+    result:{binding:s.current_binding,authority:"native-host",status:"succeeded",native_transaction_state:"rolled_back"}};
+  s.observations["preview-observation"]={operation_id:"preview",binding:s.current_binding,
+    authority:"native-host",facts:[{fact_id:"control.field.status",fact_class:"control",value:"DryRunReady"}]};
+  assert.equal(assignmentWorkAllowanceV2(s).provider_calls,48);
+  for(const change of [
+    (n:any)=>n.operations.parent.request_identity.path="/revit/other",
+    (n:any)=>n.operations.parent.capability_id="unrelated",
+    (n:any)=>n.operations.parent.binding={...n.current_binding,generation:2},
+    (n:any)=>n.operations.preview.root_operation_id="unrelated",
+    (n:any)=>n.operations.preview.result.native_transaction_state="unknown",
+    (n:any)=>n.input_invalidated_operation_ids=["parent"],
+    (n:any)=>n.input_invalidated_operation_ids=["preview"]
+  ]){const n=structuredClone(s);change(n);assert.equal(assignmentWorkAllowanceV2(n).provider_calls,32);}
+});
+test("retained C106 32-call stop would keep working with its exact native child receipt",()=>{
+  const s=JSON.parse(fs.readFileSync("test/fixtures/c106-wrapped-preview-budget.json","utf8"));
+  assert.equal(assignmentWorkAllowanceV2(s).provider_calls,48);
+  const child=Object.values(s.operations).find((op:any)=>op.operation_role==="child") as any;
+  const parent=s.operations[child.parent_operation_id];
+  assert.equal(parent.capability_id,"revit_call_tool");
+  assert.equal(child.result.native_transaction_state,"rolled_back");
+  const foreign=structuredClone(s);
+  foreign.operations[parent.operation_id].binding.generation++;
+  assert.equal(assignmentWorkAllowanceV2(foreign).provider_calls,32);
 });
 test("only distinct independently verified native edits earn bounded continuation allowance",()=>{
   const s=fixture(2);assert.deepEqual(assignmentWorkAllowanceV2(s),{broad:true,verified_changes:2,provider_calls:80});
@@ -46,6 +126,17 @@ test("only distinct independently verified native edits earn bounded continuatio
   assert.equal(maximum.max_wall_clock_ms,120*60_000);assert.equal(maximum.max_operations,1024);
   assert.equal(maximum.max_no_progress_epochs,ordinary.max_no_progress_epochs);
   assert.equal(maximum.max_equivalent_operations,ordinary.max_equivalent_operations);
+});
+
+test("C120 steering keeps bounded work credit for an already committed and physically verified edit",()=>{
+  const s=fixture(1);
+  s.input_invalidated_operation_ids=["edit0"];
+  assert.deepEqual(assignmentWorkAllowanceV2(s),{broad:true,verified_changes:1,provider_calls:72});
+  assert.equal(defaultAssignmentWorkBudgetV2(s,ordinary).max_provider_calls,72);
+  assert.equal(absoluteAssignmentWorkCallLimitV2(s),72);
+  const unverified=structuredClone(s);
+  unverified.observations.observation0.facts=[];
+  assert.equal(assignmentWorkAllowanceV2(unverified).provider_calls,64);
 });
 
 test("retained C43 32-call stop had two verified native placements and six uncompleted edit scopes",()=>{

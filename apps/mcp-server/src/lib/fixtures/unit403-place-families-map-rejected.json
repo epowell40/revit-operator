@@ -1,0 +1,109 @@
+{
+  "source_event_id": 203272,
+  "source_timestamp": "2026-09-26T08:37:51.203Z",
+  "request": {
+    "method": "POST",
+    "path": "/revit/place-families",
+    "body": {
+      "familySymbolId": 1365172,
+      "levelName": "L4",
+      "dryRun": false,
+      "instances": [
+        {
+          "x": -37.41,
+          "y": -5.767,
+          "z": 40.1667,
+          "coordinateMode": "absolute_model",
+          "rotationDegrees": 0,
+          "parameters": {
+            "Mark": "HRU403",
+            "Comments": "M104 existing conditions draft; elevation assumed to match Unit 404. No inferred airflow."
+          }
+        }
+      ]
+    }
+  },
+  "failure": {
+    "schema": "revit-operator.mcp-pre-dispatch-failure.v1",
+    "ok": false,
+    "code": "mcp_request_validation_failed",
+    "phase": "request_validation",
+    "retryable": true,
+    "request_dispatched": false,
+    "outcome_unknown": false,
+    "method": "POST",
+    "path": "/revit/place-families",
+    "invalid_fields": [
+      "body.instances[0].parameters",
+      "body.instances[0].parameters.Count",
+      "body.instances[0].parameters.Comments",
+      "body.instances[0].parameters.Mark"
+    ],
+    "input_schema_id": "operator-native/POST:/revit/place-families/input/v1",
+    "input_schema_digest": "930059a44bcc6534934647437af405a00cf7e3fe253848e1370dc67bbecba1ec",
+    "validation_issues": [
+      {
+        "field_path": "body.instances[0].parameters",
+        "expected_type": "exactly_one_schema",
+        "actual_type": "object",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "schema_alternative",
+          "type": "oneOf",
+          "allowed_values": [
+            "type: null",
+            "required: Count"
+          ]
+        },
+        "message": "body.instances[0].parameters must satisfy exactly one published alternative (type: null; required: Count); matched 0"
+      },
+      {
+        "field_path": "body.instances[0].parameters.Count",
+        "expected_type": "present",
+        "actual_type": "missing",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "required"
+        },
+        "message": "body.instances[0].parameters.Count is required"
+      },
+      {
+        "field_path": "body.instances[0].parameters.Comments",
+        "expected_type": "declared_property",
+        "actual_type": "unknown_property",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "property_set",
+          "allowed_values": [
+            "Comparer",
+            "Count",
+            "Keys",
+            "Values"
+          ]
+        },
+        "message": "body.instances[0].parameters.Comments is not a declared property"
+      },
+      {
+        "field_path": "body.instances[0].parameters.Mark",
+        "expected_type": "declared_property",
+        "actual_type": "unknown_property",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "property_set",
+          "allowed_values": [
+            "Comparer",
+            "Count",
+            "Keys",
+            "Values"
+          ]
+        },
+        "message": "body.instances[0].parameters.Mark is not a declared property"
+      }
+    ],
+    "error": "POST /revit/place-families violates the published tool contract: body.instances[0].parameters must satisfy exactly one published alternative (type: null; required: Count); matched 0; body.instances[0].parameters.Count is required; body.instances[0].parameters.Comments is not a declared property; body.instances[0].parameters.Mark is not a declared property. Inspect the exact tool contract and retry with a corrected request."
+  }
+}

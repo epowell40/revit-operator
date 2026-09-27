@@ -18,6 +18,7 @@ import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../s
 import { localProcessIsAlive, localRevitProcessGuardTarget } from "../src/benchmark/local_revit_process_liveness.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
 import { loadDurableToolEvidence, verifiedSessionMutationPaths } from "../src/benchmark/durable_tool_evidence.js";
+import { getOperatorAgentBaseInstructions } from "../src/brains/codex_brain.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
 
@@ -55,6 +56,7 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /flag\("--sidecar", "http:\/\/127\.0\.0\.1:3907"\)/);
   assert.match(runner, /harness_health_ms:/);
   assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
+  assert.match(runner, /const toolCalls = extractGeneralRevitToolCalls\(evaluatedAttempt\)/);
   assert.match(runner, /const readiness = await readExactFixtureHealth\(sidecar, expectedTitle\)/);
   assert.match(runner, /fixture_health_is_authoritative: Boolean\(requestedFixture \|\| orchestrateFixtures\)/);
   assert.match(runner, /initial_attempts: initialReadiness\.attempts/);
@@ -137,6 +139,21 @@ test("benchmark wrapper orchestrates controlled fixtures unless one is pinned an
   assert.match(wrapper, /Get-FileHash -LiteralPath \$interactionManifestCandidate -Algorithm SHA256/);
   assert.match(wrapper, /--interaction-manifest", \$resolvedInteractionManifest/);
   assert.match(wrapper, /InteractionManifest SHA-256 does not match ProtocolV2Envelope/);
+});
+
+test("opt-in Architectural link preflight runs for each case after fixture transition and before the agent", () => {
+  const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  const loop = runner.slice(runner.indexOf("for (const testCase of rescoreOnly || campaignStop"));
+  assert.match(loop, /await ensureFixtureActive\(/);
+  assert.match(loop, /await verifySnowdonArchitecturalFixtureBeforeAgent\(/);
+  assert.match(loop, /expectedDocumentPath: path\.resolve\(fixtureRoot, fixtureConfig\.fixtures\[preferredFixture\]\.sample_filename\)/);
+  assert.match(loop, /expectedArchitecturalPath: path\.resolve\(fixtureRoot, "Snowdon Towers Sample Architectural\.rvt"\)/);
+  assert.match(loop, /expectedDocumentTitle: fixtureConfig\.fixtures\[preferredFixture\]\.document_title/);
+  assert.match(loop, /requiresArchitecturalLink: fixtureConfig\.fixtures\[preferredFixture\]\.requires_architectural_link/);
+  assert.match(loop, /traces\.push\(await runCase\(/);
+  assert.ok(loop.indexOf("await ensureFixtureActive(") < loop.indexOf("await verifySnowdonArchitecturalFixtureBeforeAgent("));
+  assert.ok(loop.indexOf("await verifySnowdonArchitecturalFixtureBeforeAgent(") < loop.indexOf("traces.push(await runCase("));
+  assert.match(runner, /process\.argv\.includes\("--require-snowdon-architectural-link"\)/);
 });
 
 test("benchmark groups cases by fixture and fails closed on an unpinned mixed-model run", () => {
@@ -952,7 +969,7 @@ test("durable compact evidence counts distinct owners instead of treating two co
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {
-  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const codexPrompt = getOperatorAgentBaseInstructions();
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
   for (const prompt of [codexPrompt, openAiPrompt]) {
     assert.match(prompt, /Sheet\/titleblock parameter reads and verification must preserve sheet identity/);
@@ -964,7 +981,7 @@ test("both backend agent prompts preserve sheet identity while batching multi-sh
 });
 
 test("both backend agent prompts reject API-valid cross-service MEP peer substitutions", () => {
-  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const codexPrompt = getOperatorAgentBaseInstructions();
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
   for (const prompt of [codexPrompt, openAiPrompt]) {
     assert.match(prompt, /MEP peer-precedent rule/);
@@ -998,6 +1015,8 @@ test("sample fixture adapters bind discipline-specific tasks without changing th
   assert.equal(generalRevitFixtureForCase(fixtures, "r09_pipe_size_transition"), "snowdon_plumbing");
   assert.equal(generalRevitFixtureForCase(fixtures, "c20_add_duplex_match_circuit"), "snowdon_electrical");
   assert.equal(fixtures.fixtures.snowdon_hvac.document_title, "Snowdon Towers Sample HVAC");
+  assert.equal(fixtures.fixtures.snowdon_hvac.requires_architectural_link, true);
+  assert.equal(fixtures.fixtures.snowdon_plumbing.requires_architectural_link, false);
   assert.equal(fixtures.fixtures.snowdon_plumbing.sample_filename, "Snowdon Towers Sample Plumbing.rvt");
   assert.equal(fixtures.fixtures.snowdon_electrical.sample_filename, "Snowdon Towers Sample Electrical.rvt");
 });
@@ -1552,7 +1571,7 @@ test("authoritative Revit API assertions accept beyond-document persistence word
 
 test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
   for (const prompt of [
-    source("operator-backend/src/brains/codex_brain.ts"),
+    getOperatorAgentBaseInstructions(),
     source("operator-backend/src/brains/openai_brain.ts")
   ]) {
     assert.match(prompt, /authoritative, current, latest, or version-specific external documentation/);

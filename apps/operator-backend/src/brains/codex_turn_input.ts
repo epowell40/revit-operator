@@ -1,21 +1,23 @@
 import { formatUiContextConversationHistory } from "../conversation_history.js";
 import { TABULAR_AUDIT_VERIFICATION } from "../agent_response_policy.js";
 import type { ChatRequest } from "../contracts.js";
-import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
+import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 import { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
 import { formatToolResultsForCodex } from "./codex_tool_result_formatting.js";
 import { buildCodexVisualInput } from "./codex_visual_input.js";
+import { recoverAssignmentVisualAttachments, type AssignmentVisualRecovery } from "../attachments/assignment_visual_recovery.js";
 
 /** A continuation is a fresh observation boundary, even when user_text is empty. */
-export async function buildCodexTurnInput(req: ChatRequest, contextBlocks: string[]): Promise<UserInput[]> {
+export async function buildCodexTurnInput(req: ChatRequest, contextBlocks: string[], thinReference = false, recovery?: AssignmentVisualRecovery): Promise<UserInput[]> {
+  req = recoverAssignmentVisualAttachments(req, recovery);
   const visual = await buildCodexVisualInput(req);
   const userText = req.user_text?.trim();
   const context = req.context && typeof req.context === "object" ? req.context as Record<string, unknown> : {};
   const blocks = [
     ...contextBlocks,
-    context.revit ? TABULAR_AUDIT_VERIFICATION : "",
-    formatUiContextConversationHistory(req.session_id),
-    formatCodexRequestEnvelope(req),
+    context.revit && !thinReference ? TABULAR_AUDIT_VERIFICATION : "",
+    thinReference ? "" : formatUiContextConversationHistory(req.session_id),
+    formatCodexRequestEnvelope(req, thinReference),
     userText ? `USER:\n${req.user_text}` : req.user_attachments?.length
       ? "USER supplied attachments without a new written instruction. Use the existing assignment if it establishes the requested work; otherwise inspect the attachments and ask what result is wanted before changing the model."
       : "Continue the existing assignment using the current observations. Reconcile any uncertain prior write before further changes; do not repeat it to obtain a cleaner response.",

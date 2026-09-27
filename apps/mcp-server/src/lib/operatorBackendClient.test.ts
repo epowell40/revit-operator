@@ -303,3 +303,25 @@ test("principal credentials require TLS except for an exactly fenced loopback or
   const loopback = { ...insecure, allowed_origin: "http://127.0.0.1:7007" };
   assert.equal(buildOperatorBackendAuthHeaders(loopback, "http://127.0.0.1:7007/path").get("authorization"), "Bearer bearer");
 });
+
+
+test("compact child handoff preference is confined to the three authenticated operation methods", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createOperatorBackendClient({ baseUrl: "http://127.0.0.1:12345", token: "handoff-test-token",
+    fetchImpl: async (url, init) => { calls.push({ url: String(url), init }); return new Response('{"ok":true}', { status: 200 }); } });
+  const input = { operation_id: "child-1", arbitrary_model_field: "unchanged" };
+  await client.openAssignmentChildOperationV2(input);
+  await client.markAssignmentOperationDispatchV2(input);
+  await client.settleAssignmentOperationV2(input);
+  await client.manageAssignmentWorkPlanV2(input);
+  await client.retrieveEvidence(input);
+  assert.deepEqual(calls.map(call => new URL(call.url).pathname), [
+    "/api/assignments/v2/operations/children", "/api/assignments/v2/operations/dispatch", "/api/assignments/v2/operations/results",
+    "/api/assignments/v2/work-plan", "/evidence/retrieve"]);
+  calls.forEach((call, index) => {
+    const headers = new Headers(call.init?.headers);
+    assert.equal(headers.get("X-Operator-Assignment-Handoff"), index < 3 ? "operation_handoff_v1" : null);
+    assert.equal(headers.get("X-Operator-Token"), "handoff-test-token");
+    assert.deepEqual(JSON.parse(String(call.init?.body)), input);
+  });
+});

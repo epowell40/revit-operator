@@ -1,7 +1,7 @@
 /** Provider completion observations are scoped to one transport lifetime. */
 export type ProviderTurnCompletion = { status: "completed" | "interrupted"; interrupted: boolean };
 type Receipt = { status: "completed" | "interrupted" | "failed"; error: string | null };
-type Waiter = { settle: (receipt: Receipt) => void; reject: (error: Error) => void };
+type Waiter = { settle: (receipt: Receipt) => void; reject: (error: Error) => void; progress: () => void };
 const keyFor = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId]);
 
 export class CodexTurnCompletions {
@@ -22,17 +22,25 @@ export class CodexTurnCompletions {
     for (const waiter of [...(this.waiters.get(key) ?? [])]) waiter.settle(receipt);
   }
 
-  wait(opts: { threadId: string; turnId: string; timeoutMs: number; abortSignal?: AbortSignal }): Promise<ProviderTurnCompletion> {
-    const { threadId, turnId, timeoutMs, abortSignal } = opts;
+  observeProgress(threadId: unknown, turnId: unknown): void {
+    if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) return;
+    for (const waiter of [...(this.waiters.get(keyFor(threadId, turnId)) ?? [])]) waiter.progress();
+  }
+
+  wait(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<ProviderTurnCompletion> {
+    const { threadId, turnId, timeoutMs, maxWallMs, abortSignal } = opts;
     if (!threadId || !turnId || !Number.isFinite(timeoutMs) || timeoutMs < 0) return Promise.reject(new Error("Invalid Codex completion wait."));
+    if (maxWallMs !== undefined && (!Number.isFinite(maxWallMs) || maxWallMs < 0)) return Promise.reject(new Error("Invalid Codex completion wall limit."));
     if (abortSignal?.aborted) return Promise.reject(new Error("Codex turn wait aborted."));
     if (this.pendingCount >= 512) return Promise.reject(new Error("Too many pending Codex completion waits."));
     const key = keyFor(threadId, turnId);
     return new Promise((resolve, reject) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      let wallTimer: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => {
-        if (timer) clearTimeout(timer);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (wallTimer) clearTimeout(wallTimer);
         abortSignal?.removeEventListener("abort", onAbort);
         const entries = this.waiters.get(key);
         if (entries?.delete(waiter)) this.pendingCount -= 1;
@@ -45,8 +53,14 @@ export class CodexTurnCompletions {
         reject(error);
       };
       const onAbort = () => fail(new Error("Codex turn wait aborted."));
+      const armIdleTimer = () => {
+        if (settled) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => fail(new Error("Timed out waiting for Codex turn completion after provider inactivity.")), Math.min(timeoutMs, 2_147_483_647));
+      };
       const waiter: Waiter = {
         reject: fail,
+        progress: armIdleTimer,
         settle: receipt => {
           if (settled) return;
           if (receipt.status === "failed") return fail(new Error(receipt.error || "Codex turn failed."));
@@ -62,7 +76,8 @@ export class CodexTurnCompletions {
       this.waiters.set(key, entries);
       this.pendingCount += 1;
       abortSignal?.addEventListener("abort", onAbort, { once: true });
-      timer = setTimeout(() => fail(new Error("Timed out waiting for Codex turn completion.")), Math.min(timeoutMs, 2_147_483_647));
+      armIdleTimer();
+      if (maxWallMs !== undefined) wallTimer = setTimeout(() => fail(new Error("Timed out waiting for Codex turn completion at maximum duration.")), Math.min(maxWallMs, 2_147_483_647));
     });
   }
 

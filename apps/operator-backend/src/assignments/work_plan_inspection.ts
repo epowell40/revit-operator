@@ -3,6 +3,8 @@ import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/identity.js
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readEvidenceRef, readAuthoritativeEvidence } from "../evidence/evidence_store.js";
 import type { WorkPlanInspectionV2 } from "../domain/assignment-kernel/work_plan.js";
+import { verificationOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/outcome.js";
+import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "../verification/view_owned_detailing_v2.js";
 
 /** Retain evidence that an inspection actually read its targets. This certifies
  * coverage of the read, never the assistant's engineering interpretation. */
@@ -14,7 +16,8 @@ export function retainWorkPlanInspectionV2(snapshot: AssignmentSnapshotV2, opera
     if (!op || op.requested_effect !== "read" || op.persistent_effect !== "none" || op.settlement_state !== "settled"
         || result?.authority !== "native-host" || result.status !== "succeeded" || result.dispatch_state !== "dispatched"
         || !sameAssignmentBindingV2(op.binding, snapshot.current_binding) || !sameAssignmentBindingV2(result.binding, snapshot.current_binding)
-        || op.request_identity?.path !== "/revit/get-connectors") throw Error("work_plan_inspection_native_connectors_required");
+        || !["/revit/get-connectors", "/revit/view-owned-detailing"].includes(op.request_identity?.path ?? ""))
+      throw Error("work_plan_inspection_native_read_required");
     let accepted = false;
     for (const oid of op.observation_ids) {
       const observation = snapshot.observations[oid];
@@ -23,7 +26,22 @@ export function retainWorkPlanInspectionV2(snapshot: AssignmentSnapshotV2, opera
       const ref = readEvidenceRef(observation.raw_payload_ref.replace(/^evidence:/, ""));
       if (ref.byte_count > 8_000_000) continue;
       const data = JSON.parse(readAuthoritativeEvidence(ref, { ...snapshot.current_binding, attempt_id: id }).toString("utf8"));
-      if (payloadDigestV2(data).digest !== observation.raw_payload_hash || data.status !== "Ok" || !Array.isArray(data.results)
+      if (payloadDigestV2(data).digest !== observation.raw_payload_hash) continue;
+      if (op.request_identity?.path === "/revit/view-owned-detailing") {
+        const applied = op.verification_of_operation_id ? snapshot.operations[op.verification_of_operation_id] : null;
+        const body = applied?.input?.body as Record<string, unknown> | undefined;
+        const sourceId = Number(body?.viewId), name = body?.newName;
+        const createdIds = createdViewIdsFromIdentitiesV2(applied?.result?.affected_target_identities ?? []);
+        const targetId = Number(/^id:(\d+)$/.exec(op.target.target_id ?? "")?.[1]);
+        if (applied?.request_identity?.path !== "/revit/duplicate-view" || body?.withDetailing !== true
+            || !Number.isSafeInteger(sourceId) || sourceId <= 0 || typeof name !== "string"
+            || !Number.isSafeInteger(targetId) || !createdIds.includes(targetId)
+            || !Array.isArray(data.views) || !data.views.some((view: any) => view?.view?.id === targetId)
+            || !verificationOperationHasVerifiedPostconditionV2(snapshot, id)
+            || !duplicatedViewDetailingSatisfiedV2(sourceId, name, data, createdIds)) continue;
+        targets.add(`element_id:${targetId}`); observations.push(oid); accepted = true; break;
+      }
+      if (data.status !== "Ok" || !Array.isArray(data.results)
           || data.requestedCount !== data.results.length || data.scannedElementCount !== data.results.length
           || data.matchedElementCount !== data.results.length || data.failedElementCount !== 0 || data.connectorScanTruncatedElementCount !== 0
           || !data.results.length || new Set(data.results.map((r:any)=>r?.id)).size !== data.results.length

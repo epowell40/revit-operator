@@ -1,8 +1,50 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {polylineReadbackMatchesV2 as polylineReadbackDraft} from '../src/verification/polyline_readback_v2.js';
+import {polylineReadbackMatchesV2 as polylineReadbackDraft, createMepRouteReadbackMatchesV2} from '../src/verification/polyline_readback_v2.js';
 import {polylinePhysicalProof} from '../src/verification/polyline_physical_proof_v2.js';
+
+test('C93 exact committed Supply Air route accepts omitted optional endpoint flag only with complete physical proof',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c93-workflow-omitted-endpoint-flag.json','utf8'));
+ const matches=(f:any)=>polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors);
+ assert.equal(Object.hasOwn(fixture.input.body,'requireExistingEndpointConnections'),false);
+ assert.equal(matches(fixture),true,'the exact C93 committed route and combined native readback');
+ for(const [name,change] of Object.entries({
+  invalidFlag:(f:any)=>{f.input.body.requireExistingEndpointConnections='false';},
+  requireBothEnds:(f:any)=>{f.input.body.requireExistingEndpointConnections=true;},
+  wrongSystem:(f:any)=>{f.input.body.systemType='Exhaust Air';},
+  missingFitting:(f:any)=>{f.connectors.results=f.connectors.results.filter((r:any)=>r.category!=='OST_DuctFitting').slice(0,4);},
+  disconnectedStart:(f:any)=>{const duct=f.connectors.results.find((r:any)=>r.category==='OST_DuctCurves'); const port=duct.connectors.find((c:any)=>c.physicalConnectedTo?.some((x:any)=>x.ownerId===1542960));port.physicalConnectedTo=[];}
+ })){const f=structuredClone(fixture);(change as (f:any)=>void)(f);assert.equal(matches(f),false,name);}
+});
+
+test('C86 exact native create-mep-route proves its duct sizes, geometry and physical connections',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c86-create-mep-route-verification.json','utf8'));
+ const matches=(f:any)=>createMepRouteReadbackMatchesV2(f.input,f.apply,f.connectors.verificationParameters,f.connectors);
+ assert.equal(matches(fixture),true);
+ for(const change of [
+  (f:any)=>f.input.body.dryRun=true,
+  (f:any)=>f.input.body.ductTypeId=139185,
+  (f:any)=>f.connectors.verificationParameters.items[0].parameters.Diameter=1,
+  (f:any)=>f.connectors.results[0].connectors[0].physicalConnectedTo=[],
+  (f:any)=>f.input.body.points[1].x+=0.2,
+  (f:any)=>f.input.body.unexpectedMutation=true
+ ]){const f=structuredClone(fixture);change(f);assert.equal(matches(f),false);}
+});
+
+test('C84 native orthogonal route verifies from complete model readback without weakening physical proof',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c84-orthogonal-route-verification.json','utf8'));
+ const matches=(f:any)=>polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors);
+ assert.equal(matches(fixture),true,'the exact applied HRU route and native connector readback');
+ const wrongMode=structuredClone(fixture);wrongMode.input.body.routingMode='freeform';
+ assert.equal(matches(wrongMode),false,'unsupported routing mode');
+ const disconnected=structuredClone(fixture);
+ const first=disconnected.connectors.results.find((row:any)=>row.id===fixture.apply.applyResult.segments[0].id);
+ first.connectors[0].physicalConnectedTo=[];
+ assert.equal(matches(disconnected),false,'missing physical edge');
+ const wrongType=structuredClone(fixture);wrongType.input.body.ductTypeId=139185;
+ assert.equal(matches(wrongType),false,'rectangular type cannot verify round route');
+});
 
 test('direct C44 room exercise cannot verify a right-angle duct connection without an elbow',()=>{
  const {proof}=JSON.parse(fs.readFileSync('test/fixtures/direct-c44-missing-corner-fitting.json','utf8'));
@@ -37,6 +79,21 @@ test('external rigid duct needs independently read opposing peer axes and matchi
  const sc=straight.rows[0].connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1542938);
  for(const r of [sc.physicalConnectedTo[0],sc.connectedTo.find((r:any)=>r.ownerId===1542938)])r.coordinateSystem.basisZ=sc.coordinateSystem.basisZ.map((v:number)=>-v);
  assert.equal(polylinePhysicalProof(straight),true,'synthetic straight neighbor with independent peer-axis evidence');
+});
+
+test('one-sided continuation requires the intended start owner and an open far end',()=>{
+ const {proof}=JSON.parse(fs.readFileSync('test/fixtures/c44-polyline-source-geometry.json','utf8'));
+ const p=structuredClone(proof);
+ const far=p.rows.find((r:any)=>r.id===p.segmentIds.at(-1)).connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1464798);
+ far.physicalConnectedTo=[];far.connectedTo=[];far.physicalConnectionCount=0;far.isPhysicallyConnected=false;far.isConnected=false;
+ p.rows.find((r:any)=>r.id===p.segmentIds.at(-1)).openPhysicalConnectorCount=1;
+ p.endpointPolicy='existing_start_required';p.expectedStartOwnerId=1495652;
+ assert.equal(polylinePhysicalProof(p),true);
+ const wrong=structuredClone(p);wrong.expectedStartOwnerId=1495653;assert.equal(polylinePhysicalProof(wrong),false);
+ const absent=structuredClone(p);delete absent.expectedStartOwnerId;assert.equal(polylinePhysicalProof(absent),false);
+ const reversed=structuredClone(p);reversed.endpointPolicy='existing_end_required';reversed.expectedEndOwnerId=1495652;assert.equal(polylinePhysicalProof(reversed),false);
+ const connectedFar=structuredClone(p);connectedFar.rows.find((r:any)=>r.id===p.segmentIds.at(-1)).connectors.find((c:any)=>c.physicalConnectionCount===0).physicalConnectedTo=[{ownerId:1464798}];
+ assert.equal(polylinePhysicalProof(connectedFar),false);
 });
 
 test('retained C44 six-duct branch verifies L4 by independent native level name and ID',()=>{
@@ -112,6 +169,22 @@ open.connectors.openPhysicalConnectorCount=2;open.connectors.physicallyConnected
 open.connectors.results[0].openPhysicalConnectorCount=2;
 for(const c of open.connectors.results[0].connectors){c.connectedTo=[];c.physicalConnectedTo=[];c.physicalConnectionCount=0;c.isPhysicallyConnected=false;c.isConnected=false;}
 assert.equal(polylineReadbackDraft(open.input,open.apply,open.parameters,open.connectors),true,'synthetic open construction stage with retained native geometry');
+const continuation=structuredClone(fixture);
+continuation.input.body.requireExistingEndpointConnections=false;
+continuation.input.body.requiredExistingEndpoint='start';
+continuation.input.body.expectedExistingStartOwnerId=1495652;
+const terminal=continuation.connectors.results.find((r:any)=>r.id===proof.segmentIds.at(-1));
+const far=terminal.connectors.find((c:any)=>c.physicalConnectedTo[0]?.ownerId===1464798);
+far.connectedTo=[];far.physicalConnectedTo=[];far.physicalConnectionCount=0;far.isPhysicallyConnected=false;far.isConnected=false;
+terminal.openPhysicalConnectorCount=1;
+continuation.connectors.openPhysicalConnectorCount=1;continuation.connectors.physicallyConnectedConnectorCount=5;
+assert.equal(polylineReadbackDraft(continuation.input,continuation.apply,continuation.parameters,continuation.connectors),true,'one-sided continuation requires the named source owner');
+for(const [name,change] of Object.entries({
+ wrongOwner:(f:any)=>{f.input.body.expectedExistingStartOwnerId=1495653;},
+ missingOwner:(f:any)=>delete f.input.body.expectedExistingStartOwnerId,
+ wrongEnd:(f:any)=>{f.input.body.requiredExistingEndpoint='end';delete f.input.body.expectedExistingStartOwnerId;f.input.body.expectedExistingEndOwnerId=1495652;},
+ unverifiedFar:(f:any)=>{f.connectors.openPhysicalConnectorCount=0;}
+ })){const f=structuredClone(continuation);change(f);assert.equal(polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors),false,name);}
 const disconnectedBatch=structuredClone(fixture);disconnectedBatch.input.body.connectSegments=false;
 assert.equal(polylineReadbackDraft(disconnectedBatch.input,disconnectedBatch.apply,disconnectedBatch.parameters,disconnectedBatch.connectors),false,'multi-segment batches require explicit internal joining');
 });

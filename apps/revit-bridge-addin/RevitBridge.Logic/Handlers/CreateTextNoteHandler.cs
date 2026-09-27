@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -17,68 +18,63 @@ namespace RevitBridge.Logic.Handlers
             public double y { get; set; }
             public string text { get; set; }
             public long? typeId { get; set; }
+            public bool dryRun { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope).GetAwaiter().GetResult()));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
-            var p = JsonSerializer.Deserialize<Params>(jsonData);
-            if (p == null) throw new ArgumentException("create-text body is required.");
-            var doc = app.ActiveUIDocument.Document;
-            long textNoteId;
-            long resolvedViewId;
-            long resolvedTypeId;
-            string resolvedTypeName;
-            string normalizedText = RevitTextCasePolicy.NormalizeDraftingText(p.text ?? "");
-
-            using (var t = new Transaction(doc, "Create Text Note"))
+            var p = JsonSerializer.Deserialize<Params>(jsonData)
+                ?? throw new ArgumentException("create-text body is required.");
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            var view = doc.GetElement(ElementIdCompat.Create(p.viewId)) as View
+                ?? throw new InvalidOperationException($"View {p.viewId} not found.");
+            var textType = p.typeId.HasValue
+                ? doc.GetElement(ElementIdCompat.Create(p.typeId.Value)) as TextNoteType
+                : new FilteredElementCollector(doc).OfClass(typeof(TextNoteType)).Cast<TextNoteType>().FirstOrDefault();
+            if (textType == null) throw new InvalidOperationException("No TextNoteType found in project.");
+            var text = RevitTextCasePolicy.NormalizeDraftingText(p.text ?? "");
+            if (p.dryRun)
             {
-                t.Start();
-
-                var view = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.viewId)) as View;
-                if (view == null) throw new Exception($"View {p.viewId} not found");
-                resolvedViewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id);
-
-                // Default to first TextNoteType if not provided
-                var textType = p.typeId.HasValue
-                    ? doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.typeId.Value)) as TextNoteType
-                    : new FilteredElementCollector(doc)
-                        .OfClass(typeof(TextNoteType))
-                        .Cast<TextNoteType>()
-                        .FirstOrDefault();
-
-                if (textType == null) throw new Exception("No TextNoteType found in project.");
-                resolvedTypeId = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id);
-                resolvedTypeName = textType.Name;
-
-                // Create the text note
-                // XYZ origin depends on view type. For sheets/plans, Z is usually 0 or matches level elevation.
-                // We'll trust the user provided X/Y relative to the view's coordinate system.
-                XYZ origin = new XYZ(p.x, p.y, 0); 
-
-                // Adjust creation for View vs Sheet if necessary, but TextNote.Create takes a viewId
-                var created = TextNote.Create(doc, view.Id, origin, normalizedText, textType.Id);
-                textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
-
-                t.Commit();
-            }
-
-            return Task.FromResult<object>(new
-            {
-                status = "Success",
-                action = "create",
-                id = textNoteId,
-                textNoteId,
-                elementId = textNoteId,
-                createdElementId = textNoteId,
-                viewId = resolvedViewId,
-                text = normalizedText,
-                textType = new
+                return Task.FromResult<object>(new
                 {
-                    id = resolvedTypeId,
-                    name = resolvedTypeName
-                }
+                    status = "Dry Run", action = "create", dryRun = true,
+                    previewExecuted = false, applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                    plan = new { viewId = ElementIdCompat.GetValue(view.Id), x = p.x, y = p.y, text,
+                        textType = new { id = ElementIdCompat.GetValue(textType.Id), name = textType.Name } }
+                });
+            }
+            long textNoteId = 0;
+            enterNativeScope();
+            var result = NativeSingleTransaction.Execute(app, doc, "Create Text Note", nativeCreated =>
+            {
+                var created = TextNote.Create(doc, view.Id, new XYZ(p.x, p.y, 0), text, textType.Id);
+                textNoteId = ElementIdCompat.GetValue(created.Id);
+                nativeCreated.Add(textNoteId);
+                return new Dictionary<string, object?>
+                {
+                    ["action"] = "create", ["id"] = textNoteId, ["textNoteId"] = textNoteId,
+                    ["elementId"] = textNoteId, ["createdElementId"] = textNoteId,
+                    ["viewId"] = ElementIdCompat.GetValue(view.Id), ["text"] = text,
+                    ["textType"] = new { id = ElementIdCompat.GetValue(textType.Id), name = textType.Name }
+                };
             });
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var persisted = doc.GetElement(ElementIdCompat.Create(textNoteId)) as TextNote
+                    ?? throw new InvalidOperationException($"TextNote {textNoteId} disappeared after commit.");
+                if (persisted.OwnerViewId != view.Id) throw new InvalidOperationException("TextNote has a different owner view after commit.");
+                return new Dictionary<string, object?> { ["text"] = persisted.Text };
+            });
+            // Persisted values are evidence; this handler does not certify all requested semantics.
+            result.Remove("verified");
+            result.Remove("ok");
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
+            return Task.FromResult<object>(result);
         }
     }
 }
-

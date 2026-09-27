@@ -369,10 +369,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             var candidates = matchingKind.Count > 0 ? matchingKind : all;
             if (q.Length > 0)
             {
-                var exact = candidates.FirstOrDefault(x => x.Name.Equals(q, StringComparison.OrdinalIgnoreCase));
-                if (exact != null) return exact;
-                var contains = candidates.FirstOrDefault(x => x.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
-                if (contains != null) return contains;
+                var selectedName = MepSystemTypeNamePolicy.SelectExplicitName(q,
+                    candidates.Select(x => x.Name).ToArray());
+                if (selectedName != null)
+                    return candidates.First(x => x.Name == selectedName);
+                // An explicit service must never silently become the first
+                // unrelated Revit system type (for example ReturnAir -> Supply Air).
+                return null;
             }
             return candidates.FirstOrDefault();
         }
@@ -757,12 +760,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             Connector source,
             ISet<long> excludedOwnerIds,
             double maxDistanceFt,
-            out double distanceFt)
+            out double distanceFt,
+            long? expectedOwnerId = null)
         {
             Connector? best = null;
             distanceFt = double.MaxValue;
             var bestOwnerId = long.MaxValue;
-            foreach (var element in new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements())
+            IEnumerable<Element> candidates = expectedOwnerId.HasValue
+                ? new[] { doc.GetElement(ElementIdCompat.Create(expectedOwnerId.Value)) }.OfType<Element>()
+                : new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements();
+            foreach (var element in candidates)
             {
                 if (element == null || element is MEPSystem) continue;
                 var ownerId = ElementIdCompat.GetValue(element.Id);
@@ -791,6 +798,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             try
             {
                 if (a.Domain != b.Domain || a.Shape != b.Shape) return false;
+                if (!MepConnectorServicePolicy.AreCompatible(ConnectorService(a), ConnectorService(b))) return false;
                 const double toleranceFt = 1.0 / 192.0; // 1/16 inch
                 if (a.Shape == ConnectorProfileType.Round)
                     return Math.Abs(a.Radius - b.Radius) <= toleranceFt;
@@ -802,6 +810,32 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 return false;
             }
+        }
+
+        internal static string ConnectorService(Connector connector)
+        {
+            var propertyName = connector.Domain.ToString() switch
+            {
+                "DomainHvac" => "DuctSystemType",
+                "DomainPiping" => "PipeSystemType",
+                "DomainElectrical" => "ElectricalSystemType",
+                _ => ""
+            };
+            if (propertyName.Length == 0) return "";
+            try { return connector.GetType().GetProperty(propertyName)?.GetValue(connector, null)?.ToString() ?? ""; }
+            catch { return ""; }
+        }
+
+        internal static string SystemTypeService(MEPSystemType? systemType)
+        {
+            if (systemType == null) return "";
+            try
+            {
+                var classification = systemType.GetType().GetProperty("SystemClassification")?.GetValue(systemType, null)?.ToString();
+                if (!string.IsNullOrWhiteSpace(classification)) return classification;
+            }
+            catch { }
+            return systemType.Name ?? "";
         }
 
         internal static bool TryCreateElbowOrConnect(Document doc, Connector? a, Connector? b, out long? fittingId, out string method, out string? error)

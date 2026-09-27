@@ -281,6 +281,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/get-family-file-path", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/open-family-doc", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/find-text-notes", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/view-owned-detailing", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/replace-text-note", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/save-family-doc", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/load-family-doc", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
@@ -440,6 +441,7 @@ namespace RevitBridge.Operator
             if (m == "GET" || m == "HEAD" || m == "OPTIONS") return OperatorActionEffect.Read;
             if (m != "POST") return OperatorActionEffect.Apply;
             if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
+            if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
 
             if (string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
             {
@@ -447,6 +449,15 @@ namespace RevitBridge.Operator
             }
 
             var hasObjectBody = TryParseBodyObject(body, out var root);
+            if (hasObjectBody &&
+                (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(p, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Both native workflows roll back when apply=false. An explicit
+                // conflicting commit signal still reserves apply authority.
+                if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;
+                return HasFalseValue(root, "apply") ? OperatorActionEffect.Preview : OperatorActionEffect.Apply;
+            }
             if (hasObjectBody && string.Equals(p, "/revit/move-elements", StringComparison.OrdinalIgnoreCase))
             {
                 if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;
