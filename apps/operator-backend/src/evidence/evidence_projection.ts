@@ -1,5 +1,6 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
+import { projectConnectorGraph } from "./connector_graph_projection.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
   evidenceTargetIdentityValuesV1,
@@ -275,6 +276,15 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
   const documentationBase = { ...base, key_counts: {}, key_facts: {}, target_scope: [], effect_state: null };
   const documentation = projectToolDocumentation(ref, raw, maxBytes - projectionBytes(documentationBase) - 64);
   if (documentation) candidate = { ...documentationBase, tool_documentation: documentation, truncated: !documentation.complete };
+  // Connector coverage replaces generic inventory heuristics in this recognized
+  // presentation. Reserve the complete outer projection within the same budget.
+  const connectorBase = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope };
+  const connectorGraph = projectConnectorGraph(ref, raw, maxBytes - projectionBytes(connectorBase) - 32);
+  if (connectorGraph) {
+    const expanded = { ...connectorBase, connector_graph: connectorGraph, truncated: !connectorGraph.lists_complete || !connectorGraph.coverage.rows_complete };
+    candidate = projectionBytes(expanded) <= maxBytes ? expanded : { ...base,
+      diagnostics: ["connector_graph omitted: item byte budget; raw connector rows remain retrievable", ...base.diagnostics], truncated: true };
+  }
   while (projectionBytes(candidate) > maxBytes) {
     const facts = Object.entries(candidate.key_facts);
     const counts = Object.entries(candidate.key_counts);

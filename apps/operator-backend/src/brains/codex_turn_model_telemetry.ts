@@ -55,6 +55,7 @@ export function createCodexTurnModelTelemetry(args: {
 } {
   const receipts: ModelCallReceipt[] = [];
   const compactions: string[] = [];
+  const startedCompactions = new Set<string>();
   let actualModel = args.settings.model;
   let latestUsage: CodexUsageSnapshot | null = null;
   return {
@@ -98,17 +99,20 @@ export function createCodexTurnModelTelemetry(args: {
         // Never sum them or impersonate raw provider receipts/budget admissions.
         return;
       }
-      if (notification.method === "item/completed" && params.turnId === args.turnId) {
+      if (["item/started", "item/completed"].includes(notification.method ?? "") && params.turnId === args.turnId) {
         const item = params.item as { type?: unknown; id?: unknown } | undefined;
-        if (item?.type === "contextCompaction" && typeof item.id === "string" && item.id.length > 0 && !compactions.includes(item.id)) {
-          compactions.push(item.id);
+        if (item?.type === "contextCompaction" && typeof item.id === "string" && item.id.trim()) {
+          const started = notification.method === "item/started";
+          if (compactions.includes(item.id) || started && startedCompactions.has(item.id)) return;
+          if (started) startedCompactions.add(item.id);
+          else compactions.push(item.id);
           try {
-            appendEvent(args.sessionId, "assistant", "codex.context_compaction.completed", {
+            appendEvent(args.sessionId, "assistant", started ? "codex.context_compaction.started" : "codex.context_compaction.completed", {
               thread_id: args.threadId, turn_id: args.turnId, item_id: item.id,
-              completed_after_provider_calls: receipts.length
+              ...(started ? { started_after_provider_calls: receipts.length } : { completed_after_provider_calls: receipts.length })
             });
           } catch {
-            // Diagnostic failure cannot alter the durable mutation ledger.
+            // Receipt time is diagnostic only; no inferred start time or duration.
           }
         }
         return;

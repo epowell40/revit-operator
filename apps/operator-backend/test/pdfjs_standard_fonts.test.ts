@@ -45,6 +45,7 @@ test("uploaded nonembedded-font PDF carries visible wording into the model pixel
     fs.writeFileSync(path.join(root, "redline.pdf"), standardFontPdf("Helvetica-Bold"));
     const result = await buildCodexVisualInput({ user_attachments: [{ id: "font-redline", relative_path: "redline.pdf" }] });
     const input = result.input.find(item => item.type === "image"); assert.ok(input && input.type === "image");
+    assert.ok("url" in input);
     const img = await loadImage(Buffer.from(input.url.split(",")[1]!, "base64"));
     const canvas = createCanvas(img.width, img.height); canvas.getContext("2d").drawImage(img, 0, 0);
     assert.ok(redInk(canvas) > 1000);

@@ -33,6 +33,10 @@ namespace RevitBridge.Logic.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope).GetAwaiter().GetResult()));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : JsonSerializer.Deserialize<Params>(jsonData);
             if (p == null) throw new ArgumentException("Invalid JSON payload.");
@@ -154,6 +158,7 @@ namespace RevitBridge.Logic.Handlers
                     conflictingGuardIds,
                     missingGuardIds,
                     changedElementIds = new List<long>(),
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     changes
                 });
             }
@@ -189,233 +194,99 @@ namespace RevitBridge.Logic.Handlers
                     });
                 }
 
-                return Task.FromResult<object>(new { ok = dryRunOk, dryRun = true, changes });
+                return Task.FromResult<object>(new { ok = dryRunOk, dryRun = true, changes,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted() });
             }
 
-            using (var t = new Transaction(doc, "Change Element Type"))
+            var targets = new List<(long Id, Element Element, long OldTypeId, string? OldTypeName)>();
+            foreach (var id in ids)
             {
-                try
+                var element = doc.GetElement(ElementIdCompat.Create(id));
+                if (element == null)
                 {
-                    var startStatus = t.Start();
-                    if (startStatus != TransactionStatus.Started)
-                    {
-                        return Task.FromResult<object>(new
-                        {
-                            ok = false,
-                            count = 0,
-                            rolledBack = false,
-                            failureReason = "Revit did not start the type-change transaction.",
-                            transactionStartStatus = startStatus.ToString(),
-                            changedElementIds = new List<long>()
-                        });
-                    }
+                    changes.Add(new { elementId = id, ok = false, error = "Element not found" });
+                    continue;
                 }
-                catch (Exception ex)
+                var oldTypeId = ElementIdCompat.GetValue(element.GetTypeId());
+                if (!expectedOldTypes.TryGetValue(id, out var expected) || expected != oldTypeId)
                 {
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = 0,
-                        rolledBack = false,
-                        failureReason = "Revit could not start the type-change transaction.",
-                        error = ex.Message,
-                        changedElementIds = new List<long>()
-                    });
+                    changes.Add(new { elementId = id, ok = false, error = "Current type no longer matches expectedOldTypes.",
+                        oldTypeId, expectedOldTypeId = expected, newTypeId = newTypeIdValue });
+                    continue;
                 }
-                var targets = new List<(long Id, Element Element, long OldTypeId, string? OldTypeName)>();
-                foreach (var id in ids)
-                {
-                    var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
-                    if (elem == null)
-                    {
-                        changes.Add(new { elementId = id, ok = false, error = "Element not found" });
-                        continue;
-                    }
-
-                    var oldTypeId = elem.GetTypeId();
-                    var oldType = doc.GetElement(oldTypeId) as ElementType;
-                    var oldTypeIdValue = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId);
-                    if (expectedOldTypes.TryGetValue(id, out var expectedOldTypeId) && expectedOldTypeId != oldTypeIdValue)
-                    {
-                        changes.Add(new
-                        {
-                            elementId = id,
-                            ok = false,
-                            error = "Current type no longer matches expectedOldTypes.",
-                            oldTypeId = oldTypeIdValue,
-                            expectedOldTypeId,
-                            newTypeId = newTypeIdValue
-                        });
-                        continue;
-                    }
-                    targets.Add((id, elem, oldTypeIdValue, oldType?.Name));
-                }
-
-                if (changes.Count > 0 || targets.Count != ids.Count)
-                {
-                    var rolledBack = RollBackTransaction(t);
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = 0,
-                        rolledBack,
-                        failureReason = "Type-change preconditions failed before any element was changed.",
-                        changedElementIds = new List<long>(),
-                        changes
-                    });
-                }
-
-                var attemptedChanges = new List<object>();
-                try
-                {
-                    foreach (var target in targets)
-                    {
-                        target.Element.ChangeTypeId(newType!.Id);
-                        attemptedChanges.Add(new
-                        {
-                            elementId = target.Id,
-                            ok = true,
-                            oldTypeId = target.OldTypeId,
-                            oldTypeName = target.OldTypeName,
-                            newTypeId = RevitBridge.Common.ElementIdCompat.GetValue(newType.Id),
-                            newTypeName = newType.Name
-                        });
-                    }
-                    doc.Regenerate();
-                }
-                catch (Exception ex)
-                {
-                    var rolledBack = RollBackTransaction(t);
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = 0,
-                        rolledBack,
-                        failureReason = "A type change failed; the complete batch was rolled back.",
-                        error = ex.Message,
-                        changedElementIds = new List<long>(),
-                        attemptedChanges
-                    });
-                }
-
-                var newTypeIdActual = RevitBridge.Common.ElementIdCompat.GetValue(newType!.Id);
-                var preCommitReadback = targets.Select(target => new
-                {
-                    elementId = target.Id,
-                    actualTypeId = RevitBridge.Common.ElementIdCompat.GetValue(target.Element.GetTypeId()),
-                    expectedTypeId = newTypeIdActual
-                }).ToList();
-                var mismatches = preCommitReadback.Where(row => row.actualTypeId != row.expectedTypeId).ToList();
-                if (mismatches.Count > 0)
-                {
-                    var rolledBack = RollBackTransaction(t);
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = 0,
-                        rolledBack,
-                        failureReason = "Type-change readback failed; the complete batch was rolled back.",
-                        changedElementIds = new List<long>(),
-                        readback = preCommitReadback,
-                        mismatches,
-                        attemptedChanges
-                    });
-                }
-
-                try
-                {
-                    var commitStatus = t.Commit();
-                    if (commitStatus != TransactionStatus.Committed)
-                    {
-                        var rolledBack = EnsureRolledBack(t, commitStatus);
-                        return Task.FromResult<object>(new
-                        {
-                            ok = false,
-                            count = 0,
-                            rolledBack,
-                            failureReason = "Revit did not commit the complete type-change batch.",
-                            transactionCommitStatus = commitStatus.ToString(),
-                            changedElementIds = new List<long>(),
-                            attemptedChanges
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var rolledBack = RollBackTransaction(t);
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = 0,
-                        rolledBack,
-                        failureReason = "Revit could not commit the type-change batch.",
-                        error = ex.Message,
-                        changedElementIds = new List<long>(),
-                        attemptedChanges
-                    });
-                }
-
-                changes.AddRange(attemptedChanges);
-                try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
-
-                var readback = targets.Select(target =>
-                {
-                    var current = doc.GetElement(ElementIdCompat.Create(target.Id));
-                    return new
-                    {
-                        elementId = target.Id,
-                        actualTypeId = current == null ? 0 : ElementIdCompat.GetValue(current.GetTypeId()),
-                        expectedTypeId = newTypeIdActual
-                    };
-                }).ToList();
-                var postCommitMismatches = readback.Where(row => row.actualTypeId != row.expectedTypeId).ToList();
-                if (postCommitMismatches.Count > 0)
-                {
-                    return Task.FromResult<object>(new
-                    {
-                        ok = false,
-                        count = targets.Count,
-                        committed = true,
-                        rolledBack = false,
-                        failureReason = "Committed type-change readback did not match the requested type.",
-                        newTypeId = newTypeIdActual,
-                        changedElementIds = targets.Select(target => target.Id).OrderBy(x => x).ToList(),
-                        readback,
-                        mismatches = postCommitMismatches,
-                        changes
-                    });
-                }
-
+                targets.Add((id, element, oldTypeId, doc.GetElement(element.GetTypeId())?.Name));
+            }
+            if (changes.Count > 0 || targets.Count != ids.Count)
                 return Task.FromResult<object>(new
                 {
-                    ok = true,
-                    count = targets.Count,
-                    committed = true,
-                    rolledBack = false,
-                    newTypeId = newTypeIdActual,
-                    newTypeName = newType!.Name,
-                    changedElementIds = targets.Select(target => target.Id).OrderBy(x => x).ToList(),
-                    readback,
-                    changes
+                    ok = false, count = 0, changedElementIds = new List<long>(), changes,
+                    failureReason = "Type-change preconditions failed before any element was changed.",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted()
                 });
-            }
-        }
 
-        private static bool RollBackTransaction(Transaction transaction)
-        {
-            try { return transaction.RollBack() == TransactionStatus.RolledBack; }
-            catch { return false; }
-        }
-
-        private static bool EnsureRolledBack(Transaction transaction, TransactionStatus knownStatus)
-        {
-            if (knownStatus == TransactionStatus.RolledBack) return true;
-            try
+            var requestedTypeId = newType!.Id;
+            var requestedTypeName = newType.Name;
+            var resultingIds = new Dictionary<long, long>();
+            var modifiedIds = new HashSet<long>();
+            var deletedIds = new HashSet<long>();
+            enterNativeScope();
+            var result = NativeSingleTransaction.Execute(app, doc, "Change Element Type", nativeCreated =>
             {
-                if (transaction.GetStatus() == TransactionStatus.RolledBack) return true;
+                foreach (var target in targets)
+                {
+                    if (ElementIdCompat.GetValue(target.Element.GetTypeId()) != target.OldTypeId)
+                        throw new InvalidOperationException("Type-change precondition changed before mutation.");
+                    var replacement = target.Element.ChangeTypeId(requestedTypeId);
+                    var resultingId = target.Id;
+                    if (replacement != ElementId.InvalidElementId)
+                    {
+                        resultingId = ElementIdCompat.GetValue(replacement);
+                        nativeCreated.Add(resultingId);
+                        deletedIds.Add(target.Id);
+                    }
+                    else if (target.OldTypeId != newTypeIdValue) modifiedIds.Add(target.Id);
+                    resultingIds[target.Id] = resultingId;
+                    changes.Add(new { elementId = target.Id, resultingElementId = resultingId, ok = true,
+                        oldTypeId = target.OldTypeId, oldTypeName = target.OldTypeName,
+                        newTypeId = newTypeIdValue, newTypeName = requestedTypeName });
+                }
+                doc.Regenerate();
+                foreach (var id in resultingIds.Values)
+                {
+                    var current = doc.GetElement(ElementIdCompat.Create(id));
+                    if (current == null || ElementIdCompat.GetValue(current.GetTypeId()) != newTypeIdValue)
+                        throw new InvalidOperationException("Type-change readback failed; the complete batch must roll back.");
+                }
+                return new Dictionary<string, object?>
+                {
+                    ["count"] = targets.Count, ["newTypeId"] = newTypeIdValue, ["newTypeName"] = requestedTypeName,
+                    ["changedElementIds"] = resultingIds.Values.Distinct().OrderBy(id => id).ToList(), ["changes"] = changes
+                };
+            }, nativeModifiedElements: () => modifiedIds, nativeDeletedElements: () => deletedIds);
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var readback = resultingIds.Select(pair =>
+                {
+                    var current = doc.GetElement(ElementIdCompat.Create(pair.Value));
+                    return new { elementId = pair.Key, resultingElementId = pair.Value,
+                        actualTypeId = current == null ? 0 : ElementIdCompat.GetValue(current.GetTypeId()),
+                        expectedTypeId = newTypeIdValue };
+                }).ToList();
+                if (readback.Any(row => row.actualTypeId != row.expectedTypeId))
+                    throw new InvalidOperationException("Committed type-change readback did not match the requested type.");
+                return new Dictionary<string, object?> { ["readback"] = readback };
+            });
+            var receipt = (OperatorNativeTransactionReceipt)result["transaction"]!;
+            result["committed"] = receipt.CommittedValue;
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Applied");
+            result["rolledBack"] = receipt.Status == "rolled_back";
+            if (receipt.CommittedValue != true)
+            {
+                result["count"] = 0;
+                result["changedElementIds"] = new List<long>();
             }
-            catch { }
-            return RollBackTransaction(transaction);
+            try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
+            return Task.FromResult<object>(result);
         }
     }
 }

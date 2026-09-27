@@ -1,4 +1,4 @@
-import { readdir, mkdtemp, mkdir, rm } from "node:fs/promises";
+import { readdir, readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -9,7 +9,23 @@ const jobOptions = args.filter((value) => value.startsWith("--jobs="));
 if (jobOptions.length > 1) throw new Error("Specify --jobs only once.");
 const jobs = jobOptions.length ? Number(jobOptions[0].slice("--jobs=".length)) : 1;
 if (!Number.isInteger(jobs) || jobs < 1 || jobs > 8) throw new Error("--jobs must be an integer from 1 to 8.");
-const selected = args.filter((value) => !value.startsWith("--jobs="));
+const frontierOptions = args.filter(value => value.startsWith("--frontier-manifest="));
+if (frontierOptions.length > 1) throw new Error("Specify --frontier-manifest only once.");
+const selected = args.filter((value) => !value.startsWith("--jobs=") && !value.startsWith("--frontier-manifest="));
+if (frontierOptions.length && selected.length) throw new Error("Do not combine --frontier-manifest with individual test files.");
+if (frontierOptions.length) {
+  const manifestPath = frontierOptions[0].slice("--frontier-manifest=".length);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (manifest.schema !== "revit-operator.release-frontier/v1" || !Array.isArray(manifest.backend_tests)) {
+    throw new Error("Invalid release-frontier manifest.");
+  }
+  for (const name of manifest.backend_tests) {
+    if (typeof name !== "string" || !/^[a-zA-Z0-9._-]+\.test\.ts$/.test(name)) {
+      throw new Error("Invalid release-frontier backend test name.");
+    }
+    selected.push(path.join(testDirectory, name.replace(/\.ts$/, ".js")));
+  }
+}
 const files = selected.length ? selected : (await readdir(testDirectory))
   .filter((name) => name.endsWith(".test.js"))
   .sort()

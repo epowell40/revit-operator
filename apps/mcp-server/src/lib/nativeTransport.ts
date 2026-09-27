@@ -60,6 +60,12 @@ export type NativeTransportResult = Readonly<{
   receiptSha256: string;
 }>;
 
+export type NativePreparedDispatchV1 = Readonly<{
+  request_id: string; request_nonce_sha256: string; server_epoch: string;
+  method: string; path: string; body_present: boolean; source_body_sha256: string;
+  channel: "search" | "generic_call" | "typed_mcp"; alias: string; transport_receipt_sha256: string;
+}>;
+
 export class NativeTransportProtocolError extends Error {
   readonly phase: "pre_dispatch" | "response";
   readonly requestId?: string;
@@ -296,6 +302,7 @@ export async function callNativeTransport(input: {
   laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   requestId?: string;
   onDispatch?: (requestId: string) => void;
+  beforeDispatch?: (identity: NativePreparedDispatchV1) => void | Promise<void>;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
@@ -321,6 +328,15 @@ export async function callNativeTransport(input: {
     env: environment
   });
 
+  // Retain exact host correlation before any network bytes can leave. Failure
+  // here is pre-dispatch, not an ambiguous native timeout.
+  try {
+    const digest = (text: string) => `sha256:${crypto.createHash("sha256").update(text, "utf8").digest("hex")}`;
+    await input.beforeDispatch?.(Object.freeze({ request_id: request.requestId,
+      request_nonce_sha256: digest(request.requestNonce), server_epoch: request.serverEpoch,
+      method: input.method, path: input.path, body_present: input.method === "POST", source_body_sha256: digest(input.bodyJson ?? ""),
+      channel: input.channel ?? "generic_call", alias: input.alias ?? "revit_call_tool", transport_receipt_sha256: digest(receiptRaw) }));
+  } catch (error) { throw new NativeTransportProtocolError("Protected native dispatch retention failed.", "pre_dispatch", error, request.requestId); }
   let response: Response;
   try {
     input.onDispatch?.(request.requestId);

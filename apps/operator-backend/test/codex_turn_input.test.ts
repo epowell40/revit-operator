@@ -61,7 +61,7 @@ test("attachment-only request transports exact uploaded pixels and current assig
   assert.match(text, /VISUAL INPUT COVERAGE/);
   const images = input.filter(item => item.type === "image");
   assert.equal(images.length, 1);
-  assert.equal(images[0].url, `data:image/png;base64,${png.toString("base64")}`);
+  assert.ok("url" in images[0]); assert.equal(images[0].url, `data:image/png;base64,${png.toString("base64")}`);
   assert.equal(images[0].detail, "original");
 });
 
@@ -105,7 +105,7 @@ test("large drawing sets cannot crowd the latest Revit capture out of the visual
   }), []);
   const images = input.filter(item => item.type === "image");
   assert.equal(images.length, 6);
-  assert.equal(images[0].url, `data:image/png;base64,${png.toString("base64")}`);
+  assert.ok("url" in images[0]); assert.equal(images[0].url, `data:image/png;base64,${png.toString("base64")}`);
   assert.match(input.filter(item => item.type === "text").map(item => item.text).join("\n"), /Initial image budget reached/);
 });
 

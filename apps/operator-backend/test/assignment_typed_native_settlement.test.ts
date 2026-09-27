@@ -280,3 +280,146 @@ test("transport-bound typed parameter preview retains authoritative rollback tru
     assert.equal(preview.current.apply_opportunity_consumed, false);
   });
 });
+
+test("tag-elements exact plain Dry Run remains blocked while proven not-started planning permits a later apply", { concurrency: false }, async () => {
+  const fixture = JSON.parse(fs.readFileSync(path.resolve('test/fixtures/tag-elements-dry-run-plain.json'), 'utf8'));
+  assert.equal(fixture.payload.transaction, undefined);
+  for (const variant of ["retained_plain", "observed_unknown", "not_started", "repair_rolled_back", "committed", "pending", "malformed"] as const) {
+    await workspace(async () => {
+      const sessionId = `tag-elements-settlement-${variant}`;
+      const { goal, run } = assignment(sessionId, "apply");
+      let dispatches = 0;
+      const apply = variant === "committed";
+      const notStarted = variant === "not_started", rolledBack = variant === "repair_rolled_back";
+      const effect = apply ? "applied" : notStarted || rolledBack ? "none" : "unknown";
+      const authority = rolledBack ? "native_rollback" : apply || notStarted ? "native_transaction" : "native_host";
+      const firstSettlement = {
+        ...nativeSettlement({ assignmentId: goal.id, runId: run.runId, generation: run.generation,
+          nativeAttemptId: `native:${sessionId}`, path: fixture.input.path,
+          effect, authority, requestedEffect: apply ? "apply" : "preview" }),
+        effect_reason: notStarted ? "native_transaction_not_started" : rolledBack ? "verified_native_rollback"
+          : apply ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+        ...(variant === "malformed" ? { effect_state: "unrecognized" } : {})
+      };
+      const firstPayload = {
+        ...structuredClone(fixture.payload),
+        ...(notStarted ? { previewExecuted: false, applied: false, transaction: { status: "not_started", committed: false, affected_element_ids: [] } } : {}),
+        ...(rolledBack ? { previewExecuted: true, applied: false, transaction: { status: "rolled_back", committed: false, affected_element_ids: [] } } : {}),
+        ...(apply ? { status: "Success", dryRun: false, applied: true, tagIds: [10101], transaction: { status: "committed", committed: true, affected_element_ids: [10101] } } : {}),
+        ...(variant === "pending" ? { transaction: { status: "pending", committed: null, affected_element_ids: [] } } : {}),
+        ...(variant === "retained_plain" ? {} : { canonical_attempt_settlement: firstSettlement })
+      };
+      const runtime = { callTool: async () => {
+        dispatches++;
+        const payload = dispatches === 1 ? firstPayload : {
+          status: "Success", dryRun: false, tagIds: [10101], transaction: { status: "committed", committed: true, affected_element_ids: [10101] },
+          canonical_attempt_settlement: nativeSettlement({ assignmentId: goal.id, runId: run.runId, generation: run.generation,
+            nativeAttemptId: `native:${sessionId}:apply`, path: fixture.input.path, effect: "applied", authority: "native_transaction", requestedEffect: "apply" })
+        };
+        return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+      } };
+      const owner = beginTeammateLoopOwner(runtime, {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: sessionId, message_id: `message:${sessionId}`,
+        user_text: "Add the drawing's duct size labels to the existing draft.",
+        context: { revit: { source: { live: true }, process_id: 42, document: { title: "Disposable", path: "C:\\Disposable.rvt" } } }
+      });
+      const invoke = (name: string, dryRun: boolean) => handleCodexServerRequest(runtime as any, {
+        id: `request:${sessionId}:${name}`, method: "item/tool/call", params: {
+          namespace: "revit_operator", turnId: `turn:${sessionId}`, callId: `call:${sessionId}:${name}`, tool: "revit_call_tool",
+          arguments: { ...fixture.input, body: { ...fixture.input.body, dryRun } }
+        }
+      } as any) as Promise<any>;
+      try {
+        const first = await invoke("first", !apply);
+        const current = projection(goal.id);
+        assert.equal(dispatches, 1, variant);
+        assert.equal(current.attempts[0]?.effect.state, effect, JSON.stringify({ variant, first, current }));
+        assert.equal(current.unresolved_unknown_attempt_ids.length, effect === "unknown" ? 1 : 0, variant);
+        if (variant !== "retained_plain" && variant !== "malformed") assert.equal(current.attempts[0]?.effect.authority, authority, variant);
+        if (!apply) {
+          assert.equal(current.apply_opportunity_consumed, false, variant);
+          const followup = await invoke("apply", false);
+          assert.equal(dispatches, effect === "none" ? 2 : 1, JSON.stringify({ variant, followup, current: projection(goal.id) }));
+          if (effect === "none") {
+            assert.equal(projection(goal.id).attempts.at(-1)?.effect.state, "applied", variant);
+            assert.equal(projection(goal.id).unresolved_unknown_attempt_ids.length, 0, variant);
+          } else {
+            assert.equal(followup.success, false, variant);
+            assert.match(JSON.stringify(followup), /assignment_settlement_blocked/, variant);
+            assert.equal(projection(goal.id).unresolved_unknown_attempt_ids.length, 1, variant);
+          }
+        }
+      } finally {
+        endTeammateLoopOwner(owner);
+      }
+    });
+  }
+});
+
+test("tag-elements actual MCP V2 envelope preserves advisory operation admission after preview settlement", { concurrency: false }, async () => {
+  // Source-mode checks execute source on both sides; compiled frontiers use the matching built MCP module.
+  const mcpModule = new URL(import.meta.url.endsWith(".ts")
+    ? "../../mcp-server/src/lib/assignmentKernelV2.ts"
+    : "../../../mcp-server/dist/lib/assignmentKernelV2.js", import.meta.url);
+  const mcp = await import(mcpModule.href);
+  const { createAssignmentKernelForGoalV2 } = await import("../src/assignments/assignment_kernel_v2_factory.js");
+  const { getAssignmentKernelSnapshotV2 } = await import("../src/assignments/assignment_kernel_v2_store.js");
+  const { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2, settleAssignmentKernelOperationV2 } = await import("../src/assignments/assignment_kernel_v2_execution.js");
+  const { runWithRequestContext } = await import("../src/request_context.js");
+  const { createOperatorBackendAuth } = await import("../src/operator_backend_auth.js");
+  const fixture = JSON.parse(fs.readFileSync(path.resolve('test/fixtures/tag-elements-dry-run-plain.json'), 'utf8'));
+  const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only", { OPERATOR_API_BASE_URL: "http://127.0.0.1:7007" }) };
+  for (const variant of ["retained_plain", "not_started", "pending"] as const) {
+    await workspace(async () => {
+      const sessionId = `tag-elements-v2-${variant}`;
+      const oldMode = process.env.REVIT_OPERATOR_MODE, oldSessions = process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS;
+      process.env.REVIT_OPERATOR_MODE = "local";
+      process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS = sessionId;
+      try {
+        await runWithRequestContext(local, async () => {
+          const goal = createGoal({ title: "Add source duct labels", objective: "Finish the existing draft's source-supported duct labels.",
+            acceptance_criteria: ["Source-supported duct labels are readable."], status: "active", related_session_id: sessionId,
+            work_budget: { requested_effect: "apply", document_fingerprint: "disposable-tag-fixture" } });
+          const { kernel_version: _version, ...binding } = createAssignmentKernelForGoalV2({ goal, run_id: `run:${sessionId}` });
+          const state = () => getAssignmentKernelSnapshotV2(goal.id)!;
+          assert.equal(state().spec.execution_policy?.mode, "local_advisory_v1");
+          const open = (id: string, dryRun: boolean) => openAssignmentKernelOperationV2({ snapshot: state(),
+            provider_turn_id: "turn", controller_request_id: id, capability_id: "revit_call_tool", classified_effect: dryRun ? "preview" : "apply",
+            target_tokens: fixture.input.body.elementIds.map((id: number) => `id:${id}`), arguments: { ...fixture.input, body: { ...fixture.input.body, dryRun } } });
+          const lease = open("plan-tags", true);
+          markAssignmentKernelOperationDispatchStartedV2(lease);
+          const notStarted = variant === "not_started";
+          const payload = { ...structuredClone(fixture.payload),
+            ...(notStarted ? { previewExecuted: false, applied: false, transaction: { status: "not_started", committed: false, affected_element_ids: [] } } : {}),
+            ...(variant === "pending" ? { transaction: { status: "pending", committed: null, affected_element_ids: [] } } : {}),
+            canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview",
+              effect_state: notStarted ? "none" : "unknown", effect_authority: notStarted ? "native_transaction" : "native_host",
+              effect_reason: notStarted ? "native_transaction_not_started" : "native_handler_returned_without_authoritative_settlement", request_dispatched: true }
+          };
+          const envelope = await mcp.runWithAssignmentKernelV2({ [mcp.ASSIGNMENT_KERNEL_V2_META_KEY]: lease }, async () => {
+            const request = await mcp.beginAssignmentKernelNativeRequestV2("POST", fixture.input.path, fixture.input.body, { classified_effect: "preview" });
+            await mcp.markAssignmentKernelNativeRequestDispatchingV2(request);
+            await mcp.recordAssignmentKernelNativeResultV2("POST", fixture.input.path, payload, request);
+            return mcp.decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool");
+          });
+          const settled = settleAssignmentKernelOperationV2(lease, envelope);
+          assert.equal(settled.result.persistent_effect, notStarted ? "none" : "unknown");
+          assert.equal(state().unresolved_unknown_operation_ids.length, notStarted ? 0 : 1);
+          assert.deepEqual(state().current_binding, binding);
+          if (notStarted) {
+            const subsequent = open("apply-tags", false);
+            assert.equal(subsequent.requested_effect, "apply");
+            assert.deepEqual(subsequent.binding, binding);
+          } else {
+            const before = state();
+            assert.throws(() => open("apply-tags", false), /unknown_effect_requires_reconciliation/);
+            assert.deepEqual(state(), before);
+          }
+        });
+      } finally {
+        if (oldMode === undefined) delete process.env.REVIT_OPERATOR_MODE; else process.env.REVIT_OPERATOR_MODE = oldMode;
+        if (oldSessions === undefined) delete process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS; else process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS = oldSessions;
+      }
+    });
+  }
+});

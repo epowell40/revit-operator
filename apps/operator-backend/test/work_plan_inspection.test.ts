@@ -41,3 +41,10 @@ test("retained eight-item C43 declaration permits explicit QC dependencies witho
  const plan=declareWorkPlanV2(s,{items:revised,assumptions:[]},"2026-09-16T14:00:00Z");assert.equal(plan.items.length,8);assert.equal(plan.items.filter(p=>p.kind==="inspection").length,2);
  revised[3].depends_on=[revised[3].item_id];assert.throws(()=>declareWorkPlanV2(s,{items:revised,assumptions:[]},"2026-09-16T14:00:00Z"),/Inspections must name/);
 });
+test("C111 explains why a verified edit cannot complete an item declared afterward",()=>{
+ const s=fixture();const item=s.work_plan.items[0];delete item.completed_at;item.operation_ids=[];
+ const applied=Object.values(s.operations).find((op:any)=>op.requested_effect==="apply") as any;
+ item.declared_at="2099-01-01T00:00:00Z";
+ assert.throws(()=>completeWorkPlanItemV2(s,item.item_id,[applied.operation_id],"2099-01-01T00:01:00Z"),
+  /This edit occurred before the item was declared/);
+});

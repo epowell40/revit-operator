@@ -98,6 +98,7 @@ namespace RevitBridge.Logic.Handlers
                     locationObj = null;
                 }
 
+                var effectiveLevelId = HostedPlacementUtil.ReadInstanceLevelId(elem);
                 results.Add(new
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(elem.Id),
@@ -108,8 +109,9 @@ namespace RevitBridge.Logic.Handlers
                     name = elem.Name,
                     familyName = (elem as FamilyInstance)?.Symbol?.FamilyName,
                     typeName = (elem as FamilyInstance)?.Symbol?.Name,
-                    levelId = elem.LevelId != ElementId.InvalidElementId ? (long?)ElementIdCompat.GetValue(elem.LevelId) : null,
-                    levelName = (doc.GetElement(elem.LevelId) as Level)?.Name,
+                    levelId = effectiveLevelId,
+                    levelIdBasis = effectiveLevelId.HasValue ? "native_effective_level" : null,
+                    levelName = effectiveLevelId.HasValue ? (doc.GetElement(ElementIdCompat.Create(effectiveLevelId.Value)) as Level)?.Name : null,
                     // Read properties from the requested element, not the
                     // optional view used to evaluate its bounding box. Creation
                     // verification needs the actual scale as well as identity.

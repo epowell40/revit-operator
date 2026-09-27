@@ -1,8 +1,11 @@
+import { advisoryVerificationV2 } from "../execution_policy.js";
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
 import { CONVERSATION_EVIDENCE_GUIDANCE } from "../../../conversation_evidence_guidance.js";
 import { inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
+import { readyNativeRollbackPreviewV2 } from "./ready_native_preview.js";
+import { nativeCommitProgressIdentityV2, nativeVerificationProgressIdentityV2 } from "./native_work_progress.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
@@ -63,6 +66,16 @@ export function operationProposalCanResolveInputSchemaGapV2(input: Readonly<{
   return exactCorrectedRetry || exactSchemaDocumentation;
 }
 
+function readyPreviewFollowupV2(snapshot: AssignmentSnapshotV2): string {
+  const ready = readyNativeRollbackPreviewV2(snapshot);
+  if (!ready || Object.values(snapshot.operations).some(op => op.requested_effect === "apply"
+      && Date.parse(op.opened_at) >= Date.parse(ready.opened_at))) return "";
+  return `Native dry run ${ready.operation_id} is ready and rolled back; it has not drafted the edit. `
+    + "If its route still matches the source and current model, make the authorized matching apply call now, "
+    + "then independently read back the changed elements and physical connections. "
+    + "Use more discovery or another preview only for a concrete source, target, or input mismatch. ";
+}
+
 function inputSchemaIssueRequirementV2(issue: OperationInputSchemaIssueV2): string {
   const constraint = issue.expected_constraint;
   const constraintDetail = constraint.kind === "enum"
@@ -115,7 +128,7 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     criterion_ids: snapshot.spec.criteria.filter(c => c.required).map(c => c.criterion_id),
     work_unit_ids: ["work-primary", "work-discovery", "work-evidence"], required_fact_ids: [], current_observation_ids: [],
     reason: snapshot.work_plan
-      ? "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot,item)).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
+      ? readyPreviewFollowupV2(snapshot) + "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot,item)).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
         + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds; inspection items need fresh native connector or copied-view-detailing reads of all dependent edit targets after the latest edit. Declare inspections with kind=inspection and dependsOn naming edit items. Inspection coverage does not certify engineering correctness. One item cannot complete the entire request."
       : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Decompose the full requested area into independently verifiable room/system/branch items, with source basis and explicit assumptions. Include all required work; declare at least two items. Planning cannot authorize extra work or establish native completion."
   });
@@ -255,6 +268,11 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
 export function criteriaPendingEvaluationV2(snapshot: AssignmentSnapshotV2): Readonly<Record<string, readonly string[]>> {
   const pending: Record<string, readonly string[]> = {};
   for (const criterion of snapshot.spec.criteria) {
+    // A first successful native edit proves a result exists, but it cannot
+    // certify a multi-item drawing assignment while declared work remains.
+    if (snapshot.spec.requested_effect === "apply" && workPlanPendingV2(snapshot)
+        && criterion.semantic_fact_requirements.length === 1
+        && criterion.semantic_fact_requirements[0] === "task.result_available") continue;
     const observations = relevantObservationIds(snapshot, criterion);
     if (observations.length === 0) continue;
     const newestObservationVersion = Math.max(...observations.map((id) => snapshot.observation_versions[id] ?? 0));
@@ -278,7 +296,7 @@ function budgetBlocker(snapshot: AssignmentSnapshotV2, budget: AssignmentProgres
   if (providerCalls >= budget.max_provider_calls) return "provider_call_budget_exhausted";
   if (reasoningTurns >= budget.max_reasoning_turns) return "reasoning_turn_budget_exhausted";
   if (operationCount >= budget.max_operations) return "operation_budget_exhausted";
-  if (consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
+  if (!advisoryVerificationV2(snapshot) && consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
   if (tokens >= budget.max_total_tokens) return "token_budget_exhausted";
   if (assignmentActiveExecutionTimeMsV2(snapshot, now) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";
   return null;
@@ -326,7 +344,7 @@ export function decideAssignmentProgressV2(input: Readonly<{
   }
   const pendingCriteria = criteriaPendingEvaluationV2(snapshot);
   const criterionIds = Object.keys(pendingCriteria).sort();
-  if (criterionIds.length > 0) {
+  if (!advisoryVerificationV2(snapshot) && criterionIds.length > 0) {
     return {
       ...decisionBase(snapshot, now, "evaluate_criteria", "New authoritative observations can advance criteria."),
       decision: "evaluate_criteria",
@@ -336,7 +354,7 @@ export function decideAssignmentProgressV2(input: Readonly<{
   }
   const semanticResultGaps = deriveProgressGapsV2(snapshot)
     .filter((gap) => gap.kind === "operation_result_semantic_invalid");
-  if (semanticResultGaps.length > 0) {
+  if (!advisoryVerificationV2(snapshot) && semanticResultGaps.length > 0) {
     return {
       ...decisionBase(snapshot, now, "blocked", "operation_result_semantic_invalid"),
       decision: "blocked", outcome: "blocked",
@@ -358,15 +376,15 @@ export function decideAssignmentProgressV2(input: Readonly<{
   if (exhausted) {
     return { ...decisionBase(snapshot, now, "blocked", exhausted), decision: "blocked", outcome: "blocked", gap_ids: gaps.map((gap) => gap.gap_id) };
   }
-  if (gaps.length === 0) {
+  if (!advisoryVerificationV2(snapshot) && gaps.length === 0) {
     return { ...decisionBase(snapshot, now, "blocked", "Active quiescent Assignment has no admissible unresolved work."), decision: "blocked", outcome: "blocked", gap_ids: [] };
   }
   return {
-    ...decisionBase(snapshot, now, "admit_reasoning_turn", "Bounded reasoning is justified by explicit unresolved criterion gaps."),
+    ...decisionBase(snapshot, now, "admit_reasoning_turn", advisoryVerificationV2(snapshot) ? "Host-bounded local advisory work; semantic checks are observations, not completion certificates." : "Bounded reasoning is justified by explicit unresolved criterion gaps."),
     decision: "admit_reasoning_turn",
     gap_ids: gaps.map((gap) => gap.gap_id),
     criterion_ids: unique(gaps.flatMap((gap) => gap.criterion_ids)),
-    expected_information: unique(gaps.flatMap((gap) => gap.required_fact_ids))
+    expected_information: advisoryVerificationV2(snapshot) ? ["Continue the original task within the immutable host budget; retain results for independent review."] : unique(gaps.flatMap((gap) => gap.required_fact_ids))
   };
 }
 
@@ -392,6 +410,10 @@ export function assertOperationAdvancesProgressV2(input: Readonly<{
   operation: OperationV2;
   budget: AssignmentProgressBudgetV2;
 }>): void {
+  if (advisoryVerificationV2(input.snapshot)) {
+    assertOperationDoesNotRepeatSchemaRejectedInputV2(input);
+    return; // Native mutation identity, effect and authority are still checked by the reducer.
+  }
   const gaps = new Map(deriveProgressGapsV2(input.snapshot).map((gap) => [gap.gap_id, gap]));
   if (input.operation.advances_criterion_ids.length === 0 && input.operation.resolves_gap_ids.length === 0) throw new Error("operation_progress_binding_missing");
   for (const gapId of input.operation.resolves_gap_ids) if (!gaps.has(gapId)) throw new Error("operation_progress_gap_not_current");
@@ -549,6 +571,28 @@ export function buildProgressEpochV2(input: Readonly<{
   const beforeGaps = deriveProgressGapsV2(input.before).map((gap) => gap.gap_id);
   const afterGaps = deriveProgressGapsV2(input.after).map((gap) => gap.gap_id);
   const progressReasons: ProgressEpochV2["progress_reasons"][number][] = [];
+  const previousCommits = new Set(Object.values(input.before.operations).map(op => nativeCommitProgressIdentityV2(input.before, op)).filter(Boolean));
+  const previousVerifications = new Set(Object.values(input.before.operations).map(op => nativeVerificationProgressIdentityV2(
+    input.before, op, input.supporting_discovery_read_identities?.before ?? {})).filter(Boolean));
+  const relevantOperation = (operation: OperationV2): boolean => {
+    const seen = new Set<string>();
+    let candidate: OperationV2 | undefined = operation;
+    while (candidate && seen.size < 8 && !seen.has(candidate.operation_id)) {
+      seen.add(candidate.operation_id);
+      if (candidate.admission_state !== "admitted" || !sameAssignmentBindingV2(candidate.binding, input.after.current_binding)) return false;
+      if (candidate.resolves_gap_ids.some(gap => input.stated_gap_ids.includes(gap))) return true;
+      candidate = candidate.parent_operation_id ? input.after.operations[candidate.parent_operation_id] : undefined;
+    }
+    return false;
+  };
+  if (Object.values(input.after.operations).some(op => {
+    const identity = nativeCommitProgressIdentityV2(input.after, op);
+    return identity !== null && !previousCommits.has(identity) && relevantOperation(op);
+  })) progressReasons.push("native_change_committed");
+  if (Object.values(input.after.operations).some(op => {
+    const identity = nativeVerificationProgressIdentityV2(input.after, op, input.supporting_discovery_read_identities?.after ?? {});
+    return identity !== null && !previousVerifications.has(identity) && relevantOperation(op);
+  })) progressReasons.push("verification_observation_added");
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
   if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");

@@ -48,7 +48,7 @@ import {
   openAssignmentKernelOperationV2,
   settleAssignmentKernelOperationV2
 } from "../src/assignments/assignment_kernel_v2_execution.js";
-import { canonicalJsonV2, OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
+import { appliedOperationHasVerifiedPostconditionV2, canonicalJsonV2, deriveProgressGapsV2, OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -775,7 +775,8 @@ test("Candidate 42 operation-admission rejection remains structured and never be
   });
 });
 
-test("Candidate 66 incapable postcondition readback is rejected across the dynamic-handler seam before dispatch", { concurrency: false }, async () => {
+for (const observedValue of ["wrong", "exact"] as const) {
+test(`Candidate 66 supporting read crosses the dynamic seam before ${observedValue} postcondition readback`, { concurrency: false }, async () => {
   await withWorkspace(async () => {
     const sessionId = "candidate66-verifier-admission-seam";
     const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
@@ -836,12 +837,37 @@ test("Candidate 66 incapable postcondition readback is rejected across the dynam
       }
     });
 
+    const beforeRead = advanceAssignmentKernelProgressV2({ binding }).snapshot;
     let runtimeCalls = 0;
     const runtime = {
       assignmentKernelV2Binding: () => binding,
-      callTool: async () => {
+      callTool: async (_tool: string, args: any, context: any) => {
         runtimeCalls += 1;
-        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+        const lease = context.assignmentKernelV2;
+        assert.deepEqual(lease.binding, getAssignmentKernelSnapshotV2(goal.id)!.current_binding);
+        assert.equal(lease.request_identity.path, args.path);
+        context.onMcpAccepted?.();
+        const readPayload = args.path === "/revit/get-element-summary"
+          ? { ok: true, items: [{ elementId: 1478627, category: "Text Notes", name: "TextNote" }] }
+          : { ok: true, requestedElementIds: [1478627], exactElementFilterApplied: true, itemsComplete: true,
+            items: [{ elementId: 1478627, text: observedValue === "wrong" ? "WRONG VALUE" : replacement }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(readPayload) }],
+          structuredContent: {
+            schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+            operation_result_v2: {
+              schema: OPERATION_RESULT_V2_SCHEMA,
+              result_id: `result-${lease.operation_id}`, operation_id: lease.operation_id, binding: lease.binding,
+              status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none",
+              native_transaction_state: "not_applicable", authority: "native-host",
+              result_schema_id: `operator-native/POST:${args.path}/v2`, observation_required: true,
+              raw_payload_hash: createHash("sha256").update(canonicalJsonV2(readPayload), "utf8").digest("hex"),
+              receipt_id: `receipt-${lease.operation_id}`, native_correlation_id: `native-${lease.operation_id}`,
+              request_identity: lease.request_identity, completed_at: new Date().toISOString()
+            },
+            observation: { raw_payload: readPayload, semantic_facts: [], verification_relevance: ["task_result"] }
+          }
+        };
       },
       queueAssignmentKernelV2TurnStop: () => {}
     };
@@ -853,26 +879,52 @@ test("Candidate 66 incapable postcondition readback is rejected across the dynam
       context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
     });
     try {
-      const response = await handleCodexServerRequest(runtime as any, {
-        id: "candidate66-incapable-readback-request",
-        method: "item/tool/call",
+      const read = (callId: string, path: string) => handleCodexServerRequest(runtime as any, {
+        id: `${callId}-request`, method: "item/tool/call",
         params: {
           namespace: "revit_operator", threadId: "candidate66-thread", turnId: "candidate66-verification-turn",
-          callId: "candidate66-incapable-readback", tool: "revit_call_tool",
-          arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1478627] } }
+          callId, tool: "revit_call_tool", arguments: { method: "POST", path, body: { elementIds: [1478627] } }
         }
-      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
-      assert.equal(response.success, false);
-      assert.match(response.contentItems?.[0]?.text ?? "", /assignment_kernel_v2_verification_capability_inadmissible/);
-      assert.match(response.contentItems?.[0]?.text ?? "", /\/revit\/find-text-notes/);
-      assert.equal(runtimeCalls, 0, "incapable verification must be rejected before MCP or Revit dispatch");
-      assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
-        "rejected verification must not consume another OperationV2 identity");
+      } as any) as Promise<{ success?: boolean; contentItems?: Array<{ text?: string }> }>;
+      const response = await read("candidate66-supporting-summary", "/revit/get-element-summary");
+      assert.equal(response.success, true, JSON.stringify(response.contentItems));
+      assert.equal(runtimeCalls, 1, "a supporting native read remains available while verification is pending");
+      const afterRead = getAssignmentKernelSnapshotV2(goal.id)!;
+      const supporting = Object.values(afterRead.operations).find(operation => operation.operation_id !== applyLease.operation_id)!;
+      assert.equal(supporting.purpose, "discovery");
+      assert.equal(supporting.fulfillment_role, "supporting_control");
+      assert.deepEqual(supporting.eligible_criterion_ids, []);
+      assert.equal(supporting.verification_of_operation_id, undefined);
+      assert.equal(supporting.dispatch_state, "dispatched");
+      assert.equal(supporting.persistent_effect, "none");
+      assert.equal(supporting.settlement_state, "settled");
+      assert.deepEqual(afterRead.criteria, beforeRead.criteria, "summary context cannot advance task criteria");
+      assert.equal(afterRead.work_unit_states["work-verification"], beforeRead.work_unit_states["work-verification"]);
+      assert.equal(appliedOperationHasVerifiedPostconditionV2(afterRead, applyLease.operation_id), false);
+      assert.ok(deriveProgressGapsV2(afterRead).some(gap => gap.gap_id === `verification:${applyLease.operation_id}`));
+      const supportingObservation = Object.values(afterRead.observations).find(observation => observation.operation_id === supporting.operation_id)!;
+      assert.equal(supportingObservation.evidence_class, "control");
+      assert.deepEqual(supportingObservation.eligible_criterion_ids, []);
+      assert.ok(!supportingObservation.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+      assert.equal(afterRead.outcome, "active");
+
+      const valueRead = await read(`candidate66-${observedValue}-value`, "/revit/find-text-notes");
+      assert.equal(valueRead.success, true, JSON.stringify(valueRead.contentItems));
+      const afterValueRead = getAssignmentKernelSnapshotV2(goal.id)!;
+      assert.equal(runtimeCalls, 2);
+      assert.equal(appliedOperationHasVerifiedPostconditionV2(afterValueRead, applyLease.operation_id), observedValue === "exact");
+      assert.deepEqual(afterValueRead.criteria, beforeRead.criteria,
+        "even a successful postcondition read cannot replace this fixture's delegated task-result criterion");
+      assert.equal(afterValueRead.outcome, "active");
+      assert.ok(deriveProgressGapsV2(afterValueRead).some(gap => gap.kind === "criterion_fact_missing"));
+      assert.equal(deriveProgressGapsV2(afterValueRead).some(gap => gap.gap_id === `verification:${applyLease.operation_id}`), observedValue !== "exact");
+      assert.equal(Object.keys(afterValueRead.operations).length, 3);
     } finally {
       endTeammateLoopOwner(teammate);
     }
   });
 });
+}
 
 test("Candidate 68 contextual view scope cannot displace the affected TextNote at the dynamic-handler seam", { concurrency: false }, async () => {
   await withWorkspace(async () => {
@@ -1228,3 +1280,4 @@ test("existing fencing baseline: duplicate delivery is idempotent and stale/post
     assert.equal(afterLate.attempts[0]?.receipt_refs.length, beforeLate.attempts[0]?.receipt_refs.length);
   });
 });
+

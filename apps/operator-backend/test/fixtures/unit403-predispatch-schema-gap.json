@@ -1,0 +1,98 @@
+{
+  "description": "Exact sample-model request and rejected input-schema gap from Unit403 event203272. Full original event and canonical failed result are retained privately; only diagnostic and request are needed here.",
+  "original_result_sha256": "9a7c092f4f8de2eab0dd67109bc9000149bae09f8044faa9a923402a59319696",
+  "request": {
+    "method": "POST",
+    "path": "/revit/place-families",
+    "body": {
+      "familySymbolId": 1365172,
+      "levelName": "L4",
+      "dryRun": false,
+      "instances": [
+        {
+          "x": -37.41,
+          "y": -5.767,
+          "z": 40.1667,
+          "coordinateMode": "absolute_model",
+          "rotationDegrees": 0,
+          "parameters": {
+            "Mark": "HRU403",
+            "Comments": "M104 existing conditions draft; elevation assumed to match Unit 404. No inferred airflow."
+          }
+        }
+      ]
+    }
+  },
+  "input_schema_gap": {
+    "schema": "revit-operator.operation-input-schema-gap/v2",
+    "gap_id": "input-schema:opv2_6ee8a8f545f0707d62af1a9070c146875d0779e8ab2adfa867cd6e8b6d8d3e07",
+    "operation_id": "opv2_6ee8a8f545f0707d62af1a9070c146875d0779e8ab2adfa867cd6e8b6d8d3e07",
+    "capability_id": "revit_call_tool",
+    "input_schema_id": "operator-native/POST:/revit/place-families/input/v1",
+    "input_schema_digest": "930059a44bcc6534934647437af405a00cf7e3fe253848e1370dc67bbecba1ec",
+    "method": "POST",
+    "path": "/revit/place-families",
+    "request_signature": "6f4e878a75f04fcece47e7984dac54da9a0f088599d0e35d54c33d33dc0d3fca",
+    "dispatch": false,
+    "effect": "none",
+    "issues": [
+      {
+        "field_path": "body.instances[0].parameters",
+        "expected_type": "exactly_one_schema",
+        "actual_type": "object",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "schema_alternative",
+          "type": "oneOf",
+          "allowed_values": [
+            "type: null",
+            "required: Count"
+          ]
+        }
+      },
+      {
+        "field_path": "body.instances[0].parameters.Count",
+        "expected_type": "present",
+        "actual_type": "missing",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "required"
+        }
+      },
+      {
+        "field_path": "body.instances[0].parameters.Comments",
+        "expected_type": "declared_property",
+        "actual_type": "unknown_property",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "property_set",
+          "allowed_values": [
+            "Comparer",
+            "Count",
+            "Keys",
+            "Values"
+          ]
+        }
+      },
+      {
+        "field_path": "body.instances[0].parameters.Mark",
+        "expected_type": "declared_property",
+        "actual_type": "unknown_property",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "property_set",
+          "allowed_values": [
+            "Comparer",
+            "Count",
+            "Keys",
+            "Values"
+          ]
+        }
+      }
+    ]
+  }
+}

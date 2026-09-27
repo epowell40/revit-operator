@@ -518,6 +518,54 @@
       "path": "/revit/native-api-ops",
       "examples": [
         {
+          "name": "Pass a typed Document result into a read-only constructor",
+          "request": {
+            "operations": [
+              {
+                "id": "active_document",
+                "op": "get_property",
+                "target": "uidoc",
+                "property": "Document"
+              },
+              {
+                "id": "collector",
+                "op": "construct",
+                "memberId": "ctor:Autodesk.Revit.DB.FilteredElementCollector(Autodesk.Revit.DB.Document)",
+                "args": [
+                  {
+                    "$ref": "active_document"
+                  }
+                ]
+              },
+            {
+              "id": "instances",
+              "op": "call",
+              "target": "$collector",
+              "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.WhereElementIsNotElementType()",
+              "args": []
+            },
+            {
+              "id": "element_count",
+              "op": "call",
+              "target": "$instances",
+                "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.GetElementCount()",
+                "args": []
+              }
+            ],
+            "returns": [
+              "element_count"
+            ]
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_ops.v2",
+            "ok": true,
+            "argument_references": true,
+            "results": {
+              "element_count": 100
+            }
+          }
+        },
+        {
           "name": "Count sheets with an ephemeral collector chain",
           "request": {
             "operations": [
@@ -596,6 +644,101 @@
       "method": "POST",
       "path": "/revit/native-api-mutation-ops",
       "examples": [
+        {
+          "name": "Create a one-foot generic 3D placeholder",
+          "notes": [
+            "Creates a 1 ft cube at model origin as an unhosted Generic Model, without MEP connectors or an assigned service. Adapt the origin and dimensions to observed task requirements before use; these values are illustrative, not a room-specific placement.",
+            "These exact member ids use Revit 2024.3 API assembly 24.3.30.0. For another installed build, copy the corresponding live native-api-catalog member_id and check graph_signature_supported/graph_allowed. Graph-only members cannot be invoked through native-api-call.",
+            "All native-object arguments are typed references to earlier results in this request. A collection is an array of those reference objects, not a string containing a variable name. No handle survives into another request.",
+            "For a cylinder, replace the four lines with two Arc.Create(XYZ,XYZ,XYZ) semicircles using shared endpoints and opposite points on the arcs, then pass those two curve references to CurveLoop.Create. The three arc arguments are end0, end1, pointOnArc; use the exact live member_id.",
+            "The authorized apply example uses commit directly. Choose rollback for an optional preview or explicit dry-run request; keep explicit read-only requests read-only. A rollback returns transient result ids, not saved elements.",
+            "The graph allows creation of one element and modification of no pre-existing elements. Detached curve/solid construction does not itself persist model elements. Confirm actual native settlement and inspect the resulting geometry before reporting the placeholder complete."
+          ],
+          "request": {
+            "operations": [
+              { "id": "document", "op": "get_property", "target": "uidoc", "property": "Document" },
+              { "id": "category", "op": "construct", "memberId": "ctor:Autodesk.Revit.DB.ElementId(Autodesk.Revit.DB.BuiltInCategory)", "args": ["OST_GenericModel"] },
+              { "id": "edge_a", "op": "call", "memberId": "method:Autodesk.Revit.DB.Line.CreateBound(Autodesk.Revit.DB.XYZ,Autodesk.Revit.DB.XYZ)", "args": [[0, 0, 0], [1, 0, 0]] },
+              { "id": "edge_b", "op": "call", "memberId": "method:Autodesk.Revit.DB.Line.CreateBound(Autodesk.Revit.DB.XYZ,Autodesk.Revit.DB.XYZ)", "args": [[1, 0, 0], [1, 1, 0]] },
+              { "id": "edge_c", "op": "call", "memberId": "method:Autodesk.Revit.DB.Line.CreateBound(Autodesk.Revit.DB.XYZ,Autodesk.Revit.DB.XYZ)", "args": [[1, 1, 0], [0, 1, 0]] },
+              { "id": "edge_d", "op": "call", "memberId": "method:Autodesk.Revit.DB.Line.CreateBound(Autodesk.Revit.DB.XYZ,Autodesk.Revit.DB.XYZ)", "args": [[0, 1, 0], [0, 0, 0]] },
+              { "id": "loop", "op": "call", "memberId": "method:Autodesk.Revit.DB.CurveLoop.Create(System.Collections.Generic.IList`1[[Autodesk.Revit.DB.Curve, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]])", "args": [[{"$ref":"edge_a"}, {"$ref":"edge_b"}, {"$ref":"edge_c"}, {"$ref":"edge_d"}]] },
+              { "id": "solid", "op": "call", "memberId": "method:Autodesk.Revit.DB.GeometryCreationUtilities.CreateExtrusionGeometry(System.Collections.Generic.IList`1[[Autodesk.Revit.DB.CurveLoop, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]],Autodesk.Revit.DB.XYZ,System.Double)", "args": [[{"$ref":"loop"}], [0, 0, 1], 1] },
+              { "id": "placeholder", "op": "call", "memberId": "method:Autodesk.Revit.DB.DirectShape.CreateElement(Autodesk.Revit.DB.Document,Autodesk.Revit.DB.ElementId)", "args": [{"$ref":"document"}, {"$ref":"category"}] },
+              { "id": "set_shape", "op": "call", "memberId": "method:Autodesk.Revit.DB.DirectShape.SetShape(System.Collections.Generic.IList`1[[Autodesk.Revit.DB.GeometryObject, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]])", "target": "$placeholder", "args": [[{"$ref":"solid"}]] }
+            ],
+            "returns": ["placeholder"],
+            "transaction": {
+              "mode": "commit",
+              "name": "Create generic 3D placeholder",
+              "maxAffectedElements": 1,
+              "allowCreate": true,
+              "allowedExistingElementIds": []
+            },
+            "maxTotalMs": 10000,
+            "maxOperationMs": 5000
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_mutation_ops.v1",
+            "ok": true,
+            "transaction": { "status": "committed", "committed": true, "affected_element_count": 1 },
+            "results": { "placeholder": { "id": 12345, "category": "Generic Models" } }
+          }
+        },
+        {
+          "name": "Rollback-test a static mutation using an explicit Document argument reference",
+          "request": {
+            "operations": [
+              {
+                "id": "active_document",
+                "op": "get_property",
+                "target": "uidoc",
+                "property": "Document"
+              },
+              {
+                "id": "move",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.ElementTransformUtils.MoveElement(Autodesk.Revit.DB.Document,Autodesk.Revit.DB.ElementId,Autodesk.Revit.DB.XYZ)",
+                "args": [
+                  {
+                    "$ref": "active_document"
+                  },
+                  12345,
+                  [
+                    0.25,
+                    0,
+                    0
+                  ]
+                ]
+              }
+            ],
+            "returns": [
+              "move"
+            ],
+            "transaction": {
+              "mode": "rollback",
+              "name": "Operator typed document argument test",
+              "maxAffectedElements": 8,
+              "allowCreate": false,
+              "allowedExistingElementIds": [
+                12345
+              ]
+            },
+            "maxTotalMs": 5000,
+            "maxOperationMs": 2000
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_mutation_ops.v1",
+            "ok": true,
+            "transaction": {
+              "status": "rolled_back",
+              "committed": false
+            },
+            "results": {
+              "move": null
+            }
+          }
+        },
         {
           "name": "Rollback-test one exact active-view name mutation",
           "request": {
@@ -8484,12 +8627,14 @@
               {
                 "x": 0,
                 "y": 0,
-                "z": 0
+                "z": 0,
+                "coordinateMode": "legacy_level_offset"
               },
               {
                 "x": 10,
                 "y": 0,
-                "z": 0
+                "z": 0,
+                "coordinateMode": "legacy_level_offset"
               }
             ],
             "dryRun": true
@@ -8515,13 +8660,15 @@
                 "levelName": "Level 1",
                 "x": 0,
                 "y": 0,
-                "z": 0
+                "z": 0,
+                "coordinateMode": "legacy_level_offset"
               },
               {
                 "levelName": "Level 2",
                 "x": 0,
                 "y": 0,
-                "z": 10
+                "z": 10,
+                "coordinateMode": "legacy_level_offset"
               }
             ],
             "dryRun": true
@@ -8536,6 +8683,44 @@
                 "status": "planned"
               }
             ]
+          }
+        },
+        {
+          "name": "Provisional work-plane device on a reported horizontal support plane",
+          "request": {
+            "levelName": "Level 4",
+            "familySymbolId": 123456,
+            "allowUnhostedWorkPlanePlacement": true,
+            "instances": [
+              {
+                "x": 10,
+                "y": 20,
+                "z": 40,
+                "coordinateMode": "absolute_model"
+              }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Planned",
+            "supportPlaneElementIds": [],
+            "results": [
+              {
+                "status": "planned",
+                "coordinateMode": "absolute_model",
+                "placementBasis": "generated_horizontal_reference_plane",
+                "absoluteModelLocationVerified": true,
+                "levelVerified": true,
+                "hostVerified": true,
+                "locationX": 10,
+                "locationY": 20,
+                "locationZ": 40,
+                "supportPlaneElementId": null
+              }
+            ],
+            "transaction": {
+              "status": "rolled_back"
+            }
           }
         }
       ]

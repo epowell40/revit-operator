@@ -1,3 +1,4 @@
+import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import type { ModelCallReceipt } from "../contracts.js";
 import {
   canonicalJsonV2,
@@ -40,6 +41,8 @@ function providerAdmissionBasis(snapshot: AssignmentSnapshotV2): ProviderAdmissi
   const gapIds = gaps.map((gap) => gap.gap_id);
   const criterionIds = [...new Set(gaps.flatMap((gap) => gap.criterion_ids))].sort();
   const expectedInformation = [...new Set(gaps.flatMap((gap) => gap.required_fact_ids))].sort();
+  if (advisoryVerificationV2(snapshot)) return { gap_ids: gapIds, criterion_ids: criterionIds,
+    expected_information: ["Original assignment work under immutable local host limits; semantic proof is advisory."] };
   if (gapIds.length === 0 || criterionIds.length === 0) return null;
   return {
     gap_ids: gapIds,

@@ -61,6 +61,7 @@ type NativeConnector = {
   owner_element_id: number;
   owner_category: string;
   owner_system_name: string;
+  system_classification: string;
   connector_id: number | null;
   connector_index: number;
   connector_id_basis: string;
@@ -83,6 +84,7 @@ export type RegisteredRouteEndpointSnapV1 = {
   owner_element_id: number;
   owner_category: string;
   owner_system_name: string;
+  connector_system_classification?: string;
   connector_id: number | null;
   connector_index: number;
   connector_id_basis: string;
@@ -97,6 +99,11 @@ export type RegisteredRouteSnapReceiptV1 = {
   native_connector_readback_sha256: string;
   status: "ready" | "deferred";
   blockers: string[];
+  endpoint_diagnostics?: Array<{
+    endpoint: "start" | "end";
+    requested_system_type: string;
+    nearby_open_connector_systems: string[];
+  }>;
   endpoint_snaps: RegisteredRouteEndpointSnapV1[];
   far_end_obligation?: {
     source_endpoint_key: string;
@@ -118,6 +125,10 @@ function clean(value: unknown): string {
 
 function normalized(value: unknown): string {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function serviceToken(value: unknown): string {
+  return normalized(value).replace(/\s+/g, "");
 }
 
 function finite(value: unknown, label: string): number {
@@ -190,6 +201,7 @@ function normalizeConnectors(readback: unknown): NativeConnector[] {
         owner_element_id: ownerId,
         owner_category: clean(result.category),
         owner_system_name: clean(result.systemName),
+        system_classification: clean(connector.systemClassification),
         connector_id: optionalFinite(connector.connectorId),
         connector_index: Number.isSafeInteger(connector.index) ? Number(connector.index) : connectorIndex,
         connector_id_basis: clean(connector.connectorIdBasis),
@@ -352,10 +364,12 @@ export function planRegisteredRouteConnectorSnapV1(
   if (policy.maximum_endpoint_snap_ft > 1 || policy.final_connection_tolerance_ft > 0.1) throw new Error("registered_route_snap_policy_too_permissive");
   const registeredPoints = candidate.points.map((value, index) => point3(value, elevation, `registered_route_snap_point_${index}`));
   const connectors = normalizeConnectors(context.native_connector_readback);
-  const systemToken = normalized(candidate.system_type);
+  const systemToken = serviceToken(candidate.system_type);
   const expectedDomain = candidate.kind === "duct" ? "domainhvac" : candidate.kind === "pipe" ? "domainpiping" : "domainelectrical";
   const blockers: string[] = [];
+  const endpointDiagnostics: NonNullable<RegisteredRouteSnapReceiptV1["endpoint_diagnostics"]> = [];
   const selected: RegisteredRouteEndpointSnapV1[] = [];
+  const selectedDirections = new Map<"start" | "end", [number, number, number]>();
   const selectedKeys = new Set<string>();
 
   const requiredEndpoints = candidate.required_existing_endpoint
@@ -364,23 +378,40 @@ export function planRegisteredRouteConnectorSnapV1(
   for (const endpoint of requiredEndpoints) {
     const registered = endpoint === "start" ? registeredPoints[0]! : registeredPoints[registeredPoints.length - 1]!;
     const expectedDirection = routeDirection(registeredPoints, endpoint);
-    const ranked = connectors.flatMap(connector => {
+    const geometricallyCompatible = connectors.flatMap(connector => {
       if (connector.physical_connection_count !== 0) return [];
       if (connector.domain !== expectedDomain) return [];
       if (connector.shape !== normalized(candidate.shape)) return [];
       if (!sizeCompatible(connector, candidate, policy.maximum_size_delta_ft)) return [];
-      if (systemToken && !normalized(connector.owner_system_name).includes(systemToken)) return [];
       const distance = Math.hypot(
         connector.origin[0] - registered.x,
         connector.origin[1] - registered.y,
         connector.origin[2] - registered.z
       );
       const dot = directionDot(connector.direction, expectedDirection);
-      if (distance > policy.maximum_endpoint_snap_ft || Math.abs(connector.origin[2] - registered.z) > policy.maximum_connector_z_delta_ft || dot < policy.minimum_direction_dot) return [];
+      // Revit can form an elbow where a new duct leaves an open connector at a right angle.
+      // Preserve the exact source point and let the native dry run prove the fitting and connection.
+      const minimumDot = candidate.kind === "duct" ? -1e-6 : policy.minimum_direction_dot;
+      if (distance > policy.maximum_endpoint_snap_ft || Math.abs(connector.origin[2] - registered.z) > policy.maximum_connector_z_delta_ft || dot < minimumDot) return [];
       return [{ connector, distance, dot }];
-    }).sort((a, b) => a.distance - b.distance || b.dot - a.dot || connectorKey(a.connector).localeCompare(connectorKey(b.connector)));
+    });
+    const ranked = geometricallyCompatible
+      .filter(value => !systemToken || serviceToken(value.connector.system_classification || value.connector.owner_system_name).includes(systemToken))
+      .sort((a, b) => a.distance - b.distance || b.dot - a.dot || connectorKey(a.connector).localeCompare(connectorKey(b.connector)));
     if (ranked.length === 0) {
-      blockers.push(`${endpoint}_endpoint_has_no_compatible_open_connector`);
+      const conflictingSystems = [...new Set(geometricallyCompatible
+        .map(value => value.connector.system_classification || value.connector.owner_system_name)
+        .filter(value => value && !serviceToken(value).includes(systemToken)))].sort().slice(0, 5);
+      if (systemToken && conflictingSystems.length > 0) {
+        blockers.push(`${endpoint}_endpoint_system_type_mismatch`);
+        endpointDiagnostics.push({
+          endpoint,
+          requested_system_type: candidate.system_type,
+          nearby_open_connector_systems: conflictingSystems
+        });
+      } else {
+        blockers.push(`${endpoint}_endpoint_has_no_compatible_open_connector`);
+      }
       continue;
     }
     if (ranked.length > 1 && ranked[1]!.distance - ranked[0]!.distance < policy.minimum_ambiguity_margin_ft) {
@@ -394,6 +425,7 @@ export function planRegisteredRouteConnectorSnapV1(
       continue;
     }
     selectedKeys.add(key);
+    selectedDirections.set(endpoint, winner.connector.direction);
     selected.push({
       endpoint,
       registered_point: registered,
@@ -403,6 +435,7 @@ export function planRegisteredRouteConnectorSnapV1(
       owner_element_id: winner.connector.owner_element_id,
       owner_category: winner.connector.owner_category,
       owner_system_name: winner.connector.owner_system_name,
+      connector_system_classification: winner.connector.system_classification,
       connector_id: winner.connector.connector_id,
       connector_index: winner.connector.connector_index,
       connector_id_basis: winner.connector.connector_id_basis
@@ -412,6 +445,44 @@ export function planRegisteredRouteConnectorSnapV1(
   const snappedPoints = registeredPoints.map(value => ({ ...value }));
   for (const snap of selected) {
     snappedPoints[snap.endpoint === "start" ? 0 : snappedPoints.length - 1] = snap.snapped_point;
+  }
+  // Moving only the endpoint off a registered straight leg creates a tiny
+  // skew. Revit may refuse the physical join even when that point coincides
+  // with the open connector. Align the adjacent point (including a two-point
+  // route's far end) to the observed axis only for a near-collinear source leg.
+  if (candidate.kind === "duct" && candidate.required_existing_endpoint) {
+    const snap = selected.find(value => value.endpoint === candidate.required_existing_endpoint);
+    const axis = selectedDirections.get(candidate.required_existing_endpoint);
+    if (snap && axis && snap.direction_dot >= 0.995) {
+      const endpointIndex = snap.endpoint === "start" ? 0 : snappedPoints.length - 1;
+      const neighborIndex = snap.endpoint === "start" ? 1 : snappedPoints.length - 2;
+      const endpointPoint = snappedPoints[endpointIndex]!;
+      const neighbor = snappedPoints[neighborIndex]!;
+      const axisLength = Math.hypot(...axis);
+      if (axisLength > 1e-9) {
+        const unitAxis = axis.map(value => value / axisLength) as [number, number, number];
+        const along = (neighbor.x - endpointPoint.x) * unitAxis[0]
+          + (neighbor.y - endpointPoint.y) * unitAxis[1]
+          + (neighbor.z - endpointPoint.z) * unitAxis[2];
+        const aligned = {
+          x: endpointPoint.x + along * unitAxis[0],
+          y: endpointPoint.y + along * unitAxis[1],
+          z: endpointPoint.z + along * unitAxis[2]
+        };
+        const displacement = Math.hypot(aligned.x - neighbor.x, aligned.y - neighbor.y, aligned.z - neighbor.z);
+        // The far end of a two-point source primitive has no downstream
+        // fitting that can absorb a larger translation. Keep it inside a
+        // deliberately smaller drawing tolerance or defer for review.
+        const maximumAlignment = snappedPoints.length === 2
+          ? Math.min(policy.maximum_endpoint_snap_ft, 0.15)
+          : policy.maximum_endpoint_snap_ft;
+        if (along > 0.1 && displacement <= maximumAlignment) {
+          snappedPoints[neighborIndex] = aligned;
+        } else if (snappedPoints.length === 2 && displacement > maximumAlignment) {
+          blockers.push(`${snap.endpoint}_endpoint_tangent_alignment_exceeds_source_tolerance`);
+        }
+      }
+    }
   }
   const ready = blockers.length === 0 && selected.length === requiredEndpoints.length;
   const baseBody: Record<string, unknown> = {
@@ -492,6 +563,7 @@ export function planRegisteredRouteConnectorSnapV1(
     native_connector_readback_sha256: digest(context.native_connector_readback),
     status: ready ? "ready" : "deferred",
     blockers,
+    ...(endpointDiagnostics.length > 0 ? { endpoint_diagnostics: endpointDiagnostics } : {}),
     endpoint_snaps: selected,
     ...(farEndObligation ? { far_end_obligation: farEndObligation } : {}),
     snapped_points: snappedPoints,

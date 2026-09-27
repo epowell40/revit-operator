@@ -72,6 +72,15 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/connect-existing-mep-branch", {
+    semantic_outputs: [], principal_target_fields: ["mainElementId", "branchElementId", "terminalElementId", "createdFittingId"]
+  }],
+  ["/revit/get-connectors", {
+    semantic_outputs: ["mep.physical_connector_graph"], principal_target_fields: ["id", "elementIds"]
+  }],
+  ["revit_get_connectors", {
+    semantic_outputs: ["mep.physical_connector_graph"], principal_target_fields: ["id", "elementIds"]
+  }],
   ["/revit/duplicate-view", {
     semantic_outputs: [],
     principal_target_fields: ["viewId"],
@@ -272,6 +281,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if (path === "/revit/connect-existing-mep-branch") return ["mep.physical_connector_graph"];
   if (path === "/revit/duplicate-view") {
     const args = objectValue(apply.arguments);
     const body = objectValue(args.body);
@@ -340,9 +350,10 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (pathOf(apply) === "/revit/connect-existing-mep-branch") return " Verify the existing main and branch/terminal plus any created takeoff fitting with one POST /revit/get-connectors, elementIds=[all affected IDs], includeAllRefs=true, onlyOpenPhysicalConnectors=false, maxConnectorsPerElement=512. The fresh native read must expose reciprocal native connector IDs for the new physical connection and preserve every prior main and branch connection. Logical references and apply-local success flags cannot prove connectivity. Additional family-name/workset constraints need separate reviewed readback and cannot be certified by this graph alone. Never reapply a committed connection to obtain verification.";
   if (pathOf(apply) === "/revit/duplicate-view") return " Verify the newly created view and source together with POST /revit/view-owned-detailing, viewIds=[source viewId, new viewId from the create result]. The native read must return both exact view IDs, the new requested name, complete nontruncated owner-view inventories, and matching nonempty annotation signatures when WithDetailing was requested. The create response, current view, /revit/views alone, and image filename do not prove copied annotations.";
   if (pathOf(apply) === "/revit/create-family-instance") return " Verify every created family instance with POST /revit/get-element-summary, elementIds=[all created instance IDs], or revit_get_element_summary with ids=[all created instance IDs]. The native readback must match model-space XYZ in feet, family/type, requested level, rotation and batch spacing. The create response only identifies the new elements; its coordinates cannot independently verify placement. Connector reads alone cannot verify the insertion point. View-based placement needs a separate verification contract.";
-  if (["/revit/mep-route-workflow", "/revit/create-duct"].includes(pathOf(apply))) return " For explicit world XYZ ducts in model feet, prefer one POST /revit/get-connectors with includeVerificationParameters=true, includeAllRefs=true, includeCoordinateSystem=true, onlyOpenPhysicalConnectors=false and all created duct/fitting elementIds (maximum 500 unique IDs). This single native callback returns parameters and the physical graph together. Legacy fallback: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height,Diameter], then POST /revit/get-connectors with elementIds covering ALL created ducts and fittings and includeAllRefs=true. The combined native reads must match the admitted geometry, type, level, system and sizes. A polyline branch requires connectSegments=true and every internal fitting connection; endpoints may explicitly be open construction stages or required existing connections. Read both ducts and fittings in the same batches. Open construction stages do not establish completed-system connectivity. Parameters alone cannot verify connections. This does not certify PDF interpretation or visual review. Inspect the delivered post-change image separately; a JSON evidence ID is not an image ID. Never repeat an applied route merely to verify it.";
+  if (["/revit/mep-route-workflow", "/revit/create-duct", "/revit/create-mep-route", "/revit/existing-conditions-mep-draft-workflow"].includes(pathOf(apply))) return " For explicit world XYZ ducts in model feet, prefer one POST /revit/get-connectors with includeVerificationParameters=true, includeAllRefs=true, includeCoordinateSystem=true, onlyOpenPhysicalConnectors=false and all created duct/fitting elementIds (maximum 500 unique IDs). This single native callback returns parameters and the physical graph together. Legacy fallback: first POST /revit/get-parameters with names=[System Classification,Reference Level,Width,Height,Diameter], then POST /revit/get-connectors with elementIds covering ALL created ducts and fittings and includeAllRefs=true. The combined native reads must match the admitted geometry, type, level, system and sizes. A polyline branch requires connectSegments=true and every internal fitting connection; endpoints may explicitly be open construction stages or required existing connections. Read both ducts and fittings in the same batches. Open construction stages do not establish completed-system connectivity. Parameters alone cannot verify connections. This does not certify PDF interpretation or visual review. Inspect the delivered post-change image separately; a JSON evidence ID is not an image ID. Never repeat an applied route merely to verify it.";
   if (["/revit/export-pdf", "/revit/print", "/revit/export-elements-xlsx"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;

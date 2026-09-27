@@ -1,3 +1,4 @@
+import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { pendingDuctVerificationRequestV2 } from "../verification/combined_duct_verification_v2.js";
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/index.js";
@@ -14,6 +15,10 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
     })
     .sort((a, b) => b.observed_at.localeCompare(a.observed_at) || a.observation_id.localeCompare(b.observation_id));
   if (!observations.length) return "";
+  if (advisoryVerificationV2(snapshot)) return JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
+    observations: observations.slice(0, 16).map(observation => ({ observation_id: observation.observation_id, operation_id: observation.operation_id,
+      evidence_id: observation.raw_payload_ref.replace(/^evidence:/, ""), capability_id: snapshot.operations[observation.operation_id]?.capability_id })),
+    omitted: Math.max(0, observations.length - 16), usage: "Retained actual results. Retrieve missing native fields by evidence_id; inspect useful geometry and connections. This index does not certify task completion." });
   return JSON.stringify({
     schema: "revit-operator.model-observation-index/v2",
     observations: observations.slice(0, 32).map(observation => ({

@@ -2,18 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const CODEX_APP_SERVER_COMPATIBILITY = Object.freeze({
-  codex_cli_version: "0.149.0",
+  codex_cli_version: "0.157.0",
   protocol_mode: "experimental",
-  generated_at: "2026-08-21",
+  generated_at: "2026-09-26",
   generated_typescript: {
-    file_count: 781,
-    byte_count: 454_645,
-    sha256: "2c6938681ea2f9d521987335d3bfc84f5c0c72d1b5596636db3d40f727f54182"
+    file_count: 881,
+    byte_count: 520_413,
+    sha256: "3eb91a68ea309ddbf37558853506091a2ba1400c6e46ccd48028da097dcb855a"
   },
   generated_json_schema: {
-    file_count: 401,
-    byte_count: 3_778_968,
-    sha256: "b0560d8c302423145d4f203ef49b6c5eea5ddc6e1b8a8ec7b794c496698def5c"
+    file_count: 440,
+    byte_count: 4_340_196,
+    sha256: "9b56f090022e5d9a02f9878cfd4d286f473935d45cb5d85ec6ebabfa12e24d46"
   }
 });
 
@@ -32,7 +32,10 @@ export function parseCodexCliVersion(raw: string): string | null {
 
 export function resolveCodexExecutable(requested: string | undefined, platform = process.platform, env: NodeJS.ProcessEnv = process.env): string {
   const command = (requested ?? "codex").trim() || "codex";
-  if (platform !== "win32" || !/^codex(?:\.cmd|\.ps1|\.exe)?$/i.test(path.basename(command))) return command;
+  // Only a bare `codex` command is a shim candidate. An explicit binary path
+  // must remain authoritative, including when its basename is codex.exe.
+  if (platform !== "win32" || /[\\/]/.test(command) || /^[A-Za-z]:/.test(command)
+      || !/^codex(?:\.cmd|\.ps1|\.exe)?$/i.test(command)) return command;
   const appData = (env.APPDATA ?? "").trim();
   if (appData) {
     const candidates = [

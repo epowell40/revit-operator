@@ -14,6 +14,7 @@ import {
 } from "../src/agent_response_policy.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import { __testOnlyFinalizeOpenAiResponseForRequest } from "../src/brains/openai_brain.js";
+import { getOperatorAgentBaseInstructions } from "../src/brains/codex_brain.js";
 
 const repoRoot = path.resolve(process.cwd(), "..");
 
@@ -71,13 +72,13 @@ test("agent response policy requires natural acknowledgement instead of routine 
 
 test("backend prompts do not force Plan-prefixed action turns", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
-  const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const codexInstructions = getOperatorAgentBaseInstructions();
 
   assert.doesNotMatch(openAiBrain, /start with:\s*\\"Plan:/i);
   assert.doesNotMatch(openAiBrain, /If you need to act,\s*start with/i);
-  assert.doesNotMatch(codexBrain, /start with:\s*\\"Plan:/i);
+  assert.doesNotMatch(codexInstructions, /start with:\s*"?Plan:/i);
   assert.match(openAiBrain, /AGENT_RESPONSE_STYLE_LINES/);
-  assert.match(codexBrain, /AGENT_RESPONSE_STYLE_LINES/);
+  for (const line of AGENT_RESPONSE_STYLE_LINES) assert.ok(codexInstructions.includes(line));
 });
 
 test("per-turn teammate contract classifies representative conversation, navigation, inspection, and mutation requests", () => {

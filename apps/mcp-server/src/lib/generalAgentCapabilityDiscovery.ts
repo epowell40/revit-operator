@@ -20,7 +20,8 @@ type GeneralRegistryEntry = {
 
 export async function discoverHostedGeneralAgentCapabilities(
   input: { need: string; maxResults?: number },
-  loadRegistry: () => Promise<{ tools?: GeneralRegistryEntry[] }>
+  loadRegistry: () => Promise<{ tools?: GeneralRegistryEntry[] }>,
+  isToolExposed: (name: string) => boolean = () => false
 ) {
   const registry = await loadRegistry();
   const maxResults = input.maxResults ?? 4;
@@ -49,6 +50,7 @@ export async function discoverHostedGeneralAgentCapabilities(
     typedCatalogExposure: "full" as const,
     ranking_version: TOOL_SEARCH_RANKING_VERSION_V3,
     capabilities,
+    executionSubstrates: dynamicExecutionSubstrates(isToolExposed),
     reasonCodes: capabilities.length ? ["GENERAL_AGENT_CAPABILITIES_FOUND"] : ["GENERAL_AGENT_CAPABILITIES_UNAVAILABLE"]
   };
 }
@@ -83,19 +85,25 @@ export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
   }
 } as const;
 
+function dynamicExecutionSubstrates(isToolExposed: (name: string) => boolean) {
+  return isToolExposed(DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1.execution.tool)
+    ? [DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1] : [];
+}
+
 /**
  * Adds model-facing execution-substrate context around the exact certified
  * projection. It does not alter policy membership or discovery receipts.
  */
 export function discoverGeneralAgentCapabilities(
   input: { need: string; maxResults?: number },
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  isToolExposed: (name: string) => boolean = () => false
 ) {
   const certified = discoverCertifiedCapabilities(input, env);
   return {
     ...certified,
     generalAgentSchemaVersion: GENERAL_AGENT_CAPABILITY_DISCOVERY_V1,
-    executionSubstrates: [DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1]
+    executionSubstrates: dynamicExecutionSubstrates(isToolExposed)
   };
 }
 

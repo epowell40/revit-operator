@@ -9,8 +9,9 @@ namespace RevitBridge.Common
             normalized = (requiredEndpoint ?? "").Trim().ToLowerInvariant();
             if (normalized.Length == 0)
                 return !startOwnerId.HasValue && !endOwnerId.HasValue && (!requireBothLegacy || connectToExisting);
-            if (!connectToExisting || normalized != "start" && normalized != "end" && normalized != "both"
-                || requireBothLegacy && normalized != "both") return false;
+            // The explicit endpoint names the precise obligation. The legacy boolean
+            // means both ends only when no explicit endpoint was supplied.
+            if (!connectToExisting || normalized != "start" && normalized != "end" && normalized != "both") return false;
             if (normalized == "start") return startOwnerId > 0 && !endOwnerId.HasValue;
             if (normalized == "end") return endOwnerId > 0 && !startOwnerId.HasValue;
             return startOwnerId > 0 && endOwnerId > 0;

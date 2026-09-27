@@ -16,6 +16,7 @@ import { getAssignmentKernelPublicationV2 } from "../src/assignments/assignment_
 import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
 import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { authenticateRequest } from "../src/auth.js";
 import { parseAssignmentKernelPublicationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { handleCodexDynamicToolCall } from "../src/brains/codex_dynamic_tool_handler.js";
 import { checkpointCodexAssignmentProgressV2, finalCodexAssignmentMessageV2, codexAssignmentControllerStopMessage, prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
@@ -55,12 +56,74 @@ async function workspace(fn: (root: string) => unknown) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
-function start(prompt = "Count all air devices in the model.") {
-  const prepared = prepareAssignmentTurn({ sessionId: "controls-session", messageId: "first-turn", userText: prompt,
+function start(prompt = "Count all air devices in the model.", sessionId = "controls-session") {
+  const prepared = prepareAssignmentTurn({ sessionId, messageId: "first-turn", userText: prompt,
     toolResults: [], source: "chat", createdBy: null,
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "controls-model" } } } } })!;
   return { prepared, binding: prepared.bindingV2!, snapshot: getAssignmentKernelSnapshotV2(prepared.assignmentId)! };
 }
+
+for (const variant of ["retained", "future_constraint", "wrong_gap_identity", "dispatched", "unknown", "foreign_binding", "wrong_request", "provider_authority", "malformed_core", "missing_proof"] as const)
+test(`predispatch validation ${variant} preserves effect truth separately from optional diagnostics`, () => workspace(async () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(process.cwd(), "test/fixtures/unit403-predispatch-schema-gap.json"), "utf8"));
+  const { binding, snapshot, prepared } = start("Place the selected HVAC equipment at the specified location, set its Mark and Comments, and verify it.", `predispatch-${variant}`);
+  const knownNoDispatch = ["retained", "future_constraint", "wrong_gap_identity"].includes(variant);
+  let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, _args: unknown, context: any) => {
+      calls++; context.onMcpAccepted(); const lease = context.assignmentKernelV2;
+      const gap = { ...structuredClone(fixture.input_schema_gap), gap_id: `input-schema:${lease.operation_id}`,
+        operation_id: lease.operation_id, capability_id: lease.capability_id, request_signature: lease.request_identity.request_signature };
+      if (variant !== "retained") gap.issues[0].expected_constraint.kind = "future_native_constraint";
+      if (variant === "wrong_gap_identity") gap.operation_id = "foreign-diagnostic-operation";
+      if (variant === "dispatched") appendCurrentAssignmentKernelEventV2({ goal_id: binding.assignment_id, binding,
+        event_id: `real-native-dispatch:${lease.operation_id}`, actor: "native-host",
+        body: { event_type: "native_dispatch_recorded", operation_id: lease.operation_id } });
+      const content = [{ type: "text", text: "Host request validation failed before native dispatch." }];
+      if (variant === "missing_proof") return { isError: true, content, code: "mcp_request_validation_failed", request_dispatched: false };
+      return { isError: true, content, structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `preflight:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding: variant === "foreign_binding" ? { ...binding, generation: 9 } : binding,
+          status: "failed_before_dispatch", dispatch_state: "not_dispatched", persistent_effect: variant === "unknown" ? "unknown" : "none",
+          native_transaction_state: "not_applicable", authority: variant === "provider_authority" ? "model" : "operator-mcp-transport",
+          result_schema_id: "operator-capability/revit_call_tool/v2", observation_required: variant === "malformed_core" ? "false" : false,
+          completed_at: "2026-09-26T08:37:51.203Z", error_code: "mcp_tool_failed",
+          request_identity: variant === "wrong_request" ? { ...lease.request_identity, request_signature: "foreign" } : lease.request_identity,
+          ...(calls === 1 ? { input_schema_gap: gap } : {}) }
+      } };
+    } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "Sample HVAC", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
+  const request: any = { id: `schema-${variant}`, method: "item/tool/call", params: { namespace: "revit_operator", turnId: "schema-preflight",
+    tool: "revit_call_tool", arguments: fixture.request } };
+  try {
+    await handleCodexDynamicToolCall(runtime as any, request);
+    __testOnlyResetGoalListCache();
+    const current = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    const operation = Object.values(current.operations)[0]!;
+    assert.equal(calls, 1); assert.equal(operation.persistent_effect, knownNoDispatch ? "none" : "unknown");
+    assert.equal(operation.result?.status, knownNoDispatch ? "failed_before_dispatch" : "failed_after_dispatch");
+    assert.equal(current.unresolved_unknown_operation_ids.length, knownNoDispatch ? 0 : 1);
+    assert.equal(Object.keys(current.observations).length, 0);
+    if (knownNoDispatch) {
+      if (variant === "retained") assert.equal(operation.result?.input_schema_gap?.issues[0]?.expected_constraint.kind, "schema_alternative");
+      else {
+        assert.equal(operation.result?.input_schema_gap, undefined);
+        const rejected = JSON.parse(operation.result!.diagnostics!.find(value => value.includes('"diagnostic":"input_schema_gap"'))!);
+        assert.equal(rejected.schema, "revit-operator.rejected-result-diagnostic/v1");
+        assert.equal(rejected.truncated, false);
+        assert.equal(payloadDigestV2(JSON.parse(rejected.json)).digest, rejected.sha256);
+        assert.match(rejected.json, /future_native_constraint/);
+      }
+      const corrected = structuredClone(request); corrected.id += "-corrected";
+      delete corrected.params.arguments.body.instances[0].parameters;
+      await handleCodexDynamicToolCall(runtime as any, corrected);
+      assert.equal(calls, 2, "known predispatch rejection must permit corrected work");
+      assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.unresolved_unknown_operation_ids.length, 0);
+    }
+  } finally { endTeammateLoopOwner(owner); }
+}));
 
 test("multi-room checklist HTTP retains scope across reload and rejects foreign or stale updates", () => workspace(async () => {
   const { binding } = start("Reconstruct all ductwork in both units from the record drawing.");
@@ -1309,5 +1372,297 @@ test("C26 HVAC workbook replay keeps requested assessment pending after exact fi
     ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
     assert.equal(replay.status, 0, replay.stderr);
     assert.deepEqual(JSON.parse(replay.stdout).result_delivery, delivery);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
+
+import { createHash as nativeCompletionHash } from "node:crypto";
+import { getGoal as nativeCompletionGoal } from "../src/goals/service.js";
+import { AssignmentJournalV2, type AssignmentEventV2 } from "../src/domain/assignment-kernel/index.js";
+import { retainNativeCompletionDispatchV1, readNativeCompletionDispatchV1, readLateNativeCompletionV1 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import { __testOnlyOpenNativeRequest, __testOnlyProtectNativeResponse, NATIVE_TRANSPORT_CONTENT_TYPE } from "../src/brains/native_revit_transport.js";
+
+for (const requestedEffect of ["apply", "preview"] as const)
+for (const variant of ["committed", "rolled_back", "not_started", "pending", "not_found", "unknown", "wrong_document", "wrong_nonce", "changed_document", "body_tamper", "missing_map", "map_tamper", "changed_epoch", "typed_child", "binding_changed", "wrong_effect", "wrong_schema", "contradictory_transaction", "missing_transaction"] as const)
+test(`late native completion HTTP ${requestedEffect} ${variant} preserves the timeout, Pause, budgets and evidence authority`, () => workspace(async root => {
+  const previous = Object.fromEntries(["LOCALAPPDATA", "OPERATOR_TOKEN", "REVIT_OPERATOR_MODE", "OPERATOR_TOOL_EXPOSURE_PROFILE"].map(k => [k, process.env[k]]));
+  const token = "test-native-completion-token-0123456789", epoch = Buffer.alloc(32, 7).toString("base64url"), fingerprint = "a".repeat(64);
+  process.env.LOCALAPPDATA = root; process.env.OPERATOR_TOKEN = token;
+  process.env.REVIT_OPERATOR_MODE = "development"; process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+  const prepared = prepareAssignmentTurn({ sessionId: `late-${requestedEffect}-${variant}`, messageId: "first", userText: "Move Revit element 42 up one foot.",
+    toolResults: [], source: "chat", createdBy: null, requestContext: { revit: { document: { projectIdentity: { fingerprint } } } } })!;
+  const binding = prepared.bindingV2!, initial = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const requestBody = { ids: [42], mode: "vector", vectorX: 0, vectorY: 0, vectorZ: 1, moveTogether: true,
+    behavior: "allOrNothing", dryRun: requestedEffect === "preview" };
+  const parentLease = openAssignmentKernelOperationV2({ snapshot: initial, controller_request_id: "move", provider_turn_id: "turn",
+    capability_id: "revit_call_tool", classified_effect: requestedEffect, arguments: { method: "POST", path: "/revit/move-elements", body: requestBody } });
+  const lease = variant === "typed_child" ? openAssignmentKernelChildOperationV2({ binding, parent_operation_id: parentLease.operation_id,
+    child_ordinal: 0, operation_role: "child", capability_id: "native:POST:/revit/move-elements", classified_effect: requestedEffect,
+    method: "POST", path: "/revit/move-elements", arguments: { method: "POST", path: "/revit/move-elements", body: requestBody },
+    fulfillment_role: "supporting_control", blocks_parent_settlement: true }) : parentLease;
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const requestId = "b".repeat(64), sha = (value: string) => `sha256:${nativeCompletionHash("sha256").update(value, "utf8").digest("hex")}`;
+  const timeout = { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: {
+    schema: "revit-operator.operation-result/v2", result_id: `timeout:${lease.operation_id}`, operation_id: lease.operation_id, binding: lease.binding,
+    status: "failed_after_dispatch", dispatch_state: "dispatched", persistent_effect: "unknown", native_transaction_state: "unknown",
+    authority: "native-host", result_schema_id: "operator-native/POST:/revit/move-elements/v2", observation_required: false,
+    native_correlation_id: requestId, request_identity: lease.request_identity, completed_at: "2026-09-27T00:00:01.000Z", error_code: "native_operation_failed" } } };
+  const key = completionOutboxKeyV2(root);
+  retainCompletionOutboxV2(root, key, lease, timeout);
+  settleAssignmentKernelOperationV2(lease, timeout);
+  if (variant === "typed_child") {
+    markAssignmentKernelOperationDispatchStartedV2(parentLease);
+    const { native_correlation_id: _childCorrelation, ...parentResult } = timeout.structuredContent.operation_result_v2;
+    settleAssignmentKernelOperationV2(parentLease, { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: { ...parentResult, operation_id: parentLease.operation_id,
+        result_id: `timeout:${parentLease.operation_id}`, authority: "dynamic-runtime", request_identity: parentLease.request_identity,
+        result_schema_id: "operator-dynamic-runtime/mcp-program/v2" } } });
+  }
+  controlAssignmentExecutionV2({ binding, command_id: "paused", expected_command_id: null, action: "pause" });
+  const native = { request_id: requestId, request_nonce_sha256: sha("original-nonce"), server_epoch: epoch, method: "POST" as const,
+    path: "/revit/move-elements", body_present: true as const, source_body_sha256: sha(JSON.stringify(requestBody)),
+    channel: "generic_call" as const, alias: "revit_call_tool", transport_receipt_sha256: sha("receipt"), expected_document_fingerprint: fingerprint };
+  if (variant !== "missing_map") retainNativeCompletionDispatchV1(root, key, lease, native);
+  if (variant === "map_tamper") {
+    const dir = path.join(root, "runtime/assignment-completions-v2/native-completion-dispatch"), file = path.join(dir, fs.readdirSync(dir)[0]!);
+    const saved = JSON.parse(fs.readFileSync(file, "utf8")); saved.payload.value.native.path = "/revit/delete-elements"; fs.writeFileSync(file, JSON.stringify(saved));
+  }
+  const before = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  let lookups = 0;
+  const nativeServer = http.createServer((req, res) => {
+    const chunks: Buffer[] = []; req.on("data", c => chunks.push(Buffer.from(c))); req.on("end", () => {
+      lookups++;
+      assert.equal(req.url, "/revit/operator-transport/v1");
+      const opened = __testOnlyOpenNativeRequest(token, epoch, Buffer.concat(chunks).toString("utf8"));
+      assert.equal(opened.inner.path, "/revit/operator-completions/v1/read");
+      assert.equal(opened.inner.channel, "typed_mcp"); assert.equal(opened.inner.alias, "operator_recover_native_completion");
+      assert.equal(opened.inner.write_grant, "");
+      const selector = JSON.parse(String(opened.inner.body_json));
+      assert.equal(selector.request_id, requestId); assert.equal(selector.request_nonce_sha256, native.request_nonce_sha256);
+      const known = ["committed", "rolled_back", "not_started", "typed_child", "binding_changed"].includes(variant);
+      const status = ["typed_child", "binding_changed"].includes(variant) ? "rolled_back" : known ? variant : "pending";
+      const body = JSON.stringify({ status: "Failed", success: false, error: "Line is too short.",
+        movedIds: [], snapshots: [], skipped: [], warnings: [], movedTogether: true,
+        failureRollbackRequested: true, rolledBack: status === "rolled_back" ? true : null,
+        capturedFailures: [{ severity: "Error", message: "Line is too short.", elementIds: [42],
+          failureDefinitionId: "native-short-line", captureErrors: [] }],
+        ...(variant === "missing_transaction" ? {} : { transaction: { status, committed: status === "committed" ? true : known ? false : null,
+          affected_element_ids: status === "committed" ? [42] : [], added_element_ids: [],
+          modified_element_ids: status === "committed" ? [42] : [], deleted_element_ids: [] } }),
+        canonical_attempt_settlement: { schema: variant === "wrong_schema" ? "unsupported-settlement/v99" : "revit-operator.native-attempt-settlement.v1", method: native.method, path: native.path,
+          requested_effect: variant === "wrong_effect" ? requestedEffect === "apply" ? "preview" : "apply" : requestedEffect, request_dispatched: true, affected_target_identities: status === "committed" ? ["element_id:42"] : [],
+          effect_state: known ? status === "committed" ? "applied" : "none" : "unknown",
+          effect_authority: status === "rolled_back" ? "native_rollback" : "native_transaction",
+          effect_reason: status === "committed" ? "native_transaction_committed" : status === "not_started" ? "native_transaction_not_started" : "verified_native_rollback" } });
+      // Rejection variants start with an otherwise complete known native receipt.
+      const rawBody = known || ["pending", "not_found", "unknown"].includes(variant) ? body : body.replaceAll('"pending"', '"rolled_back"').replace('"committed":null', variant === "contradictory_transaction" ? '"committed":true' : '"committed":false').replace('"effect_state":"unknown"', '"effect_state":"none"').replace('"effect_authority":"native_transaction"', '"effect_authority":"native_rollback"');
+      const record = { schema: "revit-operator.native-terminal-completion/v1",
+        request: { ...native, request_nonce_sha256: variant === "wrong_nonce" ? sha("wrong") : native.request_nonce_sha256,
+          authorized_body_sha256: sha("normalized authorization identity"), dispatched_body_sha256: native.source_body_sha256 },
+        document: { document_fingerprint: variant === "wrong_document" ? "c".repeat(64) : fingerprint, document_session_id: "native-doc",
+          after_document_fingerprint: fingerprint, after_document_session_id: variant === "changed_document" ? "other-doc" : "native-doc" },
+        authorization: { authorization_hash: sha("authorized"), exposure_profile: "laboratory", certification_envelope_hash: null, authorized_at_utc: "2026-09-27T00:00:00Z" },
+        dispatch_started_at_utc: "2026-09-27T00:00:00Z", completed_at_utc: "2026-09-27T00:00:02Z",
+        terminal: { status_code: 200, body_json: rawBody, body_sha256: variant === "body_tamper" ? sha("tampered") : sha(rawBody) } };
+      if (variant === "binding_changed") {
+        const append = (eventId: string, body: any, currentBinding = lease.binding) => {
+          const accepted = appendCurrentAssignmentKernelEventV2({ goal_id: lease.assignment_id, binding: currentBinding,
+            actor: "trusted-concurrent-reconciliation", event_id: eventId, body }); assert.equal(accepted.accepted, true);
+        };
+        append("other-reconcile", { event_type: "reconciliation_recorded", operation_id: lease.operation_id, resolved_effect: "none", observation_ids: [] });
+        append("supersede", { event_type: "run_superseded", superseded_by_generation: lease.binding.generation + 1 });
+        append("new-run", { event_type: "run_started" }, { ...lease.binding, generation: lease.binding.generation + 1 });
+      }
+      const recordJson = JSON.stringify(record), response = { schema: "revit-operator.native-completion-lookup-result/v1",
+        state: variant === "pending" ? "pending" : variant === "not_found" ? "not_found" : "completed", record_json: recordJson, record_sha256: sha(recordJson) };
+      const envelope = __testOnlyProtectNativeResponse(token, opened.protectedRequest, variant === "pending" ? 202 : variant === "not_found" ? 404 : 200, JSON.stringify(response), Date.now(), Buffer.alloc(16, 3));
+      res.setHeader("Content-Type", NATIVE_TRANSPORT_CONTENT_TYPE); res.end(envelope);
+    });
+  });
+  const server = http.createServer((req, res) => { void runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, async () => {
+    await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => session === binding.session_id);
+  }); });
+  await new Promise<void>(resolve => nativeServer.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const receiptDir = path.join(root, "RevitOperator"); fs.mkdirSync(receiptDir, { recursive: true });
+    fs.writeFileSync(path.join(receiptDir, "bridge_transport.v1.json"), JSON.stringify({ version: "revit-operator.native-transport.v1", algorithm: "A256CBC-HS512",
+      transport_path: "/revit/operator-transport/v1", url: `http://127.0.0.1:${(nativeServer.address() as any).port}`, server_epoch: variant === "changed_epoch" ? Buffer.alloc(32, 9).toString("base64url") : epoch }));
+    const send = () => fetch(`http://127.0.0.1:${(server.address() as any).port}/api/assignments/v2/recover-completions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(binding) });
+    const response = await send(), payload = await response.json() as any;
+    const after = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    const known = ["committed", "rolled_back", "not_started", "typed_child"].includes(variant)
+      && !(requestedEffect === "preview" && variant === "committed");
+    if (known) {
+      assert.equal(response.status, 200, JSON.stringify(payload));
+      assert.deepEqual(payload.recovered_operation_ids, [lease.operation_id]);
+      assert.deepEqual(payload.unresolved_operation_ids, variant === "typed_child" ? [parentLease.operation_id] : []);
+      assert.equal(after.operations[lease.operation_id]!.persistent_effect, variant === "committed" ? "applied" : "none");
+      assert.ok(after.operations[lease.operation_id]!.native_completion_reconciliation?.evidence_id);
+      assert.ok(readLateNativeCompletionV1(root, key, lease));
+      const repeat = await (await send()).json() as any; assert.deepEqual(repeat.recovered_operation_ids, []);
+      assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), after); assert.equal(lookups, 1);
+    } else if (variant === "binding_changed") {
+      assert.equal(response.status, 409); assert.equal(after.current_binding.generation, binding.generation + 1);
+      assert.equal(after.operations[lease.operation_id]!.native_completion_reconciliation, undefined);
+      assert.equal(readLateNativeCompletionV1(root, key, lease), null);
+    } else {
+      assert.deepEqual(after, before); assert.equal(after.operations[lease.operation_id]!.persistent_effect, "unknown");
+      assert.equal(lookups, ["missing_map", "map_tamper", "changed_epoch"].includes(variant) ? 0 : 1);
+    }
+    assert.deepEqual(after.operations[lease.operation_id]!.result, before.operations[lease.operation_id]!.result);
+    assert.deepEqual(after.execution_control, before.execution_control); assert.deepEqual(after.criteria, before.criteria);
+    assert.deepEqual(after.provider_calls, before.provider_calls); assert.deepEqual(after.spec, before.spec);
+    assert.equal(after.terminal, before.terminal);
+    if (variant === "typed_child") assert.equal(after.operations[parentLease.operation_id]!.persistent_effect, "unknown");
+    const events = (nativeCompletionGoal(binding.assignment_id)!.assignment_kernel_v2 as { events: AssignmentEventV2[] }).events;
+    assert.deepEqual(new AssignmentJournalV2(events).snapshot(), after, "fresh reducer replays the durable journal without projection caches");
+    if (known) {
+      const changed = structuredClone(events);
+      const event = changed.find(e => e.event_type === "native_completion_reconciled")!;
+      if (event.event_type === "native_completion_reconciled") event.completion.proof.transaction = { status: "pending", committed: null };
+      assert.throws(() => new AssignmentJournalV2(changed), /late receipt|known effect/);
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve())); await new Promise<void>(resolve => nativeServer.close(() => resolve()));
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+}));
+
+
+for (const preference of [undefined, "operation_handoff_v1", "future_handoff"])
+test(`compact child handoff HTTP retains canonical evidence, retries and control fences (${preference ?? "default"})`, () => workspace(async () => {
+  const { binding, snapshot } = start();
+  const parent = openAssignmentKernelOperationV2({ snapshot, provider_turn_id: "handoff-turn", controller_request_id: "handoff-parent",
+    capability_id: "inventory.read", classified_effect: "read", arguments: { category: "air devices" } });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const server = http.createServer((req, res) => {
+    const auth = authenticateRequest(req, { mode: "shared_token", requireAuth: true, sharedToken: "handoff-test-token" });
+    if (!auth.ok) { res.writeHead(auth.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: auth.error })); return; }
+    void runWithRequestContext({ operator_backend_auth: auth.backend_auth }, async () => {
+      await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
+        if (session === binding.session_id) return true;
+        res.writeHead(403).end(); return false;
+      });
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as import("node:net").AddressInfo).port;
+  const send = (route: string, body: any, token = "handoff-test-token", mode = preference) => fetch(`http://127.0.0.1:${port}/api/assignments/v2/operations/${route}`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Operator-Token": token,
+      ...(mode === undefined ? {} : { "X-Operator-Assignment-Handoff": mode }) }, body: JSON.stringify(body) });
+  const snapshotNow = () => getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const checkShape = (value: any, expectedKeys: string[]) => {
+    if (preference === "operation_handoff_v1") {
+      assert.deepEqual(Object.keys(value).sort(), ["ok", "schema", ...expectedKeys].sort());
+      assert.equal(value.schema, "revit-operator.operation-handoff/v1");
+    } else { assert.equal(value.schema, undefined); assert.deepEqual(value.assignment_snapshot_v2, JSON.parse(JSON.stringify(snapshotNow()))); }
+  };
+  try {
+    const body = { ...binding, parent_operation_id: parent.operation_id, child_ordinal: 0, operation_role: "child",
+      capability_id: "native:POST:/revit/find-elements", classified_effect: "read", method: "POST", path: "/revit/find-elements",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { category: "air devices" } },
+      fulfillment_role: "supporting_control", eligible_criterion_ids: [] };
+    const initial = snapshotNow();
+    assert.equal((await send("children", body, "wrong-token")).status, 401);
+    assert.equal((await send("children", { ...body, session_id: "foreign-session" })).status, 403);
+    assert.equal((await send("children", { ...body, generation: 99 })).status, 400);
+    assert.deepEqual(snapshotNow(), initial);
+    const admittedResponse = await send("children", body); assert.equal(admittedResponse.status, 201);
+    const admitted: any = await admittedResponse.json(); checkShape(admitted, ["operation_lease_v2"]);
+    const lease = admitted.operation_lease_v2;
+    assert.equal(lease.parent_operation_id, parent.operation_id);
+    assert.deepEqual(lease.binding, snapshot.current_binding);
+    const afterAdmission = snapshotNow();
+    assert.deepEqual((await (await send("children", body)).json() as any).operation_lease_v2, lease);
+    assert.deepEqual(snapshotNow(), afterAdmission);
+    const operationBody = { ...binding, operation_id: lease.operation_id };
+    const dispatched = await send("dispatch", operationBody); assert.equal(dispatched.status, 202);
+    const dispatch: any = await dispatched.json(); checkShape(dispatch, ["operation_id"]);
+    if (preference === "operation_handoff_v1") assert.equal(dispatch.operation_id, lease.operation_id);
+    const afterDispatch = snapshotNow();
+    await (await send("dispatch", operationBody)).arrayBuffer(); assert.deepEqual(snapshotNow(), afterDispatch);
+    const payload = { items: [{ id: 41 }], total: 1 };
+    const result = { schema: "revit-operator.operation-result/v2", result_id: `handoff-result:${lease.operation_id}`, operation_id: lease.operation_id,
+      binding: lease.binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none", native_transaction_state: "not_applicable",
+      authority: "native-host", result_schema_id: "operator-native/POST:/revit/find-elements/v2", observation_required: true,
+      raw_payload_hash: payloadDigestV2(payload).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() };
+    const mcp_result = { structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: result,
+      observation: { raw_payload: payload, semantic_facts: [{ fact_id: "control.result_available", fact_class: "control", value: true }], verification_relevance: ["control"] } } };
+    assert.equal((await send("results", { ...operationBody, mcp_result: {} })).status, 400);
+    assert.equal((await send("results", { ...operationBody, mcp_result: { structuredContent: { ...mcp_result.structuredContent,
+      operation_result_v2: { ...result, binding: { ...binding, generation: 99 } } } } })).status, 400);
+    assert.deepEqual(snapshotNow(), afterDispatch);
+    controlAssignmentExecutionV2({ binding, command_id: "handoff-pause", expected_command_id: null, action: "pause" });
+    const paused = snapshotNow();
+    const response = await send("results", { ...operationBody, mcp_result }); assert.equal(response.status, 200);
+    const settled: any = await response.json(); checkShape(settled, ["operation_id", "result_id", "evidence_refs", "evidence_projections"]);
+    if (preference === "operation_handoff_v1") assert.equal(settled.result_id, result.result_id);
+    assert.equal(settled.operation_id, lease.operation_id); assert.equal(settled.evidence_refs.length, 1); assert.equal(settled.evidence_projections.length, 1);
+    const final = snapshotNow();
+    assert.deepEqual(final.operations[lease.operation_id]!.result, result);
+    assert.equal(final.operations[lease.operation_id]!.settlement_state, "settled");
+    assert.equal(final.execution_control?.state, "paused"); assert.deepEqual(final.spec, paused.spec);
+    assert.deepEqual(final.provider_calls, paused.provider_calls);
+    assert.equal(Object.values(final.observations).find(o => o.operation_id === lease.operation_id)?.raw_payload_hash, payloadDigestV2(payload).digest);
+    const retry: any = await (await send("results", { ...operationBody, mcp_result }, "handoff-test-token", "operation_handoff_v1")).json();
+    assert.deepEqual(retry.evidence_refs, settled.evidence_refs); assert.deepEqual(retry.evidence_projections, settled.evidence_projections);
+    assert.deepEqual(snapshotNow(), final);
+    assert.throws(() => openAssignmentKernelOperationV2({ snapshot: final, provider_turn_id: "paused-turn", controller_request_id: "paused-parent",
+      capability_id: "inventory.read", classified_effect: "read", arguments: { category: "rooms" } }), /paused/);
+    assert.equal(snapshotNow().execution_control?.state, "paused");
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}));
+
+
+for (const variant of ["plain_plan", "not_started", "pending"] as const)
+test(`reroute planning ${variant} retains evidence and admits later apply only after known no effect`, () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Reroute the selected duct with an offset, preserving its connected endpoints.", `reroute-${variant}`);
+  let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, args: any, context: any) => {
+      calls++; context.onMcpAccepted(); const lease = context.assignmentKernelV2;
+      const apply = args.body.apply === true;
+      const knownNone = variant === "not_started";
+      const payload = { status: apply ? "Rerouted" : "Dry Run", dryRun: !apply,
+        plan: { ApplySupported: true, segmentCount: 5 },
+        ...(apply ? { transaction: { status: "committed", committed: true, affected_element_ids: [42, 52] } }
+          : knownNone ? { previewExecuted: false, transaction: { status: "not_started", committed: false, affected_element_ids: [] } }
+          : variant === "pending" ? { transaction: { status: "pending", committed: null } } : {}) };
+      return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `reroute:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: apply ? "succeeded" : "failed_after_dispatch",
+          dispatch_state: "dispatched", persistent_effect: apply ? "applied" : knownNone ? "none" : "unknown",
+          native_transaction_state: apply ? "committed" : knownNone ? "not_started" : "unknown", authority: "native-host",
+          result_schema_id: `operator-native/POST:${args.path}/v2`, observation_required: true,
+          request_identity: lease.request_identity, completed_at: new Date().toISOString(), raw_payload_hash: payloadDigestV2(payload).digest,
+          ...(apply ? { affected_target_identities: ["element_id:42", "element_id:52"] } : { error_code: "native_preview_execution_unproven" }) },
+        observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["control"] } } };
+    } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "HVAC", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
+  const run = (id: string, apply: boolean) => handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call", params: {
+    namespace: "revit_operator", turnId: "reroute", tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/reroute-mep-route-segment",
+      body: { hostElementId: 42, operation: "offset", split1ChainageFt: 2, split2ChainageFt: 8, offsetVector: { x: 0, y: 0, z: 1 },
+        apply, dryRun: !apply, preserveConnectedEndpoints: true } } } } as any);
+  try {
+    await run("planning", false);
+    const planned = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    const operation = Object.values(planned.operations)[0]!;
+    assert.equal(calls, 1); assert.equal(operation.result?.status, "failed_after_dispatch");
+    assert.equal(operation.persistent_effect, variant === "not_started" ? "none" : "unknown");
+    assert.equal(Object.keys(planned.observations).length, 1, "failed planning keeps its useful native geometry evidence");
+    assert.equal(Object.values(planned.observations).some(o => o.facts.some(f => f.fact_id === "task.preview_valid" && f.value === true)), false);
+    await run("apply", true);
+    assert.equal(calls, variant === "not_started" ? 2 : 1, "unknown effect still blocks the following write");
+    if (variant === "not_started") {
+      const applied = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+      assert.equal(Object.values(applied.operations).filter(o => o.persistent_effect === "applied").length, 1);
+      await run("duplicate-apply", true);
+      assert.equal(calls, 2, "a committed edit remains protected from duplicate application");
+      assert.deepEqual(applied.spec, snapshot.spec); assert.equal(applied.terminal, false);
+    }
   } finally { endTeammateLoopOwner(owner); }
 }));

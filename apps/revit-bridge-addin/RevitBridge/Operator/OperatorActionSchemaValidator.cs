@@ -224,7 +224,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/export-image", StringComparison.OrdinalIgnoreCase))
             {
-                // Allow: null or { viewId?: number, imageSize?: number }
+                // Allow: null or { viewId?, imageSize?, exportMode? }.
                 if (!IsNullOrObject(body, out var obj))
                 {
                     error = "export-image body must be an object.";
@@ -239,6 +239,16 @@ namespace RevitBridge.Operator
                     }
                     if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                     if (!ValidateOptionalInt(obj.Value, "imageSize", out error)) return false;
+                    if (obj.Value.TryGetProperty("exportMode", out var mode) && mode.ValueKind != JsonValueKind.Null)
+                    {
+                        if (mode.ValueKind != JsonValueKind.String)
+                        {
+                            error = "export-image.exportMode must be full_view or visible_region.";
+                            return false;
+                        }
+                        try { RevitBridge.Common.OperatorViewImageContract.ResolveMode(mode.GetString()); }
+                        catch (ArgumentException ex) { error = ex.Message; return false; }
+                    }
                 }
                 return true;
             }
@@ -2831,6 +2841,7 @@ namespace RevitBridge.Operator
                 if (!ValidateRequiredString(obj.Value, "kind", maxLen: 16, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "mainElementId", out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "branchElementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "connectionMode", maxLen: 40, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "branchConnectorId", out error)) return false;
                 if (!ValidateOptionalXyzArray(obj.Value, "expectedBranchOriginXyz", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "originToleranceFt", out error)) return false;
@@ -2848,6 +2859,22 @@ namespace RevitBridge.Operator
                 {
                     error = "connect-existing-mep-branch.kind must be 'duct' or 'pipe'.";
                     return false;
+                }
+
+                if (obj.Value.TryGetProperty("connectionMode", out var connectionMode) && connectionMode.ValueKind != JsonValueKind.Null)
+                {
+                    var mode = (connectionMode.GetString() ?? "").Trim();
+                    if (!mode.Equals("takeoff_fitting", StringComparison.OrdinalIgnoreCase) &&
+                        !mode.Equals("air_terminal_on_duct", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "connect-existing-mep-branch.connectionMode must be 'takeoff_fitting' or 'air_terminal_on_duct'.";
+                        return false;
+                    }
+                    if (mode.Equals("air_terminal_on_duct", StringComparison.OrdinalIgnoreCase) && !kind.Equals("duct", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "connect-existing-mep-branch.air_terminal_on_duct requires kind 'duct'.";
+                        return false;
+                    }
                 }
 
                 var mainId = obj.Value.GetProperty("mainElementId").GetInt64();
@@ -9412,8 +9439,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "docId", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
-                if (!ValidateRequiredString(obj.Value, "newText", maxLen: 200, out error)) return false;
-                if (!ValidateOptionalString(obj.Value, "expectedOldText", maxLen: 200, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "newText", maxLen: 16_384, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedOldText", maxLen: 16_384, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "confirm", maxLen: 120, out error)) return false;
@@ -10798,4 +10825,3 @@ namespace RevitBridge.Operator
         }
     }
 }
-

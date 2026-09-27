@@ -1,0 +1,53 @@
+{
+  "status": "Ok",
+  "requestedCount": 3,
+  "scannedElementCount": 3,
+  "failedElementCount": 0,
+  "matchedElementCount": 3,
+  "totalScannedConnectorCount": 3,
+  "physicallyConnectedConnectorCount": 2,
+  "openPhysicalConnectorCount": 1,
+  "connectorScanTruncatedElementCount": 0,
+  "filter": "allConnectors",
+  "warnings": [],
+  "results": [
+    {
+      "id": 10, "ok": true, "connectorCount": 1, "returnedConnectorCount": 1, "connectorScanTruncated": false,
+      "connectors": [{
+        "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac",
+        "isConnected": true, "physicalConnectionCount": 1, "isPhysicallyConnected": true,
+        "connectedTo": [
+          { "ownerId": 20, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": true, "isConnectedTo": true },
+          { "ownerId": 30, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": false, "isConnectedTo": null }
+        ],
+        "physicalConnectedTo": [
+          { "ownerId": 20, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": true, "isConnectedTo": true }
+        ]
+      }]
+    },
+    {
+      "id": 20, "ok": true, "connectorCount": 1, "returnedConnectorCount": 1, "connectorScanTruncated": false,
+      "connectors": [{
+        "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac",
+        "isConnected": true, "physicalConnectionCount": 1, "isPhysicallyConnected": true,
+        "connectedTo": [
+          { "ownerId": 10, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": true, "isConnectedTo": true }
+        ],
+        "physicalConnectedTo": [
+          { "ownerId": 10, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": true, "isConnectedTo": true }
+        ]
+      }]
+    },
+    {
+      "id": 30, "ok": true, "connectorCount": 1, "returnedConnectorCount": 1, "connectorScanTruncated": false,
+      "connectors": [{
+        "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac",
+        "isConnected": true, "physicalConnectionCount": 0, "isPhysicallyConnected": false,
+        "connectedTo": [
+          { "ownerId": 10, "connectorId": 0, "connectorIdBasis": "revit_native_connector_id", "connectorType": "End", "domain": "DomainHvac", "isMepSystem": false, "isPhysicalElement": false, "isConnectedTo": null }
+        ],
+        "physicalConnectedTo": []
+      }]
+    }
+  ]
+}

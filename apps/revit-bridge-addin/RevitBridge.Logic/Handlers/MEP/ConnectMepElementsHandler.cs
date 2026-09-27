@@ -37,6 +37,10 @@ namespace RevitBridge.Logic.Handlers.MEP
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope).GetAwaiter().GetResult()));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
@@ -57,13 +61,21 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .Take(required)
                 .ToList();
             var feasible = pairs.Count >= required;
+            // Materialize before mutation: Connector wrappers may be invalid
+            // after regeneration, commit, or rollback.
+            var connectionPlan = pairs.Select(DescribePair).ToList();
 
             if (p.dryRun || !feasible)
             {
                 return Task.FromResult<object>(new
                 {
                     status = feasible ? "Ready" : "Blocked",
+                    success = feasible,
                     dryRun = p.dryRun,
+                    previewExecuted = false,
+                    applied = false,
+                    verified = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     sourceElementId = p.sourceElementId,
                     targetElementIds = targetIds,
                     requiredConnectionCount = required,
@@ -74,68 +86,65 @@ namespace RevitBridge.Logic.Handlers.MEP
                     targetOpenConnectorCounts = targetConnectorCounts,
                     sourceOpenConnectors = sourceConnectors.Select(DescribeConnector).ToList(),
                     targetOpenConnectors = targets.SelectMany(target => OpenPhysicalConnectors(target).Select(DescribeConnector)).ToList(),
-                    connectionPlan = pairs.Select(DescribePair).ToList(),
+                    connectionPlan,
                     blockReason = feasible ? null : "Not enough compatible open connector pairs were found within tolerance."
                 });
             }
 
-            var verifiedTargetIds = new List<long>();
-            var rolledBack = false;
-            Transaction? tx = null;
-            try
-            {
-                using (tx = new Transaction(doc, "Connect MEP elements"))
+            var fittingsBefore = FittingIds(doc);
+            var connectedOwners = new HashSet<long> { p.sourceElementId };
+            enterNativeScope();
+            var response = NativeSingleTransaction.Execute(app, doc, "Connect MEP elements", nativeCreated =>
                 {
-                    tx.Start();
                     foreach (var pair in pairs)
                     {
                         pair.Source.ConnectTo(pair.Target);
+                        connectedOwners.Add(ElementIdCompat.GetValue(pair.TargetOwner.Id));
                     }
                     doc.Regenerate();
-                    verifiedTargetIds = ConnectedTargetOwnerIds(source, targetIds);
-                    if (p.verify && verifiedTargetIds.Count < required)
-                    {
-                        throw new InvalidOperationException($"Native connector verification found {verifiedTargetIds.Count} required target connections; expected at least {required}.");
-                    }
-                    tx.Commit();
-                }
-            }
-            catch (Exception ex)
+                    // ConnectTo can insert fittings. Native collector identity
+                    // differences supplement the commit event inventory and
+                    // provide the bounded intermediate owners for readback.
+                    foreach (var id in FittingIds(doc).Except(fittingsBefore)) nativeCreated.Add(id);
+                    var verifiedTargets = ConnectedTargetOwnerIds(doc, p.sourceElementId, targetIds, nativeCreated);
+                    if (p.verify && verifiedTargets.Count < required)
+                        throw new InvalidOperationException($"Native connector verification found {verifiedTargets.Count} required target connections; expected at least {required}.");
+                    return new Dictionary<string, object?>();
+                }, nativeModifiedElements: () => connectedOwners);
+
+            var receipt = (OperatorNativeTransactionReceipt)response["transaction"]!;
+            if (receipt.CommittedValue == true)
             {
-                try
+                OperatorNativeTransactionExecution.ReadCommitted(response, () =>
                 {
-                    if (tx != null && tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
-                }
-                catch { }
-                rolledBack = true;
-                return Task.FromResult<object>(new
-                {
-                    status = "Blocked",
-                    dryRun = false,
-                    sourceElementId = p.sourceElementId,
-                    targetElementIds = targetIds,
-                    requiredConnectionCount = required,
-                    plannedConnectionCount = pairs.Count,
-                    connectionPlan = pairs.Select(DescribePair).ToList(),
-                    verifiedTargetElementIds = new List<long>(),
-                    rolledBack,
-                    error = ex.Message
+                    // Reacquire persisted owners/connectors after commit; the
+                    // transient ConnectTo result is not physical readback.
+                    var persisted = ConnectedTargetOwnerIds(doc, p.sourceElementId, targetIds, receipt.AddedElementIds);
+                    if (persisted.Count < required)
+                        throw new InvalidOperationException($"Post-commit physical readback found {persisted.Count} required target connections; expected at least {required}.");
+                    return new Dictionary<string, object?>
+                    {
+                        ["verifiedTargetElementIds"] = persisted,
+                        ["verifiedConnectionCount"] = persisted.Count
+                    };
                 });
             }
-
-            return Task.FromResult<object>(new
-            {
-                status = "Applied",
-                dryRun = false,
-                sourceElementId = p.sourceElementId,
-                targetElementIds = targetIds,
-                requiredConnectionCount = required,
-                plannedConnectionCount = pairs.Count,
-                connectionPlan = pairs.Select(DescribePair).ToList(),
-                verifiedTargetElementIds = verifiedTargetIds,
-                verifiedConnectionCount = verifiedTargetIds.Count,
-                rolledBack
-            });
+            var succeeded = response["success"] is bool passed && passed;
+            response["status"] = receipt.CommittedValue == true ? (succeeded ? "Applied" : "Committed With Errors")
+                : receipt.Status == "rolled_back" || receipt.Status == "not_started" ? "Blocked" : "Unknown";
+            response["dryRun"] = false;
+            response["sourceElementId"] = p.sourceElementId;
+            response["targetElementIds"] = targetIds;
+            response["requiredConnectionCount"] = required;
+            response["plannedConnectionCount"] = pairs.Count;
+            response["connectionPlan"] = connectionPlan;
+            response["physicalVerificationScope"] = "target_owner_reachability";
+            response["applied"] = receipt.CommittedValue;
+            response["rolledBack"] = receipt.Status == "rolled_back" ? (bool?)true : receipt.CommittedValue == true ? false : (bool?)null;
+            if (!response.ContainsKey("verified")) response["verified"] = false;
+            if (!response.ContainsKey("verifiedTargetElementIds")) response["verifiedTargetElementIds"] = Array.Empty<long>();
+            if (!response.ContainsKey("verifiedConnectionCount")) response["verifiedConnectionCount"] = 0;
+            return Task.FromResult<object>(response);
         }
 
         private static List<Pair> PlanPairs(List<Connector> sourceConnectors, List<Element> targets, double toleranceFt, double sizeToleranceFt)
@@ -199,20 +208,38 @@ namespace RevitBridge.Logic.Handlers.MEP
             return true;
         }
 
-        private static List<long> ConnectedTargetOwnerIds(Element source, List<long> targetIds)
+        private static HashSet<long> FittingIds(Document doc)
+            => new HashSet<long>(new FilteredElementCollector(doc)
+                .WherePasses(new ElementMulticategoryFilter(new[] { BuiltInCategory.OST_DuctFitting, BuiltInCategory.OST_PipeFitting }))
+                .WhereElementIsNotElementType().ToElementIds().Select(ElementIdCompat.GetValue));
+
+        private static List<long> ConnectedTargetOwnerIds(Document doc, long sourceId, List<long> targetIds, IEnumerable<long> createdIds)
         {
             var targetSet = new HashSet<long>(targetIds);
+            var intermediates = new HashSet<long>(createdIds.Intersect(FittingIds(doc)));
             var found = new HashSet<long>();
-            foreach (var connector in MepRoutingUtil.GetConnectors(source))
+            var visited = new HashSet<long>();
+            var pending = new Queue<long>();
+            pending.Enqueue(sourceId);
+            while (pending.Count > 0)
             {
-                ConnectorSet? references = null;
-                try { references = connector.AllRefs; } catch { }
-                if (references == null) continue;
-                foreach (Connector reference in references)
+                var ownerId = pending.Dequeue();
+                if (!visited.Add(ownerId)) continue;
+                var owner = doc.GetElement(ElementIdCompat.Create(ownerId));
+                if (owner == null || !owner.IsValidObject)
+                    throw new InvalidOperationException($"Connection readback owner {ownerId} is unavailable.");
+                foreach (var connector in MepRoutingUtil.GetConnectors(owner))
                 {
-                    if (reference == null || reference.ConnectorType == ConnectorType.Logical || reference.Owner == null) continue;
-                    var id = ElementIdCompat.GetValue(reference.Owner.Id);
-                    if (targetSet.Contains(id)) found.Add(id);
+                    if (connector.ConnectorType == ConnectorType.Logical) continue;
+                    foreach (Connector reference in connector.AllRefs)
+                    {
+                        if (reference == null || reference.ConnectorType == ConnectorType.Logical || reference.Owner == null
+                            || reference.Owner is MEPSystem || reference.Owner.Id == owner.Id) continue;
+                        if (!connector.IsConnectedTo(reference) || !reference.IsConnectedTo(connector)) continue;
+                        var id = ElementIdCompat.GetValue(reference.Owner.Id);
+                        if (targetSet.Contains(id)) found.Add(id);
+                        else if (intermediates.Contains(id)) pending.Enqueue(id);
+                    }
                 }
             }
             return found.OrderBy(id => id).ToList();

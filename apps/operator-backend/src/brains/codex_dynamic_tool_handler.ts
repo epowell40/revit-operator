@@ -49,6 +49,7 @@ import {
 } from "../assignments/assignment_kernel_v2_progress.js";
 import { deriveProgressGapsV2 } from "../domain/assignment-kernel/index.js";
 import { reconcileCanonicalToolVerification } from "../teammate_verification_state.js";
+import { expandExactRegisteredStageToolArguments } from "../existing_conditions/registered_stage_handoff_http.js";
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -93,7 +94,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       if (!conversation) {
         const interrupted = findInterruptedAutoGoalForSession(sessionId);
         const journal = binding ? null : currentAssignmentJournalContext(sessionId);
-        if (interrupted || snapshot?.execution_control?.state === "paused" || snapshot?.terminal
+        if (interrupted || snapshot?.completion_proposal || snapshot?.execution_control?.state === "paused" || snapshot?.terminal
           || (!snapshot && (!journal || journal.projection.terminal_state !== "open"))) {
           throw new Error("The model task is not active; resume it before reading more task documents.");
         }
@@ -164,6 +165,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     runtime.queueAssignmentKernelV2TurnStop(params.turnId, "user_requested_pause");
     return { contentItems: [{ type: "inputText", text: "Task paused by the user. No new work was dispatched; retain completed work for resume." }], success: false };
   }
+  if (v2Snapshot?.completion_proposal) {
+    runtime.queueAssignmentKernelV2TurnStop(params.turnId, "advisory_completion_proposed");
+    return { contentItems: [{ type: "inputText", text: "Unverified checkpoint retained for independent review; no further tool work was dispatched." }], success: false };
+  }
   const journalContext = v2Binding ? null : currentAssignmentJournalContext(sessionId);
   if (!v2Snapshot && !journalContext) {
     return {
@@ -186,6 +191,19 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     run_id: v2Binding?.run_id ?? journalContext!.runId,
     generation: v2Binding?.generation ?? journalContext!.generation
   });
+  try {
+    if (params.tool === "revit_call_tool") {
+      boundArguments.arguments = expandExactRegisteredStageToolArguments(boundArguments.arguments, {
+        session_id: sessionId,
+        assignment_id: v2Binding?.assignment_id ?? journalContext!.assignmentId,
+        run_id: v2Binding?.run_id ?? journalContext!.runId,
+        generation: v2Binding?.generation ?? journalContext!.generation
+      });
+    }
+  } catch (error) {
+    return { contentItems: [{ type: "inputText", text: `[tool_request_invalid] ${
+      (error instanceof Error ? error.message : String(error)).slice(0, 5_000)}` }], success: false };
+  }
   const boundParams = { ...params, arguments: boundArguments.arguments };
   const boundRequest = { ...request, params: boundParams };
   // The connected runtime's advertised schema is checked before the mutation
@@ -201,7 +219,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (!parallel.accepted) {
     return { contentItems: [{ type: "inputText", text: parallel.message ?? "Concurrent dependent Revit call blocked." }], success: false };
   }
-  const teammateGate = guardTeammateMcpCall(runtime, boundParams);
+  const teammateGate = guardTeammateMcpCall(runtime, boundParams, v2Snapshot);
   if (!teammateGate.allowed) {
     parallel.release();
     return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
@@ -216,10 +234,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         });
         recordTeammateMcpResult(runtime, teammateGate, result);
         const afterInteraction = getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
-        if (afterInteraction && (afterInteraction.terminal
+        if (afterInteraction && (afterInteraction.completion_proposal || afterInteraction.terminal
           || afterInteraction.outcome === "awaiting_user_input"
           || afterInteraction.outcome === "awaiting_user_review")) {
-          runtime.queueAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
+          runtime.queueAssignmentKernelV2TurnStop(params.turnId, afterInteraction.completion_proposal ? "advisory_completion_proposed" : afterInteraction.terminal_reason ?? afterInteraction.outcome);
         }
         return adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
@@ -274,8 +292,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       // A legacy target-match assertion can precede a complete multi-read check;
       // forwarding it would reject and discard useful partial observations.
       const settled = settleAssignmentKernelOperationV2(lease, rawResult);
-      reconcileCanonicalToolVerification(teammateGate.state, settled.snapshot, lease.operation_id);
-      reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
+      if (!teammateGate.state?.canonical_supervision_only) {
+        reconcileCanonicalToolVerification(teammateGate.state, settled.snapshot, lease.operation_id);
+        reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
+      }
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,

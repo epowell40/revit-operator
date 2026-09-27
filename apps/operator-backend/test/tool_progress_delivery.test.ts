@@ -85,3 +85,59 @@ test("streaming brain forwards tool progress through both read and buffered muta
     assert.ok(deltas.every(text => !text.includes("Reading model information")));
   }
 }));
+
+test("compaction progress is current-turn descriptive output, deduplicated and owned by the latest real activity", () => isolated(() => {
+  const progress: string[] = [], deltas: string[] = [], observations: unknown[] = [];
+  const observer = createCodexTurnNotificationObserver({ sessionId: "compaction-progress", threadId: "thread", turnId: "turn",
+    modelTelemetry: { observe() {} }, assignmentObserver: { observe(value) { observations.push(value); } },
+    freshEvidenceRequirement: { required: true } as any, webEvidenceRequirement: { required: true } as any,
+    mcpRuntime: null, onProgress: text => progress.push(text), onDelta: text => deltas.push(text) });
+  const emit = (method: string, id: unknown, turnId = "turn", threadId = "thread") => observer.observe({ method, threadId,
+    params: { turnId, item: { type: "contextCompaction", id } } } as any);
+  const before = observer.snapshot();
+  emit("item/started", "foreign", "old"); emit("item/started", "foreign", "turn", "other");
+  emit("item/started", ""); emit("item/started", " "); emit("item/started", null);
+  emit("item/completed", "completion-only"); emit("item/started", "completion-only");
+  assert.deepEqual(progress, []);
+  emit("item/started", "a"); emit("item/started", "a");
+  assert.deepEqual(progress, ["Organizing task notes…"]);
+  emit("item/completed", "a", "old"); emit("item/completed", "unmatched");
+  assert.equal(progress.length, 1);
+  emit("item/completed", "a"); emit("item/completed", "a"); emit("item/started", "a");
+  assert.deepEqual(progress, ["Organizing task notes…", "Continuing the task…"]);
+  emit("item/started", "b");
+  observer.observe({ method: "item/started", threadId: "thread", params: { turnId: "turn", item: { type: "dynamicToolCall", id: "read", tool: "revit_get_parameters" } } } as any);
+  const afterTool = progress.length; emit("item/completed", "b");
+  assert.equal(progress.length, afterTool); assert.equal(progress.at(-1), "Reading model information…");
+  emit("item/started", "c");
+  observer.observe({ method: "item/completed", threadId: "thread", params: { turnId: "turn", item: { type: "agentMessage", id: "comment", phase: "commentary", text: "Checking the remaining details." } } } as any);
+  const afterCommentary = progress.length; emit("item/completed", "c");
+  assert.equal(progress.length, afterCommentary); assert.equal(progress.at(-1), "Checking the remaining details.");
+  emit("item/started", "d"); emit("item/started", "e");
+  const afterNewer = progress.length; emit("item/completed", "d");
+  assert.equal(progress.length, afterNewer); emit("item/completed", "e");
+  assert.equal(progress.at(-1), "Continuing the task…");
+  assert.deepEqual(observations, []); assert.deepEqual(deltas, []); assert.deepEqual(observer.snapshot(), before);
+}));
+
+test("streaming brain forwards real compaction lifecycle text through read and buffered mutation progress callbacks", () => isolated(async () => {
+  for (const user_text of ["Review the room parameters. Do not change the model.", "Rename the selected view to HVAC TEST."]) {
+    const progress: string[] = [], deltas: string[] = [];
+    const controller = new AbortController();
+    await decideStreaming({ version: "operator.backend.v1", session_id: "compaction-delivery", message_id: user_text, user_text } as any,
+      { abortSignal: controller.signal, onProgress: text => progress.push(text), onDelta: text => deltas.push(text) }, {
+        codexStreamingBrain: async (_req, callbacks) => {
+          assert.equal(callbacks.abortSignal, controller.signal);
+          const observer = createCodexTurnNotificationObserver({ sessionId: "compaction-delivery", threadId: "thread", turnId: "turn",
+            modelTelemetry: { observe() {} }, assignmentObserver: { observe() { assert.fail("Compaction is not native evidence"); } },
+            freshEvidenceRequirement: { required: false } as any, webEvidenceRequirement: { required: false } as any,
+            mcpRuntime: null, onProgress: callbacks.onProgress, onDelta: callbacks.onDelta });
+          for (const method of ["item/started", "item/completed"]) observer.observe({ method, threadId: "thread", params: { turnId: "turn", item: { type: "contextCompaction", id: "compact" } } } as any);
+          assert.equal(controller.signal.aborted, false);
+          return { version: "operator.backend.v1", assistant_message: "The requested work needs further verification.", actions: [] } as any;
+        }
+      });
+    assert.deepEqual(progress, ["Organizing task notes…", "Continuing the task…"]);
+    assert.ok(deltas.every(text => !/Organizing task notes|Continuing the task/.test(text)));
+  }
+}));

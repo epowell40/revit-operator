@@ -14,6 +14,18 @@ namespace RevitBridge.Common.Tests
     {
         private const string Candidate22Query = "project-wide element inventory by category grouped by family and type complete count air terminals";
 
+        [Fact]
+        public void RouteDocumentationExplainsExactOneSidedEndpointPrecedence()
+        {
+            foreach (var route in new[] { "/revit/create-mep-route", "/revit/mep-route-workflow" })
+            {
+                var tool = Assert.Single(OperatorToolManifest.Tools, item => item.Path == route);
+                Assert.Contains("requiredExistingEndpoint", tool.Description);
+                Assert.Contains("expectedExistingStartOwnerId", tool.Description);
+                Assert.Contains("true alone requires both ends", tool.Description);
+            }
+        }
+
         [Theory]
         [InlineData("Read the complete Revit room and space inventory with HVAC load-calculation parameters, validate counts/units/missing values, and export a room-by-room Excel workbook artifact without changing the model.", "/revit/export-elements-xlsx")]
         [InlineData("export element parameters to an Excel spreadsheet workbook", "/revit/export-elements-xlsx")]

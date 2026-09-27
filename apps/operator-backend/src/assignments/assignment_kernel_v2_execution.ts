@@ -1,4 +1,11 @@
+import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
+import { committedTargetChangeRetryV2 } from "../domain/assignment-kernel/committed_target_retry.js";
+import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
+import { nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { trustedLocalExperimentHost } from "./local_advisory_policy.js";
+import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
+import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
 import { createHash } from "node:crypto";
@@ -54,6 +61,7 @@ import {
 } from "../execution_truth/assignment_kernel_v2_result_adapter.js";
 import {
   appendCurrentAssignmentKernelEventV2,
+  appendAssignmentKernelObservationSettlementV2,
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
@@ -144,7 +152,7 @@ function operationEffect(effect: string): RequestedEffectV2 {
 }
 
 function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): OperationPurposeV2 {
-  if (snapshot.unresolved_unknown_operation_ids.length > 0 && ["read", "discovery", "navigation"].includes(effect)) {
+  if (snapshot.unresolved_unknown_operation_ids.length > 0 && effect === "read") {
     return "reconciliation";
   }
   if (effect === "evidence_read") return "evidence_read";
@@ -257,15 +265,40 @@ function canonicalTargetId(targetTokens: readonly string[]): string | undefined 
   return targetTokens.length === 1 ? targetTokens[0] : undefined;
 }
 
-function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: readonly string[]): OperationV2 | null {
+function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: readonly string[],
+  identity: OperationRequestIdentityV2, args: unknown): OperationV2 | null {
   return Object.values(snapshot.operations)
     .filter(operation => operation.requested_effect === "apply"
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
+      && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
       && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
-      && verificationTargetMatchesAppliedOperation(operation, targetTokens))
+      && verificationReadTargetsCovered(operation, targetTokens, identity)
+      && verificationCapabilityAdmissionV2({
+        apply: { capability_id: operation.capability_id, method: operation.request_identity?.method,
+          path: operation.request_identity?.path, tool: operation.input.tool, arguments: operation.input },
+        verification: { capability_id: identity.capability_id, method: identity.method,
+          path: identity.path, tool: object(args).tool }
+      }).admissible)
     .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
       .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0] ?? null;
+}
+
+function verificationReadTargetsCovered(operation: OperationV2, targetTokens: readonly string[],
+  identity: OperationRequestIdentityV2): boolean {
+  if (targetTokens.length === 0) return false;
+  // A comparison of a duplicated view includes its exact source as context.
+  // Every other target must belong to the native-created set; an arbitrary
+  // aggregate read must not acquire verification ownership by partial overlap.
+  if (operation.request_identity?.path === "/revit/duplicate-view" && identity.path === "/revit/view-owned-detailing") {
+    const source = operationTargetSelectorV2({ operation: { ...operation.request_identity, capability_id: operation.capability_id },
+      value: { viewId: object(operation.input.body).viewId } }).contextual_scope_tokens;
+    const sourceAliases = new Set(source.flatMap(operationTargetIdentityAliasesV2));
+    return targetTokens.some(token => verificationTargetMatchesAppliedOperation(operation, [token]))
+      && targetTokens.every(token => verificationTargetMatchesAppliedOperation(operation, [token])
+        || operationTargetIdentityAliasesV2(token).some(alias => sourceAliases.has(alias)));
+  }
+  return targetTokens.every(token => verificationTargetMatchesAppliedOperation(operation, [token]));
 }
 
 function verificationTargetMatchesAppliedOperation(operation: OperationV2, targetTokens: readonly string[]): boolean {
@@ -278,6 +311,14 @@ function verificationTargetMatchesAppliedOperation(operation: OperationV2, targe
   return (operation.result?.affected_target_identities ?? [])
     .flatMap(operationTargetIdentityAliasesV2)
     .some(identity => requested.has(identity));
+}
+
+function assertInterpretedModelEffect(snapshot:AssignmentSnapshotV2,effect:RequestedEffectV2,path:string|undefined):void {
+  if(!validBoundOperationScope(snapshot.spec)||effect==="read")return;
+  const modelEffect=snapshot.spec.interpreted_scope!.scope.model_effect;
+  if((effect==="apply"&&modelEffect!=="apply")||(effect==="preview"&&modelEffect==="read")) {
+    if(!authorizedArtifactExportPath(snapshot.spec.source_user_request,path))throw Error("assignment_kernel_v2_user_no_model_write_limit");
+  }
 }
 
 export function openAssignmentKernelOperationV2(input: Readonly<{
@@ -294,25 +335,34 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.snapshot.current_binding)) {
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   }
+  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) throw new Error("advisory_execution_requires_local_host");
   if (snapshot.terminal || snapshot.outcome !== "active") {
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
-  if (suggestedEffect === "apply" && snapshot.spec.work_plan_required && !snapshot.work_plan)
+  assertInterpretedModelEffect(snapshot,suggestedEffect,requestIdentity({capability_id:input.capability_id,arguments:input.arguments}).path);
+  if (suggestedEffect === "apply" && !advisoryVerificationV2(snapshot) && snapshot.spec.work_plan_required && !snapshot.work_plan)
     throw new Error("assignment_kernel_v2_declare_work_plan_before_apply");
   if (suggestedEffect === "apply" && requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path === "/revit/export-elements-xlsx"
       && !authorizedArtifactExportPath(snapshot.spec.source_user_request, "/revit/export-elements-xlsx")) {
     throw new Error("assignment_kernel_v2_explicit_workbook_export_authority_required");
   }
-  if (suggestedEffect === "apply" && isExplicitNoWriteRequest(snapshot.spec.source_user_request)
+  if (suggestedEffect === "apply" && !validBoundOperationScope(snapshot.spec) && isExplicitNoWriteRequest(snapshot.spec.source_user_request)
       && !authorizedArtifactExportPath(snapshot.spec.source_user_request, requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path)) {
     throw new Error("assignment_kernel_v2_user_no_model_write_limit");
   }
-  const purpose = operationPurpose(input.classified_effect, snapshot);
-  if (snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
+  const targetTokens = [...new Set((input.target_tokens ?? []).map(String).filter(Boolean))].sort();
+  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  const suggestedPurpose = operationPurpose(input.classified_effect, snapshot);
+  const verifies = suggestedPurpose === "verification"
+    ? verificationSubject(snapshot, targetTokens, currentIdentity, input.arguments) : null;
+  // Pending postconditions constrain proof credit, not the ability to inspect
+  // the model. Only a compatible read owned by one exact subject verifies it.
+  const purpose = suggestedPurpose === "verification" && !verifies ? "discovery" : suggestedPurpose;
+  if (snapshot.unresolved_unknown_operation_ids.length > 0 && suggestedEffect !== "read") {
     throw new Error("assignment_kernel_v2_unknown_effect_requires_reconciliation");
   }
-  if (purpose !== "reconciliation"
+  if (!advisoryVerificationV2(snapshot) && purpose !== "reconciliation"
       && Object.keys(criteriaPendingEvaluationV2(snapshot)).length > 0) {
     throw new Error("assignment_kernel_v2_criterion_evaluation_pending");
   }
@@ -326,12 +376,6 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     controller_request_id: String(input.controller_request_id),
     capability_id: input.capability_id
   })}`;
-  const targetTokens = [...new Set((input.target_tokens ?? []).map(String).filter(Boolean))].sort();
-  const verifies = purpose === "verification" ? verificationSubject(snapshot, targetTokens) : null;
-  if (purpose === "verification" && !verifies) {
-    throw new Error("assignment_kernel_v2_verification_target_unbound");
-  }
-  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
   // A detailed view copy is verified by reading both source and created views.
   // The source is comparison context, not another applied target. Keep the
   // complete request in the operation input; bind only the native-created view
@@ -341,28 +385,6 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     ? targetTokens.filter(token => verificationTargetMatchesAppliedOperation(verifies, [token]))
     : targetTokens;
   const targetId = canonicalTargetId(boundTargetTokens);
-  if (verifies) {
-    const verificationAdmission = verificationCapabilityAdmissionV2({
-      apply: {
-        capability_id: verifies.capability_id,
-        method: verifies.request_identity?.method,
-        path: verifies.request_identity?.path,
-        tool: verifies.input.tool,
-        arguments: verifies.input.arguments
-      },
-      verification: {
-        capability_id: input.capability_id,
-        method: currentIdentity.method,
-        path: currentIdentity.path,
-        tool: object(input.arguments).tool
-      }
-    });
-    if (!verificationAdmission.admissible) {
-      throw new Error(`assignment_kernel_v2_verification_capability_inadmissible:${verificationAdmission.reason}`
-        + `:required=${verificationAdmission.required_semantic_outputs.join(",")}`
-        + `:admissible_readback_paths=${verificationAdmission.admissible_readback_paths.join(",")}`);
-    }
-  }
   const correctedPredecessor = Object.values(snapshot.operations)
     .filter(candidate => candidate.settlement_state === "settled"
       && candidate.persistent_effect === "none"
@@ -432,7 +454,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     .sort();
   const relevantInputSchemaGaps = currentGaps.filter((gap) => gap.kind === "operation_input_schema_invalid"
     && gap.work_unit_ids.includes(unit.work_unit_id));
-  if (fulfillmentRole === "supporting_control"
+  if (!advisoryVerificationV2(snapshot) && fulfillmentRole === "supporting_control"
       && relevantInputSchemaGaps.length > 0
       && !resolvesGapIds.some((gapId) => relevantInputSchemaGaps.some((gap) => gap.gap_id === gapId))) {
     throw new Error("assignment_kernel_v2_input_schema_gap_requires_corrected_operation_or_exact_schema_docs");
@@ -476,6 +498,12 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     deadline_at: boundedDeadline(openedAt)
   };
   assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
+  if (!operation.retry_of_operation_id) {
+    const correction = committedTargetChangeRetryV2(snapshot, operation);
+    if (correction) Object.assign(operation, correction);
+    const checkpoint = documentCheckpointContinuationV2(snapshot, operation, nativeDocumentCheckpointResultV2);
+    if (checkpoint) Object.assign(operation, checkpoint);
+  }
   appendCurrentAssignmentKernelEventV2({
     goal_id: snapshot.spec.binding.assignment_id,
     binding: snapshot.current_binding,
@@ -524,6 +552,7 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.binding)) {
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   }
+  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) throw new Error("advisory_execution_requires_local_host");
   if (snapshot.terminal || snapshot.outcome !== "active") {
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
@@ -549,6 +578,7 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     method: input.method,
     path: input.path
   });
+  assertInterpretedModelEffect(snapshot,suggestedEffect,identity.path);
   const operationId = `opv2_${stableHash({
     assignment_id: input.binding.assignment_id,
     generation: input.binding.generation,
@@ -748,7 +778,9 @@ function commitInput(
         ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/create-family-instance"
           ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
-        : ["/revit/mep-route-workflow", "/revit/create-duct"].includes(verificationSubject.request_identity?.path ?? "")
+        : verificationSubject.request_identity?.path === "/revit/connect-existing-mep-branch"
+          ? existingMepConnectionPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : ["/revit/mep-route-workflow", "/revit/create-duct", "/revit/create-mep-route", "/revit/existing-conditions-mep-draft-workflow"].includes(verificationSubject.request_identity?.path ?? "")
           ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
@@ -818,13 +850,44 @@ export function settleAssignmentKernelOperationV2(
   const commit = commitInput(envelope, result, lease, trustedVerification);
   if (commit) assertEvidenceStoreInputSafe(evidenceInput(lease, result, commit));
   recordNativeDispatchIfNeeded(lease, result);
-  appendCurrentAssignmentKernelEventV2({
+  const resultEvent = {
     goal_id: lease.assignment_id, binding: lease.binding,
     event_id: `operation-result:${result.result_id}`,
     actor: result.authority,
     occurred_at: result.completed_at,
-    body: { event_type: "operation_result_recorded", result, ...(commit ? { observation_commit: commit } : {}) }
-  });
+    body: { event_type: "operation_result_recorded" as const, result, ...(commit ? { observation_commit: commit } : {}) }
+  };
+  const pending = result.observation_required && commit
+    ? getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id] : undefined;
+  if (pending && !pending.result && commit) {
+    // Evidence preparation is synchronous and outside the goal lock. Dispatch
+    // is already durable if this process stops here; no native effect is inferred.
+    let prepared: ReturnType<typeof prepareAssignmentKernelObservationV2>;
+    try {
+      prepared = prepareAssignmentKernelObservationV2(lease, result, commit, pending, observationCommitRuntime);
+    } catch (error) {
+      appendCurrentAssignmentKernelEventV2(resultEvent);
+      return recordAssignmentKernelObservationFailureV2(lease, result, 1, error);
+    }
+    try {
+      const settled = appendAssignmentKernelObservationSettlementV2({ result_event: resultEvent,
+        observation_event: observationEvent(lease, prepared.observation) });
+      return { snapshot: settled.snapshot, result, observation: prepared.observation,
+        evidence_refs: [prepared.stored.ref], evidence_projections: [prepared.stored.projection] };
+    } catch (error) {
+      const retained = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
+      // Only observation failure after this exact result became durable is an
+      // observation retry. Conflicting/stale result delivery remains rejected.
+      if (retained?.settlement_state === "retaining_observation" && retained.result
+        && canonicalJsonV2(retained.result) === canonicalJsonV2(result)) {
+        return recordAssignmentKernelObservationFailureV2(lease, result, (retained.observation_commit_attempts ?? 0) + 1, error);
+      }
+      throw error;
+    }
+  }
+  // Duplicate delivery keeps existing event identity/conflict and read-only
+  // evidence rehydration behavior; never run the evidence writer twice.
+  appendCurrentAssignmentKernelEventV2(resultEvent);
   if (!result.observation_required) {
     return {
       snapshot: getAssignmentKernelSnapshotV2(lease.assignment_id)!, result,
@@ -877,56 +940,71 @@ export function commitAssignmentKernelObservationV2(
   const commit = operation.observation_commit;
   const attempt = (operation.observation_commit_attempts ?? 0) + 1;
   try {
-    const stored = runtime.storeEvidence(evidenceInput(lease, result, commit), getEvidenceContextBudget().item_bytes);
-    const fulfillmentRole = operation.fulfillment_role
-      ?? operationFulfillmentRoleForAdmissionV2({
-        purpose: operation.purpose,
-        capability_id: operation.capability_id,
-        prerequisite: operation.operation_role === "prerequisite"
-      });
-    const evidenceClass = evidenceClassForFulfillmentRoleV2(fulfillmentRole);
-    const semanticFacts = normalizeSemanticFactsForEvidenceV2(evidenceClass, commit.semantic_facts);
-    const registry = new ObservationDecoderRegistryV2();
-    registry.register(result.result_schema_id, () => semanticFacts);
-    const observation = observationFromOperationResultV2({
-      result,
-      expected_binding: lease.binding,
-      observation_id: `obsv2_${stableHash({ operation_id: lease.operation_id, evidence_id: stored.ref.evidence_id })}`,
-      raw_payload_ref: `evidence:${stored.ref.evidence_id}`,
-      raw_payload: commit.raw_payload,
-      target_scope: commit.target_scope,
-      verification_relevance: commit.verification_relevance,
-      fulfillment_role: fulfillmentRole,
-      evidence_class: evidenceClass,
-      capability_id: operation.capability_id,
-      eligible_criterion_ids: operation.eligible_criterion_ids ?? [],
-      registry
-    });
-    appendCurrentAssignmentKernelEventV2({
-      goal_id: lease.assignment_id, binding: lease.binding,
-      event_id: `observation-retained:${observation.observation_id}`,
-      actor: "operator-evidence-store",
-      occurred_at: observation.observed_at,
-      body: { event_type: "observation_retained", observation }
-    });
+    const { stored, observation } = prepareAssignmentKernelObservationV2(lease, result, commit, operation, runtime);
+    appendCurrentAssignmentKernelEventV2(observationEvent(lease, observation));
     return {
       snapshot: getAssignmentKernelSnapshotV2(lease.assignment_id)!, result, observation,
       evidence_refs: [stored.ref], evidence_projections: [stored.projection]
     };
   } catch (error) {
-    const errorCode = (error instanceof Error ? error.message : String(error)).slice(0, 240) || "observation_commit_failed";
-    const terminal = attempt >= observationCommitLimit();
-    appendCurrentAssignmentKernelEventV2({
-      goal_id: lease.assignment_id, binding: lease.binding,
-      event_id: `${terminal ? "observation-commit-failed" : "observation-commit-retry"}:${result.result_id}:${attempt}`,
-      actor: "operator-evidence-store",
-      body: terminal
-        ? { event_type: "observation_commit_failed", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
-        : { event_type: "observation_commit_retry_recorded", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
-    });
-    if (terminal) deriveAndSettleAssignmentKernelV2(lease.binding, "observation_commit_failed");
-    throw error;
+    return recordAssignmentKernelObservationFailureV2(lease, result, attempt, error);
   }
+}
+
+
+function prepareAssignmentKernelObservationV2(
+  lease: AssignmentKernelOperationLeaseV2, result: OperationResultV2, commit: ObservationCommitInputV2,
+  operation: OperationV2, runtime: AssignmentKernelObservationCommitRuntimeV2
+) {
+  const stored = runtime.storeEvidence(evidenceInput(lease, result, commit), getEvidenceContextBudget().item_bytes);
+  const fulfillmentRole = operation.fulfillment_role
+    ?? operationFulfillmentRoleForAdmissionV2({
+      purpose: operation.purpose,
+      capability_id: operation.capability_id,
+      prerequisite: operation.operation_role === "prerequisite"
+    });
+  const evidenceClass = evidenceClassForFulfillmentRoleV2(fulfillmentRole);
+  const semanticFacts = normalizeSemanticFactsForEvidenceV2(evidenceClass, commit.semantic_facts);
+  const registry = new ObservationDecoderRegistryV2();
+  registry.register(result.result_schema_id, () => semanticFacts);
+  const observation = observationFromOperationResultV2({
+    result,
+    expected_binding: lease.binding,
+    observation_id: `obsv2_${stableHash({ operation_id: lease.operation_id, evidence_id: stored.ref.evidence_id })}`,
+    raw_payload_ref: `evidence:${stored.ref.evidence_id}`,
+    raw_payload: commit.raw_payload,
+    target_scope: commit.target_scope,
+    verification_relevance: commit.verification_relevance,
+    fulfillment_role: fulfillmentRole,
+    evidence_class: evidenceClass,
+    capability_id: operation.capability_id,
+    eligible_criterion_ids: operation.eligible_criterion_ids ?? [],
+    registry
+  });
+  return { stored, observation };
+}
+
+function observationEvent(lease: AssignmentKernelOperationLeaseV2, observation: ObservationV2) {
+  return { goal_id: lease.assignment_id, binding: lease.binding,
+    event_id: `observation-retained:${observation.observation_id}`, actor: "operator-evidence-store",
+    occurred_at: observation.observed_at, body: { event_type: "observation_retained" as const, observation } };
+}
+
+function recordAssignmentKernelObservationFailureV2(
+  lease: AssignmentKernelOperationLeaseV2, result: OperationResultV2, attempt: number, error: unknown
+): never {
+  const errorCode = (error instanceof Error ? error.message : String(error)).slice(0, 240) || "observation_commit_failed";
+  const terminal = attempt >= observationCommitLimit();
+  appendCurrentAssignmentKernelEventV2({
+    goal_id: lease.assignment_id, binding: lease.binding,
+    event_id: `${terminal ? "observation-commit-failed" : "observation-commit-retry"}:${result.result_id}:${attempt}`,
+    actor: "operator-evidence-store",
+    body: terminal
+      ? { event_type: "observation_commit_failed", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
+      : { event_type: "observation_commit_retry_recorded", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
+  });
+  if (terminal) deriveAndSettleAssignmentKernelV2(lease.binding, "observation_commit_failed");
+  throw error;
 }
 
 export function failAssignmentKernelOperationV2(

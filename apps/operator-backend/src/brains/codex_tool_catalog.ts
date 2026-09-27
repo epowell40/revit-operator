@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { DynamicToolSpec } from "../codex/generated/app_server_0_149_0/v2/DynamicToolSpec.js";
+import type { DynamicToolSpec } from "../codex/generated/app_server_0_157_0/v2/DynamicToolSpec.js";
 import { getConversationHistory, getPendingCodexThreadHandoff } from "../memory/sqlite_store.js";
-import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
+import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);

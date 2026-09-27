@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { ChatRequest } from "../contracts.js";
-import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
+import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 import { readLocalWorkspaceFile, toolAttachmentToDataUrl } from "../attachments/inline_images.js";
 import { getWorkspaceRoot } from "../workspace.js";
 import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";

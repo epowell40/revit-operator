@@ -61,5 +61,17 @@ test("registration tool exposes one explicitly read-only MCP surface", () => {
   assert.match(registration.description, /read-only/i);
   assert.match(registration.description, /never creates or changes Revit elements/i);
   assert.match(registration.description, /model-observation-index/i);
+  assert.match(registration.description, /reflection_fit_available/);
   assert.equal(registration.schema, existingConditionsRegistrationInputSchema);
+});
+
+test("a reflected-fit diagnostic reaches the agent without changing the explicit orientation choice", async () => {
+  const diagnostic = "existing_conditions_registration_residual_exceeds_limit:rms=18.05:max=23.31:reflection_fit_available:retry_with_allowReflection_true_after_visual_orientation_check";
+  let received: any;
+  const result = await runWithAssignmentKernelV2(bindingMeta, async () => handleExistingConditionsRegistration(input, {
+    async registerExistingConditionsInterpretation(value) { received = value; throw new Error(diagnostic); }
+  }));
+  assert.equal(received.allow_reflection, false);
+  assert.equal(result.isError, true);
+  assert.equal(result.content[0]?.text, diagnostic);
 });

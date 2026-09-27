@@ -1,7 +1,9 @@
 import { combinedDuctVerificationParametersV2 } from "./combined_duct_verification_v2.js";
-import { polylineReadbackMatchesV2 } from "./polyline_readback_v2.js";
+import { polylineReadbackMatchesV2, createMepRouteReadbackMatchesV2 } from "./polyline_readback_v2.js";
 import { explicitCreateDuctIntentV2 } from "./open_duct_intent_v2.js";
 import { connectedDuctReadbackMatchesV2 } from "./connected_duct_readback_v2.js";
+import { registeredStageDuctRouteReadbackMatchesV2 } from "./registered_stage_route_readback_v2.js";
+import { registeredStageDuctBranchReadbackMatchesV2 } from "./registered_stage_duct_branch_readback_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
@@ -59,7 +61,7 @@ export function openDuctReadbackMatchesV2(input: unknown, affected: readonly str
  * model-written report, preview, foreign binding or pre-edit read can qualify. */
 export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, current: OperationResultV2, payload: unknown): boolean {
   const applied = subject.result;
-  if (!["/revit/mep-route-workflow", "/revit/create-duct"].includes(subject.request_identity?.path ?? "") || subject.requested_effect !== "apply"
+  if (!["/revit/mep-route-workflow", "/revit/create-duct", "/revit/create-mep-route", "/revit/existing-conditions-mep-draft-workflow"].includes(subject.request_identity?.path ?? "") || subject.requested_effect !== "apply"
       || subject.persistent_effect !== "applied" || subject.settlement_state !== "settled"
       || applied?.authority !== "native-host" || applied.status !== "succeeded" || applied.native_transaction_state !== "committed"
       || !sameAssignmentBindingV2(subject.binding, snapshot.current_binding) || !sameAssignmentBindingV2(applied.binding, snapshot.current_binding)
@@ -69,14 +71,16 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
       || !Number.isFinite(Date.parse(current.completed_at)) || !Number.isFinite(Date.parse(applied.completed_at))
       || Date.parse(current.completed_at) < Date.parse(applied.completed_at)
       || payloadDigestV2(payload).digest !== current.raw_payload_hash) return false;
-  // Another committed edit invalidates the combined readback; ask for a fresh
-  // verification contract rather than combining observations across changes.
-  if (Object.values(snapshot.operations).some(op => op.operation_id !== subject.operation_id && op.persistent_effect === "applied"
-      && op.result && Date.parse(op.result.completed_at) >= Date.parse(applied.completed_at))) return false;
   if (Object.hasOwn(record(payload), "verificationParameters")) {
     const parameters = combinedDuctVerificationParametersV2(snapshot, subject, current, payload);
-    return parameters !== null && retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload);
+    return parameters !== null && combinedReadFollowsSettledChanges(snapshot, current)
+      && retainedDuctReadbackMatchesV2(snapshot, subject, parameters, payload);
   }
+  // Legacy split reads must not combine parameters and connector geometry
+  // across another committed edit. An atomic combined read above can instead
+  // inspect the complete route after all edits have settled.
+  if (Object.values(snapshot.operations).some(op => op.operation_id !== subject.operation_id && op.persistent_effect === "applied"
+      && op.result && Date.parse(op.result.completed_at) >= Date.parse(applied.completed_at))) return false;
   const prior = Object.values(snapshot.operations).filter(op => op.verification_of_operation_id === subject.operation_id
     && op.request_identity?.path === "/revit/get-parameters")
     .sort((a,b) => Date.parse(b.opened_at) - Date.parse(a.opened_at))[0];
@@ -103,9 +107,47 @@ export function openDuctPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2,
   return false;
 }
 
+export function combinedReadFollowsSettledChanges(snapshot: AssignmentSnapshotV2, current: OperationResultV2): boolean {
+  const read = snapshot.operations[current.operation_id];
+  const openedAt = Date.parse(read?.opened_at ?? "");
+  if (!Number.isFinite(openedAt) || Date.parse(current.completed_at) < openedAt
+      || snapshot.unresolved_unknown_operation_ids?.length) return false;
+  for (const operation of Object.values(snapshot.operations)) {
+    if (operation.operation_id === current.operation_id) continue;
+    if (operation.persistent_effect === "unknown" || operation.result?.persistent_effect === "unknown") return false;
+    if (operation.requested_effect !== "read" && operation.dispatch_state === "dispatched"
+        && operation.settlement_state !== "settled") return false;
+    if (operation.persistent_effect !== "applied") continue;
+    const result = operation.result;
+    // Use the whole document's commit frontier, not just the created IDs:
+    // sibling routes can edit a shared existing equipment connector which is
+    // absent from their created-element receipt. No old read can prove that.
+    if (operation.settlement_state !== "settled" || result?.authority !== "native-host"
+        || result.status !== "succeeded" || result.native_transaction_state !== "committed"
+        || !sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
+        || !sameAssignmentBindingV2(result.binding, snapshot.current_binding)
+        || !Number.isFinite(Date.parse(result.completed_at)) || Date.parse(result.completed_at) > openedAt) return false;
+  }
+  return true;
+}
+
 function retainedDuctReadbackMatchesV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, parameters: unknown, payload: unknown): boolean {
   const applied = subject.result!;
   try {
+      if (subject.request_identity?.path === "/revit/existing-conditions-mep-draft-workflow") {
+        for (const applyObservationId of subject.observation_ids) {
+          const applyObservation = snapshot.observations[applyObservationId];
+          if (!applyObservation || applyObservation.operation_id !== subject.operation_id || applyObservation.authority !== "native-host"
+              || applyObservation.raw_payload_hash !== applied.raw_payload_hash || !sameAssignmentBindingV2(applyObservation.binding, snapshot.current_binding)) continue;
+          const applyRef = readEvidenceRef(applyObservation.raw_payload_ref.replace(/^evidence:/, ""));
+          if (applyRef.byte_count > 2_000_000) continue;
+          const nativeApply = JSON.parse(readAuthoritativeEvidence(applyRef, { ...snapshot.current_binding, attempt_id: subject.operation_id }).toString("utf8"));
+          if (payloadDigestV2(nativeApply).digest !== applyObservation.raw_payload_hash) continue;
+          if (registeredStageDuctRouteReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], nativeApply, parameters, payload)
+            || registeredStageDuctBranchReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], nativeApply, parameters, payload)) return true;
+        }
+        return false;
+      }
       if (openDuctReadbackMatchesV2(subject.input, applied.affected_target_identities ?? [], parameters, payload)) return true;
       for (const applyObservationId of subject.observation_ids) {
         const applyObservation = snapshot.observations[applyObservationId];
@@ -115,7 +157,9 @@ function retainedDuctReadbackMatchesV2(snapshot: AssignmentSnapshotV2, subject: 
         if (applyRef.byte_count > 2_000_000) continue;
         const nativeApply = JSON.parse(readAuthoritativeEvidence(applyRef, { ...snapshot.current_binding, attempt_id: subject.operation_id }).toString("utf8"));
         if (payloadDigestV2(nativeApply).digest !== applyObservation.raw_payload_hash) continue;
-        if (polylineReadbackMatchesV2(subject.input, nativeApply, parameters, payload)) return true;
+        if (subject.request_identity?.path === "/revit/create-mep-route"
+          ? createMepRouteReadbackMatchesV2(subject.input, nativeApply, parameters, payload)
+          : polylineReadbackMatchesV2(subject.input, nativeApply, parameters, payload)) return true;
       }
   } catch { /* Retained apply evidence must still bind to this exact operation. */ }
   return false;

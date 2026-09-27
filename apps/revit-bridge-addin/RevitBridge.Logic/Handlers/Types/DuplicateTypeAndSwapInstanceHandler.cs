@@ -28,6 +28,9 @@ namespace RevitBridge.Logic.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope => HandleCore(app, jsonData, enterNativeScope)));
+
+        private object HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             if (p.instanceId <= 0) throw new ArgumentException("instanceId is required.");
@@ -56,20 +59,25 @@ namespace RevitBridge.Logic.Handlers
             var typeDiffs = new List<object>();
             long? swappedToTypeId = null;
             var missingAfter = new List<long>();
-
-            using (var t = new Transaction(doc, "Duplicate Type and Swap Instance"))
+            var sourceTypeId = ElementIdCompat.GetValue(type.Id);
+            var sourceTypeName = type.Name;
+            var resultingInstanceId = p.instanceId;
+            var deletedInstanceIds = new List<long>();
+            var parameterFailures = 0;
+            var expectedParameterValues = new Dictionary<string, string>();
+            enterNativeScope();
+            var result = NativeSingleTransaction.Execute(app, doc, "Duplicate Type and Swap Instance", nativeCreated =>
             {
-                t.Start();
-                WarningSuppressionUtil.SuppressWarnings(t);
-
                 created = type.Duplicate(newName) as ElementType;
                 if (created == null) throw new InvalidOperationException("Duplicate did not return an ElementType.");
+                nativeCreated.Add(ElementIdCompat.GetValue(created.Id));
 
                 foreach (var ch in changes)
                 {
                     var param = created.LookupParameter(ch.parameterName);
                     if (param == null)
                     {
+                        parameterFailures++;
                         typeDiffs.Add(new { typeId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id), parameterName = ch.parameterName, ok = false, changed = false, error = "Parameter not found on type." });
                         continue;
                     }
@@ -78,17 +86,25 @@ namespace RevitBridge.Logic.Handlers
                     var normalized = NormalizeInputForParam(doc, param, ch.value);
                     if (!ParameterValueUtil.TrySetFromString(param, normalized, out var didChange, out var message))
                     {
+                        parameterFailures++;
                         typeDiffs.Add(new { typeId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id), parameterName = ch.parameterName, ok = false, changed = false, error = message, before, after = before });
                         continue;
                     }
 
                     var after = ParameterValueUtil.SnapshotForWire(param);
+                    expectedParameterValues[ch.parameterName] = NativeParameterValue(param);
                     typeDiffs.Add(new { typeId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id), parameterName = ch.parameterName, ok = true, changed = didChange, before, after });
                 }
 
                 try
                 {
-                    inst.ChangeTypeId(created.Id);
+                    var replacementId = inst.ChangeTypeId(created.Id);
+                    if (replacementId != ElementId.InvalidElementId)
+                    {
+                        resultingInstanceId = ElementIdCompat.GetValue(replacementId);
+                        nativeCreated.Add(resultingInstanceId);
+                        deletedInstanceIds.Add(p.instanceId);
+                    }
                     swappedToTypeId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
                 }
                 catch (Exception ex)
@@ -96,37 +112,44 @@ namespace RevitBridge.Logic.Handlers
                     throw new InvalidOperationException($"Failed to swap instance {p.instanceId} to new type: {ex.Message}");
                 }
 
-                if (p.dryRun) t.RollBack();
-                else t.Commit();
-            }
-
-            if (!p.dryRun)
-            {
-                try { doc.Regenerate(); } catch { }
-                try { uidoc.RefreshActiveView(); } catch { }
-
-                if (doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.instanceId)) == null)
+                return new Dictionary<string, object?>
                 {
-                    missingAfter.Add(p.instanceId);
-                }
-            }
-
-            return Task.FromResult<object>(new
-            {
-                status = p.dryRun ? "Dry Run" : "Applied",
-                dryRun = p.dryRun,
-                instanceId = p.instanceId,
-                sourceTypeId = RevitBridge.Common.ElementIdCompat.GetValue(type.Id),
-                sourceTypeName = type.Name,
-                newTypeName = newName,
-                newTypeId = p.dryRun ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(created?.Id),
-                swappedToTypeId,
-                requestedTypeParamChanges = changes.Count,
-                typeParamDiffs = typeDiffs,
-                missingAfterElementIds = missingAfter,
-                requiredConfirm,
-                confirmReceived
-            });
+                    ["success"] = parameterFailures == 0, ["typeParameterChangesComplete"] = parameterFailures == 0,
+                    ["dryRun"] = p.dryRun, ["instanceId"] = p.instanceId,
+                    ["resultingInstanceId"] = resultingInstanceId, ["sourceTypeId"] = sourceTypeId,
+                    ["sourceTypeName"] = sourceTypeName, ["newTypeName"] = newName,
+                    ["newTypeId"] = p.dryRun ? (long?)null : swappedToTypeId, ["swappedToTypeId"] = swappedToTypeId,
+                    ["requestedTypeParamChanges"] = changes.Count, ["typeParamDiffs"] = typeDiffs,
+                    ["missingAfterElementIds"] = missingAfter, ["requiredConfirm"] = requiredConfirm,
+                    ["confirmReceived"] = confirmReceived
+                };
+            }, nativeModifiedElements: () => resultingInstanceId == p.instanceId && swappedToTypeId.HasValue
+                    ? new[] { p.instanceId } : Array.Empty<long>(),
+                disposition: p.dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
+                nativeDeletedElements: () => deletedInstanceIds,
+                configureTransaction: tx => WarningSuppressionUtil.SuppressWarnings(tx));
+            if (!p.dryRun)
+                OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+                {
+                    var current = doc.GetElement(ElementIdCompat.Create(resultingInstanceId));
+                    if (current == null) missingAfter.Add(resultingInstanceId);
+                    if (current == null || ElementIdCompat.GetValue(current.GetTypeId()) != swappedToTypeId)
+                        throw new InvalidOperationException("Committed instance type did not match the duplicated type.");
+                    var persistedType = doc.GetElement(current.GetTypeId());
+                    foreach (var expected in expectedParameterValues)
+                    {
+                        var parameter = persistedType?.LookupParameter(expected.Key)
+                            ?? throw new InvalidOperationException("Committed type parameter is missing: " + expected.Key);
+                        if (NativeParameterValue(parameter) != expected.Value)
+                            throw new InvalidOperationException("Committed type parameter changed from its native result: " + expected.Key);
+                    }
+                    return new Dictionary<string, object?> { ["actualTypeId"] = ElementIdCompat.GetValue(current.GetTypeId()),
+                        ["typeSwapVerified"] = true, ["successfulParameterReadbacksVerified"] = true };
+                }, requestedChangesComplete: parameterFailures == 0);
+            if (parameterFailures > 0) result["verified"] = false;
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Applied");
+            try { uidoc.RefreshActiveView(); } catch { }
+            return result;
         }
 
         private static string NormalizeInputForParam(Document doc, Parameter param, string raw)
@@ -136,5 +159,14 @@ namespace RevitBridge.Logic.Handlers
                 return ft.ToString("G17", System.Globalization.CultureInfo.InvariantCulture);
             return raw ?? "";
         }
+
+        private static string NativeParameterValue(Parameter parameter) => parameter.StorageType switch
+        {
+            StorageType.String => "String:" + JsonSerializer.Serialize(parameter.AsString()),
+            StorageType.Integer => "Integer:" + parameter.AsInteger().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            StorageType.Double => "Double:" + parameter.AsDouble().ToString("G17", System.Globalization.CultureInfo.InvariantCulture),
+            StorageType.ElementId => "ElementId:" + ElementIdCompat.GetValue(parameter.AsElementId()).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _ => throw new InvalidOperationException("Parameter has no readable native value.")
+        };
     }
 }

@@ -1,3 +1,4 @@
+import { operationInputSchemaGapErrorV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import {
   OBSERVATION_V2_SCHEMA,
@@ -84,21 +85,43 @@ function validateOperationResultShape(value: unknown): asserts value is Operatio
   }
   if (value.observation_required) adapterAssert(typeof value.raw_payload_hash === "string" && value.raw_payload_hash.length > 0, "operation_result_payload_hash_missing", "Observation-bearing result requires a raw payload hash.");
   if (value.input_schema_gap !== undefined) {
-    adapterAssert(isRecord(value.input_schema_gap), "operation_input_schema_gap_invalid", "Input-schema gap must be structured.");
-    const gap = value.input_schema_gap;
-    adapterAssert(gap.schema === "revit-operator.operation-input-schema-gap/v2"
-      && gap.operation_id === value.operation_id
-      && typeof gap.input_schema_digest === "string" && /^[a-f0-9]{64}$/.test(gap.input_schema_digest)
-      && (gap.method === "GET" || gap.method === "POST") && typeof gap.path === "string"
-      && typeof gap.request_signature === "string" && gap.request_signature.length > 0
-      && gap.dispatch === false && gap.effect === "none"
-      && Array.isArray(gap.issues) && gap.issues.length > 0,
-    "operation_input_schema_gap_invalid", "Input-schema gap must bind to the no-effect operation result.");
+    const error = operationInputSchemaGapErrorV2(value.input_schema_gap, value);
+    if (error) throw new AssignmentKernelErrorV2(error.code, error.message);
+  }
+}
+
+function rejectedInputSchemaDiagnostic(value: unknown, error: Readonly<{ code: string; message: string }>): string {
+  const identity = { schema: "revit-operator.rejected-result-diagnostic/v1", diagnostic: "input_schema_gap",
+    reason_code: error.code, reason: error.message };
+  try {
+    const json = canonicalJsonV2(value), maximum = 32_768;
+    return canonicalJsonV2({ ...identity, sha256: payloadDigestV2(value).digest,
+      json: json.slice(0, maximum), original_length: json.length, truncated: json.length > maximum });
+  } catch {
+    // Not possible over JSON transport, but malformed in-process diagnostics must not mask host truth either.
+    return canonicalJsonV2({ ...identity, serialization_failed: true, value_type: typeof value });
   }
 }
 
 export function unwrapOperationResultV2(envelope: OperationResultTransportV2): OperationResultV2 {
   const result = transportPayload(envelope);
+  // Optional correction metadata cannot overturn independently established host no-dispatch truth.
+  // Exact binding/request identity and the durable dispatch ledger remain reducer checks.
+  if (envelope.transport === "typed_mcp" && isRecord(result) && result.input_schema_gap !== undefined
+    && result.authority === "operator-mcp-transport" && result.status === "failed_before_dispatch"
+    && result.dispatch_state === "not_dispatched" && result.persistent_effect === "none"
+    && result.native_transaction_state === "not_applicable" && result.observation_required === false) {
+    const { input_schema_gap: diagnostic, ...core } = result;
+    validateOperationResultShape(core);
+    const error = operationInputSchemaGapErrorV2(diagnostic, core);
+    if (error) {
+      const maximum = 32_768;
+      return structuredClone({ ...core, diagnostics: [
+        ...(Array.isArray(core.diagnostics) ? core.diagnostics.filter((row): row is string => typeof row === "string").slice(0, 15).map(row => row.slice(0, maximum)) : []),
+        rejectedInputSchemaDiagnostic(diagnostic, error)
+      ] });
+    }
+  }
   validateOperationResultShape(result);
   return structuredClone(result);
 }

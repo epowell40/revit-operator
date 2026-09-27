@@ -1,5 +1,8 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using RevitBridge.Common;
+using RevitBridge.Logic.Handlers;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -35,6 +38,10 @@ namespace RevitBridge.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope).GetAwaiter().GetResult()));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new Params()
@@ -117,6 +124,8 @@ namespace RevitBridge.Handlers
                         status = "Dry Run",
                         action = "repair",
                         dryRun = true,
+                        previewExecuted = false, applied = false,
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
                         before,
                         plannedAfter = new
                         {
@@ -134,32 +143,36 @@ namespace RevitBridge.Handlers
                     });
                 }
 
-                using (var t = new Transaction(doc, "Repair Text Note"))
+                var modified = new HashSet<long>();
+                enterNativeScope();
+                var repairResult = NativeSingleTransaction.Execute(app, doc, "Repair Text Note", _ =>
                 {
-                    t.Start();
-
                     if (hasPoint)
                     {
                         var move = targetPoint - note.Coord;
-                        if (!move.IsZeroLength()) ElementTransformUtils.MoveElement(doc, note.Id, move);
+                        if (!move.IsZeroLength())
+                        {
+                            ElementTransformUtils.MoveElement(doc, note.Id, move);
+                            modified.Add(ElementIdCompat.GetValue(note.Id));
+                        }
                     }
-                    if (p.text != null) note.Text = plannedText;
-                    if (requestedType != null && requestedType.Id != note.GetTypeId()) note.ChangeTypeId(requestedType.Id);
-                    if (p.widthFt.HasValue) SetTextNoteWidth(note, p.widthFt.Value);
-
-                    t.Commit();
-                }
-
-                note = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.textNoteId.Value)) as TextNote
-                       ?? throw new InvalidOperationException($"TextNote {p.textNoteId.Value} disappeared after repair.");
-                return Task.FromResult<object>(new
+                    if (p.text != null) { note.Text = plannedText; modified.Add(ElementIdCompat.GetValue(note.Id)); }
+                    if (requestedType != null && requestedType.Id != note.GetTypeId())
+                    { note.ChangeTypeId(requestedType.Id); modified.Add(ElementIdCompat.GetValue(note.Id)); }
+                    if (p.widthFt.HasValue) { SetTextNoteWidth(note, p.widthFt.Value); modified.Add(ElementIdCompat.GetValue(note.Id)); }
+                    return new Dictionary<string, object?> { ["action"] = "repair", ["dryRun"] = false, ["before"] = before };
+                }, nativeModifiedElements: () => modified);
+                OperatorNativeTransactionExecution.ReadCommitted(repairResult, () =>
                 {
-                    status = "Success",
-                    action = "repair",
-                    dryRun = false,
-                    before,
-                    after = CaptureTextNote(note, doc.GetElement(note.OwnerViewId) as View)
+                    var persisted = doc.GetElement(ElementIdCompat.Create(p.textNoteId.Value)) as TextNote
+                        ?? throw new InvalidOperationException($"TextNote {p.textNoteId.Value} disappeared after repair.");
+                    return new Dictionary<string, object?> { ["after"] = CaptureTextNote(persisted, doc.GetElement(persisted.OwnerViewId) as View) };
                 });
+                // Persisted values are evidence; this handler does not certify all requested semantics.
+                repairResult.Remove("verified");
+                repairResult.Remove("ok");
+                repairResult["status"] = OperatorNativeTransactionExecution.OutcomeStatus(repairResult, "Success");
+                return Task.FromResult<object>(repairResult);
             }
 
             if (action == "create_type")
@@ -170,7 +183,7 @@ namespace RevitBridge.Handlers
 
                 var allowExisting = p.allowExisting ?? true;
                 var dryRunCreateType = p.dryRun ?? false;
-                var existing = ResolveTextType(doc, null, newTypeName);
+                var existing = ResolveTextType(doc, null, newTypeName, allowFallback: false);
                 var baseType = ResolveTextType(doc, p.baseTypeId, p.baseTypeName) ?? ResolveFallbackTextType(doc);
                 if (baseType == null)
                     throw new InvalidOperationException("No TextNoteType found in project.");
@@ -203,6 +216,8 @@ namespace RevitBridge.Handlers
                         status = "Dry Run",
                         action = "create_type",
                         dryRun = true,
+                        previewExecuted = false, applied = false,
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
                         type = new
                         {
                             name = newTypeName,
@@ -219,47 +234,56 @@ namespace RevitBridge.Handlers
                 }
 
                 long? createdTypeTextNoteId = null;
-                using (var t = new Transaction(doc, "Create Text Type"))
+                long targetTypeId = ElementIdCompat.GetValue(targetType.Id);
+                var modified = new HashSet<long>();
+                enterNativeScope();
+                var typeResult = NativeSingleTransaction.Execute(app, doc, "Create Text Type", nativeCreated =>
                 {
-                    t.Start();
-
                     if (shouldCreate)
                     {
                         targetType = targetType.Duplicate(newTypeName) as TextNoteType
-                                     ?? throw new InvalidOperationException("Failed to create text note type.");
+                            ?? throw new InvalidOperationException("Failed to create text note type.");
+                        targetTypeId = ElementIdCompat.GetValue(targetType.Id);
+                        nativeCreated.Add(targetTypeId);
                     }
-
-                    ApplyTypeOverrides(targetType, p.fontName, p.textSize, p.bold, p.italic);
-
+                    if (ApplyTypeOverrides(targetType, p.fontName, p.textSize, p.bold, p.italic) && !shouldCreate)
+                        modified.Add(targetTypeId);
                     if (hasCreatePayload)
                     {
-                        if (viewForCreate == null)
-                            throw new InvalidOperationException("View not found. Provide viewId or activate a view.");
+                        if (viewForCreate == null) throw new InvalidOperationException("View not found. Provide viewId or activate a view.");
                         var origin = new XYZ(p.x!.Value, p.y!.Value, 0);
-                        var normalizedText = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text);
+                        var normalizedText = RevitTextCasePolicy.NormalizeDraftingText(p.text);
                         var created = p.widthFt.HasValue
                             ? TextNote.Create(doc, viewForCreate.Id, origin, p.widthFt.Value, normalizedText, targetType.Id)
                             : TextNote.Create(doc, viewForCreate.Id, origin, normalizedText, targetType.Id);
-                        createdTypeTextNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
+                        createdTypeTextNoteId = ElementIdCompat.GetValue(created.Id);
+                        nativeCreated.Add(createdTypeTextNoteId.Value);
                     }
-
-                    t.Commit();
-                }
-
-                return Task.FromResult<object>(new
+                    return new Dictionary<string, object?> { ["action"] = "create_type", ["textNoteId"] = createdTypeTextNoteId };
+                }, nativeModifiedElements: () => modified);
+                OperatorNativeTransactionExecution.ReadCommitted(typeResult, () =>
                 {
-                    status = "Success",
-                    action = "create_type",
-                    type = new
+                    var persistedType = doc.GetElement(ElementIdCompat.Create(targetTypeId)) as TextNoteType
+                        ?? throw new InvalidOperationException($"TextNoteType {targetTypeId} disappeared after commit.");
+                    var readback = new Dictionary<string, object?>
                     {
-                        id = RevitBridge.Common.ElementIdCompat.GetValue(targetType.Id),
-                        name = targetType.Name,
-                        created = shouldCreate,
-                        fontName = TryReadBuiltInStringParameter(targetType, "TEXT_FONT"),
-                        textSize = TryReadBuiltInDoubleParameter(targetType, "TEXT_SIZE")
-                    },
-                    textNoteId = createdTypeTextNoteId
+                        ["type"] = new { id = targetTypeId, name = persistedType.Name, created = shouldCreate,
+                            fontName = TryReadBuiltInStringParameter(persistedType, "TEXT_FONT"),
+                            textSize = TryReadBuiltInDoubleParameter(persistedType, "TEXT_SIZE") }
+                    };
+                    if (createdTypeTextNoteId.HasValue)
+                    {
+                        var persistedNote = doc.GetElement(ElementIdCompat.Create(createdTypeTextNoteId.Value)) as TextNote
+                            ?? throw new InvalidOperationException($"TextNote {createdTypeTextNoteId.Value} disappeared after commit.");
+                        readback["textNote"] = CaptureTextNote(persistedNote, doc.GetElement(persistedNote.OwnerViewId) as View);
+                    }
+                    return readback;
                 });
+                // Persisted values are evidence; this handler does not certify all requested semantics.
+                typeResult.Remove("verified");
+                typeResult.Remove("ok");
+                typeResult["status"] = OperatorNativeTransactionExecution.OutcomeStatus(typeResult, "Success");
+                return Task.FromResult<object>(typeResult);
             }
 
             var view = ResolveView(doc, p.viewId);
@@ -281,6 +305,8 @@ namespace RevitBridge.Handlers
                     status = "Dry Run",
                     action = "create",
                     dryRun = true,
+                    previewExecuted = false, applied = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     plan = new
                     {
                         viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
@@ -295,39 +321,36 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            long textNoteId;
-
-            using (var t = new Transaction(doc, "Create Text Note"))
+            long textNoteId = 0;
+            enterNativeScope();
+            var createResult = NativeSingleTransaction.Execute(app, doc, "Create Text Note", nativeCreated =>
             {
-                t.Start();
-
-                // Create the text note
-                // XYZ origin depends on view type. For sheets/plans, Z is usually 0 or matches level elevation.
-                // We'll trust the user provided X/Y relative to the view's coordinate system.
-                XYZ origin = new XYZ(p.x.Value, p.y.Value, 0);
-
-                // Width-bearing creation must use Revit's line-wrapping overload. Creating an
-                // unwrapped note and assigning Width later can leave different wrapping/layout
-                // state even when the final numeric width matches a reference note.
-                var normalizedText = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text);
+                // Preserve the existing view-coordinate and native wrapping semantics.
+                var origin = new XYZ(p.x.Value, p.y.Value, 0);
+                var normalizedText = RevitTextCasePolicy.NormalizeDraftingText(p.text);
                 var created = p.widthFt.HasValue
                     ? TextNote.Create(doc, view.Id, origin, p.widthFt.Value, normalizedText, textType.Id)
                     : TextNote.Create(doc, view.Id, origin, normalizedText, textType.Id);
-                textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
-
-                t.Commit();
-            }
-
-            return Task.FromResult<object>(new
-            {
-                status = "Success",
-                action = "create",
-                textNoteId,
-                viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                textType = new { id = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id), name = textType.Name },
-                textNote = CaptureTextNote(doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(textNoteId)) as TextNote
-                    ?? throw new InvalidOperationException($"TextNote {textNoteId} disappeared after creation."), view)
+                textNoteId = ElementIdCompat.GetValue(created.Id);
+                nativeCreated.Add(textNoteId);
+                return new Dictionary<string, object?>
+                {
+                    ["action"] = "create", ["textNoteId"] = textNoteId,
+                    ["viewId"] = ElementIdCompat.GetValue(view.Id),
+                    ["textType"] = new { id = ElementIdCompat.GetValue(textType.Id), name = textType.Name }
+                };
             });
+            OperatorNativeTransactionExecution.ReadCommitted(createResult, () =>
+            {
+                var persisted = doc.GetElement(ElementIdCompat.Create(textNoteId)) as TextNote
+                    ?? throw new InvalidOperationException($"TextNote {textNoteId} disappeared after creation.");
+                return new Dictionary<string, object?> { ["textNote"] = CaptureTextNote(persisted, view) };
+            });
+            // Persisted values are evidence; this handler does not certify all requested semantics.
+            createResult.Remove("verified");
+            createResult.Remove("ok");
+            createResult["status"] = OperatorNativeTransactionExecution.OutcomeStatus(createResult, "Success");
+            return Task.FromResult<object>(createResult);
         }
 
         private static object CaptureTextNote(TextNote note, View? view)
@@ -419,29 +442,12 @@ namespace RevitBridge.Handlers
             return doc.ActiveView;
         }
 
-        private static TextNoteType? ResolveTextType(Document doc, long? typeId, string? typeName)
-        {
-            if (typeId.HasValue && typeId.Value > 0)
-            {
-                return doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(typeId.Value)) as TextNoteType;
-            }
-
-            var name = (typeName ?? "").Trim();
-            if (name.Length > 0)
-            {
-                var named = new FilteredElementCollector(doc)
-                    .OfClass(typeof(TextNoteType))
-                    .Cast<TextNoteType>()
-                    .FirstOrDefault(t => (t.Name ?? "").Trim().Equals(name, StringComparison.OrdinalIgnoreCase));
-                if (named != null) return named;
-            }
-
-            var fallbackId = new FilteredElementCollector(doc)
-                .OfClass(typeof(TextNoteType))
-                .FirstElementId();
-            if (fallbackId == null || fallbackId == ElementId.InvalidElementId) return null;
-            return doc.GetElement(fallbackId) as TextNoteType;
-        }
+        private static TextNoteType? ResolveTextType(Document doc, long? typeId, string? typeName, bool allowFallback = true)
+            => TextNoteTypeLookup.Resolve(typeId, typeName,
+                id => doc.GetElement(ElementIdCompat.Create(id)) as TextNoteType,
+                name => new FilteredElementCollector(doc).OfClass(typeof(TextNoteType)).Cast<TextNoteType>()
+                    .FirstOrDefault(t => (t.Name ?? "").Trim().Equals(name, StringComparison.OrdinalIgnoreCase)),
+                () => ResolveFallbackTextType(doc), allowFallback);
 
         private static TextNoteType? ResolveFallbackTextType(Document doc)
         {
@@ -452,28 +458,30 @@ namespace RevitBridge.Handlers
             return doc.GetElement(fallbackId) as TextNoteType;
         }
 
-        private static void ApplyTypeOverrides(TextNoteType type, string? fontName, double? textSize, bool? bold, bool? italic)
+        private static bool ApplyTypeOverrides(TextNoteType type, string? fontName, double? textSize, bool? bold, bool? italic)
         {
+            var changed = false;
             var font = (fontName ?? "").Trim();
             if (font.Length > 0)
             {
-                TrySetBuiltInStringParameter(type, "TEXT_FONT", font);
+                changed |= TrySetBuiltInStringParameter(type, "TEXT_FONT", font);
             }
 
             if (textSize.HasValue && textSize.Value > 0)
             {
-                TrySetBuiltInDoubleParameter(type, "TEXT_SIZE", textSize.Value);
+                changed |= TrySetBuiltInDoubleParameter(type, "TEXT_SIZE", textSize.Value);
             }
 
             if (bold.HasValue)
             {
-                TrySetBuiltInIntegerParameter(type, "TEXT_STYLE_BOLD", bold.Value ? 1 : 0);
+                changed |= TrySetBuiltInIntegerParameter(type, "TEXT_STYLE_BOLD", bold.Value ? 1 : 0);
             }
 
             if (italic.HasValue)
             {
-                TrySetBuiltInIntegerParameter(type, "TEXT_STYLE_ITALIC", italic.Value ? 1 : 0);
+                changed |= TrySetBuiltInIntegerParameter(type, "TEXT_STYLE_ITALIC", italic.Value ? 1 : 0);
             }
+            return changed;
         }
 
         private static bool TrySetBuiltInStringParameter(Element element, string builtInParameterName, string value)

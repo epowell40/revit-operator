@@ -14,18 +14,24 @@ export type ToolDocumentationProjection = {
 const record = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const fields = ["method", "path", "title", "risk", "required_fields", "request_schema", "optional_fields", "enums", "units", "notes", "description", "examples"];
+// Registry callers can explicitly request full schemas. Keep each schema atomic
+// and prioritize it ahead of prose; a partial schema is not a usable contract.
+const registryFields = ["method", "path", "required_fields", "request_schema", "optional_fields", "title", "risk", "enums", "units", "notes", "description", "examples"];
 
 /** A navigation aid from the exact retained tool documentation, never a native
  * task result. Omitted fields remain explicit and independently retrievable. */
 export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budget: number): ToolDocumentationProjection | null {
-  const catalog = ref.source === "assignment_kernel_v2:revit_search_tools";
+  const search = ref.source === "assignment_kernel_v2:revit_search_tools";
+  const registry = ref.source === "assignment_kernel_v2:revit_tool_registry";
+  const catalog = search || registry;
   if ((!catalog && ref.source !== "assignment_kernel_v2:revit_tool_doc") || ref.trust_level !== "host_observed" || budget < 512) return null;
   const outer = record(raw);
   if (!outer || outer.isError === true) return null;
   const payload = record(Array.isArray(outer.content) || "structuredContent" in outer ? extractMcpStructuredPayload(raw)?.payload : raw);
   if (!payload) return null;
-  const rows = catalog ? payload.matches : [payload];
-  if (!Array.isArray(rows) || rows.length > 100 || (catalog ? payload.source !== "/revit/tool-registry" : payload.version !== "operator.tool_doc.v1")) return null;
+  const rows = registry ? payload.items : search ? payload.matches : [payload];
+  if (!Array.isArray(rows) || rows.length > 100 || (registry ? payload.version !== "operator.tool_registry.v1"
+    : search ? payload.source !== "/revit/tool-registry" : payload.version !== "operator.tool_doc.v1")) return null;
   if (rows.some(value => {
     const tool = record(value);
     return !tool || !["GET", "POST"].includes(String(tool.method)) || typeof tool.path !== "string"
@@ -36,15 +42,15 @@ export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budge
     tools: [], returned_tools: 0, total_tools: rows.length, omitted_paths: [], complete: false };
   for (let index = 0; index < rows.length; index++) {
     const tool = record(rows[index])!;
-    const prefix = catalog ? `payload.matches[${index}]` : "payload";
+    const prefix = registry ? `payload.items[${index}]` : search ? `payload.matches[${index}]` : "payload";
     const selected: Record<string, unknown> = { method: tool.method, path: tool.path,
       ...(Object.hasOwn(tool, "required_fields") ? { required_fields: tool.required_fields } : {}) };
     const omitted: string[] = Object.keys(tool).filter(field => !fields.includes(field)).map(field => `${prefix}.${field}`);
-    for (const field of fields.filter(key => !(key in selected))) {
+    for (const field of (registry ? registryFields : fields).filter(key => !(key in selected))) {
       if (!(field in tool)) { omitted.push(`${prefix}.${field}`); continue; }
       // Search returns tool identity and input names first; exact schemas are
       // fetched with tool_doc instead of flooding the catalog with each schema.
-      if (catalog && ["request_schema", "examples", "notes", "enums", "units", "description"].includes(field)) {
+      if (search && ["request_schema", "examples", "notes", "enums", "units", "description"].includes(field)) {
         omitted.push(`${prefix}.${field}`); continue;
       }
       const candidate = { ...result, tools: [...result.tools, { ...selected, [field]: tool[field] }],
@@ -59,5 +65,5 @@ export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budge
     Object.assign(result, candidate);
   }
   result.complete = result.returned_tools === rows.length && result.omitted_paths.length === 0;
-  return result.tools.length > 0 && bytes(result) <= budget ? result : null;
+  return (result.tools.length > 0 || (registry && rows.length === 0)) && bytes(result) <= budget ? result : null;
 }

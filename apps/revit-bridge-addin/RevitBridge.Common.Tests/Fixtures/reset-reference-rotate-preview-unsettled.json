@@ -1,0 +1,30 @@
+{
+  "status": "Dry Run",
+  "rotatedIds": [
+    1542960
+  ],
+  "skipped": [],
+  "warnings": [],
+  "snapshots": [
+    {
+      "id": 1542960,
+      "before": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -32.1833,
+          12.9583,
+          40.1667
+        ]
+      },
+      "after": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -32.1833,
+          12.9583,
+          40.1667
+        ]
+      }
+    }
+  ],
+  "rolledBack": true
+}

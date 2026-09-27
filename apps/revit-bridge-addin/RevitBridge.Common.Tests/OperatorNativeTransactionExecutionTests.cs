@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
@@ -9,6 +10,142 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorNativeTransactionExecutionTests
     {
+        [Theory]
+        [InlineData("RolledBack", "none", true)]
+        [InlineData("Pending", "unknown", false)]
+        public void ExactThinRotatePreviewRequiresObservedRollbackAndRetainsOnlyTransientEvidence(string status, string effect, bool previewRetained)
+        {
+            // Exact native payload: thin-session-events.jsonl event 201077,
+            // opv2_b67ffaaaac981ebac19ad7466343ab8658a373efbe0bca484939ade8926a33b0.
+            var historical = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "reset-reference-rotate-preview-unsettled.json")))!;
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(historical, "preview", "POST", "/revit/rotate-elements").EffectState);
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => throw new Exception("must not commit"),
+                () => status, () => status, () => historical, () => throw new Exception("must not create commit receipt"),
+                disposition: NativeTransactionDisposition.Rollback);
+            var receipt = Assert.IsType<OperatorNativeTransactionReceipt>(response["transaction"]);
+            Assert.Empty(receipt.ModifiedElementIds);
+            Assert.Empty(receipt.AddedElementIds);
+            Assert.Equal(previewRetained, response.ContainsKey("snapshots"));
+            Assert.Equal(previewRetained, response["success"]);
+            Assert.Equal(effect, OperatorAttemptSuccessfulSettlement.Classify(response, "preview", "POST", "/revit/rotate-elements").EffectState);
+        }
+
+        [Theory]
+        [InlineData("Committed", "applied")]
+        [InlineData("RolledBack", "none")]
+        [InlineData("Pending", "unknown")]
+        public void ExactBaselineRotateResponseOnlySettlesFromObservedNativeStatus(string status, string effect)
+        {
+            // Retained inline native payload from reset-reference/baseline-session-events.jsonl,
+            // event 200977 (the baseline stopped after this physically completed rotation).
+            var historical = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "reset-reference-rotate-unsettled.json")))!;
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(historical, "apply", "POST", "/revit/rotate-elements").EffectState);
+            int edits = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => status,
+                () => throw new Exception("must not retry settlement"), () => status,
+                () => { edits++; return historical; }, () => OperatorNativeTransactionReceipt.Committed(new[] { 1542959L }));
+            Assert.Equal(1, edits);
+            using var wire = JsonDocument.Parse(JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                response, "apply", "POST", "/revit/rotate-elements", assignmentId: "assignment", attemptId: "attempt", runId: "run", generation: 1)));
+            var settlement = wire.RootElement.GetProperty("canonical_attempt_settlement");
+            Assert.Equal(effect, settlement.GetProperty("effect_state").GetString());
+            Assert.Equal("attempt", settlement.GetProperty("attempt_id").GetString());
+            Assert.Equal(status == "Committed", response.ContainsKey("rotatedIds"));
+        }
+
+        [Theory]
+        [InlineData("/revit/rotate-elements", "RolledBack", "none", true)]
+        [InlineData("/revit/move-elements", "RolledBack", "none", true)]
+        [InlineData("/revit/rotate-elements", "Pending", "unknown", false)]
+        [InlineData("/revit/move-elements", "Pending", "unknown", false)]
+        [InlineData("/revit/rotate-elements", "Committed", "applied", false)]
+        public void IntentionalPreviewUsesActualRollbackAndNeverCommits(string route, string rollbackStatus, string effect, bool success)
+        {
+            int edits = 0, rollbackCalls = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => throw new Exception("preview must not commit"),
+                () => { rollbackCalls++; return rollbackStatus; }, () => rollbackStatus,
+                () => { edits++; return new Dictionary<string, object?> { ["snapshots"] = new[] { new { rotationDegrees = 180 } } }; },
+                () => OperatorNativeTransactionReceipt.Committed(new[] { 42L }), disposition: NativeTransactionDisposition.Rollback);
+            Assert.Equal(1, edits); Assert.Equal(1, rollbackCalls);
+            Assert.Equal(success, response["success"]);
+            Assert.Equal(effect, OperatorAttemptSuccessfulSettlement.Classify(response, "preview", "POST", route).EffectState);
+            Assert.Equal(rollbackStatus != "Pending", response.ContainsKey("snapshots"));
+        }
+
+        [Theory]
+        [InlineData("RolledBack", "none")]
+        [InlineData("Started", "unknown")]
+        [InlineData("Pending", "unknown")]
+        public void PreviewRollbackExceptionUsesObservedStatusWithoutRepeatingRollback(string observed, string effect)
+        {
+            int rollbacks = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => throw new Exception("must not commit"),
+                () => { rollbacks++; throw new Exception("rollback response failed"); }, () => observed,
+                () => new Dictionary<string, object?> { ["snapshots"] = new[] { 42 } },
+                () => throw new Exception("must not declare commit"), disposition: NativeTransactionDisposition.Rollback);
+            Assert.Equal(1, rollbacks);
+            Assert.Equal(false, response["success"]);
+            Assert.False(response.ContainsKey("snapshots"));
+            Assert.Equal(effect, OperatorAttemptSuccessfulSettlement.Classify(response, "preview", "POST", "/revit/move-elements").EffectState);
+        }
+
+        [Fact]
+        public void NativeIdentityEnumerationFailurePreservesCommitAndAlreadyCapturedChanges()
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed", () => "RolledBack", () => "Committed",
+                () => new Dictionary<string, object?>(), () => OperatorNativeTransactionReceipt.Committed(new[] { 41L }),
+                nativeCreatedElements: () => throw new Exception("created identities unavailable"), nativeModifiedElements: () => new[] { 42L });
+            Assert.Equal(false, response["success"]);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/move-elements");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Equal(new[] { "element_id:41", "element_id:42" }, settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void PostCommitReadbackFailurePreservesBothCommitAndOriginalError()
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => throw new Exception("commit response failed"),
+                () => throw new Exception("must not roll back"), () => "Committed", () => new Dictionary<string, object?>(),
+                () => OperatorNativeTransactionReceipt.Committed(new[] { 42L }));
+            OperatorNativeTransactionExecution.ReadCommitted(response, () => throw new Exception("location readback failed"));
+            Assert.Contains("commit response failed", Assert.IsType<string>(response["error"]));
+            Assert.Contains("location readback failed", Assert.IsType<string>(response["error"]));
+            Assert.Equal(true, response["applied"]); Assert.Equal(false, response["verified"]);
+            Assert.Equal("applied", OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/rotate-elements").EffectState);
+        }
+
+        [Fact]
+        public void CommittedMutationSurvivesInventoryFailureWithoutRepeatingEdit()
+        {
+            int edits = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed",
+                () => throw new Exception("must not roll back a committed edit"), () => "Committed",
+                () => { edits++; return new Dictionary<string, object?>(); },
+                () => throw new Exception("inventory unavailable"), nativeModifiedElements: () => new[] { 1542959L });
+            Assert.Equal(1, edits);
+            Assert.Equal(false, response["success"]);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/rotate-elements");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Contains("element_id:1542959", settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void BestEffortFailureDoesNotBecomeTaskSuccessWhenTransactionCommits()
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed",
+                () => "RolledBack", () => "Committed",
+                () => new Dictionary<string, object?> { ["success"] = false, ["movedIds"] = new[] { 42L },
+                    ["skipped"] = new[] { new { id = 43L, reason = "Pinned" } } },
+                () => OperatorNativeTransactionReceipt.Committed(new[] { 42L }));
+            Assert.Equal(false, response["success"]);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/move-elements");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Contains("element_id:42", settlement.AffectedTargetIdentities);
+            Assert.DoesNotContain("element_id:43", settlement.AffectedTargetIdentities);
+        }
+
         [Theory]
         [InlineData("Committed", "applied")]
         [InlineData("RolledBack", "none")]
@@ -151,7 +288,7 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(1, mutations);
             Assert.Equal(1, rollbacks);
             Assert.Equal(false, response["success"]);
-            Assert.Equal("Category 'Rooms' cannot be hidden in view 'L4'.", response["error"]);
+            Assert.StartsWith("Category 'Rooms' cannot be hidden in view 'L4'.", Assert.IsType<string>(response["error"]));
             Assert.False(response.ContainsKey("view"));
             var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/visibility");
             Assert.Equal(effect, settlement.EffectState);
@@ -253,7 +390,7 @@ namespace RevitBridge.Common.Tests
                     () => failRollback ? throw new Exception("rollback failed") : "RolledBack", () => "Started",
                     () => throw new Exception("name already exists"),
                     () => throw new Exception("must not produce commit receipt"));
-                Assert.Equal("name already exists", response["error"]);
+                Assert.StartsWith("name already exists", Assert.IsType<string>(response["error"]));
                 Assert.Equal(failRollback ? "unknown" : "none",
                     OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/duplicate-view").EffectState);
             }

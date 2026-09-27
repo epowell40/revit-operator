@@ -5,6 +5,21 @@ export const MODEL_EVIDENCE_ENVELOPE_SCHEMA = "revit-operator.model-evidence-env
 
 export type EvidenceContextBudget = { item_bytes: number; request_bytes: number };
 
+type ModelEvidenceProjectionV1 = Omit<EvidenceProjectionV1, "retrieval"> & {
+  retrieval: Omit<EvidenceProjectionV1["retrieval"], "selector_forms">;
+};
+
+function modelEvidenceProjection(projection: EvidenceProjectionV1): ModelEvidenceProjectionV1 {
+  // Selector instructions already live in the retrieval tool and turn guidance.
+  // Keep durable projections (including projected_bytes) and all evidence untouched.
+  if (!projection.retrieval || !Object.prototype.hasOwnProperty.call(projection.retrieval, "selector_forms")) {
+    return { ...projection };
+  }
+  const { selector_forms: _selectorForms, ...retrieval } = projection.retrieval;
+  return { ...projection, retrieval };
+}
+
+
 function envInt(name: string, fallback: number, min: number, max: number): number {
   const parsed = Number.parseInt((process.env[name] || "").trim(), 10);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
@@ -32,7 +47,7 @@ export function assembleBoundedEvidenceContext(input: {
   let bytes = Buffer.byteLength(JSON.stringify(modelEvidenceEnvelope([], input.projections.length)), "utf8");
   let omitted = 0;
   for (const projection of input.projections) {
-    const itemBytes = Buffer.byteLength(JSON.stringify(projection), "utf8");
+    const itemBytes = Buffer.byteLength(JSON.stringify(modelEvidenceProjection(projection)), "utf8");
     const encodedBytes = itemBytes + (selected.length > 0 ? 1 : 0);
     if (itemBytes > budget.item_bytes || bytes + encodedBytes > budget.request_bytes) { omitted++; continue; }
     selected.push(projection);
@@ -116,13 +131,13 @@ export function assertBoundedModelEvidencePayload(input: unknown, budget = getEv
 
 export function modelEvidenceEnvelope(projections: EvidenceProjectionV1[], omitted = 0): {
   schema: typeof MODEL_EVIDENCE_ENVELOPE_SCHEMA;
-  evidence_projections: EvidenceProjectionV1[];
+  evidence_projections: ModelEvidenceProjectionV1[];
   omitted: number;
   retrieval: string;
 } {
   return {
     schema: MODEL_EVIDENCE_ENVELOPE_SCHEMA,
-    evidence_projections: projections,
+    evidence_projections: projections.map(modelEvidenceProjection),
     omitted,
     retrieval: "Read inline_payload first; retrieve only missing fields/images. resultItems use raw_payload paths for native keys, or source=deterministic_projection with [key_counts or key_facts, exact literal key] for summaries. Preserve paging/scope limits; never reconstruct IDs or split literal keys."
   };

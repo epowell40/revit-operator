@@ -2,6 +2,27 @@
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
     {
+      "id": "c103_registered_stage_explicit_rollback",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": { "dryRun": true },
+      "expected_effect": "preview"
+    },
+    {
+      "id": "c103_registered_stage_commit",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": { "dryRun": false },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c103_registered_stage_ambiguous_intent_fails_closed",
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
       "id": "c68_native_api_single_call_read_with_dry_run",
       "method": "POST",
       "path": "/revit/native-api-call",

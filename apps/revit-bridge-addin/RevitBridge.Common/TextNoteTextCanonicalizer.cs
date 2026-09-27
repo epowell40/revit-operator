@@ -1,9 +1,35 @@
 using System;
+using System.Text.Json;
 
 namespace RevitBridge.Common
 {
     public static class TextNoteTextCanonicalizer
     {
+        public const int MaximumRequestTextLength = 16_384;
+
+        public static void ValidateRequestTextLengths(string? newText, string? expectedOldText)
+        {
+            if (newText != null && newText.Length > MaximumRequestTextLength)
+                throw new ArgumentException("newText is too long.", nameof(newText));
+            if (expectedOldText != null && expectedOldText.Length > MaximumRequestTextLength)
+                throw new ArgumentException("expectedOldText is too long.", nameof(expectedOldText));
+        }
+
+        public static void ValidateReplacementRequestTextLengths(string jsonData)
+        {
+            if (string.IsNullOrEmpty(jsonData)) return;
+            using var document = JsonDocument.Parse(jsonData);
+            var body = document.RootElement;
+            if (body.ValueKind != JsonValueKind.Object) return;
+            // Only bound the two text fields. The handler retains its aliases,
+            // null/empty semantics, selectors, confirmation and type validation.
+            var newText = body.TryGetProperty("newText", out var next) && next.ValueKind == JsonValueKind.String
+                ? next.GetString() : null;
+            var expectedOldText = body.TryGetProperty("expectedOldText", out var old) && old.ValueKind == JsonValueKind.String
+                ? old.GetString() : null;
+            ValidateRequestTextLengths(newText, expectedOldText);
+        }
+
         public static string Normalize(string value)
         {
             // JSON already supports line breaks, but some callers escape them twice.

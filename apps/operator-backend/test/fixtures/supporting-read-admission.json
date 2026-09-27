@@ -1,0 +1,170 @@
+{
+  "description": "Exact failed read requests from a disposable Autodesk sample fixture; output folder replaced with a public fixture path. Provider/session/user identities omitted. No model/source drawing content.",
+  "cases": [
+    {
+      "case_id": "retained-read-1",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/get-connectors",
+        "body": {
+          "elementIds": [
+            1542959,
+            1542963,
+            1542979,
+            1542982,
+            1542985,
+            1542988,
+            1542990
+          ],
+          "includeVerificationParameters": true,
+          "includeAllRefs": true,
+          "includeCoordinateSystem": true
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] operation_verification_target_mismatch"
+    },
+    {
+      "case_id": "retained-read-2",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/export-view-frame",
+        "body": {
+          "viewId": 1363433,
+          "imageSize": 2400,
+          "includeMapping": true,
+          "folder": "C:/fixture/artifacts"
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_target_unbound"
+    },
+    {
+      "case_id": "retained-read-3",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/export-visible-elements",
+        "body": {
+          "viewId": 1363433,
+          "imageSize": 2400,
+          "includeGeometry": true,
+          "includeMapping": true,
+          "categories": [
+            "OST_MechanicalEquipment",
+            "OST_DuctCurves",
+            "OST_DuctFitting",
+            "OST_DuctTerminal"
+          ],
+          "modelBounds": [
+            -40,
+            8,
+            32,
+            -20,
+            44,
+            45
+          ],
+          "limit": 100
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_target_unbound"
+    },
+    {
+      "case_id": "retained-read-4",
+      "tool": "revit_capture_view",
+      "arguments": {
+        "viewId": 1363433,
+        "imageSize": 2400
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_target_unbound"
+    },
+    {
+      "case_id": "retained-read-5",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/get-connectors",
+        "body": {
+          "elementIds": [
+            1542959,
+            1543148,
+            1543149,
+            1543150,
+            1543151,
+            1543152,
+            1543153,
+            1543154
+          ],
+          "includeAllRefs": true,
+          "includeCoordinateSystem": true,
+          "onlyOpenPhysicalConnectors": true
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_capability_inadmissible:required_semantic_output_unavailable:required=element.parameter_values:admissible_readback_paths=/revit/get-parameters,/revit/verify-parameter-on-sheet,revit_get_parameters"
+    },
+    {
+      "case_id": "retained-read-6",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/trace-connected-network",
+        "body": {
+          "startElementId": 1542959,
+          "inferSystemFromStart": false,
+          "includeDucts": true,
+          "includeFittings": true,
+          "includeEquipment": true,
+          "includeTerminals": true,
+          "maxElements": 100
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_capability_inadmissible:required_semantic_output_unavailable:required=element.parameter_values:admissible_readback_paths=/revit/get-parameters,/revit/verify-parameter-on-sheet,revit_get_parameters"
+    },
+    {
+      "case_id": "retained-read-7",
+      "tool": "revit_get_element_summary",
+      "arguments": {
+        "ids": [
+          1543148,
+          1543149,
+          1543150,
+          1543151,
+          1543152,
+          1543153,
+          1543154,
+          1542959
+        ]
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] assignment_kernel_v2_verification_capability_inadmissible:required_semantic_output_unavailable:required=element.parameter_values:admissible_readback_paths=/revit/get-parameters,/revit/verify-parameter-on-sheet,revit_get_parameters"
+    },
+    {
+      "case_id": "retained-read-8",
+      "tool": "revit_call_tool",
+      "arguments": {
+        "method": "POST",
+        "path": "/revit/get-parameters",
+        "body": {
+          "elementIds": [
+            1542959,
+            1543148,
+            1543149,
+            1543150,
+            1543151,
+            1543152,
+            1543153,
+            1543154
+          ],
+          "names": [
+            "Mark",
+            "Comments",
+            "Family",
+            "Type",
+            "Level"
+          ],
+          "includeEmpty": true
+        }
+      },
+      "previous_error": "[assignment_kernel_v2_operation_admission_blocked] operation_verification_target_mismatch"
+    }
+  ]
+}

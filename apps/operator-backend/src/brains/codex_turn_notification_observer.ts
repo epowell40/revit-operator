@@ -81,6 +81,13 @@ export function createCodexTurnNotificationObserver(args: {
   let assistantDeltas = "";
   const messagePhases = new Map<string, string>();
   const messageDeltas = new Map<string, string>();
+  const startedCompactions = new Set<string>();
+  const completedCompactions = new Set<string>();
+  let compactionProgressOwner: string | null = null;
+  const reportProgress = (text: string, compactionId: string | null = null): void => {
+    compactionProgressOwner = compactionId;
+    args.onProgress?.(text);
+  };
   const canStream = !args.deferAssistantOutput && !args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required;
   let hasFreshRevitEvidence = !args.freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !args.webEvidenceRequirement.required;
@@ -91,8 +98,15 @@ export function createCodexTurnNotificationObserver(args: {
       args.modelTelemetry.observe(notification);
       if (notification.method === "item/started" && notification.params?.turnId === args.turnId) {
         const item = notification.params?.item;
+        if (item?.type === "contextCompaction") {
+          if (typeof item.id === "string" && item.id.trim() && !startedCompactions.has(item.id) && !completedCompactions.has(item.id)) {
+            startedCompactions.add(item.id);
+            reportProgress("Organizing task notes…", item.id);
+          }
+          return;
+        }
         const stage = toolProgressStage(item);
-        if (stage) args.onProgress?.(stage);
+        if (stage) reportProgress(stage);
         if (item?.type === "agentMessage" && typeof item.id === "string") messagePhases.set(item.id, item.phase ?? "unknown");
       }
       if (notification.method === "item/agentMessage/delta") {
@@ -110,11 +124,18 @@ export function createCodexTurnNotificationObserver(args: {
 
       if (notification.method !== "item/completed" || notification.params?.turnId !== args.turnId) return;
       const item = notification.params?.item;
+      if (item?.type === "contextCompaction") {
+        if (typeof item.id === "string" && item.id.trim() && !completedCompactions.has(item.id)) {
+          completedCompactions.add(item.id);
+          if (compactionProgressOwner === item.id) reportProgress("Continuing the task…");
+        }
+        return;
+      }
       if (item?.type === "agentMessage") {
         const full = typeof item.text === "string" ? item.text : "";
         const phase = item.phase ?? messagePhases.get(String(item.id));
         if (phase === "commentary") {
-          if (full) args.onProgress?.(full.replace(/\s+/g, " ").trim().slice(0, 240));
+          if (full) reportProgress(full.replace(/\s+/g, " ").trim().slice(0, 240));
         } else if (full) {
           assistantText = full; assistantDeltas = full;
           if (canStream && messagePhases.get(String(item.id)) !== "final_answer") args.onDelta?.(full);
@@ -124,7 +145,7 @@ export function createCodexTurnNotificationObserver(args: {
 
       const dynamicTool = adaptDynamicToolCompletedItem(item);
       if (dynamicTool) {
-        args.onProgress?.(dynamicTool.success === false ? "Reviewing a tool issue…" : "Reviewing the result…");
+        reportProgress(dynamicTool.success === false ? "Reviewing a tool issue…" : "Reviewing the result…");
         args.assignmentObserver.observe(dynamicTool);
         if (isSuccessfulFreshRevitEvidence(args.freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
         if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
@@ -208,7 +229,7 @@ export function createCodexTurnNotificationObserver(args: {
       if (item?.type !== "mcpToolCall") return;
       const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
       const error = typeof item.error === "string" ? item.error.trim() : "";
-      args.onProgress?.(error || ["failed", "error"].includes(status) ? "Reviewing a tool issue…" : "Reviewing the result…");
+      reportProgress(error || ["failed", "error"].includes(status) ? "Reviewing a tool issue…" : "Reviewing the result…");
       args.assignmentObserver.observe({
         action_id: typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null,
         server: typeof item.server === "string" ? item.server : null,

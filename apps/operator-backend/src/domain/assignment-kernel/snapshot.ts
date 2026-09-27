@@ -31,6 +31,7 @@ export interface AssignmentSnapshotV2 {
   }>>>;
   work_unit_states: Readonly<Record<WorkUnitIdV2, AssignmentWorkUnitStateV2>>;
   pending_review_ids: readonly string[];
+  completion_proposal?: Readonly<import("./execution_policy.js").AdvisoryCompletionProposalV1 & { review_id: string; proposed_at: string; verified: false }>;
   provider_call_ids: readonly string[];
   provider_calls: Readonly<Record<string, ProviderCallV2>>;
   in_flight_provider_call_ids: readonly string[];
@@ -49,6 +50,8 @@ export interface AssignmentSnapshotV2 {
   outcome: AssignmentOutcomeV2;
   terminal: boolean;
   result_delivery?: AssignmentResultDeliveryV2;
+  advisory_followups?: readonly import("./advisory_followups.js").AdvisoryFollowupV2[];
+  work_plan_claims?: readonly Readonly<{ item_id: string; operation_ids: readonly string[]; claimed_at: string; verified: false }>[];
   work_plan?: import("./work_plan.js").AssignmentWorkPlanV2;
   terminal_reason?: string;
   in_flight_operation_ids: readonly OperationIdV2[];

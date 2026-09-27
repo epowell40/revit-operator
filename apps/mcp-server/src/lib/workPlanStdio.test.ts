@@ -18,7 +18,7 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   const port = (backend.address() as any).port;
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-work-plan-"));
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
-  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
+  const transport = new StdioClientTransport({ command: process.execPath, args: import.meta.url.endsWith(".ts") ? ["--loader", "ts-node/esm", path.join(process.cwd(), "src", "server.ts")] : [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
     env: { ...env, OPERATOR_API_BASE_URL: `http://127.0.0.1:${port}`, OPERATOR_AUTH_MODE: "shared_token", OPERATOR_TOKEN: "test-only",
       OPERATOR_WORKSPACE_ROOT: workspace, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }, stderr: "pipe" });
   transport.stderr?.on("data", () => {});
@@ -51,6 +51,35 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   const qc={itemId:"room_qc",kind:"inspection",dependsOn:["room_a_supply","room_b_supply"],description:"Inspect completed branches",sourceBasis:"Drawing connectivity"};
   assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"declare",items:[qc]},_meta})).isError,true);
   assert.deepEqual(requests.at(-1).body.declaration.items[0],{item_id:qc.itemId,kind:qc.kind,depends_on:qc.dependsOn,description:qc.description,source_basis:qc.sourceBasis});
+  const checkpoint = { claimed_completed: ["Drafted visible routes"], remaining_work: ["Independent grade pending"], uncertainties: ["Unknown drawing elevation"] };
+  assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "propose_completion", completionProposal: checkpoint }, _meta })).isError, true);
+  assert.deepEqual(requests.at(-1).body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id, generation: 1,
+    action: "propose_completion", completion_proposal: checkpoint });
+  const followup = { command_id: "split-scope", item_id: "followup:2:remaining_work:0", expected_version: 2,
+    disposition: "superseded", reason: "The unresolved clause is retained separately.",
+    replacements: [{ kind: "remaining_work", text: "Confirm the exterior devices." }] };
+  assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "update_followup", followup }, _meta })).isError, true);
+  assert.deepEqual(requests.at(-1).body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id, generation: 1,
+    action: "update_followup", followup });
+  assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "status", followupStart: 8 }, _meta })).isError, true);
+  assert.equal(requests.at(-1).body.followup_start, 8);
+  const followupCount = requests.length;
+  for (const args of [{ action: "update_followup" }, { action: "status", followup }, { action: "update_followup", followup, completionProposal: checkpoint },
+    { action: "update_followup", followup: { ...followup, expected_version: 0 } },
+    { action: "update_followup", followup: { ...followup, verified: true } },
+    { action: "update_followup", followup: { ...followup, replacements: [{ kind: "remaining_work", text: "x".repeat(1001) }] } },
+    { action: "update_followup", followup: { ...followup, replacements: Array(9).fill({ kind: "remaining_work", text: "Unresolved" }) } },
+    { action: "status", followupStart: -1 }])
+    assert.equal((await client.callTool({ name: "operator_manage_work_plan", arguments: args, _meta })).isError, true);
+  assert.equal((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "update_followup", followup } })).isError, true);
+  assert.equal(requests.length, followupCount, "invalid followups must not reach HTTP or obtain an untrusted binding");
+  const count = requests.length;
+  for (const args of [{ action: "propose_completion" }, { action: "status", completionProposal: checkpoint },
+    { action: "propose_completion", completionProposal: { ...checkpoint, uncertainties: ["x".repeat(1001)] } },
+    { action: "propose_completion", completionProposal: checkpoint, items },
+    { action: "propose_completion", completionProposal: { ...checkpoint, execution_policy: "local_advisory_v1" } }])
+    assert.equal((await client.callTool({ name: "operator_manage_work_plan", arguments: args, _meta })).isError, true);
+  assert.equal(requests.length, count, "invalid proposals must not reach the backend");
   assert.deepEqual(requests[2].body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id,
     generation: 1, action: "status", start: 8, operation_start: 16, assumption_start: 2 });
 });

@@ -90,3 +90,84 @@ test("incomplete connector or parameter evidence does not overstate connection, 
     assert.equal(result, "Created 1 duct segment.");
   } finally { f.cleanup(); }
 });
+
+test("verified registered interior tee reports the bounded edit and its open end", () => {
+  const f = fixture();
+  try {
+    const branch = { schema: "operator.existing_conditions_mep_draft_workflow.v1", status: "Applied", dryRun: false,
+      transactionGroupRolledBack: false, atomic: true, operationCount: 1,
+      createdElementIds: [11, 12, 13, 14, 15, 16, 17],
+      operations: [{ path: "/revit/connect-mep-branch", createdElementIds: [11, 12, 13, 14, 15, 16, 17],
+        response: { status: "CreatedWithSplitTee", kind: "duct", rolledBack: false,
+          splitMainSegmentIds: [10, 11], createdBranchElementIds: [12, 13, 14],
+          createdFittingIds: [15, 16, 17], openConnectorCount: 1,
+          connectionAttempts: [
+            { connection: "split_main_to_branch_tee", connected: true, method: "new_tee_fitting", fittingId: 15 },
+            { connection: "branch_internal", connected: true, method: "new_elbow_fitting", fittingId: 16 },
+            { connection: "branch_internal", connected: true, method: "new_elbow_fitting", fittingId: 17 }],
+          selected: { system: { name: "Supply Air" }, size: '8"', level: { name: "L4" } } } }] };
+    f.add("apply", branch, "/revit/existing-conditions-mep-draft-workflow", "applied", "2026-09-25T16:45:31Z");
+    f.add("verify", { status: "Ok" }, "/revit/get-connectors", "none", "2026-09-25T16:45:44Z");
+    f.snapshot.operations.apply.verification_operation_ids = ["verify"];
+    f.snapshot.operations.verify.verification_of_operation_id = "apply";
+    f.snapshot.operations.verify.purpose = "verification";
+    f.snapshot.observations.verify.facts = [{ fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }];
+    assert.equal(renderTerminalResultV2(f.snapshot),
+      "Added and verified an 8-inch Supply Air branch on L4: 3 duct segments, a tee, and 2 elbows. One branch end remains open.");
+    for (const change of [
+      (x: any) => { x.operations.apply.persistent_effect = "none"; },
+      (x: any) => { x.observations.verify.facts[0].value = false; },
+      (x: any) => { x.observations.apply.raw_payload_hash = "tampered"; },
+      (x: any) => { x.observations.apply.binding = { ...x.current_binding, generation: 2 }; }
+    ]) {
+      const changed = structuredClone(f.snapshot); change(changed);
+      assert.equal(nativeResultPresentationV2(changed, ["apply", "verify"]), null);
+    }
+  } finally { f.cleanup(); }
+});
+
+test("C142 verified two-segment registered tee reports the actual branch instead of generic completion", () => {
+  const f = fixture();
+  try {
+    const branch = JSON.parse(fs.readFileSync(path.join(process.cwd(), "test/fixtures/c142-registered-tee-apply.json"), "utf8"));
+    f.add("apply", branch, "/revit/existing-conditions-mep-draft-workflow", "applied", "2026-09-25T18:23:38Z");
+    f.add("verify", { status: "Ok" }, "/revit/get-connectors", "none", "2026-09-25T18:24:28Z");
+    f.snapshot.operations.apply.verification_operation_ids = ["verify"];
+    f.snapshot.operations.verify.verification_of_operation_id = "apply";
+    f.snapshot.operations.verify.purpose = "verification";
+    f.snapshot.observations.verify.facts = [{ fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }];
+    assert.equal(renderTerminalResultV2(f.snapshot),
+      "Added and verified an 8-inch Supply Air branch on L4: 2 duct segments, a tee, and 1 elbow. One branch end remains open.");
+    for (const change of [
+      (x: any) => { x.operations.apply.persistent_effect = "none"; },
+      (x: any) => { x.observations.verify.facts[0].value = false; },
+      (x: any) => { x.observations.apply.raw_payload_hash = "tampered"; },
+      (x: any) => { x.observations.apply.binding = { ...x.current_binding, generation: 2 }; },
+      (x: any) => { x.observations.apply.raw_payload_ref = "evidence:missing"; }
+    ]) { const changed = structuredClone(f.snapshot); change(changed);
+      assert.equal(nativeResultPresentationV2(changed, ["apply", "verify"]), null); }
+  } finally { f.cleanup(); }
+});
+
+test("C142 presentation rejects fitting, identity, rollback and open-end tampering", () => {
+  for (const mutate of [
+    (x: any) => { x.operations[0].response.connectionAttempts[1].method = "new_transition_fitting"; },
+    (x: any) => { x.operations[0].response.connectionAttempts[1].fittingId = 1543999; },
+    (x: any) => { x.operations[0].response.createdBranchElementIds[1] = 1543999; },
+    (x: any) => { x.operations[0].response.openConnectorCount = 0; },
+    (x: any) => { x.transactionGroupRolledBack = true; }
+  ]) {
+    const f = fixture();
+    try {
+      const branch = JSON.parse(fs.readFileSync(path.join(process.cwd(), "test/fixtures/c142-registered-tee-apply.json"), "utf8"));
+      mutate(branch);
+      f.add("apply", branch, "/revit/existing-conditions-mep-draft-workflow", "applied", "2026-09-25T18:23:38Z");
+      f.add("verify", { status: "Ok" }, "/revit/get-connectors", "none", "2026-09-25T18:24:28Z");
+      f.snapshot.operations.apply.verification_operation_ids = ["verify"];
+      f.snapshot.operations.verify.verification_of_operation_id = "apply";
+      f.snapshot.operations.verify.purpose = "verification";
+      f.snapshot.observations.verify.facts = [{ fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }];
+      assert.equal(nativeResultPresentationV2(f.snapshot, ["apply", "verify"]), null);
+    } finally { f.cleanup(); }
+  }
+});

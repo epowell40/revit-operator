@@ -158,6 +158,15 @@ export type ChatResponse = {
   /** Provider-call metadata only. Never contains prompts or model output. */
   model_call_receipts?: ModelCallReceipt[];
   provider_turn_usage?: import("@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage").ProviderTurnUsageV1;
+  /** Host-selected local experiment telemetry; never task completion authority. */
+  local_execution_experiment?: {
+    schema: "revit-operator.local-execution-experiment/v1";
+    lane: "thin-reference";
+    turns: number;
+    stop_reason: string;
+    duration_ms: number;
+    provider_turns: NonNullable<ChatResponse["provider_turn_usage"]>[];
+  };
   /** Exact authenticated Assignment outcome after the inner turn settles. */
   canonical_assignment_outcome?: CanonicalAssignmentOutcomeV1;
   /** Exact V2 journal projection; authoritative for V2 Assignments. */

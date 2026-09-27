@@ -4,7 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   callNativeTransport,
   NATIVE_TRANSPORT_ALGORITHM,
@@ -324,4 +324,43 @@ test("protected call rejects a plaintext or hostile outer response before interp
   } finally {
     await close(server);
   }
+});
+
+
+test("protected dispatch awaits durable exact identity and retention failure sends no request", async () => {
+  let requests = 0, persisted = false, retained: any;
+  const body = '{ "value": "é\\ntext", "elementId": 42 }';
+  const server = http.createServer((request, response) => {
+    requests++;
+    const chunks: Buffer[] = [];
+    request.on("data", chunk => chunks.push(Buffer.from(chunk)));
+    request.on("end", () => {
+      const opened = testProtectedResponse(Buffer.concat(chunks).toString("utf8"), 200, '{"ok":true}');
+      const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+      if (retained) {
+      assert.equal(retained.request_id, opened.innerRequest.request_id);
+      assert.equal(retained.request_nonce_sha256, sha(String(opened.innerRequest.request_nonce)));
+      assert.equal(retained.source_body_sha256, sha(body));
+      assert.equal(retained.server_epoch, EPOCH);
+      assert.equal(retained.path, "/revit/set-parameter");
+      assert.equal(retained.method, "POST");
+      }
+      response.setHeader("content-type", NATIVE_TRANSPORT_CONTENT_TYPE);
+      response.end(opened.envelopeJson);
+    });
+  });
+  const port = await listen(server), root = fs.mkdtempSync(path.join(os.tmpdir(), "native-dispatch-map-"));
+  writeReceipt(root, `http://127.0.0.1:${port}`);
+  try {
+    await callNativeTransport({ operatorToken: TOKEN, method: "POST", path: "/revit/set-parameter", bodyJson: body,
+      env: { LOCALAPPDATA: root }, beforeDispatch: async identity => {
+        await Promise.resolve(); retained = identity; persisted = true;
+      } });
+    assert.equal(persisted, true);
+    assert.equal(requests, 1);
+    await assert.rejects(callNativeTransport({ operatorToken: TOKEN, method: "POST", path: "/revit/set-parameter", bodyJson: body,
+      env: { LOCALAPPDATA: root }, beforeDispatch: () => { throw new Error("disk full"); } }),
+      (error: any) => error instanceof NativeTransportProtocolError && error.phase === "pre_dispatch");
+    assert.equal(requests, 1);
+  } finally { await close(server); fs.rmSync(root, { recursive: true, force: true }); }
 });

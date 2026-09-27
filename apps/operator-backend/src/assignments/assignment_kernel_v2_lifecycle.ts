@@ -1,4 +1,5 @@
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, discoveredInputDependenciesV2, validDiscoveredInputIdV2, type DiscoveredAssignmentInputV2 } from "../domain/assignment-kernel/input_registry.js";
+import { prerequisiteValueSatisfied } from "../domain/assignment-kernel/operation_scope.js";
 import { createHash } from "node:crypto";
 import {
   canonicalJsonV2,
@@ -148,6 +149,7 @@ export function requestAssignmentInputV2(input: Readonly<{
   if (newVariableIds.length > 1 || (newVariableIds.length && (variableIds.length !== 1 || newVariableIds[0] !== variableIds[0])))
     throw new Error("assignment_kernel_v2_input_declaration_invalid");
   const declarations = new Map<string, DiscoveredAssignmentInputV2>();
+  let appended: ReturnType<typeof appendCurrentAssignmentKernelEventV2> | undefined;
   let preflight = snapshot;
   for (const variableId of newVariableIds) {
     if (!validDiscoveredInputIdV2(variableId)) throw new Error("assignment_kernel_v2_input_declaration_id_invalid");
@@ -174,17 +176,18 @@ export function requestAssignmentInputV2(input: Readonly<{
         if (!prior.resolved_at && snapshot.pending_input_variable_ids.includes(variableId)) continue;
       }
     }
-    snapshot = appendCurrentAssignmentKernelEventV2({
+    appended = appendCurrentAssignmentKernelEventV2({
       goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding,
       event_id: `input-requested:${clarificationId}:${variableId}`,
       actor: "operator-runtime",
       body: { event_type: "input_requested", variable_id: variableId, clarification_id: clarificationId, question: question.slice(0, 1_200),
         ...(declarations.has(variableId) ? { declaration: declarations.get(variableId)! } : {}) }
-    }).snapshot;
+    });
+    snapshot = appended.snapshot;
   }
-  const pendingGoal = getGoal(input.binding.assignment_id);
-  if (pendingGoal) persistWorkReturn(pendingGoal);
+  const pendingGoal = appended?.goal ?? getGoal(input.binding.assignment_id);
+  if (pendingGoal) persistWorkReturn(pendingGoal, appended?.snapshot);
   return snapshot;
 }
 
@@ -208,6 +211,10 @@ export function supplyAssignmentInputResultV2(input: Readonly<{
   let snapshot = resolved.snapshot;
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(input.clarification_id.trim())) throw new Error("assignment_kernel_v2_clarification_id_invalid");
   const normalized = normalizeAssignmentInputsV2({ spec: snapshot.spec, additional_variables: Object.values(snapshot.discovered_inputs ?? {}).map(item => item.variable), external_values: input.external_values, aliases: input.aliases });
+  for(const p of snapshot.spec.interpreted_scope?.scope.prerequisites??[]) {
+    if(Object.hasOwn(normalized,p.variable_id)&&!prerequisiteValueSatisfied(p.kind,normalized[p.variable_id]))
+      throw Error(p.kind==="approval"?"assignment_kernel_v2_approval_requires_explicit_true":"assignment_kernel_v2_prerequisite_answer_required");
+  }
   if (Object.keys(normalized).length < 1) throw new Error("assignment_kernel_v2_input_value_required");
   const entries = Object.entries(normalized).map(([variableId, value]) => ({
     variableId,
@@ -233,17 +240,19 @@ export function supplyAssignmentInputResultV2(input: Readonly<{
       throw new Error("clarification_binding_invalid");
     }
   }
+  let appended: ReturnType<typeof appendCurrentAssignmentKernelEventV2> | undefined;
   for (const { variableId, value, eventId } of entries) {
-    snapshot = appendCurrentAssignmentKernelEventV2({
+    appended = appendCurrentAssignmentKernelEventV2({
       goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding,
       event_id: eventId,
       actor: "authenticated-user",
       body: { event_type: "input_supplied", variable_id: variableId, clarification_id: input.clarification_id, value,
         result_freshness: "invalidate_dependent_results_v1" }
-    }).snapshot;
+    });
+    snapshot = appended.snapshot;
   }
-  const resumedGoal = getGoal(input.binding.assignment_id);
-  if (resumedGoal) persistWorkReturn(resumedGoal);
+  const resumedGoal = appended?.goal ?? getGoal(input.binding.assignment_id);
+  if (resumedGoal) persistWorkReturn(resumedGoal, appended?.snapshot);
   return { snapshot, idempotent: false };
 }

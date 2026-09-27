@@ -10,6 +10,7 @@ const retainedPostPaths = [
   "/revit/get-placement-context",
   "/revit/find-elements",
   "/revit/get-connectors",
+  "/revit/connect-existing-mep-branch",
   "/revit/set-parameter",
   "/tools/redline/verify-visual",
   "/tools/mep/semantic-route-plan"
@@ -31,7 +32,6 @@ const excludedPaths = [
   "/revit/low-voltage-layout",
   "/revit/link-revit",
   "/revit/audit-electrical-circuit-loading",
-  "/revit/connect-existing-mep-branch",
   "/revit/resize-ductwork-by-scope",
   "/revit/repair-duct-continuity-by-scope",
   "/revit/repair-mep-connectors"
@@ -58,4 +58,12 @@ test("action filtering retains supported work and drops excluded and unknown rou
   const paths = [...retainedPostPaths, ...excludedPaths, "/revit/not-real"];
   const actions = paths.map((path, index) => ({ action_id: String(index), method: "POST" as const, path, body: {} }));
   assert.deepEqual(filterAllowlistedActions(actions).map(action => action.path), retainedPostPaths);
+});
+
+test("supported branch connection still requires inclusion in the caller's scoped allowlist", () => {
+  const path = "/revit/connect-existing-mep-branch";
+  const readOnly = { GET: new Set([path]), POST: new Set(["/revit/get-connectors"]) };
+  assert.equal(isAllowlisted("POST", path, readOnly), false);
+  assert.equal(isAllowlisted("GET", path, readOnly), false);
+  assert.deepEqual(filterAllowlistedActions([{ action_id: "branch", method: "POST", path, body: {} }], readOnly), []);
 });

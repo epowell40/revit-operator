@@ -342,6 +342,9 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
 export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
   kind: "duct_route";
   discipline: "mechanical";
+  /** A source-visible branch from one exact, independently inventoried existing duct. */
+  geometry_mode?: "source_points" | "existing_main_branch_tee";
+  main_reference_key?: string;
   service: "supply_air" | "return_air" | "exhaust_air" | "outside_air" | "unclassified";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
@@ -1313,6 +1316,20 @@ function validateObservation(
       && (observation.connect_to_existing === true || observation.require_existing_endpoint_connections === true)) {
       throw new Error(`${id}_provisional_duct_attributes_cannot_connect_to_existing`);
     }
+    if (observation.geometry_mode === "existing_main_branch_tee") {
+      requiredText(observation.main_reference_key, `${id}_main_reference_key`);
+      if (sizePolicy !== "explicit_required" || typePolicy !== "explicit_required"
+        || systemPolicy !== "explicit_required" || observation.service === "unclassified") {
+        throw new Error(`${id}_existing_main_branch_requires_explicit_service_size_and_type`);
+      }
+      if (observation.connect_to_existing || observation.require_existing_endpoint_connections) {
+        throw new Error(`${id}_existing_main_branch_cannot_request_endpoint_autosnap`);
+      }
+    } else if (observation.geometry_mode != null && observation.geometry_mode !== "source_points") {
+      throw new Error(`${id}_duct_geometry_mode_invalid`);
+    } else if (clean(observation.main_reference_key)) {
+      throw new Error(`${id}_main_reference_requires_existing_branch_mode`);
+    }
     return;
   }
   if (observation.kind === "conduit_route") {
@@ -2258,6 +2275,14 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     if (!visibleEvidenceByRole.has(normalizedEvidenceRole)) {
       throw new Error(`${observation.observation_id}_references_unknown_visible_evidence_role:${evidenceRole}`);
     }
+    if (observation.kind === "duct_route" && observation.geometry_mode === "existing_main_branch_tee") {
+      const mainReference = nativeReferences.get(observation.main_reference_key!);
+      if (!mainReference) throw new Error(`${observation.observation_id}_main_reference_unknown:${observation.main_reference_key}`);
+      const mainCategory = normalized(mainReference.category).replaceAll(" ", "");
+      if (!mainCategory.includes("ductcurves") && !mainCategory.endsWith("ducts")) {
+        throw new Error(`${observation.observation_id}_main_reference_category_mismatch`);
+      }
+    }
     if ("placement" in observation
       && observation.placement.mode === "provisional_plan_symbol"
       && nativeEvidenceRoles.has(normalizedEvidenceRole)) {
@@ -2848,6 +2873,24 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           ...transformExistingConditionsPlanPoint(registration, entry),
           z: levelElevationFt + observation.elevation_ft
         }));
+        if (observation.geometry_mode === "existing_main_branch_tee") {
+          const mainReference = nativeReferences.get(observation.main_reference_key!)!;
+          const common: JsonMap = {
+            kind: "duct", mainElementId: mainReference.element_id,
+            branchPoints: points, branchSize: observation.duct_size!,
+            connectionMode: "tee", ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
+            verify: true, visualVerify: true
+          };
+          actions.push({
+            action_key: actionKey, observation_ids: [observation.observation_id],
+            method: "POST", path: "/revit/connect-mep-branch", depends_on: [],
+            dry_run_body: { ...common, dryRun: true },
+            apply_body: { ...common, dryRun: false },
+            expected_created_min: observation.points.length,
+            expected_created_max: observation.points.length * 3
+          });
+          continue;
+        }
         const common: JsonMap = {
           kind: "duct",
           ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),

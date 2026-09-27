@@ -34,14 +34,14 @@ test("HTTP unavailable classification cannot authorize task admission and an exa
   await post();assert.equal(calls,2,"Accepted retry is durable and does not invoke the provider again");
 });
 
-test("HTTP intake authorizes before model use, uses full text, persists the answer and falls back for attachments",async t=>{
+test("HTTP intake authorizes before model use, preserves text, and rejects answering unseen attachment work",async t=>{
   process.env.OPERATOR_WORKSPACE_ROOT=fs.mkdtempSync(path.join(os.tmpdir(),"operator-intake-http-"));__closeForTests();
-  let calls=0;const seen:string[]=[];
+  let calls=0;const seen:string[]=[],inputs:any[]=[],corrections:any[]=[];
   const server=http.createServer((req,res)=>void handleConversationIntakeHttp(req,res,{
     readJson:async request=>{let raw="";for await(const chunk of request)raw+=chunk;return JSON.parse(raw);},
     authorized:session=>{if(session!=="owned"){res.writeHead(403).end();return false;}return true;},
     respond:(status,body)=>res.writeHead(status,{"content-type":"application/json"}).end(JSON.stringify(body)),
-    interpreter:{interpret:async input=>{calls++;seen.push(input.user_text);return {value:{route:"answer",answer:null,question_kind:"ui_identity",identity_fields:["document_title"],
+    interpreter:{interpret:async(input,_signal,correction)=>{calls++;seen.push(input.user_text);inputs.push(input);corrections.push(correction);return {value:{route:"answer",answer:null,question_kind:"ui_identity",identity_fields:["document_title"],
       basis:"ui_identity",read_evidence:"not_applicable",requested_effect:"none",entire_request_answered:true,confidence:0.99,reason:"Supplied UI identity."}};}}
   })).listen(0,"127.0.0.1");await once(server,"listening");
   t.after(()=>{server.close();__closeForTests();});
@@ -53,11 +53,44 @@ test("HTTP intake authorizes before model use, uses full text, persists the answ
   const answer=await(await post()).json() as any;assert.equal(answer.route,"answer");assert.deepEqual(seen,[prompt]);
   assert.equal(getConversationHistory("owned").length,2);
   const redline=await(await post({message_id:"two",attachments:[{id:"redline"}]})).json() as any;
-  assert.equal(redline.route,"task");assert.equal(calls,1);
-  assert.equal((await post({user_text:"Reuse the message id for a different question"})).status,400);assert.equal(calls,1);
+  assert.equal(redline.route,"task");assert.equal(redline.routing_status,"unavailable");assert.equal(calls,3);
+  assert.equal(inputs[1],inputs[2]);assert.equal(inputs[2].user_text,prompt);assert.equal(inputs[2].attachment_count,1);
+  assert.doesNotMatch(JSON.stringify(inputs[2]),/redline/);assert.equal(corrections[2].rejection.issues[0].code,"attachments_require_task");
+  assert.equal((await post({user_text:"Reuse the message id for a different question"})).status,400);assert.equal(calls,3);
   const unknown=await(await post({message_id:"unknown",ui_observation:{ok:false}})).json() as any;
   assert.equal(unknown.route,"task");assert.equal(unknown.history_saved,false);
   assert.equal(getConversationHistory("owned").length,2,"A model's confident UI claim cannot turn a missing HTTP observation into an answer");
+});
+
+test("HTTP synthetic correction stays unresolved until durable acceptance and exposes no rejected candidate",async t=>{
+  process.env.OPERATOR_WORKSPACE_ROOT=fs.mkdtempSync(path.join(os.tmpdir(),"operator-correction-http-"));__closeForTests();
+  const value={route:"task",answer:null,question_kind:"current_model",identity_fields:[],read_evidence:"complete_collection",basis:"needs_tools",requested_effect:"read",entire_request_answered:false,confidence:0.99,reason:"Synthetic complete collection handoff."};
+  let calls=0,finish:(value:any)=>void=()=>{},began:()=>void=()=>{},original:unknown;
+  const correcting=new Promise<void>(resolve=>{began=resolve;});
+  const server=http.createServer((req,res)=>void handleConversationIntakeHttp(req,res,{
+    readJson:async request=>{let raw="";for await(const chunk of request)raw+=chunk;return JSON.parse(raw);},
+    authorized:session=>{if(session!=="owned"){res.writeHead(403).end();return false;}return true;},
+    respond:(status,body)=>res.writeHead(status,{"content-type":"application/json"}).end(JSON.stringify(body)),
+    interpreter:{interpret:async(input,_signal,correction)=>{
+      calls++;assert.equal(input.attachment_count,1);assert.doesNotMatch(JSON.stringify(input),/ATTACHMENT-BYTES/);
+      if(calls===1){original=input;return {value:{...value,confidence:0.4,reason:"SYNTHETIC-REJECTED-VALUE"}};}
+      assert.equal(input,original);assert.equal(correction?.attempt,2);
+      return new Promise(resolve=>{finish=resolve;began();});
+    }}
+  })).listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>{server.close();__closeForTests();});
+  const request={version:"operator.backend.v1",session_id:"owned",message_id:"correction",user_text:"Count every sheet in the attached work.",attachments:[{data:"ATTACHMENT-BYTES"}]};
+  const url=`http://127.0.0.1:${(server.address() as any).port}`;
+  const post=(body:any)=>fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  assert.equal((await post({...request,session_id:"foreign"})).status,403);assert.equal(calls,0);
+  const pending=post(request);await correcting;
+  assert.throws(()=>assertConversationIntakeResolved(request),/classification is not ready/);
+  assert.equal(retainedIntakeDecision({...request,session_id:"foreign"}),null);
+  assert.equal((await post({...request,attachments:[]})).status,400);assert.equal(calls,2);
+  finish({value});const response=await(await pending).json() as any;
+  assert.equal(response.routing_status,"accepted");assert.equal(response.route,"task");
+  assert.doesNotMatch(JSON.stringify(response),/SYNTHETIC-REJECTED-VALUE|rejection|telemetry|confidence/);
+  assert.doesNotThrow(()=>assertConversationIntakeResolved(request));
+  await post(request);assert.equal(calls,2);
 });
 
 test("HTTP classification persists an exact-message speed profile; foreign and mixed work cannot borrow it",async t=>{

@@ -263,64 +263,92 @@ export function createAssignmentKernelV2(goalId: string, spec: AssignmentSpecV2,
   });
 }
 
-export function appendCurrentAssignmentKernelEventV2(input: Readonly<{
+export type AssignmentKernelCurrentEventInputV2 = Readonly<{
   goal_id: string;
   binding: AssignmentEventV2["binding"];
   event_id: string;
   actor: string;
   occurred_at?: string;
   body: AssignmentKernelEventBodyV2<AssignmentEventV2>;
+}>;
+
+export function appendCurrentAssignmentKernelEventV2(input: AssignmentKernelCurrentEventInputV2): AssignmentKernelAppendResultV2 {
+  return appendCurrentEventsUnderGoalLock([input]);
+}
+
+/** Only an already prepared result/observation pair may share this durable write.
+ * Admission and dispatch remain separate. A rejected observation cannot erase
+ * an accepted native result: its accepted prefix and quarantine are persisted.
+ */
+export function appendAssignmentKernelObservationSettlementV2(input: Readonly<{
+  result_event: AssignmentKernelCurrentEventInputV2 & { body: AssignmentKernelEventBodyV2<Extract<AssignmentEventV2, { event_type: "operation_result_recorded" }>> };
+  observation_event: AssignmentKernelCurrentEventInputV2 & { body: AssignmentKernelEventBodyV2<Extract<AssignmentEventV2, { event_type: "observation_retained" }>> };
 }>): AssignmentKernelAppendResultV2 {
-  let accepted = false;
+  if (input.result_event.goal_id !== input.observation_event.goal_id
+    || input.result_event.body.event_type !== "operation_result_recorded"
+    || input.observation_event.body.event_type !== "observation_retained") throw new Error("assignment_kernel_v2_settlement_batch_invalid");
+  return appendCurrentEventsUnderGoalLock([input.result_event, input.observation_event]);
+}
+
+function appendCurrentEventsUnderGoalLock(inputs: readonly AssignmentKernelCurrentEventInputV2[]): AssignmentKernelAppendResultV2 {
+  let accepted = true;
   let quarantinedReasonCode: string | null = null;
   let acceptedSnapshot: AssignmentSnapshotV2 | null = null;
-  const goal = mutateGoalRecord(input.goal_id, current => {
+  let appended = false;
+  const goal = mutateGoalRecord(inputs[0]!.goal_id, current => {
     const record = journalForMutation(current.assignment_kernel_v2);
     const journal = journalProjection.open(record.events);
-    const snapshot = record.events.length > 0 ? journal.snapshot() : null;
+    let snapshot = record.events.length > 0 ? journal.snapshot() : null;
     if (!snapshot) throw new Error("assignment_kernel_v2_not_created");
-    const existing = [...record.events, ...record.quarantined_events.map(item => item.event)]
-      .find(event => event.event_id === input.event_id);
-    const candidate = {
-      schema: ASSIGNMENT_EVENT_V2_SCHEMA,
-      event_id: input.event_id,
-      assignment_id: input.goal_id,
-      assignment_version: existing?.assignment_version ?? snapshot.assignment_version + 1,
-      binding: structuredClone(input.binding),
-      occurred_at: existing?.occurred_at ?? input.occurred_at ?? new Date().toISOString(),
-      actor: input.actor,
-      ...input.body
-    } as AssignmentEventV2;
-    if (existing) {
-      accepted = record.events.some(event => event.event_id === input.event_id) && eventDigest(existing) === eventDigest(candidate);
-      quarantinedReasonCode = accepted ? null : "assignment_event_id_conflict";
-      acceptedSnapshot = snapshot;
-      if (accepted) return current;
-      const reasonCode = "assignment_event_id_conflict";
-      record.quarantined_events.push({
-        event: structuredClone(candidate), reason_code: reasonCode,
-        reason: "Event identity was reused with different content.", quarantined_at: new Date().toISOString()
-      });
-      return { ...current, assignment_kernel_v2: record };
+    acceptedSnapshot = snapshot;
+    for (const input of inputs) {
+      const existing = [...record.events, ...record.quarantined_events.map(item => item.event)]
+        .find(event => event.event_id === input.event_id);
+      const candidate = {
+        schema: ASSIGNMENT_EVENT_V2_SCHEMA,
+        event_id: input.event_id,
+        assignment_id: input.goal_id,
+        assignment_version: existing?.assignment_version ?? snapshot.assignment_version + 1,
+        binding: structuredClone(input.binding),
+        occurred_at: existing?.occurred_at ?? input.occurred_at ?? new Date().toISOString(),
+        actor: input.actor,
+        ...input.body
+      } as AssignmentEventV2;
+      if (existing) {
+        accepted = record.events.some(event => event.event_id === input.event_id) && eventDigest(existing) === eventDigest(candidate);
+        quarantinedReasonCode = accepted ? null : "assignment_event_id_conflict";
+        acceptedSnapshot = snapshot;
+        if (accepted) continue;
+        const reasonCode = "assignment_event_id_conflict";
+        record.quarantined_events.push({
+          event: structuredClone(candidate), reason_code: reasonCode,
+          reason: "Event identity was reused with different content.", quarantined_at: new Date().toISOString()
+        });
+        break;
+      }
+      try {
+        acceptedSnapshot = journal.append(candidate);
+        snapshot = acceptedSnapshot;
+        record.events.push(structuredClone(candidate));
+        accepted = true;
+        appended = true;
+      } catch (error) {
+        const reasonCode = error instanceof AssignmentKernelErrorV2 ? error.code : "assignment_kernel_event_invalid";
+        quarantinedReasonCode = reasonCode;
+        accepted = false;
+        record.quarantined_events.push({
+          event: structuredClone(candidate), reason_code: reasonCode,
+          reason: error instanceof Error ? error.message : String(error), quarantined_at: new Date().toISOString()
+        });
+        acceptedSnapshot = snapshot;
+        break;
+      }
     }
-    try {
-      acceptedSnapshot = journal.append(candidate);
-      record.events.push(structuredClone(candidate));
-      accepted = true;
-      return synchronizeGoalLifecycle({ ...current, assignment_kernel_v2: record }, acceptedSnapshot);
-    } catch (error) {
-      const reasonCode = error instanceof AssignmentKernelErrorV2 ? error.code : "assignment_kernel_event_invalid";
-      quarantinedReasonCode = reasonCode;
-      record.quarantined_events.push({
-        event: structuredClone(candidate), reason_code: reasonCode,
-        reason: error instanceof Error ? error.message : String(error), quarantined_at: new Date().toISOString()
-      });
-      acceptedSnapshot = snapshot;
-      return { ...current, assignment_kernel_v2: record };
-    }
+    if (appended) return synchronizeGoalLifecycle({ ...current, assignment_kernel_v2: record }, acceptedSnapshot!);
+    return accepted ? current : { ...current, assignment_kernel_v2: record };
   });
   if (!acceptedSnapshot) throw new Error("assignment_kernel_v2_not_created");
+  if (accepted || appended) observeAssignmentKernelIndexV2(acceptedSnapshot);
   if (!accepted) throw new Error(quarantinedReasonCode ?? "assignment_kernel_v2_event_rejected");
-  observeAssignmentKernelIndexV2(acceptedSnapshot);
   return { goal, snapshot: acceptedSnapshot, accepted, quarantined_reason_code: quarantinedReasonCode };
 }

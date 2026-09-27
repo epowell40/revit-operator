@@ -41,9 +41,21 @@ test("source provenance is cross-platform for line endings but still binds exact
   assert.throws(() => epic0437SourceInputHash(root, relative), /malformed UTF-8/);
   fs.writeFileSync(source, "const a = 1;\0\n", "utf8");
   assert.throws(() => epic0437SourceInputHash(root, relative), /NUL\/binary text/);
-  const javascript = path.join(root, "fixture.js");
-  fs.writeFileSync(javascript, "export const fixture = true;\n", "utf8");
-  assert.match(epic0437SourceInputHash(root, "fixture.js"), /^sha256:[0-9a-f]{64}$/);
+  for (const extension of ["js", "mjs"]) {
+    const filename = `fixture.${extension}`;
+    const javascript = path.join(root, filename);
+    fs.writeFileSync(javascript, "export const fixture = true;\n", "utf8");
+    const javascriptHash = epic0437SourceInputHash(root, filename);
+    assert.match(javascriptHash, /^sha256:[0-9a-f]{64}$/);
+    fs.writeFileSync(javascript, "export const fixture = true;\r\n", "utf8");
+    assert.equal(epic0437SourceInputHash(root, filename), javascriptHash);
+    fs.writeFileSync(javascript, "export const fixture = false;\n", "utf8");
+    assert.notEqual(epic0437SourceInputHash(root, filename), javascriptHash);
+    fs.writeFileSync(javascript, Buffer.from([0xc3, 0x28]));
+    assert.throws(() => epic0437SourceInputHash(root, filename), /malformed UTF-8/);
+    fs.writeFileSync(javascript, "export const fixture = true;\0\n", "utf8");
+    assert.throws(() => epic0437SourceInputHash(root, filename), /NUL\/binary text/);
+  }
   const unsupported = path.join(root, "source.bin");
   fs.writeFileSync(unsupported, "text", "utf8");
   assert.throws(() => epic0437SourceInputHash(root, "source.bin"), /unsupported non-text build input/);

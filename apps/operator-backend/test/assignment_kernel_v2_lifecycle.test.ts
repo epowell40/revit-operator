@@ -23,6 +23,10 @@ import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, ca
 import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
+import { generateVerifiedWorkPacket } from "../src/work_packets/generator.js";
+import { renderVerifiedWorkPacketMarkdown } from "../src/work_packets/renderer.js";
+import { generateWorkReturn, renderWorkReturnMarkdown } from "../src/work_returns/generator.js";
+import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
 import { deriveTerminalResultV2, renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
 import { prepareCodexAssignmentProgressV2, settleCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
@@ -34,6 +38,7 @@ import {
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
 import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
+import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
 import { buildAssignmentResultDeliveryV2 } from "../src/assignments/assignment_kernel_v2_result_delivery.js";
 import { assertCompleteProtocolV2Receipts } from "../src/benchmark/protocol_v2_runner.js";
 import {
@@ -445,6 +450,22 @@ test("quiescence or assistant claim without authoritative Observation cannot com
   }), /unknown observation/);
   assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.terminal, false);
   assert.equal(getGoal(goal.id)!.finished_at, null);
+}));
+
+test("task projection shows the canonical drawing plan instead of a stale auto checklist", () => workspace(() => {
+  const { goal, binding } = setup("apply");
+  manageAssignmentWorkPlan({ binding, action: "declare", declaration: { items: [
+    { item_id: "east-supply", description: "Draft the east Supply Air branch", source_basis: "Registered M104", kind: "edit" },
+    { item_id: "inspect-east", description: "Inspect its physical connections", source_basis: "Native readback", kind: "inspection", depends_on: ["east-supply"] }
+  ], assumptions: [] } });
+  const stale = { ...getGoal(goal.id)!, work_items: [{ id: "auto.revit-work", title: "Complete Revit work", status: "in_progress" as const,
+    scope: null, depends_on: [], planned_actions: [], evidence_refs: [], blocker: null, result_summary: null,
+    updated_at: "2026-09-25T16:40:10Z" }] };
+  const projected = projectGoalAssignment(stale);
+  assert.deepEqual(projected.plan.steps.map(step => [step.id, step.status]),
+    [["east-supply", "pending"], ["inspect-east", "pending"]]);
+  assert.equal(projected.progress.total, 2);
+  assert.equal(projected.progress.active, 0);
 }));
 
 test("Candidate 39 failed native preview remains evidence, cannot complete, and permits one corrected preview", () => workspace(() => {
@@ -947,4 +968,54 @@ test("bounded reconciliation exhaustion terminalizes an unknown effect as blocke
   assert.deepEqual(advanced.snapshot.unresolved_unknown_operation_ids, [applyLease.operation_id]);
   assert.equal(Object.keys(advanced.snapshot.operations).length, 2, "the mutation is never replayed");
   assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
+}));
+
+test("input transitions persist the final canonical artifact pair and keep no-append retries isolated", () => workspace(() => {
+  const { goal, binding } = setup("apply");
+  controlAssignmentExecutionV2({ binding, command_id: "artifact-pause", expected_command_id: null, action: "pause" });
+  const initial = getGoal(goal.id)!.assignment_kernel_v2!.events;
+  const request = { binding, clarification_id: "artifact-wording", variable_ids: ["replacement_text"], new_variable_ids: ["replacement_text"],
+    question: "What wording should the note contain?" };
+  const pending = requestAssignmentInputV2(request);
+  function verifyArtifacts(snapshot: typeof pending) {
+    const persisted = getGoal(goal.id)!;
+    const packets = listVerifiedWorkPackets(goal.id);
+    const returns = listWorkReturns(goal.id);
+    const packet = packets.find(value => !packets.some(other => other.parent_packet_id === value.packet_id))!;
+    const workReturn = returns.find(value => !returns.some(other => other.parent_work_return_id === value.work_return_id))!;
+    let canonicalPacket: ReturnType<typeof generateVerifiedWorkPacket> | null = null;
+    try { canonicalPacket = generateVerifiedWorkPacket(persisted, packet.parent_packet_id); }
+    catch (error) { assert.match(String(error), /requires a settled V2 Assignment/); }
+    if (canonicalPacket) assert.deepEqual(packet, canonicalPacket,
+      "stored packet equals independent full-journal reconstruction at this input transition");
+    assert.deepEqual(workReturn, generateWorkReturn(persisted, workReturn.parent_work_return_id, canonicalPacket));
+    const directory = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "artifacts", "goals", goal.id);
+    for (const [folder, id, value, markdown] of [
+      ["verified-work-packets", packet.packet_id, packet, renderVerifiedWorkPacketMarkdown(packet)],
+      ["work-returns", workReturn.work_return_id, workReturn, renderWorkReturnMarkdown(workReturn)]
+    ] as const) {
+      assert.equal(fs.readFileSync(path.join(directory, folder, `${id}.json`), "utf8"), `${JSON.stringify(value, null, 2)}\n`);
+      assert.equal(fs.readFileSync(path.join(directory, folder, `${id}.md`), "utf8"), markdown);
+    }
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), snapshot);
+    return { packets, returns, events: persisted.assignment_kernel_v2!.events };
+  }
+  const first = verifyArtifacts(pending);
+  const replayedRequest = requestAssignmentInputV2(request);
+  assert.deepEqual(replayedRequest, pending);
+  assert.deepEqual(verifyArtifacts(replayedRequest), first, "request with no new append retains equivalent artifacts");
+  const answer = { binding, clarification_id: request.clarification_id, external_values: { replacement_text: "Full replacement wording." } };
+  const supplied = supplyAssignmentInputResultV2(answer);
+  assert.equal(supplied.idempotent, false);
+  assert.equal(supplied.snapshot.execution_control?.state, "paused");
+  const second = verifyArtifacts(supplied.snapshot);
+  assert.equal(second.packets.length, first.packets.length, "answering input does not invent a settled packet");
+  assert.equal(second.returns.length, first.returns.length + 1);
+  assert.deepEqual(second.events.slice(0, initial.length), initial, "prior history is untouched");
+  assert.deepEqual(second.events.slice(initial.length).map(event => event.event_type), ["input_requested", "input_supplied"]);
+  assert.equal(supplyAssignmentInputResultV2(answer).idempotent, true);
+  assert.deepEqual(verifyArtifacts(supplied.snapshot), second, "exact answer retry creates no artifact or event");
+  assert.throws(() => supplyAssignmentInputResultV2({ ...answer, external_values: { replacement_text: "Conflicting wording." } }), /integrity_conflict/);
+  assert.throws(() => requestAssignmentInputV2({ ...request, binding: { ...binding, generation: binding.generation + 1 } }), /binding_stale/);
+  assert.deepEqual(verifyArtifacts(supplied.snapshot), second, "rejected input leaves artifact chain and history unchanged");
 }));

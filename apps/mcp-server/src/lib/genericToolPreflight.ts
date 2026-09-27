@@ -1,4 +1,5 @@
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import type { OperationInputSchemaIssueV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export type GenericToolContract = {
   method?: string;
@@ -8,25 +9,7 @@ export type GenericToolContract = {
   input_schema_id?: string;
 };
 
-export type GenericToolValidationIssue = {
-  field_path: string;
-  expected_type: string;
-  actual_type: string;
-  safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
-  correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
-  expected_constraint: Readonly<{
-    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds" | "schema_alternative";
-    type?: string;
-    allowed_values?: readonly (string | number | boolean | null)[];
-    minimum?: number;
-    maximum?: number;
-    min_length?: number;
-    max_length?: number;
-    min_items?: number;
-    max_items?: number;
-  }>;
-  message: string;
-};
+export type GenericToolValidationIssue = OperationInputSchemaIssueV2 & { message: string };
 
 const MAX_VALIDATION_ISSUES = 64;
 const MAX_SCHEMA_DEPTH = 24;
@@ -261,6 +244,16 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
       if (Object.prototype.hasOwnProperty.call(objectValue, name) && objectValue[name] !== undefined) {
         schemaViolations(objectValue[name], propertySchema, `${field}.${name}`, violations, depth + 1, budget);
       }
+    }
+  }
+  const additionalSchema = record(schema.additionalProperties);
+  if (objectValue && additionalSchema) {
+    // A JSON property map has no declared keys; each undeclared entry uses
+    // the value schema. Reuse the same bounded traversal as DTOs and arrays.
+    for (const name of Object.keys(objectValue)) {
+      if (budget.exhausted || violations.length >= MAX_VALIDATION_ISSUES) break;
+      if (properties && Object.prototype.hasOwnProperty.call(properties, name)) continue;
+      schemaViolations(objectValue[name], additionalSchema, `${field}.${name}`, violations, depth + 1, budget);
     }
   }
 }

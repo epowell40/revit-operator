@@ -1,9 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { nativeReadEvidence } from "./nativeReadEvidence.js";
 
 const ids=(facts:ReturnType<typeof nativeReadEvidence>)=>facts.map(fact=>fact.fact_id);
 const complete=(route:string,body:unknown,payload:unknown)=>nativeReadEvidence(route,body,payload).find(fact=>fact.fact_id==="collection.total")?.value;
+
+test("retained HVAC and link inventories have separate query identities, not contradictory route totals",()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/ui-inventory-scope-collision.json',import.meta.url),'utf8'));
+  const totals=fixture.cases.map((entry:any)=>nativeReadEvidence('/revit/find-elements',entry.request.input.body,entry.payload)
+    .find(fact=>fact.fact_id==='collection.total'));
+  assert.deepEqual(totals.map((fact:any)=>fact.value),[7,6]);
+  assert.ok(totals.every((fact:any)=>typeof fact.dimensions.query_scope==='string'));
+  assert.notEqual(totals[0].dimensions.query_scope,totals[1].dimensions.query_scope);
+  for(let index=0;index<totals.length;index++)assert.equal(totals[index].dimensions.query_scope,fixture.expected_query_scopes[index]);
+});
+
+test("same element query keeps its identity across count changes, category order, defaults, and presentation limits",()=>{
+  const payload={status:'Ok',count:1,elementIds:[42],items:[{id:42}],itemsComplete:true,truncated:false,scanCapReached:false,identityExpansionScanCapReached:false};
+  const scope=(body:unknown,result:unknown=payload)=>nativeReadEvidence('/revit/find-elements',body,result).find(f=>f.fact_id==='collection.total')?.dimensions?.query_scope;
+  const query={categories:['OST_DuctCurves','OST_DuctFitting'],physicalElementsOnly:true};
+  const expected=scope(query);
+  assert.equal(typeof expected,'string');
+  assert.equal(scope({...query,categories:['OST_DuctFitting','OST_DuctCurves','OST_DuctCurves'],limit:2000,includeGeometry:true,topLevelInstancesOnly:false}),expected);
+  assert.equal(scope({category:'OST_DuctCurves',categories:['OST_DuctFitting'],physicalElementsOnly:true}),expected);
+  assert.equal(scope({...query,requestId:'another-id',timestamp:'later',ignoredNativeField:'noise'}),expected,'ignored JSON fields cannot hide a real count disagreement');
+  assert.equal(scope(query,{...payload,count:2,elementIds:[42,43],items:[{id:42},{id:43}]}),expected,'result cardinality must never create a new query scope');
+  for(const body of [{...query,viewId:99},{...query,physicalElementsOnly:false},{...query,familyNameContains:'HRU'}])assert.notEqual(scope(body),expected);
+  const identityTerms=['one','two','three','four','five','six','seven','eight','nine'];
+  const bounded=scope({...query,identityTerms});
+  assert.notEqual(scope({...query,identityTerms:[...identityTerms].reverse()}),bounded,'native keeps the first eight distinct terms before applying the filter');
+  assert.equal(scope({...query,identityTerms:[...identityTerms.slice(0,8),'ignored ninth']}),bounded);
+  assert.equal(scope({...query,identityTerms:[' ONE ',...identityTerms]}),bounded,'native deduplicates case-insensitively before the eight-term cap');
+});
 
 test("model contents require a recognized native object read; document labels and API property prose do not qualify",()=>{
   for(const route of ["/revit/context","/revit/native-api-ops","/revit/tool-registry","/revit/native-api-catalog"])

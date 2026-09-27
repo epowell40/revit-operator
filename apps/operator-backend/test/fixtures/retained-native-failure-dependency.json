@@ -1,0 +1,176 @@
+{
+  "schema": "test.retained-native-failure-dependency/v1",
+  "description": "Minimal offline native failure/correction regression sample. Historical assignment/session/principal identifiers, timestamps, provenance, unrelated geometry and unneeded output fields are omitted; exact unredacted replay is retained privately. No live native proof is created by this fixture.",
+  "failure": {
+    "input": {
+      "method": "POST",
+      "path": "/revit/connect-existing-mep-branch",
+      "body": {
+        "kind": "duct",
+        "mainElementId": 1542961,
+        "branchElementId": 1543203,
+        "connectionMode": "takeoff_fitting",
+        "dryRun": false,
+        "verify": true
+      }
+    },
+    "result": {
+      "schema": "revit-operator.operation-result/v2",
+      "status": "failed_after_dispatch",
+      "dispatch_state": "dispatched",
+      "persistent_effect": "none",
+      "native_transaction_state": "rolled_back",
+      "authority": "native-host",
+      "result_schema_id": "operator-native/POST:/revit/connect-existing-mep-branch/v2",
+      "observation_required": true,
+      "affected_target_identities": [],
+      "receipt_id": "bac0cb4c5bdc3fa20731e81c2a990460861dc6a83bf4a309cf173c4f8d1ec46e",
+      "native_correlation_id": "bac0cb4c5bdc3fa20731e81c2a990460861dc6a83bf4a309cf173c4f8d1ec46e",
+      "error_code": "native_domain_operation_failed"
+    },
+    "raw": {
+      "status": "Blocked",
+      "success": false,
+      "dryRun": false,
+      "transaction": {
+        "status": "rolled_back",
+        "committed": false,
+        "modified_element_ids": [],
+        "affected_element_ids": [],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "applied": false,
+      "capturedFailures": [
+        {
+          "severity": "Error",
+          "message": "The family is connected in a network and can no longer keep the connectivity. Disconnect the family from the network?",
+          "elementIds": [
+            1543203,
+            1543209
+          ],
+          "failureDefinitionId": "dd0a16ea-9d2c-467d-b02c-5d86474a5041",
+          "captureErrors": []
+        },
+        {
+          "severity": "Error",
+          "message": "The family is connected in a network and can no longer keep the connectivity. Disconnect the family from the network?",
+          "elementIds": [
+            1543203,
+            1543209
+          ],
+          "failureDefinitionId": "dd0a16ea-9d2c-467d-b02c-5d86474a5041",
+          "captureErrors": []
+        },
+        {
+          "severity": "Error",
+          "message": "The duct/pipe has been modified to be in the opposite direction causing the connections to be invalid.",
+          "elementIds": [
+            1543203
+          ],
+          "failureDefinitionId": "1643aec9-a57a-4eec-a30e-2cae191b350d",
+          "captureErrors": []
+        }
+      ],
+      "failureRollbackRequested": true
+    }
+  },
+  "correction": {
+    "input": {
+      "method": "POST",
+      "path": "/revit/change-element-type",
+      "body": {
+        "elementId": 1543209,
+        "typeId": 693822,
+        "expectedOldTypes": [
+          {
+            "elementId": 1543209,
+            "typeId": 693820
+          }
+        ],
+        "dryRun": false
+      }
+    },
+    "result": {
+      "schema": "revit-operator.operation-result/v2",
+      "status": "succeeded",
+      "dispatch_state": "dispatched",
+      "persistent_effect": "applied",
+      "native_transaction_state": "committed",
+      "authority": "native-host",
+      "result_schema_id": "operator-native/POST:/revit/change-element-type/v2",
+      "observation_required": true,
+      "affected_target_identities": [
+        "element_id:101014",
+        "element_id:1321945",
+        "element_id:1543186",
+        "element_id:1543203",
+        "element_id:1543204",
+        "element_id:1543206",
+        "element_id:1543207",
+        "element_id:1543209",
+        "element_id:1543210",
+        "element_id:669230",
+        "element_id:731023"
+      ],
+      "receipt_id": "fdb07b53f7c7caacd43b3ba22343f469ee727ae33490182ee364726b5182b961",
+      "native_correlation_id": "fdb07b53f7c7caacd43b3ba22343f469ee727ae33490182ee364726b5182b961"
+    },
+    "raw": {
+      "status": "Applied",
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          101014,
+          669230,
+          731023,
+          1321945,
+          1543186,
+          1543203,
+          1543204,
+          1543206,
+          1543207,
+          1543209,
+          1543210
+        ],
+        "affected_element_ids": [
+          101014,
+          669230,
+          731023,
+          1321945,
+          1543186,
+          1543203,
+          1543204,
+          1543206,
+          1543207,
+          1543209,
+          1543210
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "applied": true,
+      "changes": [
+        {
+          "elementId": 1543209,
+          "resultingElementId": 1543209,
+          "ok": true,
+          "oldTypeId": 693820,
+          "oldTypeName": "1.5 D",
+          "newTypeId": 693822,
+          "newTypeName": "1 D"
+        }
+      ],
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "source_event_id": 202537,
+  "source_event_ts": "2026-09-26T05:40:13.420Z",
+  "source_event_sha256": "23ecb6f19f13a042292e2a0bd72ac6b7d2a59f23bc4d108e211d5ebf79ab477b",
+  "native_payload_sha256": "sha256:404968c3d40d8603eb98157b286991eabec6c4db0985f826b73dfc57a1cf9e6e",
+  "request": {
+    "method": "POST",
+    "path": "/revit/draw-detail-curves",
+    "body": {
+      "viewId": 1363433,
+      "expectedViewType": "FloorPlan",
+      "expectedLevelName": "L4",
+      "projectToViewPlane": true,
+      "lineStyleName": "Thin Lines",
+      "curves": [
+        {
+          "kind": "arc",
+          "a": {
+            "xyz": [
+              -33.3,
+              13.8,
+              32.16666666667
+            ]
+          },
+          "b": {
+            "xyz": [
+              -33.8,
+              13.8,
+              32.16666666667
+            ]
+          },
+          "c": {
+            "xyz": [
+              -33.55,
+              14.05,
+              32.16666666667
+            ]
+          }
+        },
+        {
+          "kind": "arc",
+          "a": {
+            "xyz": [
+              -33.8,
+              13.8,
+              32.16666666667
+            ]
+          },
+          "b": {
+            "xyz": [
+              -33.3,
+              13.8,
+              32.16666666667
+            ]
+          },
+          "c": {
+            "xyz": [
+              -33.55,
+              13.55,
+              32.16666666667
+            ]
+          }
+        },
+        {
+          "kind": "polyline",
+          "points": [
+            {
+              "xyz": [
+                -33.925,
+                13.425,
+                32.16666666667
+              ]
+            },
+            {
+              "xyz": [
+                -33.175,
+                13.425,
+                32.16666666667
+              ]
+            },
+            {
+              "xyz": [
+                -33.175,
+                14.175,
+                32.16666666667
+              ]
+            },
+            {
+              "xyz": [
+                -33.925,
+                14.175,
+                32.16666666667
+              ]
+            },
+            {
+              "xyz": [
+                -33.925,
+                13.425,
+                32.16666666667
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "line",
+          "a": {
+            "xyz": [
+              -33.3,
+              13.8,
+              32.16666666667
+            ]
+          },
+          "b": {
+            "xyz": [
+              -29.5,
+              17.5,
+              32.16666666667
+            ]
+          }
+        }
+      ],
+      "dryRun": false
+    }
+  },
+  "raw_result": {
+    "status": "Success",
+    "dryRun": false,
+    "viewId": 1363433,
+    "viewType": "FloorPlan",
+    "levelName": "L4",
+    "projectedToViewPlane": true,
+    "maximumCreatedCurveViewPlaneDistanceFt": 0,
+    "detailCurveIds": [
+      1543049,
+      1543050,
+      1543051,
+      1543052,
+      1543053,
+      1543054,
+      1543055
+    ],
+    "createdCount": 7,
+    "segmentsCreated": 7,
+    "lineStyle": {
+      "requested": "Thin Lines",
+      "resolved": null,
+      "created": false
+    },
+    "warnings": []
+  }
+}

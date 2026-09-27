@@ -116,6 +116,9 @@ for (const [effect, prompt, facts] of [
   ["apply", "On this disposable Level 4 sample, reconstruct the first source-bound 8-inch duct segment in the now-cleared Unit 403 area from the M104 PDF we registered earlier in this chat. First rebind that verified registration using a fresh complete L4 grid observation. Inspect the cleared model and nearby like ducts to justify system, type, size, and an assumed elevation. Stage a dry run; if it is safe and faithfully follows one registered source primitive, create only that first duct segment with both ends open and record which source continuations remain unresolved. Independently verify its native geometry and both physical connectors. Do not invent branches, do not use hidden fixture IDs, and do not claim the multi-room network is complete.", ["task.result_available"]],
   ["apply", "Dry-run the proposed duct; if the geometry and system are supported, create it and independently verify both ends.", ["task.result_available"]],
   ["apply", "Preview the proposed duct, then draw it in the disposable model and verify it.", ["task.result_available"]],
+  ["apply", "Continue drafting the existing HVAC for Studio Unit 404 on L4 from the attached original M104 record drawing and the open disposable Revit model with Architectural background loaded. The previous task placed HRU404 (1543471), a connected east Return Air run (1543498, 1543501, 1543504, 1543507, 1543509), and a verified 8-inch west-side Supply Air starter duct (1543517). Do not recreate these or change Unit 403. From the open construction end of 1543517, follow the drawing-supported Supply Air path through Unit 404 toward its visible far end. Do the actual drafting in connected chunks, including required bends or size transitions if the drawing supports them; verify service, size, level, geometry, and physical connectors after each chunk. Keep working through the route until the source-visible path is covered or a material ambiguity prevents a defensible edit. If blocked, preserve what is already connected and say exactly what remains. A single dry run or one more starter does not complete this requested route. Use drawing and model landmarks rather than hidden truth. Do not infer sizes or devices where the source is illegible.", ["task.result_available"]],
+  ["apply", "Draw the connected duct route in the model. A dry run alone does not complete the task.", ["task.result_available"]],
+  ["apply", "Continue laying out the supply duct until it reaches the final device. One preview would be insufficient.", ["task.result_available"]],
   ["preview", "Dry-run the proposed duct and tell me if it is safe to create. Do not create it yet.", ["task.preview_valid"]],
   ["preview", "Stage a dry run; if it is safe, report the proposed duct geometry. Leave the model unchanged.", ["task.preview_valid"]],
   ["apply", "Replace the selected note text with the exact literal 'Issued for Construction'.", ["task.result_available"]]
@@ -139,6 +142,10 @@ for (const [effect, prompt, facts] of [
         assert.equal(prepared?.kernelVersion, 2);
         const snapshot = getAssignmentKernelSnapshotV2(prepared!.assignmentId)!;
         assert.equal(snapshot.spec.requested_effect, effect);
+        if (prompt.startsWith("Continue drafting the existing HVAC for Studio Unit 404")) {
+          assert.equal(snapshot.spec.work_plan_required, true, "the multi-chunk route must retain scope beyond one preview or edit");
+          assert.equal(snapshot.spec.work_units.some(unit => unit.requested_effect === "apply"), true);
+        }
         if (prompt.startsWith("Read-only existing-conditions qualification.")) {
           assert.equal(snapshot.spec.result_delivery_required, true, "read-only registration must permit a verified answer");
           assert.equal(snapshot.spec.work_units.some(unit => unit.requested_effect === "apply"), false);

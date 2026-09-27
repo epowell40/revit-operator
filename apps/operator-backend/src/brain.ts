@@ -20,6 +20,7 @@ import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_
 import { enforceModeledRedlineGuard } from "./verification/model_redline_guard.js";
 import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
 import { buildTeammateTurnContract, guardGenericTeammateDecision } from "./teammate_loop_runtime.js";
+import { localThinReferenceLimits } from "./brains/thin_reference_execution.js";
 import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
 import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_redline.js";
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
@@ -320,6 +321,11 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
 }
 
 function finalizeGenericDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
+  if (localThinReferenceLimits(req) && requestHasExactAssignmentKernelV2Binding(req)
+      && decision.local_execution_experiment?.lane === "thin-reference") {
+    if (decision.actions.length) throw new Error("thin_reference_unexpected_client_actions");
+    return finalizeCanonicalAssignment(req, decision) ?? decision;
+  }
   return finalizeDecision(req, guardGenericTeammateDecision(req, decision));
 }
 

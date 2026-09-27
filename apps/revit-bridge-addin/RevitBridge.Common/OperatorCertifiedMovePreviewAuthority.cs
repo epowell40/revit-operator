@@ -167,15 +167,32 @@ namespace RevitBridge.Common
             executionReceipt["preview_issued_at_utc"] = previewReceipt == null ? null : previewReceipt["issued_at_utc"];
             executionReceipt["native_attestation_signature"] =
                 OperatorNativeExecutionAttestationAuthority.SignCanonicalPayload(executionReceipt);
-            var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (var property in result.EnumerateObject())
-            {
-                if (property.Name == "certified_preview_receipt" || property.Name == "certified_execution_receipt")
-                    throw Denied("Move preview result attempted to supply native certification metadata.");
-                output.Add(property.Name, property.Value.Clone());
-            }
+            var output = ProjectCertifiedMoveWireResult(result);
             if (previewReceipt != null) output.Add("certified_preview_receipt", previewReceipt);
             output.Add("certified_execution_receipt", executionReceipt);
+            return output;
+        }
+
+        // Certified callers retain their deliberately narrow signed wire contract.
+        // Ordinary move responses keep transaction/readback/rotation metadata;
+        // certification validates it above, then exposes only the reviewed fields.
+        internal static Dictionary<string, object?> ProjectCertifiedMoveWireResult(JsonElement result)
+        {
+            RequireExactResultKeys(result);
+            var output = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var key in new[] { "status", "movedIds", "skipped", "warnings", "movedTogether", "rolledBack" })
+                output.Add(key, result.GetProperty(key).Clone());
+            object Point(JsonElement point) => new Dictionary<string, object?>
+            {
+                ["kind"] = point.GetProperty("kind").Clone(),
+                ["pointXyz"] = point.GetProperty("pointXyz").Clone()
+            };
+            output["snapshots"] = result.GetProperty("snapshots").EnumerateArray().Select(snapshot => new Dictionary<string, object?>
+            {
+                ["id"] = snapshot.GetProperty("id").Clone(),
+                ["before"] = Point(snapshot.GetProperty("before")),
+                ["after"] = Point(snapshot.GetProperty("after"))
+            }).ToArray();
             return output;
         }
 
@@ -472,11 +489,32 @@ namespace RevitBridge.Common
             {
                 "status", "movedIds", "skipped", "warnings", "snapshots", "movedTogether", "rolledBack"
             }, StringComparer.Ordinal);
+            // Native transaction metadata is additive to the reviewed move
+            // projection. Keep the existing cross-runtime signed hash stable;
+            // independently validate this metadata before issuing any receipt.
+            var native = new HashSet<string>(new[]
+            {
+                "transaction", "success", "changeTracking", "applied", "verified", "ok"
+            }, StringComparer.Ordinal);
             var found = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in result.EnumerateObject())
-                if (!expected.Contains(property.Name) || !found.Add(property.Name))
+                if ((!expected.Contains(property.Name) && !native.Contains(property.Name)) || !found.Add(property.Name))
                     throw Denied("Certified move result contains unknown or duplicate fields.");
-            if (found.Count != expected.Count) throw Denied("Certified move result is missing a required field.");
+            if (!expected.IsSubsetOf(found)) throw Denied("Certified move result is missing a required field.");
+            if (found.Overlaps(native))
+            {
+                if (!Boolean(result, "success", out var success) || !success
+                    || !Boolean(result, "rolledBack", out var rolledBack)
+                    || !result.TryGetProperty("transaction", out var transaction) || transaction.ValueKind != JsonValueKind.Object
+                    || !String(transaction, "status", out var nativeStatus) || nativeStatus != (rolledBack ? "rolled_back" : "committed")
+                    || !Boolean(transaction, "committed", out var committed) || committed == rolledBack)
+                    throw Denied("Certified move native settlement contradicts its reviewed outcome.");
+                if (result.TryGetProperty("changeTracking", out var tracking) && tracking.ValueKind != JsonValueKind.Object)
+                    throw Denied("Certified move native change tracking must be an object.");
+                foreach (var flag in new[] { "applied", "verified", "ok" })
+                    if (result.TryGetProperty(flag, out _) && (!Boolean(result, flag, out var value) || value == rolledBack))
+                        throw Denied("Certified move execution metadata contradicts its reviewed outcome.");
+            }
         }
 
         private static bool SameXyz(JsonElement value, string name, double x, double y, double z)

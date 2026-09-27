@@ -15,10 +15,13 @@ test("complete and selected backend test runs isolate workstation provider setti
       {env:{...process.env,OPERATOR_BRAIN:'fixture-provider',OPERATOR_ASSIGNMENT_KERNEL_V2:'1'}});
     assert.equal(explicit.status,0,explicit.stderr.toString());`;
   fs.writeFileSync(path.join(directory, "probe.test.js"), probe);
+  const manifestPath = path.join(root, "frontier.json");
+  fs.writeFileSync(manifestPath, JSON.stringify({ schema: "revit-operator.release-frontier/v1",
+    backend_tests: ["probe.test.ts"] }));
   const runner = path.resolve("scripts/run-tests.mjs");
   const childEnv={...process.env}; delete childEnv.NODE_TEST_CONTEXT;
   try {
-    for (const selected of [[], ["dist/test/probe.test.js"]]) {
+    for (const selected of [[], ["dist/test/probe.test.js"], [`--frontier-manifest=${manifestPath}`]]) {
       const result = spawnSync(process.execPath, [runner, ...selected], { cwd: root, encoding: "utf8", timeout: 10_000,
         env: { ...childEnv, OPERATOR_BRAIN: "codex", OPERATOR_ASSIGNMENT_KERNEL_V2: "1" } });
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -26,6 +29,10 @@ test("complete and selected backend test runs isolate workstation provider setti
     const outside = spawnSync(process.execPath, [runner, "../unrelated.test.js"], { cwd: root, encoding: "utf8", timeout: 10_000 });
     assert.notEqual(outside.status, 0);
     assert.match(outside.stderr, /Expected a compiled test beneath/);
+    const mixed = spawnSync(process.execPath, [runner, `--frontier-manifest=${manifestPath}`,
+      "dist/test/probe.test.js"], { cwd: root, encoding: "utf8", timeout: 10_000 });
+    assert.notEqual(mixed.status, 0);
+    assert.match(mixed.stderr, /Do not combine --frontier-manifest/);
   } finally {
     assert(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
     fs.rmSync(root, { recursive: true, force: true });

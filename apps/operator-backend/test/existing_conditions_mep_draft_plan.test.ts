@@ -1161,6 +1161,51 @@ test("mechanical plan compiles explicit duct routes and unhosted equipment place
   assert.equal(plan.plan_elements[1]?.category, "OST_MechanicalEquipment");
 });
 
+test("C125 registered PDF branch targets one evidenced existing duct and emits a native split tee", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1, fixture_id: "return-upper-source-1", scope_id: "unit-403-return-upper",
+    source_evidence_sha256: SOURCE_HASH, visible_evidence: visibleEvidence(),
+    native_element_references: [{ reference_key: "return-main", element_id: 1543280,
+      category: "OST_DuctCurves", role: "physically read existing return main",
+      evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH }],
+    registration: registration(), level_name: "L4", level_elevation_ft: 32,
+    observations: [{ kind: "duct_route", geometry_mode: "existing_main_branch_tee",
+      main_reference_key: "return-main", observation_id: "return-upper-branch",
+      discipline: "mechanical", service: "return_air", visibility: "clear", confidence: 0.95,
+      supported_attributes: ["location", "size", "elevation", "system", "type"],
+      points: [{ x: 2, y: 1 }, { x: 2, y: 4 }], elevation_ft: 10,
+      duct_size: "8 inch", duct_type: "Round Duct", system_type: "Return Air" }]
+  };
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.actions.length, 1);
+  assert.equal(plan.actions[0]?.path, "/revit/connect-mep-branch");
+  assert.equal(plan.actions[0]?.apply_body?.mainElementId, 1543280);
+  assert.equal(plan.actions[0]?.apply_body?.connectionMode, "tee");
+  assert.equal(plan.actions[0]?.apply_body?.branchSize, "8 inch");
+  assert.deepEqual(plan.actions[0]?.apply_body?.branchPoints, [
+    { x: 98, y: 204, z: 42 }, { x: 92, y: 204, z: 42 }
+  ]);
+  assert.equal(plan.actions[0]?.dry_run_body?.dryRun, true);
+  assert.equal(plan.actions[0]?.apply_body?.dryRun, false);
+  const staged = buildAtomicMepDraftWorkflowRequest(plan, { dry_run: true });
+  assert.equal(staged.operations.length, 1);
+  assert.equal(staged.operations[0]?.path, "/revit/connect-mep-branch");
+  assert.equal(staged.operations[0]?.apply_body?.mainElementId, 1543280);
+  assert.equal(staged.operations[0]?.apply_body?.connectionMode, "tee");
+  const missingMain = structuredClone(input);
+  if (missingMain.observations[0]?.kind !== "duct_route") assert.fail("duct fixture invalid");
+  missingMain.observations[0].main_reference_key = "missing";
+  assert.throws(() => compileMepDraftPlan(missingMain), /main_reference_unknown/);
+  const wrongCategory = structuredClone(input);
+  wrongCategory.native_element_references[0]!.category = "OST_PipeCurves";
+  assert.throws(() => compileMepDraftPlan(wrongCategory), /main_reference_category_mismatch/);
+  const unclassified = structuredClone(input);
+  if (unclassified.observations[0]?.kind !== "duct_route") assert.fail("duct fixture invalid");
+  unclassified.observations[0].service = "unclassified";
+  assert.throws(() => compileMepDraftPlan(unclassified), /classified|unclassified/);
+});
+
 test("mechanical plan compiles hydronic supply and return as native pipe routes without plumbing coercion", () => {
   const plan = compileMepDraftPlan({
     schema_version: 1,

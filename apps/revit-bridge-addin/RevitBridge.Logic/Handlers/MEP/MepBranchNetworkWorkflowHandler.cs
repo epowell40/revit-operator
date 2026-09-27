@@ -89,7 +89,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
             if (p.mainPoints == null || p.mainPoints.Count < 2)
             {
-                return Task.FromResult<object>(new { status = "Blocked", error = "At least two mainPoints are required.", warnings });
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = "At least two mainPoints are required.", warnings });
             }
 
             var doc = app.ActiveUIDocument.Document;
@@ -108,12 +108,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             warnings.AddRange(ctx.Warnings);
             if (ctx.Level == null)
             {
-                return Task.FromResult<object>(new { status = "Blocked", error = "Could not resolve a level for this network.", warnings });
+                return Task.FromResult<object>(new { status = "Blocked", transaction = OperatorNativeTransactionReceipt.NotStarted(), error = "Could not resolve a level for this network.", warnings });
             }
 
             var mainResolved = ResolvePoints(p.mainPoints, p.frameId, ctx.RecommendedZ);
             TransactionGroup? networkApplyGroup = null;
             var networkApplyCommitted = false;
+            object? mainDryRun = null;
             if (p.apply)
             {
                 networkApplyGroup = new TransactionGroup(doc, "Apply MEP Branch Network Atomically");
@@ -180,7 +181,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var accessoryPlans = BuildAccessoryPlans(doc, kind, p, mainResolved, ctx.RecommendedZ);
             var blockingAccessoryPlans = accessoryPlans.Where(x => x.applySupported == false).ToList();
 
-            var mainDryRun = Invoke(new CreateMepRouteHandler(), app, ToCreateMainParams(p, kind, dryRun: true));
+            mainDryRun = Invoke(new CreateMepRouteHandler(), app, ToCreateMainParams(p, kind, dryRun: true));
             var mainDryRunJson = ToElement(mainDryRun);
             warnings.AddRange(ReadStringArray(mainDryRunJson, "warnings"));
             if (IsBlocked(ReadString(mainDryRunJson, "status")))
@@ -193,7 +194,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     workflowMode = p.apply ? "applyRequested" : "dryRun",
                     reason = "Main route dry-run failed.",
                     atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
-                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack)
+                        : OperatorNativeTransactionReceipt.LastAttemptedStage(mainDryRun, null, false),
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -225,6 +227,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     status = "DryRunReady",
                     workflowMode = "dryRun",
+                    // Only the main preview executes a transaction in this branch.
+                    // Forward its actual receipt; branch/accessory plans are not executed.
+                    transaction = OperatorNativeTransactionReceipt.LastAttemptedStage(mainDryRun, null, false),
                     executionOrder = BuildExecutionOrder(p.branches.Count, accessoryPlans.Count, applied: false, visualAttempted: false),
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
@@ -478,7 +483,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     reason = "The network workflow encountered an unexpected error.",
                     error = ex.Message,
                     atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
-                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack) : null,
+                    transaction = p.apply ? OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rolledBack)
+                        : mainDryRun == null ? null : OperatorNativeTransactionReceipt.LastAttemptedStage(mainDryRun, null, false),
                     warnings = warnings.Distinct().ToList()
                 });
             }

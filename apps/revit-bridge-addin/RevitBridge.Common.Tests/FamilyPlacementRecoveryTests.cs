@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using RevitBridge.Common;
+using RevitBridge.Logic.Handlers;
 using Xunit;
 
 namespace RevitBridge.Common.Tests
@@ -20,7 +21,8 @@ namespace RevitBridge.Common.Tests
             }
             throw new DirectoryNotFoundException();
         }
-        private static string Source() => File.ReadAllText(Path.Combine(Root(), "RevitBridge.Logic/Handlers/PlaceFamiliesHandler.cs"));
+        private static string Source() => File.ReadAllText(Environment.GetEnvironmentVariable("OPERATOR_PLACEMENT_HANDLER_SOURCE_FOR_TEST")
+            ?? Path.Combine(Root(), "RevitBridge.Logic/Handlers/PlaceFamiliesHandler.cs"));
         private static JsonDocument Replay() => JsonDocument.Parse(File.ReadAllText(Path.Combine(Root(), "../mcp-server/src/lib/fixtures/c46-linked-face-placement.json")));
 
         [Fact]
@@ -60,9 +62,104 @@ namespace RevitBridge.Common.Tests
             var source = Source();
             Assert.Contains("HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(fi, instanceLevel!", source);
             Assert.Contains("HostedPlacementUtil.ReadInstanceLevelId(existing) != ElementIdCompat.GetValue(instanceLevel!.Id)", source);
-            Assert.True(source.IndexOf("instResult.levelVerified = instResult.levelId ==", StringComparison.Ordinal) > source.IndexOf("SetParameter(fi, kvp.Key, kvp.Value)", StringComparison.Ordinal));
+            var parameters = source.IndexOf("ApplyRequestedParameters(doc, fi, instData.parameters, instResult, apply: true)", StringComparison.Ordinal);
+            Assert.True(parameters >= 0);
+            Assert.True(source.IndexOf("instResult.levelVerified = instResult.levelId ==", StringComparison.Ordinal) > parameters);
             Assert.Contains("using var instanceScope = new SubTransaction(doc)", source);
             Assert.Contains("instanceScope.RollBack() != TransactionStatus.RolledBack", source);
+        }
+
+        [Theory]
+        [InlineData("0.3333333333333333", 0.3333333333333333)]
+        [InlineData("0.25", 0.25)]
+        [InlineData("1,234", 1234.0)]
+        [InlineData("2.5e-1", 0.25)]
+        public void BareNumericParametersRemainInvariantInternalUnits(string text, double expected)
+            => Assert.Equal(expected, PlacementParameterValues.ParseDouble(text, _ => throw new Exception("Numeric value must not use display units.")));
+
+        [Theory]
+        [InlineData("4\"", 0.3333333333333333)]
+        [InlineData("3\"", 0.25)]
+        [InlineData("0'-4\"", 0.3333333333333333)]
+        [InlineData("101.6 mm", 0.3333333333333333)]
+        public void FormattedValuesRequireAnExplicitNativeUnitInterpretation(string text, double interpreted)
+        {
+            var calls = 0;
+            var actual = PlacementParameterValues.ParseDouble(text, received => { Assert.Equal(text, received); calls++; return interpreted; });
+            Assert.Equal(1, calls);
+            Assert.True(PlacementParameterValues.MatchesDouble(actual, interpreted));
+            Assert.False(PlacementParameterValues.MatchesDouble(0.5, actual)); // Retained default radius must not verify.
+        }
+
+        [Theory]
+        [InlineData("NaN")]
+        [InlineData("Infinity")]
+        [InlineData("1e999")]
+        [InlineData("unparseable")]
+        [InlineData("4 square feet")]
+        public void UnparseableOrNonfiniteRequestedValuesFailExplicitly(string text)
+            => Assert.Throws<FormatException>(() => PlacementParameterValues.ParseDouble(text, _ => null));
+
+        [Fact]
+        public void InvalidNativeInterpretationOrReadbackCannotVerify()
+        {
+            Assert.Throws<FormatException>(() => PlacementParameterValues.ParseDouble("4\"", _ => double.NaN));
+            Assert.Throws<FormatException>(() => PlacementParameterValues.ParseDouble("4\"", _ => double.PositiveInfinity));
+            Assert.False(PlacementParameterValues.MatchesDouble(double.NaN, 0.25));
+            Assert.False(PlacementParameterValues.MatchesDouble(0.25, double.NaN));
+            Assert.False(PlacementParameterValues.MatchesDouble(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.False(PlacementParameterValues.MatchesDouble(0.25000001, 0.25));
+        }
+
+        [Theory]
+        [InlineData("Placed", 0, 0, true)]
+        [InlineData("Planned", 0, 0, true)]
+        [InlineData("Unknown", 0, 0, false)]
+        [InlineData("Failed", 0, 0, false)]
+        [InlineData("PlacedWithErrors", 1, 0, false)]
+        [InlineData("PlannedWithErrors", 1, 0, false)]
+        [InlineData("Placed", 0, 1, false)]
+        [InlineData("Placed", 1, 0, false)]
+        public void OverallSuccessRequiresCompleteIntentButNotNewlyCreatedCount(string status, int failed, int verificationFailed, bool expected)
+            => Assert.Equal(expected, PlacementParameterValues.ResultSucceeded(status, failed, verificationFailed));
+
+        [Fact]
+        public void RequestedParametersAreVerifiedWithinInstanceRollbackAndAfterOuterCommit()
+        {
+            var source = Source();
+            var apply = source.IndexOf("ApplyRequestedParameters(doc, fi, instData.parameters, instResult, apply: true)", StringComparison.Ordinal);
+            Assert.True(apply > source.IndexOf("instanceScope.Start()", StringComparison.Ordinal));
+            var regenerate = source.IndexOf("doc.Regenerate();", apply, StringComparison.Ordinal);
+            var verify = source.IndexOf("VerifyRequestedParameters(fi, parameterExpectations, instResult, afterCommit: false)", StringComparison.Ordinal);
+            Assert.True(verify > regenerate);
+            Assert.True(source.IndexOf("if (instanceScope.Commit() != TransactionStatus.Committed)", verify, StringComparison.Ordinal) > verify);
+            Assert.Contains("instanceScope.RollBack() != TransactionStatus.RolledBack", source);
+            Assert.Contains("if (!bestEffort)", source);
+            Assert.Contains("ApplyRequestedParameters(doc, existing, instData.parameters, instResult, apply: false)", source);
+            Assert.Contains("Parameter identity or storage type changed.", source);
+            Assert.Contains("Parameter is read-only.", source);
+            Assert.Contains("Requested parameter was not found.", source);
+            Assert.Contains("Requested parameter name is ambiguous.", source);
+            Assert.Contains("Unsupported parameter storage type.", source);
+            Assert.Contains("Set returned false", source);
+            var committed = source.IndexOf("if (observed != TransactionStatus.Committed)", StringComparison.Ordinal);
+            Assert.True(source.IndexOf("var committedElement = doc.GetElement(ToElementId(target.id))", StringComparison.Ordinal) > committed);
+            Assert.Contains("VerifyRequestedParameters(committedElement, target.expectations, target.result, afterCommit: true)", source);
+            Assert.Contains("public bool success => PlacementParameterValues.ResultSucceeded", source);
+            Assert.Contains("SetParameter(fi, \"ROS_AutoGenerated\", \"1\")", source);
+        }
+
+        [Theory]
+        [InlineData("Committed", "applied")]
+        [InlineData("RolledBack", "none")]
+        [InlineData("Pending", "unknown")]
+        public void ParameterFailureCannotEraseCommittedOrUncertainEffects(string status, string effect)
+        {
+            var receipt = OperatorNativeTransactionReceipt.FromObservedStatus(status, new[] { 201L, 202L });
+            var result = new { status = "PlacedWithErrors", success = false, placedCount = status == "Committed" ? 1 : 0,
+                failedCount = 1, parameterVerificationFailedCount = 0, transaction = receipt };
+            var actual = OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/place-families");
+            Assert.Equal(effect, actual.EffectState);
         }
 
         [Theory]

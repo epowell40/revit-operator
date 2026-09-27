@@ -1,0 +1,407 @@
+{
+  "request": {
+    "inputFingerprintSha256": "6106e2b3da4db1c3291b60d5c2fc9858a0faf5beba8db56eb6b521836198a6f4",
+    "stageKey": "operation:registered-route:sa-continuation",
+    "priorActionOutputs": [],
+    "operations": [
+      {
+        "action_key": "registered-route:sa-continuation",
+        "path": "/revit/create-mep-route",
+        "depends_on": [],
+        "apply_body": {
+          "kind": "duct",
+          "points": [
+            {
+              "x": -46.62,
+              "y": -10.55,
+              "z": 40.16806102362584
+            },
+            {
+              "x": -46.62,
+              "y": -26.432284181783473,
+              "z": 40.16806102362584
+            },
+            {
+              "x": -42.90227554818779,
+              "y": -26.432284170869252,
+              "z": 40.16806102362584
+            }
+          ],
+          "viewId": 1363433,
+          "levelName": "L4",
+          "systemType": "SupplyAir",
+          "sizePolicy": "explicit_required",
+          "elevationPolicy": "explicit_required",
+          "routingMode": "polyline",
+          "connectSegments": true,
+          "connectToExisting": true,
+          "requireExistingEndpointConnections": false,
+          "requiredExistingEndpoint": "start",
+          "expectedExistingStartOwnerId": 1543123,
+          "externalConnectionToleranceFt": 0.01,
+          "verify": true,
+          "ductShape": "round",
+          "ductSize": "4\"",
+          "diameter": "4\"",
+          "ductTypeId": 139186
+        },
+        "expected_created_min": 1,
+        "expected_created_max": 3
+      }
+    ],
+    "dryRun": true,
+    "verify": true,
+    "maximumCreatedElements": 3,
+    "targetViewId": 1363433,
+    "applyTargetViewPhase": true,
+    "requireAllCreatedElementsVisibleInTargetView": true
+  },
+  "payload": {
+    "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+    "inputFingerprintSha256": "6106e2b3da4db1c3291b60d5c2fc9858a0faf5beba8db56eb6b521836198a6f4",
+    "stageKey": "operation:registered-route:sa-continuation",
+    "priorActionOutputCount": 0,
+    "status": "DryRunReady",
+    "dryRun": true,
+    "transactionGroupRolledBack": true,
+    "rollbackVerified": true,
+    "residualCreatedElementIds": [],
+    "atomic": true,
+    "error": null,
+    "targetView": {
+      "id": 1363433,
+      "name": "L4",
+      "phaseId": 21885,
+      "phaseName": "New Construction"
+    },
+    "targetViewAcceptance": {
+      "applyTargetViewPhase": true,
+      "requireAllCreatedElementsVisible": true,
+      "phaseAdjustedElementIds": [
+        1543130,
+        1543133,
+        1543136
+      ],
+      "phaseSkippedElementIds": [],
+      "visibleCreatedElementIds": [
+        1543130,
+        1543133,
+        1543136
+      ],
+      "invisibleCreatedElementIds": [],
+      "passed": true
+    },
+    "operationCount": 1,
+    "createdElementIds": [],
+    "transientCreatedElementIds": [
+      1543130,
+      1543133,
+      1543136
+    ],
+    "failedOperation": null,
+    "operations": [
+      {
+        "actionKey": "registered-route:sa-continuation",
+        "path": "/revit/create-mep-route",
+        "createdElementIds": [],
+        "transientCreatedElementIds": [
+          1543130,
+          1543133,
+          1543136
+        ],
+        "response": {
+          "status": "CreatedWithOpenConnectors",
+          "transaction": {
+            "status": "committed",
+            "committed": true,
+            "modified_element_ids": [
+              1543130,
+              1543133,
+              1543136
+            ],
+            "affected_element_ids": [
+              1543130,
+              1543133,
+              1543136
+            ],
+            "added_element_ids": [],
+            "deleted_element_ids": []
+          },
+          "dryRun": false,
+          "kind": "duct",
+          "plannedPoints": [
+            {
+              "x": -46.62,
+              "y": -10.55,
+              "z": 40.16806102362584
+            },
+            {
+              "x": -46.62,
+              "y": -26.432284181783473,
+              "z": 40.16806102362584
+            },
+            {
+              "x": -42.90227554818779,
+              "y": -26.432284170869252,
+              "z": 40.16806102362584
+            }
+          ],
+          "segmentCount": 2,
+          "totalLengthFt": 19.60000863359568,
+          "selected": {
+            "level": {
+              "id": 1362791,
+              "name": "L4",
+              "elevation": 32.16666666667046
+            },
+            "systemType": {
+              "id": 712041,
+              "name": "Supply Air"
+            },
+            "ductType": {
+              "id": 139186,
+              "name": "Tees",
+              "familyName": "Round Duct",
+              "shape": "round"
+            },
+            "pipeType": null,
+            "conduitType": null
+          },
+          "selectedWorkset": null,
+          "chosenSize": {
+            "requested": "4\"",
+            "applied": "4\"",
+            "usedDefault": false,
+            "widthFt": null,
+            "heightFt": null,
+            "diameterFt": 0.3333333333333333
+          },
+          "segmentSizes": [
+            "4\"",
+            "4\""
+          ],
+          "jointPlan": [
+            {
+              "jointIndex": 0,
+              "expectedFitting": "elbow_or_connect",
+              "reason": "adjacent segment sizes match or are unspecified",
+              "fromSize": "4",
+              "toSize": "4"
+            }
+          ],
+          "chosenElevation": {
+            "zFt": 40.16806102362584,
+            "mode": "explicit_points",
+            "confidence": "high",
+            "assumption": "All route points supplied the same explicit Z.",
+            "usedFallback": false
+          },
+          "createdElementIds": [
+            1543130,
+            1543133
+          ],
+          "createdFittingIds": [
+            1543136
+          ],
+          "dryRunElementIds": [],
+          "dryRunFittingIds": [],
+          "segments": [
+            {
+              "index": 0,
+              "id": 1543130,
+              "start": {
+                "x": -46.62,
+                "y": -10.55,
+                "z": 40.16806102362584
+              },
+              "end": {
+                "x": -46.62,
+                "y": -26.432284181783473,
+                "z": 40.16806102362584
+              },
+              "lengthFt": 15.882284181783472,
+              "requestedSize": "4\"",
+              "chosenSize": {
+                "requested": "4\"",
+                "applied": "4\"",
+                "usedDefault": false,
+                "widthFt": null,
+                "heightFt": null,
+                "diameterFt": 0.3333333333333333
+              },
+              "sizeApplied": {
+                "width": false,
+                "height": false,
+                "diameter": true
+              },
+              "worksetApplied": null,
+              "nativeSizeReadback": {
+                "shape": "round",
+                "widthFt": null,
+                "heightFt": null,
+                "diameterFt": 0.3333333333333333
+              },
+              "nativeGeometryReadback": {
+                "start": {
+                  "x": -46.62,
+                  "y": -10.55,
+                  "z": 40.16806102362584
+                },
+                "end": {
+                  "x": -46.62,
+                  "y": -26.432284181783473,
+                  "z": 40.16806102362584
+                },
+                "lengthFt": 15.882284181783472
+              }
+            },
+            {
+              "index": 1,
+              "id": 1543133,
+              "start": {
+                "x": -46.62,
+                "y": -26.432284181783473,
+                "z": 40.16806102362584
+              },
+              "end": {
+                "x": -42.90227554818779,
+                "y": -26.432284170869252,
+                "z": 40.16806102362584
+              },
+              "lengthFt": 3.7177244518122095,
+              "requestedSize": "4\"",
+              "chosenSize": {
+                "requested": "4\"",
+                "applied": "4\"",
+                "usedDefault": false,
+                "widthFt": null,
+                "heightFt": null,
+                "diameterFt": 0.3333333333333333
+              },
+              "sizeApplied": {
+                "width": false,
+                "height": false,
+                "diameter": true
+              },
+              "worksetApplied": null,
+              "nativeSizeReadback": {
+                "shape": "round",
+                "widthFt": null,
+                "heightFt": null,
+                "diameterFt": 0.3333333333333333
+              },
+              "nativeGeometryReadback": {
+                "start": {
+                  "x": -46.62,
+                  "y": -26.432284181783473,
+                  "z": 40.16806102362584
+                },
+                "end": {
+                  "x": -42.90227554818779,
+                  "y": -26.432284170869252,
+                  "z": 40.16806102362584
+                },
+                "lengthFt": 3.7177244518122095
+              }
+            }
+          ],
+          "createdFittingWorksets": [],
+          "postConnectionGeometryReadback": [
+            {
+              "segmentIndex": 0,
+              "elementId": 1543130,
+              "geometry": {
+                "start": {
+                  "x": -46.62,
+                  "y": -10.55,
+                  "z": 40.16806102362584
+                },
+                "end": {
+                  "x": -46.620000000000026,
+                  "y": -25.932284181783494,
+                  "z": 40.16806102362583
+                },
+                "lengthFt": 15.382284181783493
+              }
+            },
+            {
+              "segmentIndex": 1,
+              "elementId": 1543133,
+              "geometry": {
+                "start": {
+                  "x": -46.120000000000026,
+                  "y": -26.432284181783494,
+                  "z": 40.16806102362583
+                },
+                "end": {
+                  "x": -42.90227554818779,
+                  "y": -26.432284170869252,
+                  "z": 40.16806102362584
+                },
+                "lengthFt": 3.217724451812238
+              }
+            }
+          ],
+          "connectionAttempts": [
+            {
+              "fromSegment": 0,
+              "toSegment": 1,
+              "sharedPoint": {
+                "x": -46.62,
+                "y": -26.432284181783473,
+                "z": 40.16806102362584
+              },
+              "expectedFitting": "elbow_or_connect",
+              "connected": true,
+              "method": "new_elbow_fitting",
+              "fittingId": 1543136,
+              "error": null
+            },
+            {
+              "connectionKind": "existing_endpoint",
+              "endpoint": "start",
+              "routeElementId": 1543130,
+              "externalOwnerId": 1543123,
+              "externalCategory": "Ducts",
+              "distanceFt": 0,
+              "connected": true,
+              "method": "connector_connect_to",
+              "fittingId": null,
+              "error": null
+            }
+          ],
+          "internalConnectionsVerified": true,
+          "openConnectorCount": 1,
+          "warnings": [
+            "Connector verification found 1 open connector(s) on created route elements."
+          ],
+          "nativeFailures": [],
+          "rolledBack": false
+        }
+      }
+    ],
+    "operationOutputs": [
+      {
+        "action_key": "registered-route:sa-continuation",
+        "created_element_ids": [
+          1543130,
+          1543133,
+          1543136
+        ],
+        "affected_element_ids": [],
+        "route_segment_element_ids": [
+          1543130,
+          1543133
+        ],
+        "route_start_element_ids": [
+          1543130
+        ],
+        "route_end_element_ids": [
+          1543133
+        ],
+        "split_main_start_element_ids": [],
+        "split_main_end_element_ids": []
+      }
+    ]
+  }
+}

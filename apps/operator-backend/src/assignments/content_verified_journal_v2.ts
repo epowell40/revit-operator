@@ -14,7 +14,7 @@ export function createContentVerifiedJournalV2(options: {maxEntries?:number; max
   function retain(text:string,journal:AssignmentJournalV2) {
     const key=digest(text), previous=entries.get(key);
     if(previous){bytes-=previous.bytes;entries.delete(key);}
-    const size=Buffer.byteLength(text)+Buffer.byteLength(JSON.stringify(journal.snapshot()));
+    const size=Buffer.byteLength(text)+Buffer.byteLength(journal.serializedSnapshot());
     if(size>maxBytes)return;
     entries.set(key,{journal:journal.fork(),bytes:size});bytes+=size;
     while(entries.size>maxEntries||bytes>maxBytes){const first=entries.keys().next().value!;bytes-=entries.get(first)!.bytes;entries.delete(first);}

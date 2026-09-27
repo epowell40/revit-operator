@@ -282,7 +282,20 @@ export function registerStructuredExistingConditionsInterpretationV1(
     const suggestion = best
       ? `:best_leave_one_out=${/^[A-Za-z0-9_-]{1,50}$/.test(ids[best.excludedIndex] ?? "") ? ids[best.excludedIndex] : `control_${best.excludedIndex}`}:rms=${Number(best.candidate.rms_error_ft.toFixed(3))}:max=${Number(best.candidate.maximum_error_ft.toFixed(3))}`
       : "";
-    throw new Error(`existing_conditions_registration_residual_exceeds_limit:rms=${registration.rms_error_ft}:max=${registration.maximum_error_ft}:controls=${controlResiduals.join(",")}${suggestion}`);
+    let reflectionSuggestion = "";
+    if (input.allow_reflection === false) {
+      const reflected = solveExistingConditionsRegistration({
+        source_evidence_sha256: interpretation.ref.content_hash.replace(/^sha256:/, ""),
+        control_points: controls,
+        allow_reflection: true,
+        ...(input.max_rms_error_ft === undefined ? {} : { max_rms_error_ft: input.max_rms_error_ft }),
+        ...(input.max_point_error_ft === undefined ? {} : { max_point_error_ft: input.max_point_error_ft })
+      });
+      if (reflected.verified && reflected.reflection_applied) {
+        reflectionSuggestion = ":reflection_fit_available:retry_with_allowReflection_true_after_visual_orientation_check";
+      }
+    }
+    throw new Error(`existing_conditions_registration_residual_exceeds_limit:rms=${registration.rms_error_ft}:max=${registration.maximum_error_ft}:controls=${controlResiduals.join(",")}${suggestion}${reflectionSuggestion}`);
   }
   const pagePrimitives = interpretation.payload.receipt?.page_primitives;
   if (!Array.isArray(pagePrimitives)) throw new Error("existing_conditions_registration_page_primitives_missing");

@@ -147,6 +147,13 @@ function genericConditionalIntentEffect(row) {
 }
 
 function explicitConditionalActionPathEffect(normalized, row) {
+  if (normalized === "/revit/existing-conditions-mep-draft-workflow") {
+    // This native wrapper rolls back only when dryRun is explicitly true.
+    // Missing or conflicting intent must reserve apply authority.
+    return genericConditionalIntentEffect(row) === "apply"
+      ? "apply"
+      : row.dryRun === true ? "preview" : "apply";
+  }
   if (normalized === "/revit/mep-route-workflow" || normalized === "/revit/mep-branch-network-workflow") {
     // These native workflows use apply=false for a rolled-back transaction.
     // A generic apply=false flag is not sufficient for other handlers.

@@ -72,6 +72,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/connect-existing-mep-branch"
+    },
+    {
+      "method": "POST",
       "path": "/revit/connect-mep-elements"
     },
     {
@@ -180,6 +184,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow"
+    },
+    {
+      "method": "POST",
       "path": "/revit/find-elements"
     },
     {
@@ -225,6 +233,10 @@
     {
       "method": "POST",
       "path": "/revit/list-element-types"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/linked-room-boundaries"
     },
     {
       "method": "POST",

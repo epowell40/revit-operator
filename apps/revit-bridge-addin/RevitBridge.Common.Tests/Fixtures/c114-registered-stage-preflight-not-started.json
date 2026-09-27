@@ -1,0 +1,116 @@
+{
+  "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+  "inputFingerprintSha256": "a16a96afe1eefde9f523cc8aced494b05b50a8a551916658f8ea55e71711aa1b",
+  "stageKey": "operation:registered-route:return8west",
+  "priorActionOutputCount": 0,
+  "status": "Blocked",
+  "dryRun": true,
+  "transactionGroupRolledBack": true,
+  "rollbackVerified": true,
+  "residualCreatedElementIds": [],
+  "atomic": true,
+  "error": "operation_failed:registered-route:return8west:Multiple duct types are loaded; provide ductTypeId or a unique ductType name.",
+  "targetView": {
+    "id": 1363433,
+    "name": "L4",
+    "phaseId": 21885,
+    "phaseName": "New Construction"
+  },
+  "targetViewAcceptance": {
+    "applyTargetViewPhase": true,
+    "requireAllCreatedElementsVisible": true,
+    "phaseAdjustedElementIds": [],
+    "phaseSkippedElementIds": [],
+    "visibleCreatedElementIds": [],
+    "invisibleCreatedElementIds": [],
+    "passed": true
+  },
+  "operationCount": 0,
+  "createdElementIds": [],
+  "transientCreatedElementIds": [],
+  "failedOperation": {
+    "actionKey": "registered-route:return8west",
+    "path": "/revit/create-mep-route",
+    "createdElementIds": [],
+    "transientCreatedElementIds": [],
+    "response": {
+      "status": "Blocked",
+      "transaction": {
+        "status": "not_started",
+        "committed": false,
+        "modified_element_ids": [],
+        "affected_element_ids": [],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "error": "Multiple duct types are loaded; provide ductTypeId or a unique ductType name.",
+      "selected": {
+        "level": {
+          "id": 1362791,
+          "name": "L4",
+          "elevation": 32.16666666667046
+        },
+        "systemType": {
+          "id": 712042,
+          "name": "Return Air"
+        },
+        "ductType": null,
+        "pipeType": null,
+        "conduitType": null
+      },
+      "ductTypeCandidates": [
+        {
+          "Id": 139186,
+          "Name": "Tees",
+          "FamilyName": "Round Duct",
+          "Shape": "round"
+        },
+        {
+          "Id": 139188,
+          "Name": "Taps",
+          "FamilyName": "Round Duct",
+          "Shape": "round"
+        }
+      ],
+      "pipeTypeCandidates": null,
+      "conduitTypeCandidates": null,
+      "warnings": []
+    }
+  },
+  "operations": [],
+  "operationOutputs": [],
+  "canonical_attempt_settlement": {
+    "schema": "revit-operator.native-attempt-settlement.v1",
+    "assignment_id": null,
+    "attempt_id": "6a68ecebba2a7f858143793724d80dcb810f8c1590cb2e8bfa72320b2f1c290e",
+    "run_id": null,
+    "generation": null,
+    "requested_effect": "preview",
+    "method": "POST",
+    "path": "/revit/existing-conditions-mep-draft-workflow",
+    "action_signature": null,
+    "target_fingerprint": null,
+    "request_dispatched": true,
+    "effect_state": "unknown",
+    "effect_reason": "native_handler_returned_without_authoritative_settlement",
+    "effect_authority": "native_host",
+    "affected_target_identities": [],
+    "receipt_refs": [],
+    "evidence_refs": [],
+    "settled_at_utc": "2026-09-25T14:16:22.8842512+00:00"
+  },
+  "open_prints_folder_url": "op://open-folder?path=artifacts/prints",
+  "registered_stage": {
+    "recorded": true,
+    "event": "stage_rejected",
+    "status": "rejected_plan",
+    "stage_key": "operation:registered-route:return8west",
+    "next_stage": {
+      "state": "blocked",
+      "stage_key": "operation:registered-route:return8west",
+      "action_key": "registered-route:return8west",
+      "reason": "operation_failed:registered-route:return8west:Multiple duct types are loaded; provide ductTypeId or a unique ductType name.",
+      "accepted_action_outputs": []
+    }
+  }
+}

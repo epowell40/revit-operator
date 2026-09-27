@@ -42,11 +42,15 @@ async function stop(child: ChildProcess): Promise<void> {
   await new Promise<void>(resolve => child.once("exit", () => resolve()));
 }
 
-test("health exposes the backend-authored Sidecar agent profile handshake", async (t) => {
+for (const installation of [false, true])
+test(`health exposes the backend-authored Sidecar agent profile handshake (local installation ${installation})`, async (t) => {
   const port = await availablePort();
   const token = "sidecar-agent-profile-health-test-token";
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-sidecar-profile-"));
-  const child = spawn(process.execPath, [path.join(process.cwd(), "dist", "src", "index.js")], {
+  const entry = import.meta.url.endsWith(".ts")
+    ? ["--import", "tsx", path.join(process.cwd(), "src", "index.ts")]
+    : [path.join(process.cwd(), "dist", "src", "index.js")];
+  const child = spawn(process.execPath, entry, {
     env: {
       ...process.env,
       OPERATOR_BACKEND_PORT: String(port),
@@ -55,6 +59,12 @@ test("health exposes the backend-authored Sidecar agent profile handshake", asyn
       OPERATOR_WORKSPACE_ROOT: workspace,
       OPERATOR_MEMORY_AUTO_TURN_NOTES: "0",
       OPERATOR_BRAIN: "codex",
+      OPERATOR_API_BASE_URL: `http://127.0.0.1:${port}`,
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "1",
+      OPERATOR_LOCAL_EXECUTOR_PROFILE: installation ? "codex_v2_advisory_v1" : "",
+      OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS: "",
+      OPERATOR_OPENAI_API_KEY: "",
+      OPENAI_API_KEY: "",
       REVIT_OPERATOR_MODE: "development",
       OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
       OPERATOR_HOSTED_ENABLED: "0"
@@ -83,4 +93,11 @@ test("health exposes the backend-authored Sidecar agent profile handshake", asyn
 
   const desktopConfig = await fetchJson(`http://127.0.0.1:${port}/desktop/computer/config`, token);
   assert.deepEqual(desktopConfig.sidecar_agent_profile, expectedProfile);
+  const expectedExecutor = installation ? { schema: "revit-operator.local-executor-capability/v1", source: "backend_configuration",
+    profile: "codex_v2_advisory_v1", executor: "codex", assignment_kernel: 2, execution_policy: "local_advisory_v1" } : null;
+  assert.deepEqual(desktopConfig.local_executor, expectedExecutor);
+  assert.equal(desktopConfig.available, false, "API-key computer availability does not confer executor selection");
+  const forged = await fetchJson(`http://127.0.0.1:${port}/desktop/computer/config?OPERATOR_LOCAL_EXECUTOR_PROFILE=codex_v2_advisory_v1&local_executor=codex`, token);
+  assert.deepEqual(forged.local_executor, expectedExecutor, "request fields cannot choose the installation profile");
+  assert.equal((await fetch(`http://127.0.0.1:${port}/desktop/computer/config`)).status, 401);
 });

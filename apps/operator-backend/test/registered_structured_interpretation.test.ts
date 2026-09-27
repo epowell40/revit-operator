@@ -173,7 +173,7 @@ test("registration rejects missing source meaning instead of publishing geometry
 test("registration fails closed when reflection is not explicitly allowed", () => {
   assert.throws(
     () => registerStructuredExistingConditionsInterpretationV1({ ...input, allow_reflection: false }, { read_interpretation: () => interpretation, read_frame: () => frame }),
-    /existing_conditions_registration_residual_exceeds_limit/
+    /existing_conditions_registration_residual_exceeds_limit:.*reflection_fit_available:retry_with_allowReflection_true_after_visual_orientation_check/
   );
 });
 

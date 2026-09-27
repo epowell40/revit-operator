@@ -1,4 +1,6 @@
 export * from "./native-artifact.js";
+export * from "./native-completion.js";
+export * from "./input-schema-gap.js";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA = "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA = "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD = "assignment_kernel_v2_session_index";
@@ -763,4 +765,37 @@ export function selectExactEvidenceTargetsV1(payload, targetSubset) {
     matched_target_ids: Object.freeze([...requested]),
     selection_paths: Object.freeze([...selections.keys()])
   });
+}
+
+/** Bounded native failure parsing only. The reducer separately validates exact
+ * receipt/hash/binding and journal order before this can inform a write retry. */
+export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) {
+  const record = value => value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+  const payload = record(value), transaction = record(payload?.transaction), rows = payload?.capturedFailures;
+  if (!payload || transaction?.status !== "rolled_back" || transaction.committed !== false
+      || payload.failureRollbackRequested !== true || payload.applied !== false || payload.success !== false
+      || !Array.isArray(rows) || rows.length === 0 || rows.length > 64 || !Array.isArray(declaredTargetIdentities)) return undefined;
+  const targets = new Set(declaredTargetIdentities
+    .filter(value => typeof value === "string" && /^id:[1-9]\d*$/.test(value)).map(value => value.slice(3)));
+  const dependencies = new Map();
+  for (const value of rows) {
+    const row = record(value), ids = row?.elementIds;
+    if (!row || !["Error", "Warning", "DocumentCorruption"].includes(row.severity)
+        || typeof row.message !== "string" || !row.message.trim()
+        || typeof row.failureDefinitionId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.failureDefinitionId)
+        || !Array.isArray(row.captureErrors) || row.captureErrors.length !== 0
+        || !Array.isArray(ids) || ids.length > 32
+        || ids.some(id => typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) return undefined;
+    const named = ids.map(String), matched = named.filter(id => targets.has(id));
+    if (!matched.length) continue;
+    for (const id of named) if (!targets.has(id)) {
+      const linked = dependencies.get(id) ?? new Set();
+      for (const target of matched) linked.add(target);
+      dependencies.set(id, linked);
+      if (dependencies.size > 256) return undefined;
+    }
+  }
+  if (dependencies.size === 0) return undefined;
+  return [...dependencies.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([element_id, linked]) => ({ element_id, target_element_ids: [...linked].sort() }));
 }

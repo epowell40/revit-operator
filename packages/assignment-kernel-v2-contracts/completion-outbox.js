@@ -101,3 +101,50 @@ export function retainCompletionOutboxV2(workspace, key, lease, envelope) {
     }
   } finally { fs.unlinkSync(pending); }
 }
+
+// Separate immutable records: a late receipt must never replace the original
+// completion (including a timeout). Domain-separated signatures and filenames
+// prevent either kind of evidence being read as the other.
+function auxiliaryPath(workspace, kind, lease) {
+  return path.join(directory(workspace), kind, `${createHash("sha256").update(canonical(identity(lease))).digest("hex")}.json`);
+}
+function readAuxiliary(workspace, key, kind, lease) {
+  const file = auxiliaryPath(workspace, kind, lease);
+  let raw;
+  try { requireValue(fs.statSync(file).size <= LIMIT, "record_too_large"); raw = fs.readFileSync(file, "utf8"); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  const record = JSON.parse(raw);
+  requireValue(record.schema === `revit-operator.${kind}/v1` && /^[a-f0-9]{64}$/.test(record.signature), "record_invalid");
+  requireValue(timingSafeEqual(Buffer.from(record.signature, "hex"), Buffer.from(signature(key, { kind, payload: record.payload }), "hex")), "signature_invalid");
+  requireValue(canonical(record.payload.identity) === canonical(identity(lease)), "binding_mismatch");
+  return record.payload.value;
+}
+function retainAuxiliary(workspace, key, kind, lease, value) {
+  const payload = { identity: identity(lease), value: JSON.parse(JSON.stringify(value)) };
+  const text = JSON.stringify({ schema: `revit-operator.${kind}/v1`, payload, signature: signature(key, { kind, payload }) });
+  requireValue(Buffer.byteLength(text) <= LIMIT, "record_too_large");
+  const file = auxiliaryPath(workspace, kind, lease), root = path.dirname(file);
+  fs.mkdirSync(root, { recursive: true });
+  const pending = path.join(root, `${randomUUID()}.pending`), fd = fs.openSync(pending, "wx", 0o600);
+  try { fs.writeFileSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try {
+    try { fs.linkSync(pending, file); }
+    catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      requireValue(canonical(readAuxiliary(workspace, key, kind, lease)) === canonical(payload.value), "result_conflict");
+    }
+  } finally { fs.unlinkSync(pending); }
+}
+export function retainNativeCompletionDispatchV1(workspace, key, lease, native) {
+  const value = { schema: "revit-operator.native-completion-dispatch/v1", identity: identity(lease), native };
+  retainAuxiliary(workspace, key, "native-completion-dispatch", lease, value);
+}
+export function readNativeCompletionDispatchV1(workspace, key, lease) {
+  return readAuxiliary(workspace, key, "native-completion-dispatch", lease);
+}
+export function retainLateNativeCompletionV1(workspace, key, lease, value) {
+  retainAuxiliary(workspace, key, "late-native-completion", lease, value);
+}
+export function readLateNativeCompletionV1(workspace, key, lease) {
+  return readAuxiliary(workspace, key, "late-native-completion", lease);
+}

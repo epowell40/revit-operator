@@ -202,7 +202,41 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
+        private delegate Dictionary<string, object?> NativeStage(Document document, string name,
+            Func<ISet<long>, Dictionary<string, object?>> mutate, Func<IEnumerable<long>>? modified,
+            NativeTransactionDisposition disposition);
+
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+            {
+                var stages = new List<Dictionary<string, object?>>();
+                Dictionary<string, object?> RunStage(Document document, string name,
+                    Func<ISet<long>, Dictionary<string, object?>> mutate, Func<IEnumerable<long>>? modified,
+                    NativeTransactionDisposition disposition)
+                {
+                    TagNativeStages.RequireSettledPrefix(stages);
+                    enterNativeScope();
+                    try
+                    {
+                        var stage = NativeSingleTransaction.Execute(app, document, name, mutate, modified, disposition);
+                        stages.Add(stage);
+                        return stage;
+                    }
+                    catch (Exception error)
+                    {
+                        stages.Add(new Dictionary<string, object?> { ["success"] = false, ["error"] = error.Message,
+                            ["transaction"] = OperatorNativeTransactionReceipt.Unknown("tag_stage_receipt_unavailable") });
+                        throw;
+                    }
+                }
+                try { return TagNativeStages.CompleteNativeStages(HandleCore(app, jsonData, RunStage).GetAwaiter().GetResult(), stages); }
+                catch (Exception error) when (stages.Count > 0)
+                {
+                    return TagNativeStages.CompleteNativeStages(new { status = "Failed", success = false, error = error.Message }, stages);
+                }
+            }));
+
+        private Task<object> HandleCore(UIApplication app, string jsonData, NativeStage runNative)
         {
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new TagRequest()
@@ -215,7 +249,7 @@ namespace RevitBridge.Logic.Handlers
             if (view == null) throw new InvalidOperationException("tag-elements requires viewId or viewName (or an active view).");
 
             if (p.repairExistingTagId.HasValue)
-                return Task.FromResult(HandleExistingTagRepair(doc, view, p));
+                return Task.FromResult(HandleExistingTagRepair(doc, view, p, runNative));
 
             var max = p.max.GetValueOrDefault(5000);
             if (max < 1) max = 1;
@@ -256,7 +290,7 @@ namespace RevitBridge.Logic.Handlers
             var mapping = ResolveCategoryTagTypeMap(doc, p.categoryTagTypeMap, out var mappingWarnings);
             var defaultTypeId = ResolveDefaultTagTypeId(doc, p.tagTypeId, p.tagTypeName, p.tagFamilyName);
             var tagFamilyResolution = geometryAware && TagWorkPolicy.RequiresFamilyResolution(dryRun, plannedToTag)
-                ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun)
+                ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun, runNative)
                 : null;
             if (defaultTypeId == null && tagFamilyResolution?.TypeId != null) defaultTypeId = tagFamilyResolution.TypeId;
             if (dryRun && p.inspectTagFamilyElements == true && tagFamilyResolution?.TypeId != null)
@@ -275,6 +309,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     status = "Dry Run",
                     dryRun = true,
+                    previewExecuted = false,
                     viewId = ElementIdCompat.GetValue(view.Id),
                     targetCount = planned.Count,
                     plannedToTag,
@@ -308,10 +343,11 @@ namespace RevitBridge.Logic.Handlers
                 : new GeometryObstacleSet();
             var tagSizeCalibration = new TagSizeCalibration(tagWidth, tagHeight);
 
-            using (var t = new Transaction(doc, "Tag Elements"))
+            var modified = new HashSet<long>();
+            var result = runNative(doc, "Tag Elements", nativeCreated =>
             {
-                t.Start();
                 tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: false);
+                if (tagVisibility.Changed && tagVisibility.OwnerViewId.HasValue) modified.Add(tagVisibility.OwnerViewId.Value);
                 if (ensureTagCategoryVisible && !string.IsNullOrWhiteSpace(tagVisibility.Error))
                     throw new InvalidOperationException($"Tag category visibility could not be ensured: {tagVisibility.Error}");
                 IEnumerable<Element> orderedTargets = geometryAware
@@ -345,10 +381,12 @@ namespace RevitBridge.Logic.Handlers
                             doc.GetElement(targetTypeId) is FamilySymbol targetSymbol && !targetSymbol.IsActive)
                         {
                             targetSymbol.Activate();
+                            modified.Add(ElementIdCompat.GetValue(targetSymbol.Id));
                             doc.Regenerate();
                         }
 
                         var tag = CreateTagElement(doc, view, element, geometryAware ? false : addLeader, orientation, point);
+                        nativeCreated.Add(ElementIdCompat.GetValue(tag.Id));
                         if (targetTypeId != null && targetTypeId != ElementId.InvalidElementId)
                         {
                             try
@@ -386,7 +424,7 @@ namespace RevitBridge.Logic.Handlers
                             }
                             if (!TagWorkPolicy.KeepCreatedTag(geometryAware: true, hasMeasurableGeometry, outcome.CollisionFree))
                             {
-                                doc.Delete(tag.Id);
+                                foreach (var deleted in doc.Delete(tag.Id)) nativeCreated.Remove(ElementIdCompat.GetValue(deleted));
                                 errors.Add(new
                                 {
                                     elementId,
@@ -408,7 +446,7 @@ namespace RevitBridge.Logic.Handlers
                         }
                         else if (geometryAware)
                         {
-                            doc.Delete(tag.Id);
+                            foreach (var deleted in doc.Delete(tag.Id)) nativeCreated.Remove(ElementIdCompat.GetValue(deleted));
                             errors.Add(new
                             {
                                 elementId,
@@ -434,7 +472,8 @@ namespace RevitBridge.Logic.Handlers
                 {
                     try
                     {
-                        doc.Delete(tagFamilyResolution.FamilyId ?? tagFamilyResolution.TypeId!);
+                        foreach (var deleted in doc.Delete(tagFamilyResolution.FamilyId ?? tagFamilyResolution.TypeId!))
+                            nativeCreated.Remove(ElementIdCompat.GetValue(deleted));
                         tagFamilyResolution.Status = "import_rejected_no_geometry";
                         tagFamilyResolution.Error = "The imported tag type produced no visible/measurable tag-head geometry and was removed.";
                     }
@@ -445,12 +484,10 @@ namespace RevitBridge.Logic.Handlers
                     }
                 }
 
-                t.Commit();
-            }
-
-            return Task.FromResult<object>(new
+                var payload = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(new
             {
                 status = "Success",
+                success = errors.Count == 0,
                 viewId = ElementIdCompat.GetValue(view.Id),
                 targetCount = planned.Count,
                 taggedCount = tagIds.Count,
@@ -480,10 +517,23 @@ namespace RevitBridge.Logic.Handlers
                 tags = tagReadback,
                 tagReadback,
                 errors = errors.Take(200).ToList()
-            });
+            }))!;
+                payload["success"] = errors.Count == 0;
+                return payload;
+            }, () => modified, NativeTransactionDisposition.Commit);
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                foreach (var id in tagIds)
+                    if (doc.GetElement(ElementIdCompat.Create(id)) == null)
+                        throw new InvalidOperationException($"Tag {id} was unavailable after native commit.");
+                return new Dictionary<string, object?>();
+            }, errors.Count == 0);
+            // Persistence is not a certification of every requested tag placement.
+            result.Remove("verified"); result.Remove("ok");
+            return Task.FromResult<object>(result);
         }
 
-        private static object HandleExistingTagRepair(Document doc, View view, TagRequest request)
+        private static object HandleExistingTagRepair(Document doc, View view, TagRequest request, NativeStage runNative)
         {
             var tagId = ElementIdCompat.Create(request.repairExistingTagId!.Value);
             if (doc.GetElement(tagId) is not IndependentTag tag)
@@ -508,11 +558,18 @@ namespace RevitBridge.Logic.Handlers
                 throw new ArgumentException("hasLeader=false cannot be combined with free-leader geometry.");
 
             var before = ReadExistingTagSnapshot(tag, view);
-            if (!hasRequestedWrite)
+            var alreadyMatches = (requestedHead == null || PointsMatch(before.Head, requestedHead, 1e-8))
+                && (!request.hasLeader.HasValue || before.HasLeader == request.hasLeader.Value)
+                && (!requestedCondition.HasValue || before.LeaderEndCondition == requestedCondition.Value.ToString())
+                && (requestedLeaderEnd == null || before.HasLeader && before.LeaderEndCondition == "Free"
+                    && NullablePointsMatch(before.LeaderEnd, requestedLeaderEnd, 1e-8))
+                && (requestedLeaderElbow == null || before.HasLeader && before.LeaderEndCondition == "Free"
+                    && NullablePointsMatch(before.LeaderElbow, requestedLeaderElbow, 1e-8));
+            if (!hasRequestedWrite || request.dryRun != true && alreadyMatches)
             {
                 return new
                 {
-                    status = "Read",
+                    status = hasRequestedWrite ? "No Change" : "Read",
                     dryRun = request.dryRun ?? false,
                     tag = ExistingTagSnapshotPayload(before),
                     changed = false
@@ -520,14 +577,11 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var dryRun = request.dryRun ?? false;
-            ExistingTagSnapshot after;
+            ExistingTagSnapshot? after = null;
             ExistingTagSnapshot? rollback = null;
-            bool effectiveChange;
-            TransactionStatus nativeStatus;
-            using (var transaction = new Transaction(doc, "Repair Existing Tag Geometry"))
+            bool effectiveChange = false;
+            var result = runNative(doc, "Repair Existing Tag Geometry", _ =>
             {
-                transaction.Start();
-
                 if (requestedHead != null) tag.TagHeadPosition = requestedHead;
                 if (request.hasLeader.HasValue) tag.HasLeader = request.hasLeader.Value;
                 if (requestedCondition.HasValue)
@@ -565,41 +619,39 @@ namespace RevitBridge.Logic.Handlers
                 doc.Regenerate();
                 after = ReadExistingTagSnapshot(tag, view);
                 effectiveChange = !ExistingTagSnapshotsMatch(before, after);
-                nativeStatus = dryRun || !effectiveChange
-                    ? transaction.RollBack()
-                    : transaction.Commit();
-            }
+                return new Dictionary<string, object?> { ["before"] = ExistingTagSnapshotPayload(before),
+                    ["after"] = ExistingTagSnapshotPayload(after), ["changed"] = effectiveChange,
+                    ["dryRun"] = dryRun, ["previewExecuted"] = dryRun };
+            }, () => effectiveChange ? new[] { request.repairExistingTagId.Value } : Array.Empty<long>(),
+                dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit);
+            var receipt = (OperatorNativeTransactionReceipt)result["transaction"]!;
 
-            if (nativeStatus == TransactionStatus.RolledBack)
+            if (receipt.Status == "rolled_back" && result.TryGetValue("success", out var succeeded) && succeeded is true)
             {
-                if (doc.GetElement(tagId) is not IndependentTag rolledBackTag)
-                    throw new InvalidOperationException(
-                        $"Tag {request.repairExistingTagId.Value} disappeared after dry-run rollback.");
-                rollback = ReadExistingTagSnapshot(rolledBackTag, view);
+                try
+                {
+                    if (doc.GetElement(tagId) is not IndependentTag rolledBackTag)
+                        throw new InvalidOperationException($"Tag {request.repairExistingTagId.Value} disappeared after dry-run rollback.");
+                    rollback = ReadExistingTagSnapshot(rolledBackTag, view);
+                    result["rollback"] = ExistingTagSnapshotPayload(rollback);
+                    result["rollbackVerified"] = ExistingTagSnapshotsMatch(before, rollback);
+                    if (!ExistingTagSnapshotsMatch(before, rollback)) throw new InvalidOperationException("Tag rollback readback differs from its original geometry.");
+                }
+                catch (Exception error) { result["success"] = false; result["error"] = error.Message; }
             }
-            else if (nativeStatus == TransactionStatus.Committed)
+            else if (receipt.CommittedValue == true)
             {
-                if (doc.GetElement(tagId) is not IndependentTag committedTag)
-                    throw new InvalidOperationException(
-                        $"Tag {request.repairExistingTagId.Value} disappeared after native commit.");
-                after = ReadExistingTagSnapshot(committedTag, view);
+                OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+                {
+                    if (doc.GetElement(tagId) is not IndependentTag committedTag)
+                        throw new InvalidOperationException($"Tag {request.repairExistingTagId.Value} disappeared after native commit.");
+                    return new Dictionary<string, object?> { ["after"] = ExistingTagSnapshotPayload(ReadExistingTagSnapshot(committedTag, view)) };
+                });
+                result.Remove("verified"); result.Remove("ok");
             }
-
-            var transactionReceipt = OperatorNativeTransactionReceipt.FromObservedStatus(
-                nativeStatus.ToString(), new[] { request.repairExistingTagId.Value });
-
-            return new
-            {
-                status = dryRun ? "Dry Run" : effectiveChange ? "Repaired" : "No Change",
-                dryRun,
-                changed = effectiveChange && (dryRun || nativeStatus == TransactionStatus.Committed),
-                before = ExistingTagSnapshotPayload(before),
-                after = ExistingTagSnapshotPayload(after),
-                rolledBack = nativeStatus == TransactionStatus.RolledBack,
-                rollbackVerified = rollback == null ? (bool?)null : ExistingTagSnapshotsMatch(before, rollback),
-                rollback = rollback == null ? null : ExistingTagSnapshotPayload(rollback),
-                transaction = transactionReceipt
-            };
+            result["rolledBack"] = receipt.Status == "rolled_back";
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, effectiveChange ? "Repaired" : "No Change");
+            return result;
         }
 
         private static ExistingTagSnapshot ReadExistingTagSnapshot(IndependentTag tag, View view)
@@ -1542,7 +1594,8 @@ namespace RevitBridge.Logic.Handlers
             IReadOnlyList<Element> targets,
             ElementId? requestedTypeId,
             TagRequest request,
-            bool dryRun)
+            bool dryRun,
+            NativeStage runNative)
         {
             var targetTagCategory = ResolveCommonTargetTagCategory(targets);
             var contentProfile = TagFamilyContentPolicy.NormalizeProfile(request.generatedTagContentProfile);
@@ -1615,7 +1668,8 @@ namespace RevitBridge.Logic.Handlers
                 request.tagFamilySourceFamilyName,
                 request.tagFamilySourceTypeName,
                 contentProfile,
-                dryRun);
+                dryRun,
+                runNative);
         }
 
         private static TagFamilyResolution ImportTagFamilyFromSource(
@@ -1628,7 +1682,8 @@ namespace RevitBridge.Logic.Handlers
             string? requestedSourceFamilyName,
             string? requestedSourceTypeName,
             string contentProfile,
-            bool dryRun)
+            bool dryRun,
+            NativeStage runNative)
         {
             Document? sourceDoc = null;
             Document? familyDoc = null;
@@ -1694,9 +1749,9 @@ namespace RevitBridge.Logic.Handlers
                 if (targetCategory == null) throw new InvalidOperationException($"Target tag category {targetTagCategory} is unavailable in the family document.");
                 using (var familyTransaction = new Transaction(familyDoc, "Retarget Tag Family"))
                 {
-                    familyTransaction.Start();
+                    if (familyTransaction.Start() != TransactionStatus.Started) throw new InvalidOperationException("Source tag family transaction did not start.");
                     familyDoc.OwnerFamily.FamilyCategory = targetCategory;
-                    familyTransaction.Commit();
+                    if (familyTransaction.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Source tag family transaction did not commit.");
                 }
                 var contentReceipt = SanitizeTagFamilyContent(familyDoc, contentProfile);
 
@@ -1706,16 +1761,23 @@ namespace RevitBridge.Logic.Handlers
                 familyDoc.Close(false);
                 familyDoc = null;
 
-                Family? loadedFamily;
-                using (var loadTransaction = new Transaction(targetDoc, "Load Geometry-Aware Tag Family"))
+                Family? loadedFamily = null;
+                var existingFamilyIds = new HashSet<long>(new FilteredElementCollector(targetDoc).OfClass(typeof(Family))
+                    .ToElementIds().Select(ElementIdCompat.GetValue));
+                var loadResult = runNative(targetDoc, "Load Geometry-Aware Tag Family", created =>
                 {
-                    loadTransaction.Start();
                     targetDoc.LoadFamily(outputPath, new TagFamilyLoadOptions(), out loadedFamily);
                     if (loadedFamily == null) throw new InvalidOperationException("Revit did not return the imported tag family.");
-                    loadTransaction.Commit();
-                }
+                    var id = ElementIdCompat.GetValue(loadedFamily.Id);
+                    if (!existingFamilyIds.Contains(id)) created.Add(id);
+                    return new Dictionary<string, object?>();
+                }, () => loadedFamily != null && existingFamilyIds.Contains(ElementIdCompat.GetValue(loadedFamily.Id))
+                    ? new[] { ElementIdCompat.GetValue(loadedFamily.Id) } : Array.Empty<long>(), NativeTransactionDisposition.Commit);
+                if (!(loadResult["transaction"] is OperatorNativeTransactionReceipt loadedReceipt) || loadedReceipt.CommittedValue != true
+                    || !loadResult.TryGetValue("success", out var loadedSuccess) || loadedSuccess is not true)
+                    throw new InvalidOperationException(loadResult.TryGetValue("error", out var loadError) ? $"{loadError}" : "Tag family load did not reach a confirmed native commit.");
 
-                var loadedSymbols = loadedFamily.GetFamilySymbolIds()
+                var loadedSymbols = loadedFamily!.GetFamilySymbolIds()
                     .Select(id => targetDoc.GetElement(id))
                     .OfType<FamilySymbol>()
                     .ToList();
@@ -1797,9 +1859,9 @@ namespace RevitBridge.Logic.Handlers
 
             using (var transaction = new Transaction(familyDoc, "Sanitize Generated Tag Content"))
             {
-                transaction.Start();
+                if (transaction.Start() != TransactionStatus.Started) throw new InvalidOperationException("Tag content transaction did not start.");
                 familyDoc.Delete(receipt.Removed.Select(x => ElementIdCompat.Create(x.ElementId)).ToList());
-                transaction.Commit();
+                if (transaction.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Tag content transaction did not commit.");
             }
             receipt.Status = "sanitized";
             return receipt;
@@ -2205,4 +2267,51 @@ namespace RevitBridge.Logic.Handlers
             return null;
         }
     }
+    internal static class TagNativeStages
+    {
+        private static bool Settled(OperatorNativeTransactionReceipt receipt) =>
+            receipt.Status == "committed" && receipt.CommittedValue == true
+            || (receipt.Status == "rolled_back" || receipt.Status == "not_started") && receipt.CommittedValue == false;
+
+        internal static void RequireSettledPrefix(IReadOnlyList<Dictionary<string, object?>> stages)
+        {
+            if (stages.Any(stage => !stage.TryGetValue("transaction", out var item)
+                || !(item is OperatorNativeTransactionReceipt receipt) || !Settled(receipt)))
+                throw new InvalidOperationException("A previous tag transaction is unsettled; no further native stage may start.");
+        }
+
+        // A family load is a separate committed stage. A later tag rollback or
+        // readback error must never erase that prefix or infer a whole-request rollback.
+        internal static Dictionary<string, object?> CompleteNativeStages(object payload,
+            IReadOnlyList<Dictionary<string, object?>> stages)
+        {
+            var result = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(payload))!;
+            var receipts = stages.Select(stage => stage.TryGetValue("transaction", out var receipt)
+                && receipt is OperatorNativeTransactionReceipt native ? native
+                : OperatorNativeTransactionReceipt.Unknown("tag_stage_receipt_unavailable")).ToList();
+            var committed = receipts.Where(receipt => receipt.Status == "committed" && receipt.CommittedValue == true).ToList();
+            var unsettled = receipts.Any(receipt => !Settled(receipt));
+            var receipt = unsettled ? OperatorNativeTransactionReceipt.Unknown("tag_stage_unsettled", committed.SelectMany(item => item.AffectedElementIds))
+                : committed.Count > 0 ? OperatorNativeTransactionReceipt.CommittedChanges(
+                    committed.SelectMany(item => item.AddedElementIds), committed.SelectMany(item => item.ModifiedElementIds), committed.SelectMany(item => item.DeletedElementIds))
+                : receipts.Any(item => item.Status == "rolled_back") ? OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>())
+                : OperatorNativeTransactionReceipt.NotStarted();
+            var succeeded = (!result.TryGetValue("success", out var success) || success is JsonElement value && value.ValueKind == JsonValueKind.True)
+                && stages.All(stage => stage.TryGetValue("success", out var passed) && passed is true);
+            result["success"] = succeeded && !unsettled;
+            result["applied"] = receipt.CommittedValue;
+            result["transaction"] = receipt;
+            result["transactionStages"] = stages.Select(stage => new {
+                transaction = stage.TryGetValue("transaction", out var item) ? item : null,
+                success = stage.TryGetValue("success", out var passed) ? passed : null,
+                error = stage.TryGetValue("error", out var error) ? error : null,
+                changeTracking = stage.TryGetValue("changeTracking", out var tracking) ? tracking : null
+            }).ToList();
+            if (unsettled) result["status"] = "UnknownEffect";
+            else if (!succeeded) result["status"] = committed.Count > 0 ? "CommittedWithErrors" : "Blocked";
+            return result;
+        }
+
+    }
+
 }

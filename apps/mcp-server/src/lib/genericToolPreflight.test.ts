@@ -8,6 +8,65 @@ import {
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
 
+test("retained family placement accepts a string map while invalid map entries stay pre-dispatch", () => {
+  const retained = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/unit403-place-families-map-rejected.json", import.meta.url), "utf8"));
+  const map = { type: "object", additionalProperties: { type: "string" } };
+  const contract = { method: retained.request.method, path: retained.request.path, request_schema: {
+    type: "object", additionalProperties: false, properties: {
+      familySymbolId: { type: "integer" }, levelName: { type: "string" }, dryRun: { type: "boolean" },
+      instances: { type: "array", items: { type: "object", additionalProperties: false, properties: {
+        x: { type: "number" }, y: { type: "number" }, z: { type: "number" }, coordinateMode: { type: "string" },
+        rotationDegrees: { type: "number" }, parameters: { oneOf: [{ type: "null" }, map] }
+      } } }
+    }
+  } };
+  assert.equal(retained.source_event_id, 203272);
+  assert.ok(retained.failure.invalid_fields.includes("body.instances[0].parameters.Count"));
+  assert.equal(preflightKnownGenericToolBody(contract, retained.request.body), null);
+  for (const parameters of [{}, null, { "Count": "A valid native parameter name", "Other custom parameter": "value" }]) {
+    const body = structuredClone(retained.request.body); body.instances[0].parameters = parameters;
+    assert.equal(preflightKnownGenericToolBody(contract, body), null);
+  }
+  for (const bad of [403, false, null, [], { nested: "value" }]) {
+    const body = structuredClone(retained.request.body); body.instances[0].parameters.Mark = bad;
+    const failure = preflightKnownGenericToolBody(contract, body);
+    assert.equal(failure?.request_dispatched, false);
+    assert.equal(failure?.outcome_unknown, false);
+    assert.ok(failure?.invalid_fields?.includes("body.instances[0].parameters.Mark"));
+  }
+  const extra = structuredClone(retained.request.body); extra.instances[0].inventedField = true;
+  assert.ok(preflightKnownGenericToolBody(contract, extra)?.invalid_fields?.includes("body.instances[0].inventedField"));
+});
+
+test("schema-valued additional properties validate nested maps and lists without weakening declared properties", () => {
+  const contract = { method: "POST", path: "/revit/example", request_schema: {
+    type: "object", required: ["label"], properties: { label: { type: "string" } },
+    additionalProperties: { type: "object", additionalProperties: { type: "array", items: { type: "integer" } } }
+  } };
+  assert.equal(preflightKnownGenericToolBody(contract, { label: "A", room: { branches: [1, 2] } }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, { label: "A" }), null);
+  assert.ok(preflightKnownGenericToolBody(contract, { label: 1 })?.invalid_fields?.includes("body.label"));
+  assert.ok(preflightKnownGenericToolBody(contract, { label: "A", room: { branches: [1, "2"] } })?.invalid_fields?.includes("body.room.branches[1]"));
+  assert.ok(preflightKnownGenericToolBody(contract, { label: "A", room: [] })?.invalid_fields?.includes("body.room"));
+  const prototypeName = JSON.parse('{"label":"A","__proto__":{"branches":["bad"]}}');
+  assert.ok(preflightKnownGenericToolBody(contract, prototypeName)?.invalid_fields?.includes("body.__proto__.branches[0]"));
+});
+
+test("typed-map traversal retains depth, field path, visit and issue bounds", () => {
+  const contract = (schema: unknown) => ({ method: "POST", path: "/revit/example", request_schema: schema });
+  let schema: any = { type: "integer" }, body: any = 1;
+  for (let i = 0; i < 26; i++) { schema = { type: "object", additionalProperties: schema }; body = { child: body }; }
+  assert.equal(preflightKnownGenericToolBody(contract(schema), body)?.request_dispatched, false);
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "object", additionalProperties: { type: "integer" } }), { ["a".repeat(513)]: 1 })?.request_dispatched, false);
+  const large = Object.fromEntries(Array.from({ length: 100_001 }, (_, i) => [`k${i}`, 1]));
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "object", additionalProperties: { type: "integer" } }), large)?.request_dispatched, false);
+  const bad = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`k${i}`, "bad"]));
+  const limited = preflightKnownGenericToolBody(contract({ type: "object", additionalProperties: { type: "integer" } }), bad)!;
+  assert.ok(limited.validation_issues!.length > 0 && limited.validation_issues!.length <= 64);
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "object", additionalProperties: true }), { any: { value: [1] } }), null);
+  assert.equal(preflightKnownGenericToolBody(contract({ type: "object", additionalProperties: {} }), { any: { value: [1] } }), null);
+});
+
 test("sheet duplication uses the native published schema to reject the live invalid option before dispatch", () => {
   const schema = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json", import.meta.url), "utf8"));
   const contract = { method: "POST", path: "/revit/duplicate-sheet", required_fields: schema.required, request_schema: schema };

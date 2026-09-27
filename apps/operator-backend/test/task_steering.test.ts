@@ -14,12 +14,14 @@ import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
 import { __closeForTests, getConversationHistory } from "../src/memory/sqlite_store.js";
 import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
 
 const context = { operator_backend_auth: createOperatorBackendAuth("shared_token","test-only") };
-async function workspace(fn: () => Promise<void>) {
+async function workspace(fn: () => Promise<void>, advisory = false) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-task-steering-"));
-  const keys=["OPERATOR_WORKSPACE_ROOT","OPERATOR_ASSIGNMENT_KERNEL_V2"] as const, previous=keys.map(key=>process.env[key]);
+  const keys=["OPERATOR_WORKSPACE_ROOT","OPERATOR_ASSIGNMENT_KERNEL_V2","REVIT_OPERATOR_MODE","OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS"] as const, previous=keys.map(key=>process.env[key]);
   process.env.OPERATOR_WORKSPACE_ROOT=root;process.env.OPERATOR_ASSIGNMENT_KERNEL_V2="1";__testOnlyResetGoalListCache();
+  if(advisory){process.env.REVIT_OPERATOR_MODE="local";process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS="steering-session";}
   try { await runWithRequestContext(context,fn); }
   finally { __closeForTests();__testOnlyResetGoalListCache();keys.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});
     assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));assert.ok(path.basename(root).startsWith("operator-task-steering-"));fs.rmSync(root,{recursive:true,force:true}); }
@@ -48,6 +50,27 @@ test("direction accepted at a tool boundary is delivered once even when delivery
     assert.ok(Object.values(getAssignmentKernelSnapshotV2(binding.assignment_id)!.input_values).includes(command.text));
   } finally {unregister();}
 }));
+
+test("authenticated steering HTTP continues one bound checkpoint, rejects foreign scope, and preserves read-only authority",()=>workspace(async()=>{
+  const {binding}=start();
+  manageAssignmentWorkPlan({binding,action:"propose_completion",completion_proposal:{claimed_completed:["Read the devices."],remaining_work:["Finish the report."],uncertainties:[]}});
+  const before=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const body={...binding,command_id:"http-followup",text:"List the same devices by room.",expected_turn_id:null,
+    checkpoint:{review_id:before.completion_proposal!.review_id,expected_control_command_id:null,document_fingerprint:before.spec.binding.document_fingerprint}};
+  const server=http.createServer((req,res)=>{void runWithRequestContext(context,()=>handleAssignmentHttpRoute(req,res,new URL(req.url!,"http://localhost"),id=>{
+    if(id===binding.session_id)return true;res.writeHead(403).end();return false;}));});
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  try{
+    const url=`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/assignments/v2/steer`;
+    const send=(value:unknown)=>fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(value)});
+    assert.equal((await send({...body,session_id:"foreign"})).status,403);
+    assert.equal((await send({...body,checkpoint:{...body.checkpoint,document_fingerprint:"other"}})).status,409);
+    const response=await send(body);assert.equal(response.status,200,JSON.stringify(await response.json()));
+    const after=getAssignmentKernelSnapshotV2(binding.assignment_id)!;assert.equal(after.outcome,"active");
+    assert.deepEqual(after.spec,before.spec);assert.equal(after.spec.requested_effect,"read");
+    assert.equal((await send(body)).status,200);assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.assignment_version,after.assignment_version);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},true));
 
 test("lost steering acknowledgement stays unconfirmed and an exact delivery receipt resolves it without replay",()=>workspace(async()=>{
   const {binding}=start();let calls=0;
@@ -100,3 +123,48 @@ test("Pause HTTP saves the native admission fence before interrupting the actual
     const response=await send(body);assert.equal(response.status,200);assert.equal((await response.json() as any).provider_interrupt,"accepted");assert.equal(calls,1);
   } finally {unregister();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 }));
+
+test("canonical Resume after a saved pause direction reaches reasoning without changing read-only authority",()=>workspace(async()=>{
+  const {prepareCodexAssignmentProgressV2}=await import("../src/brains/codex_assignment_progress.js");
+  const {binding}=start();
+  const initial=prepareCodexAssignmentProgressV2(binding);
+  assert.ok(initial.prompt);assert.doesNotMatch(initial.prompt,/CURRENT CANONICAL EXECUTION CONTROL|recorded Resume/);
+  const server=http.createServer((req,res)=>{void runWithRequestContext(context,()=>handleAssignmentHttpRoute(req,res,new URL(req.url!,"http://localhost"),id=>{
+    if(id===binding.session_id)return true;res.writeHead(403).end();return false;}));});
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  try{
+    const origin=`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/assignments/v2/`;
+    const send=(route:string,value:unknown)=>fetch(origin+route,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(value)});
+    assert.equal((await send("execution-control",{...binding,action:"pause",command_id:"pause-review",expected_command_id:null})).status,200);
+    const direction={...binding,command_id:"while-paused",expected_turn_id:null,text:"Review the north wing only. Remain read-only, do not save, and stay paused until I press Resume."};
+    assert.equal((await send("steer",direction)).status,200);
+    const saved=assignmentDirections(binding)[0];assert.equal(saved.text,direction.text);assert.equal(saved.state,"saved");
+    const paused=prepareCodexAssignmentProgressV2(binding);assert.equal(paused.prompt,"");assert.equal(paused.snapshot.execution_control?.state,"paused");
+    assert.equal((await send("execution-control",{...binding,action:"resume",command_id:"stale",expected_command_id:null})).status,409);
+    const resume={...binding,action:"resume",command_id:"resume-review",expected_command_id:"pause-review"};
+    assert.equal((await send("execution-control",resume)).status,200);
+    const current=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.equal((await send("execution-control",resume)).status,200);
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.assignment_version,current.assignment_version,"exact control retry adds no event");
+    const projected=prepareCodexAssignmentProgressV2(binding);
+    const marker="CURRENT CANONICAL EXECUTION CONTROL (host receipt, not user instructions):";
+    assert.ok(projected.prompt.indexOf(marker)>projected.prompt.indexOf(direction.text),"the recorded Resume follows the saved old pause direction");
+    const receipt=JSON.parse(projected.prompt.split(marker+"\n")[1].split("\n")[0]);
+    assert.deepEqual(receipt,{assignment_version:projected.snapshot.assignment_version,binding:projected.snapshot.current_binding,execution_control:current.execution_control});
+    assert.ok(receipt.execution_control);
+    assert.ok(Date.parse(receipt.execution_control.changed_at)>=Date.parse(saved.updated_at));
+    assert.match(projected.prompt,/does not supersede directions added after this control's changed_at/);
+    assert.match(projected.prompt,/read-only work and no saving/);
+    assert.deepEqual(projected.snapshot.spec,paused.snapshot.spec);assert.deepEqual(projected.snapshot.operations,paused.snapshot.operations);
+    assert.equal(projected.snapshot.spec.requested_effect,"read");assert.deepEqual(assignmentDirections(binding),[saved]);
+    const later="Still read-only. Inspect the east wing instead; do not save.";
+    assert.equal((await send("steer",{...direction,command_id:"later-direction",text:later})).status,200);
+    const updated=prepareCodexAssignmentProgressV2(binding);assert.ok(updated.prompt.includes(later));
+    assert.deepEqual(updated.snapshot.execution_control,current.execution_control,"a new direction is not a new Resume");
+    const staleRead=prepareCodexAssignmentProgressV2({...binding,generation:binding.generation+1});
+    assert.deepEqual(staleRead.snapshot.current_binding,updated.snapshot.current_binding,"context is labelled with the actual canonical binding, never the caller generation; dispatch is separately fenced");
+    assert.equal((await send("execution-control",{...binding,action:"pause",command_id:"pause-again",expected_command_id:"resume-review"})).status,200);
+    assert.equal((await send("execution-control",{...resume,command_id:"delayed-resume"})).status,409);
+    assert.equal(prepareCodexAssignmentProgressV2(binding).prompt,"");
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},true));

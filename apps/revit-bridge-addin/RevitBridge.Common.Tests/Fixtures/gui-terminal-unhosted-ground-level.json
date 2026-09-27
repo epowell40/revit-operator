@@ -1,0 +1,600 @@
+{
+  "description": "Exact retained native preview/apply and separate parameter readback; not a synthetic successful placement.",
+  "source_manifest": "gui-terminal-z-diagnosis/manifest.json",
+  "preview": {
+    "event_id": 202188,
+    "request": {
+      "method": "POST",
+      "path": "/revit/place-families",
+      "body": {
+        "levelName": "L4",
+        "familySymbolId": 1376349,
+        "allowUnhostedWorkPlanePlacement": true,
+        "instances": [
+          {
+            "x": -33.55,
+            "y": 14.1,
+            "z": 40.1667
+          }
+        ],
+        "dryRun": true
+      }
+    },
+    "result": {
+      "transaction": {
+        "status": "rolled_back",
+        "committed": false,
+        "modified_element_ids": [],
+        "affected_element_ids": [],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "status": "Planned",
+      "familyPlacementType": "WorkPlaneBased",
+      "requiresExplicitHost": false,
+      "unhostedWorkPlanePlacementAllowed": true,
+      "placedCount": 0,
+      "skippedCount": 0,
+      "failedCount": 0,
+      "selectedWorksetId": null,
+      "selectedWorksetName": null,
+      "elementIds": [],
+      "results": [
+        {
+          "index": 0,
+          "status": "planned",
+          "elementId": null,
+          "reason": "dryRun: rolled back",
+          "coordinateMode": "legacy_level_offset",
+          "requestedLocationX": -33.55,
+          "requestedLocationY": 14.1,
+          "requestedLocationZ": 40.1667,
+          "absoluteModelCorrectionDistanceFt": null,
+          "absoluteModelLocationVerified": null,
+          "worksetId": null,
+          "worksetName": null,
+          "worksetVerified": null,
+          "familySymbolId": 1376349,
+          "hostElementId": null,
+          "linkedHostElementId": null,
+          "hostVerified": null,
+          "levelId": null,
+          "levelVerified": null,
+          "ownerViewId": null,
+          "locationX": -33.55,
+          "locationY": 14.1,
+          "locationZ": -6.137491269689685e-15,
+          "inTargetViewCollector": null,
+          "viewSpecificBoundingBoxAvailable": null,
+          "bboxMinX": null,
+          "bboxMinY": null,
+          "bboxMinZ": null,
+          "bboxMaxX": null,
+          "bboxMaxY": null,
+          "bboxMaxZ": null,
+          "warnings": []
+        }
+      ],
+      "warnings": [],
+      "error": null
+    },
+    "content_hash": "sha256:706845c2466ebd0a70c6bffc6a4ec2a151d568da071e7e672090668b3b1a2b53"
+  },
+  "apply": {
+    "event_id": 202196,
+    "request": {
+      "method": "POST",
+      "path": "/revit/place-families",
+      "body": {
+        "levelName": "L4",
+        "familySymbolId": 1376349,
+        "allowUnhostedWorkPlanePlacement": true,
+        "instances": [
+          {
+            "x": -33.55,
+            "y": 14.1,
+            "z": 40.1667
+          }
+        ],
+        "dryRun": false
+      }
+    },
+    "result": {
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          1543051
+        ],
+        "affected_element_ids": [
+          1543051
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "status": "Placed",
+      "familyPlacementType": "WorkPlaneBased",
+      "requiresExplicitHost": false,
+      "unhostedWorkPlanePlacementAllowed": true,
+      "placedCount": 1,
+      "skippedCount": 0,
+      "failedCount": 0,
+      "selectedWorksetId": null,
+      "selectedWorksetName": null,
+      "elementIds": [
+        1543051
+      ],
+      "results": [
+        {
+          "index": 0,
+          "status": "created",
+          "elementId": 1543051,
+          "reason": null,
+          "coordinateMode": "legacy_level_offset",
+          "requestedLocationX": -33.55,
+          "requestedLocationY": 14.1,
+          "requestedLocationZ": 40.1667,
+          "absoluteModelCorrectionDistanceFt": null,
+          "absoluteModelLocationVerified": null,
+          "worksetId": null,
+          "worksetName": null,
+          "worksetVerified": null,
+          "familySymbolId": 1376349,
+          "hostElementId": null,
+          "linkedHostElementId": null,
+          "hostVerified": null,
+          "levelId": null,
+          "levelVerified": null,
+          "ownerViewId": null,
+          "locationX": -33.55,
+          "locationY": 14.1,
+          "locationZ": -6.137491269689685e-15,
+          "inTargetViewCollector": null,
+          "viewSpecificBoundingBoxAvailable": null,
+          "bboxMinX": null,
+          "bboxMinY": null,
+          "bboxMinZ": null,
+          "bboxMaxX": null,
+          "bboxMaxY": null,
+          "bboxMaxZ": null,
+          "warnings": []
+        }
+      ],
+      "warnings": [],
+      "error": null
+    },
+    "content_hash": "sha256:8e7a4462c9bd42595585a0ea4b8522618ef5c5ef1bc595ce4dc3369adc6d8799"
+  },
+  "parameters": {
+    "event_id": 202202,
+    "request": {
+      "method": "POST",
+      "path": "/revit/get-parameters",
+      "body": {
+        "elementId": 1543051,
+        "includeEmpty": true
+      }
+    },
+    "result": {
+      "id": 1543051,
+      "uniqueId": "08fdfffa-c4ff-4867-a14f-b847701791b1-00178b8b",
+      "name": "4\" DIA",
+      "category": "Air Terminals",
+      "categoryId": -2008013,
+      "parameters": {
+        "Image": "-1",
+        "System Abbreviation": "",
+        "Category": "-2008013",
+        "System Type": "-1",
+        "System Classification": "Exhaust Air",
+        "System Name": "",
+        "Size": "4\"ø",
+        "IFC Predefined Type": "",
+        "Export to IFC As": "",
+        "Export to IFC": "0",
+        "IfcGUID": "08$V$wnFz8Pw5Fk4Tm01ew",
+        "Flow": "0",
+        "Design Option": "-1",
+        "Volume": "0.0441269097222233",
+        "Area": "0.633965005086268",
+        "Phase Demolished": "-1",
+        "Phase Created": "21885",
+        "Comments": "",
+        "Host Id": "-1",
+        "Level": "1362791",
+        "Family and Type": "1376349",
+        "Family": "1376349",
+        "Type": "1376349",
+        "Family Name": "",
+        "Type Name": "",
+        "Type Id": "1376349",
+        "Schedule Level": "1362791",
+        "Host": "None",
+        "Elevation from Level": "-32.1666666666705",
+        "Mark": "731"
+      },
+      "parameterDetails": [
+        {
+          "name": "Image",
+          "value": "-1",
+          "valueString": "-1",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1152385
+        },
+        {
+          "name": "System Abbreviation",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1150468
+        },
+        {
+          "name": "Category",
+          "value": "-2008013",
+          "valueString": "Air Terminals",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1140363
+        },
+        {
+          "name": "Category",
+          "value": "-2008013",
+          "valueString": "Air Terminals",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1140362
+        },
+        {
+          "name": "System Type",
+          "value": "-1",
+          "valueString": "Undefined",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1140333
+        },
+        {
+          "name": "System Classification",
+          "value": "Exhaust Air",
+          "valueString": "Exhaust Air",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1140325
+        },
+        {
+          "name": "System Name",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1140324
+        },
+        {
+          "name": "Size",
+          "value": "4\"ø",
+          "valueString": "4\"ø",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1114240
+        },
+        {
+          "name": "IFC Predefined Type",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": false,
+          "parameterId": -1019016
+        },
+        {
+          "name": "Export to IFC As",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": false,
+          "parameterId": -1019014
+        },
+        {
+          "name": "Export to IFC",
+          "value": "0",
+          "valueString": "By Type",
+          "storageType": "Integer",
+          "isReadOnly": false,
+          "parameterId": -1019012
+        },
+        {
+          "name": "IfcGUID",
+          "value": "08$V$wnFz8Pw5Fk4Tm01ew",
+          "valueString": "08$V$wnFz8Pw5Fk4Tm01ew",
+          "storageType": "String",
+          "isReadOnly": false,
+          "parameterId": -1019000
+        },
+        {
+          "name": "Flow",
+          "value": "0",
+          "valueString": "0 CFM",
+          "storageType": "Double",
+          "isReadOnly": true,
+          "parameterId": -1013405
+        },
+        {
+          "name": "Design Option",
+          "value": "-1",
+          "valueString": "-1",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1013201
+        },
+        {
+          "name": "Volume",
+          "value": "0.0441269097222233",
+          "valueString": "0.04 CF",
+          "storageType": "Double",
+          "isReadOnly": true,
+          "parameterId": -1012806
+        },
+        {
+          "name": "Area",
+          "value": "0.633965005086268",
+          "valueString": "1 SF",
+          "storageType": "Double",
+          "isReadOnly": true,
+          "parameterId": -1012805
+        },
+        {
+          "name": "Phase Demolished",
+          "value": "-1",
+          "valueString": "None",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1012101
+        },
+        {
+          "name": "Phase Created",
+          "value": "21885",
+          "valueString": "New Construction",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1012100
+        },
+        {
+          "name": "Comments",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": false,
+          "parameterId": -1010106
+        },
+        {
+          "name": "Host Id",
+          "value": "-1",
+          "valueString": "-1",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1002108
+        },
+        {
+          "name": "Level",
+          "value": "1362791",
+          "valueString": "L4",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1002062
+        },
+        {
+          "name": "Family and Type",
+          "value": "1376349",
+          "valueString": "Air Terminal-Exhaust Cap-FB: 4\" DIA",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1002052
+        },
+        {
+          "name": "Family",
+          "value": "1376349",
+          "valueString": "Air Terminal-Exhaust Cap-FB",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1002051
+        },
+        {
+          "name": "Type",
+          "value": "1376349",
+          "valueString": "4\" DIA",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1002050
+        },
+        {
+          "name": "Family Name",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1002002
+        },
+        {
+          "name": "Type Name",
+          "value": "",
+          "valueString": "",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1002001
+        },
+        {
+          "name": "Type Id",
+          "value": "1376349",
+          "valueString": "1376349",
+          "storageType": "ElementId",
+          "isReadOnly": true,
+          "parameterId": -1002000
+        },
+        {
+          "name": "Schedule Level",
+          "value": "1362791",
+          "valueString": "L4",
+          "storageType": "ElementId",
+          "isReadOnly": false,
+          "parameterId": -1001365
+        },
+        {
+          "name": "Host",
+          "value": "None",
+          "valueString": "None",
+          "storageType": "String",
+          "isReadOnly": true,
+          "parameterId": -1001363
+        },
+        {
+          "name": "Elevation from Level",
+          "value": "-32.1666666666705",
+          "valueString": "-32' - 2\"",
+          "storageType": "Double",
+          "isReadOnly": true,
+          "parameterId": -1001360
+        },
+        {
+          "name": "Mark",
+          "value": "731",
+          "valueString": "731",
+          "storageType": "String",
+          "isReadOnly": false,
+          "parameterId": -1001203
+        }
+      ]
+    },
+    "content_hash": "sha256:3e15b1fa52c41d5d43d77155b4c61c12c60cf3a68aaf58f0417a0a78090aa494"
+  },
+  "summary": {
+    "event_id": 202204,
+    "request": {
+      "method": "POST",
+      "path": "/revit/get-element-summary",
+      "body": {
+        "elementIds": [
+          1543051
+        ]
+      }
+    },
+    "result": {
+      "result": [
+        {
+          "id": 1543051,
+          "found": true,
+          "className": "FamilyInstance",
+          "fullClassName": "Autodesk.Revit.DB.FamilyInstance",
+          "category": "Air Terminals",
+          "name": "4\" DIA",
+          "familyName": "Air Terminal-Exhaust Cap-FB",
+          "typeName": "4\" DIA",
+          "levelId": null,
+          "levelName": null,
+          "viewType": null,
+          "viewScale": null,
+          "boundingBox": {
+            "min": {
+              "x": -33.8,
+              "y": 13.85,
+              "z": -6.217248937900877e-15
+            },
+            "max": {
+              "x": -33.3,
+              "y": 14.350000000000001,
+              "z": 0.3333333333333221
+            }
+          },
+          "location": {
+            "type": "point",
+            "x": -33.55,
+            "y": 14.1,
+            "z": -6.137491269689685e-15,
+            "rotationRadians": 0
+          },
+          "viewIdUsed": null
+        }
+      ]
+    },
+    "content_hash": "sha256:9d6f5dbb480a64e456cfad321e86f383a0e819643c9154af241ec5deeb4aa373"
+  },
+  "absolute_preview_other_symbol": {
+    "event_id": 202172,
+    "request": {
+      "method": "POST",
+      "path": "/revit/place-families",
+      "body": {
+        "levelName": "L4",
+        "familySymbolId": 1380250,
+        "allowUnhostedWorkPlanePlacement": true,
+        "instances": [
+          {
+            "x": -33.55,
+            "y": 14.1,
+            "z": 40.1667,
+            "coordinateMode": "absolute_model"
+          }
+        ],
+        "dryRun": true
+      }
+    },
+    "result": {
+      "transaction": {
+        "status": "rolled_back",
+        "committed": false,
+        "modified_element_ids": [],
+        "affected_element_ids": [],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "status": "Failed",
+      "familyPlacementType": "WorkPlaneBased",
+      "requiresExplicitHost": false,
+      "unhostedWorkPlanePlacementAllowed": true,
+      "placedCount": 0,
+      "skippedCount": 0,
+      "failedCount": 1,
+      "selectedWorksetId": null,
+      "selectedWorksetName": null,
+      "elementIds": [],
+      "results": [
+        {
+          "index": 0,
+          "status": "failed",
+          "elementId": null,
+          "reason": "absolute_model placement for element 1543049 did not retain the requested point; residual is 40.1667 ft.",
+          "coordinateMode": "absolute_model",
+          "requestedLocationX": -33.55,
+          "requestedLocationY": 14.1,
+          "requestedLocationZ": 40.1667,
+          "absoluteModelCorrectionDistanceFt": null,
+          "absoluteModelLocationVerified": null,
+          "worksetId": null,
+          "worksetName": null,
+          "worksetVerified": null,
+          "familySymbolId": null,
+          "hostElementId": null,
+          "linkedHostElementId": null,
+          "hostVerified": null,
+          "levelId": null,
+          "levelVerified": null,
+          "ownerViewId": null,
+          "locationX": null,
+          "locationY": null,
+          "locationZ": null,
+          "inTargetViewCollector": null,
+          "viewSpecificBoundingBoxAvailable": null,
+          "bboxMinX": null,
+          "bboxMinY": null,
+          "bboxMinZ": null,
+          "bboxMaxX": null,
+          "bboxMaxY": null,
+          "bboxMaxZ": null,
+          "warnings": []
+        }
+      ],
+      "warnings": [],
+      "error": "Failed to place family instance at index 0: absolute_model placement for element 1543049 did not retain the requested point; residual is 40.1667 ft."
+    },
+    "content_hash": "sha256:644c28d8ef38b7b075e0342348a4560338a572264e7b1b410ec4a1c13c0bd73d"
+  }
+}

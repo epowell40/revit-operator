@@ -1,0 +1,1126 @@
+{
+  "description": "Exact observed requests and native inline payloads from a disposable sample. Serialization is normalized; raw events retained privately.",
+  "cases": [
+    {
+      "source_event_id": 202918,
+      "source_timestamp": "2026-09-26T07:26:36.542Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543195,
+          "branchElementId": 1543231,
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Blocked",
+        "success": false,
+        "dryRun": false,
+        "mainElementId": 1543195,
+        "branchElementId": 1543231,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -38.262816670473036,
+            -12.120633510969448,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -41.69212314420377,
+              -12.120633510969482,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543240,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -41.69212314420377,
+              -12.120633510969482,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.250033333333334,
+              -8.13750052493438,
+              40.67851102362205
+            ],
+            "connectedOwnerId": 1543136,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.250033333333334,
+              -8.13750052493438,
+              40.67851102362204
+            ]
+          },
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.26518328553109,
+              -12.85804209215312,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543207,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.26518328553109,
+              -12.85804209215312,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": false,
+        "projectedPoint": [
+          -38.262816670473036,
+          -12.120633510969448,
+          40.67851102362204
+        ],
+        "branchToMainDistanceFt": 7.105427357601002e-15,
+        "distanceToMainStartFt": 3.9831534991949615,
+        "distanceToMainEndFt": 0.7374123788424964,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": null,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": false,
+        "connectedAfterCommit": false,
+        "committedFittingVerified": false,
+        "transaction": {
+          "status": "rolled_back",
+          "committed": false,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": false,
+        "transactionGroupRolledBack": true,
+        "rollbackVerified": true,
+        "nativeFailures": [
+          "The branch connector moved beyond the allowed identity/origin guard."
+        ],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    },
+    {
+      "source_event_id": 202964,
+      "source_timestamp": "2026-09-26T07:27:56.186Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543195,
+          "branchElementId": 1543231,
+          "originToleranceFt": 0.5,
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Blocked",
+        "success": false,
+        "dryRun": false,
+        "mainElementId": 1543195,
+        "branchElementId": 1543231,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -38.262816670473036,
+            -12.120633510969448,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -41.69212314420377,
+              -12.120633510969482,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543240,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -41.69212314420377,
+              -12.120633510969482,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.26518328553109,
+              -12.85804209215312,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543207,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.26518328553109,
+              -12.85804209215312,
+              40.67851102362204
+            ]
+          },
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.250033333333334,
+              -8.13750052493438,
+              40.67851102362205
+            ],
+            "connectedOwnerId": 1543136,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.250033333333334,
+              -8.13750052493438,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": false,
+        "projectedPoint": [
+          -38.262816670473036,
+          -12.120633510969448,
+          40.67851102362204
+        ],
+        "branchToMainDistanceFt": 7.105427357601002e-15,
+        "distanceToMainStartFt": 3.9831534991949615,
+        "distanceToMainEndFt": 0.7374123788424964,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": null,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": false,
+        "connectedAfterCommit": false,
+        "committedFittingVerified": false,
+        "transaction": {
+          "status": "rolled_back",
+          "committed": false,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": false,
+        "transactionGroupRolledBack": true,
+        "rollbackVerified": true,
+        "nativeFailures": [
+          "The branch connector moved beyond the allowed identity/origin guard."
+        ],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    },
+    {
+      "source_event_id": 202966,
+      "source_timestamp": "2026-09-26T07:27:57.387Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543216,
+          "branchElementId": 1543244,
+          "originToleranceFt": 0.5,
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Blocked",
+        "success": false,
+        "dryRun": false,
+        "mainElementId": 1543216,
+        "branchElementId": 1543244,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -36.589157404160034,
+            -10.920034043827798,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -28.26100185579622,
+              -10.920034043827824,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543253,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -28.26100185579622,
+              -10.920034043827824,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.58336666666667,
+              -8.137500524934385,
+              40.67851102362205
+            ],
+            "connectedOwnerId": 1543136,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.58336666666667,
+              -8.137500524934385,
+              40.67851102362205
+            ]
+          },
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.61495189427437,
+              -23.314661399703056,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543225,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.61495189427437,
+              -23.314661399703052,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": false,
+        "projectedPoint": [
+          -36.589157404160034,
+          -10.920034043827798,
+          40.67851102362205
+        ],
+        "branchToMainDistanceFt": 0,
+        "distanceToMainStartFt": 2.782539544446058,
+        "distanceToMainEndFt": 12.39465419633527,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": null,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": false,
+        "connectedAfterCommit": false,
+        "committedFittingVerified": false,
+        "transaction": {
+          "status": "rolled_back",
+          "committed": false,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": false,
+        "transactionGroupRolledBack": true,
+        "rollbackVerified": true,
+        "nativeFailures": [
+          "The branch connector moved beyond the allowed identity/origin guard."
+        ],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    },
+    {
+      "source_event_id": 202968,
+      "source_timestamp": "2026-09-26T07:27:58.628Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543219,
+          "branchElementId": 1543257,
+          "originToleranceFt": 0.5,
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Blocked",
+        "success": false,
+        "dryRun": false,
+        "mainElementId": 1543219,
+        "branchElementId": 1543257,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -35.471818359031694,
+            -24.88483152604819,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.71980014488436,
+              -25.84129326835751,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543263,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.71980014488436,
+              -25.84129326835751,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -34.61716341613404,
+              -25.75025394210074,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543228,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -34.61716341613404,
+              -25.750253942100745,
+              40.67851102362204
+            ]
+          },
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.32647330192935,
+              -24.01940910999563,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543225,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.32647330192935,
+              -24.01940910999563,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": false,
+        "projectedPoint": [
+          -35.471818359031694,
+          -24.88483152604819,
+          40.67851102362204
+        ],
+        "branchToMainDistanceFt": 7.105427357601002e-15,
+        "distanceToMainStartFt": 1.2163021950262343,
+        "distanceToMainEndFt": 1.2163021950262316,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": null,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": false,
+        "connectedAfterCommit": false,
+        "committedFittingVerified": false,
+        "transaction": {
+          "status": "rolled_back",
+          "committed": false,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": false,
+        "transactionGroupRolledBack": true,
+        "rollbackVerified": true,
+        "nativeFailures": [
+          "The branch connector moved beyond the allowed identity/origin guard."
+        ],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    }
+  ],
+  "positive_siblings": [
+    {
+      "source_event_id": 203153,
+      "source_timestamp": "2026-09-26T07:58:54.992Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543294,
+          "branchElementId": 1543356,
+          "branchConnectorId": 0,
+          "expectedBranchOriginXyz": [
+            -38.77481617647059,
+            -12.134316770202572,
+            40.67851102362205
+          ],
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Connected",
+        "success": true,
+        "dryRun": false,
+        "mainElementId": 1543294,
+        "branchElementId": 1543356,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -38.77481617647059,
+            -12.134316770202572,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -41.95892729243534,
+              -12.134316770202608,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543365,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -41.95892729243534,
+              -12.134316770202608,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.269765556315235,
+              -12.865595931609878,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543306,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.269765556315235,
+              -12.865595931609878,
+              40.67851102362204
+            ]
+          },
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -38.27633333333333,
+              -8.11080052493438,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543156,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -38.27633333333333,
+              -8.11080052493438,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": true,
+        "projectedPoint": [
+          -38.27077663055207,
+          -12.133620542696915,
+          40.67851102362204
+        ],
+        "branchToMainDistanceFt": 0.504040026766212,
+        "distanceToMainStartFt": 4.022823855484698,
+        "distanceToMainEndFt": 0.7319760872087252,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": 1543414,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": true,
+        "connectedAfterCommit": true,
+        "committedFittingVerified": true,
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543294,
+            1543295,
+            1543296,
+            1543356,
+            1543357,
+            1543359,
+            1543360,
+            1543362,
+            1543363,
+            1543365,
+            1543366,
+            1543367,
+            1543368
+          ],
+          "affected_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543294,
+            1543295,
+            1543296,
+            1543356,
+            1543357,
+            1543358,
+            1543359,
+            1543360,
+            1543362,
+            1543363,
+            1543365,
+            1543366,
+            1543367,
+            1543368,
+            1543414,
+            1543415
+          ],
+          "added_element_ids": [
+            1543414,
+            1543415
+          ],
+          "deleted_element_ids": [
+            1543358
+          ]
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": true,
+        "transactionGroupRolledBack": false,
+        "rollbackVerified": true,
+        "nativeFailures": [],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    },
+    {
+      "source_event_id": 203155,
+      "source_timestamp": "2026-09-26T07:58:56.252Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543329,
+          "branchElementId": 1543382,
+          "branchConnectorId": 0,
+          "expectedBranchOriginXyz": [
+            -36.109375,
+            -10.93478260871056,
+            40.67851102362205
+          ],
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Connected",
+        "success": true,
+        "dryRun": false,
+        "mainElementId": 1543329,
+        "branchElementId": 1543382,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -36.109375,
+            -10.93478260871056,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -27.99419770756465,
+              -10.934782608710586,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543391,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -27.99419770756465,
+              -10.934782608710586,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.60966666666667,
+              -8.110800524934385,
+              40.67851102362205
+            ],
+            "connectedOwnerId": 1543156,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.60966666666667,
+              -8.110800524934385,
+              40.67851102362205
+            ]
+          },
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.615647231893156,
+              -23.44867419111387,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543338,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.615647231893156,
+              -23.44867419111387,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": true,
+        "projectedPoint": [
+          -36.61076772149311,
+          -10.934587104956895,
+          40.67851102362205
+        ],
+        "branchToMainDistanceFt": 0.501392759608659,
+        "distanceToMainStartFt": 2.8237867946849238,
+        "distanceToMainEndFt": 12.514088037469712,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": 1543417,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": true,
+        "connectedAfterCommit": true,
+        "committedFittingVerified": true,
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543329,
+            1543330,
+            1543331,
+            1543382,
+            1543383,
+            1543385,
+            1543386,
+            1543388,
+            1543389,
+            1543391,
+            1543392,
+            1543393,
+            1543394
+          ],
+          "affected_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543329,
+            1543330,
+            1543331,
+            1543382,
+            1543383,
+            1543384,
+            1543385,
+            1543386,
+            1543388,
+            1543389,
+            1543391,
+            1543392,
+            1543393,
+            1543394,
+            1543417,
+            1543418
+          ],
+          "added_element_ids": [
+            1543417,
+            1543418
+          ],
+          "deleted_element_ids": [
+            1543384
+          ]
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": true,
+        "transactionGroupRolledBack": false,
+        "rollbackVerified": true,
+        "nativeFailures": [],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    },
+    {
+      "source_event_id": 203157,
+      "source_timestamp": "2026-09-26T07:58:57.423Z",
+      "request": {
+        "method": "POST",
+        "path": "/revit/connect-existing-mep-branch",
+        "body": {
+          "kind": "duct",
+          "mainElementId": 1543332,
+          "branchElementId": 1543404,
+          "branchConnectorId": 0,
+          "expectedBranchOriginXyz": [
+            -35.84283088235294,
+            -25.329192546614728,
+            40.67851102362205
+          ],
+          "dryRun": false,
+          "verify": true
+        }
+      },
+      "result": {
+        "status": "Connected",
+        "success": true,
+        "dryRun": false,
+        "mainElementId": 1543332,
+        "branchElementId": 1543404,
+        "branchConnector": {
+          "connectorId": 0,
+          "connectorIdBasis": "revit_native_connector_id",
+          "origin": [
+            -35.84283088235294,
+            -25.329192546614728,
+            40.67851102362205
+          ],
+          "domain": "DomainHvac",
+          "shape": "Round",
+          "size": {
+            "kind": "round",
+            "diameterFt": 0.6666666666666666
+          },
+          "physicalConnectedOwnerIds": []
+        },
+        "mainConnectorCountBefore": 2,
+        "preexistingBranchPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.50581533558737,
+              -25.840674209792965,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543410,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.50581533558737,
+              -25.840674209792965,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingMainPhysicalConnections": [
+          {
+            "connectorId": 1,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -34.723044607581464,
+              -25.755994583953637,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543341,
+            "connectedConnectorId": 1,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -34.723044607581464,
+              -25.755994583953637,
+              40.67851102362204
+            ]
+          },
+          {
+            "connectorId": 0,
+            "connectorIdBasis": "revit_native_connector_id",
+            "origin": [
+              -36.32277932894097,
+              -24.156145652931382,
+              40.67851102362204
+            ],
+            "connectedOwnerId": 1543338,
+            "connectedConnectorId": 2,
+            "connectedConnectorIdBasis": "revit_native_connector_id",
+            "connectedOrigin": [
+              -36.32277932894097,
+              -24.156145652931382,
+              40.67851102362204
+            ]
+          }
+        ],
+        "preexistingConnectionsPreservedDuringTransaction": true,
+        "projectedPoint": [
+          -35.49629879213834,
+          -24.982685194556577,
+          40.67851102362204
+        ],
+        "branchToMainDistanceFt": 0.4900528895730052,
+        "distanceToMainStartFt": 1.1688617076384813,
+        "distanceToMainEndFt": 1.0935855913756238,
+        "expectedTakeoffTypeId": null,
+        "createdFittingId": 1543420,
+        "previewFittingId": null,
+        "createdTypeId": 696624,
+        "createdFamilyName": "Round Takeoff",
+        "createdTypeName": "Standard",
+        "requestedWorkset": null,
+        "fittingWorkset": null,
+        "worksetVerified": true,
+        "connectedDuringTransaction": true,
+        "connectedAfterCommit": true,
+        "committedFittingVerified": true,
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543331,
+            1543332,
+            1543333,
+            1543404,
+            1543405,
+            1543407,
+            1543408,
+            1543410,
+            1543411
+          ],
+          "affected_element_ids": [
+            101014,
+            378358,
+            669230,
+            1321945,
+            1543331,
+            1543332,
+            1543333,
+            1543404,
+            1543405,
+            1543406,
+            1543407,
+            1543408,
+            1543410,
+            1543411,
+            1543420,
+            1543421
+          ],
+          "added_element_ids": [
+            1543420,
+            1543421
+          ],
+          "deleted_element_ids": [
+            1543406
+          ]
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": true,
+        "transactionGroupRolledBack": false,
+        "rollbackVerified": true,
+        "nativeFailures": [],
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "nextAction": null
+      }
+    }
+  ]
+}

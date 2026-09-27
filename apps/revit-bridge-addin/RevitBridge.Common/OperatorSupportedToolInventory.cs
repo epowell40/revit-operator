@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:d78c047ee3eab8bf4edd8887629d25f47ca44d2ec292eaec5e8c5c310c9ff8b5";
+        public const string InventoryHash = "sha256:13e1bf185dbe4474353a877397051a8e41d0446a3f8bb96fdcbf237b04550cf5";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -25,6 +25,7 @@ namespace RevitBridge.Common
             "POST /revit/close-active-model",
             "POST /revit/close-doc",
             "POST /revit/configure-schedule",
+            "POST /revit/connect-existing-mep-branch",
             "POST /revit/connect-mep-elements",
             "POST /revit/create-dimension",
             "POST /revit/create-drafting-view",
@@ -46,6 +47,7 @@ namespace RevitBridge.Common
             "POST /revit/duplicate-sheet",
             "POST /revit/duplicate-type-and-swap-instance",
             "POST /revit/duplicate-view",
+            "POST /revit/existing-conditions-mep-draft-workflow",
             "POST /revit/export-elements-xlsx",
             "POST /revit/export-image",
             "POST /revit/export-pdf",
@@ -62,6 +64,7 @@ namespace RevitBridge.Common
             "POST /revit/get-titleblock-info",
             "POST /revit/inspect-exported-files",
             "POST /revit/inspect-family-content",
+            "POST /revit/linked-room-boundaries",
             "POST /revit/list-element-types",
             "POST /revit/load-family",
             "POST /revit/load-family-doc",

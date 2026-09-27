@@ -70,6 +70,8 @@ export type EvidenceProjectionV1 = {
   inline_payload?: unknown;
   /** Host documentation only: not eligible for task completion or verification. */
   tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
+  /** Observed native topology presentation; raw evidence remains authoritative. */
+  connector_graph?: import("./connector_graph_projection.js").ConnectorGraphProjection;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];

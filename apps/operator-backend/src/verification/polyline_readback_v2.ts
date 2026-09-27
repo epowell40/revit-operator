@@ -6,11 +6,35 @@ const id=(v:any)=>Number.isSafeInteger(v)&&v>0;
 const near=(a:any,b:number)=>(typeof a==='number'||typeof a==='string'&&a.trim()!=='')&&Number.isFinite(Number(a))&&Math.abs(Number(a)-b)<=1e-6;
 const sameIds=(a:any,b:number[])=>Array.isArray(a)&&a.length===b.length&&a.every(id)&&new Set(a).size===a.length&&a.every(x=>b.includes(x));
 const allowed=new Set(['kind','viewId','roomNumber','frameId','levelId','levelName','systemType','ductTypeId','ductType','ductShape','ductSize','diameter','segmentSizes','sizePolicy','elevationPolicy','routingMode','points','connectSegments','connectToExisting','requireExistingEndpointConnections','requiredExistingEndpoint','expectedExistingStartOwnerId','expectedExistingEndOwnerId','externalConnectionToleranceFt','verify','apply','visualVerify','visualViewId','imageSize','focusPaddingFt']);
+/** Normalize the native endpoint's reviewed defaults, not missing geometry.
+ * The shared proof still requires explicit finite XYZ and explicit parseable
+ * dimensions, even when native fallback policies were selected or omitted. */
+export function createMepRouteReadbackMatchesV2(input:unknown,nativeApply:unknown,parameters:unknown,connectors:unknown):boolean{
+ const request=row(input),body=row(request.body);
+ const points=Array.isArray(body.points)?body.points.map((value:unknown)=>{
+  const p=row(value);
+  if(Object.keys(p).length===1&&Array.isArray(p.xyz)&&p.xyz.length===3&&p.xyz.every(Number.isFinite))return {xyz:p.xyz};
+  if(Object.keys(p).length===3&&['x','y','z'].every(k=>typeof p[k]==='number'&&Number.isFinite(p[k])))return {xyz:[p.x,p.y,p.z]};
+  return null;
+ }):null;
+ if(request.method!=='POST'||request.path!=='/revit/create-mep-route'||body.dryRun!==false
+  ||Object.hasOwn(body,'apply')||!points||points.some(p=>!p)
+  ||body.sizePolicy!==undefined&&!['explicit_required','use_default_with_warning'].includes(body.sizePolicy)
+  ||body.elevationPolicy!==undefined&&!['explicit_required','resolve_context_default'].includes(body.elevationPolicy))return false;
+ const {dryRun:_,...routeBody}=body;
+ const normalized={method:'POST',path:'/revit/mep-route-workflow',body:{...routeBody,
+  routingMode:body.routingMode===undefined?'polyline':body.routingMode,
+  connectSegments:body.connectSegments===undefined?true:body.connectSegments,
+  connectToExisting:body.connectToExisting===undefined?false:body.connectToExisting,
+  sizePolicy:'explicit_required',elevationPolicy:'explicit_required',points,apply:true}};
+ return polylineReadbackMatchesV2(normalized,nativeApply,parameters,connectors);
+}
 export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,parameters:unknown,connectors:unknown):boolean{
  const request=row(input),b=row(request.body),apply=row(row(nativeApply).applyResult??nativeApply);
  if(request.path!=='/revit/mep-route-workflow'||b.kind!=='duct'||b.apply!==true||b.verify===false
-  ||b.routingMode!=='polyline'||typeof b.connectSegments!=='boolean'||typeof b.connectToExisting!=='boolean'
-  ||typeof b.requireExistingEndpointConnections!=='boolean'||b.requireExistingEndpointConnections&&!b.connectToExisting
+  ||!['polyline','orthogonal'].includes(b.routingMode)||typeof b.connectSegments!=='boolean'||typeof b.connectToExisting!=='boolean'
+  ||b.requireExistingEndpointConnections!==undefined&&typeof b.requireExistingEndpointConnections!=='boolean'
+  ||b.requireExistingEndpointConnections&&!b.connectToExisting
   ||b.sizePolicy!=='explicit_required'||b.elevationPolicy!=='explicit_required'
   ||(b.levelId===undefined?typeof b.levelName!=='string'||!b.levelName.trim():!id(b.levelId))
   ||(b.levelName!==undefined&&(typeof b.levelName!=='string'||!b.levelName.trim()))
@@ -19,7 +43,6 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
   ||!['round','rectangular'].includes(b.ductShape))return false;
  const requiredEndpoint=b.requiredExistingEndpoint;
  if(requiredEndpoint!==undefined&&(!['start','end','both'].includes(requiredEndpoint)||!b.connectToExisting
-  ||b.requireExistingEndpointConnections&&requiredEndpoint!=='both'
   ||(requiredEndpoint==='start'||requiredEndpoint==='both')&&!id(b.expectedExistingStartOwnerId)
   ||(requiredEndpoint==='end'||requiredEndpoint==='both')&&!id(b.expectedExistingEndOwnerId)
   ||requiredEndpoint==='start'&&b.expectedExistingEndOwnerId!==undefined
@@ -27,6 +50,9 @@ export function polylineReadbackMatchesV2(input:unknown,nativeApply:unknown,para
   ||requiredEndpoint===undefined&&(b.expectedExistingStartOwnerId!==undefined||b.expectedExistingEndOwnerId!==undefined))return false;
  const points=b.points.map((p:Row)=>{p=row(p);return Object.keys(p).length===1&&Array.isArray(p.xyz)&&p.xyz.length===3&&p.xyz.every(Number.isFinite)?p.xyz:null;});
  if(points.some((p:unknown)=>!p)||points.length>2&&!b.connectSegments)return false;
+ const coordinates=points as number[][];
+ if(b.routingMode==='orthogonal'&&coordinates.slice(1).some((p,i)=>
+  p.reduce((changed,value,axis)=>changed+(Math.abs(value-coordinates[i]![axis]!)>1e-6?1:0),0)!==1))return false;
  const system=({'Supply Air':'SupplyAir','Return Air':'ReturnAir','Exhaust Air':'ExhaustAir'} as Row)[b.systemType];
  if(!system)return false;
  if(b.ductShape==='rectangular'&&b.diameter!==undefined)return false;

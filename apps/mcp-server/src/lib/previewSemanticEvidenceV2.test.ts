@@ -1,8 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import { normalizeTextNoteTextV2, previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
+
+test("retained C105 staged duct preview proves the requested stage was rolled back", () => {
+  const fixture = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c105-registered-stage-preview.json", import.meta.url), "utf8"));
+  const evaluate = (payload: unknown = fixture.payload, requestBody: unknown = fixture.request) => previewSemanticEvidenceV2({
+    path: "/revit/existing-conditions-mep-draft-workflow", payload, requestBody,
+    requestedEffect: "preview", authoritativePreview: true
+  });
+  assert.equal(evaluate().admitted, true);
+  for (const payload of [
+    { ...fixture.payload, status: "Applied" },
+    { ...fixture.payload, rollbackVerified: false },
+    { ...fixture.payload, residualCreatedElementIds: [1543130] },
+    { ...fixture.payload, stageKey: "other" },
+    { ...fixture.payload, operationCount: 0 },
+    { ...fixture.payload, operations: [{ ...fixture.payload.operations[0], actionKey: "other" }] },
+    { ...fixture.payload, targetViewAcceptance: { ...fixture.payload.targetViewAcceptance, passed: false } }
+  ]) assert.equal(evaluate(payload).admitted, false);
+  assert.equal(evaluate(fixture.payload, { ...fixture.request, dryRun: false }).admitted, false);
+});
 
 test("duct previews require exact native geometry, profile, size and empty committed identities", () => {
   for (const legacy of [false, true]) for (const round of [false, true]) {
@@ -117,6 +137,60 @@ test("native status alone cannot admit an unknown preview route", () => {
     authoritativePreview: true
   });
   assert.deepEqual(evidence, { recognized: false, admitted: false, facts: [] });
+});
+
+test("C81 native family preview must admit its exact rolled-back proposal and reject altered placement", () => {
+  const requestBody = { familyName: "HeatRecoveryUnit", typeName: "Heat Recovery Unit (HRU)", levelName: "L4",
+    x: -34.4, y: -7.5, z: 41.1666666667, rotationDegrees: 0, dryRun: true };
+  const payload = { status: "Dry Run", dryRun: true, requestedCount: 1, familyName: "HeatRecoveryUnit",
+    symbolName: "Heat Recovery Unit (HRU)", levelName: "L4", targetView: null,
+    planned: [{ index: 0, x: -34.4, y: -7.5, z: 41.1666666667, rotationDegrees: 0 }],
+    transaction: { status: "rolled_back", committed: false, modified_element_ids: [],
+      affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] } };
+  const evaluate = (value: unknown = payload, body: unknown = requestBody, authoritativePreview = true) =>
+    previewSemanticEvidenceV2({ path: "/revit/create-family-instance", payload: value,
+      requestBody: body, requestedEffect: "preview", authoritativePreview });
+  assert.equal(evaluate().admitted, true, "exact C81 live payload failed with preview_semantic_adapter_missing");
+  assert.equal(evaluate().facts.some(fact => fact.fact_id === "task.preview_valid" && fact.value === true), true);
+  assert.equal(evaluate(payload, requestBody, false).admitted, false);
+  for (const invalid of [
+    { ...payload, status: "Placed" }, { ...payload, dryRun: false },
+    { ...payload, requestedCount: 2 }, { ...payload, symbolName: "Other" },
+    { ...payload, planned: [{ ...payload.planned[0], x: -31.4 }] },
+    { ...payload, planned: [{ ...payload.planned[0], elementId: 1543000 }] },
+    { ...payload, transaction: { ...payload.transaction, committed: true } },
+    { ...payload, transaction: { ...payload.transaction, added_element_ids: [1543000] } }
+  ]) assert.equal(evaluate(invalid).admitted, false, JSON.stringify(invalid));
+});
+
+test("C81 bulk family preview admits the exact level-based placement proposal and rejects shifted or committed output", () => {
+  const body = { levelName: "L4", viewId: 1363433, familySymbolId: 1365172,
+    instances: [{ x: -37.4, y: -5.6, z: 44.1666667, coordinateMode: "absolute_model", rotationDegrees: 0 }],
+    dryRun: true, idempotency: { enabled: true, toleranceFt: 0.05 }, behavior: "fail_fast" };
+  const row = { index: 0, status: "planned", elementId: null, reason: "dryRun: rolled back",
+    coordinateMode: "absolute_model", requestedLocationX: -37.4, requestedLocationY: -5.6,
+    requestedLocationZ: 44.1666667, absoluteModelCorrectionDistanceFt: 0,
+    absoluteModelLocationVerified: true, familySymbolId: 1365172, hostElementId: null,
+    linkedHostElementId: null, locationX: -37.4, locationY: -5.6, locationZ: 44.1666667,
+    inTargetViewCollector: true, viewSpecificBoundingBoxAvailable: true,
+    bboxMinX: -39.06666666666667, bboxMinY: -7.945800524934386, bboxMinZ: 44.1666667,
+    bboxMaxX: -35.684120734908134, bboxMaxY: -3.2541994750656116, bboxMaxZ: 45.190288747244104,
+    warnings: [] };
+  const result = { transaction: { status: "rolled_back", committed: false, modified_element_ids: [],
+    affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] }, status: "Planned",
+    familyPlacementType: "OneLevelBased", requiresExplicitHost: false,
+    unhostedWorkPlanePlacementAllowed: false, placedCount: 0, skippedCount: 0, failedCount: 0,
+    selectedWorksetId: null, selectedWorksetName: null, elementIds: [], results: [row], warnings: [], error: null };
+  const evaluate = (payload: unknown = result, requestBody: unknown = body) => previewSemanticEvidenceV2({
+    path: "/revit/place-families", payload, requestBody, requestedEffect: "preview", authoritativePreview: true });
+  assert.equal(evaluate().admitted, true, "exact live route failed with preview_semantic_adapter_missing");
+  for (const invalid of [
+    { ...result, status: "Placed" }, { ...result, placedCount: 1 },
+    { ...result, transaction: { ...result.transaction, committed: true } },
+    { ...result, results: [{ ...row, locationX: -33.4 }] },
+    { ...result, results: [{ ...row, elementId: 1543000 }] },
+    { ...result, results: [{ ...row, inTargetViewCollector: false }] }
+  ]) assert.equal(evaluate(invalid).admitted, false, JSON.stringify(invalid));
 });
 
 test("workbook preview binds the exact selected instances, parameters, and output without claiming a file exists", () => {

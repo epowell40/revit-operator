@@ -4,7 +4,7 @@ import { assignmentDirections, steerAssignment } from "./task_steering.js";
 import { listTaskNavigationAsync } from "./task_navigation.js";
 import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
-import { recoverRetainedAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
+import { recoverAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
@@ -37,6 +37,11 @@ import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } 
 import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
+
+const OPERATION_HANDOFF_SCHEMA = "revit-operator.operation-handoff/v1";
+function prefersCompactOperationHandoff(req: http.IncomingMessage): boolean {
+  return req.headers["x-operator-assignment-handoff"] === "operation_handoff_v1";
+}
 
 function v2Binding(body: JsonMap | null): AssignmentKernelBindingInputV2 {
   const session_id = typeof body?.session_id === "string" ? body.session_id.trim().slice(0, 180) : "";
@@ -95,7 +100,8 @@ export async function handleAssignmentHttpRoute(
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       if (url.pathname.endsWith("/steer")) {
         const receipt = await steerAssignment({ binding, command_id: body?.command_id as string,
-          text: body?.text as string, expected_turn_id: body?.expected_turn_id as string | null });
+          text: body?.text as string, expected_turn_id: body?.expected_turn_id as string | null,
+          ...(body?.checkpoint !== undefined ? { checkpoint: body.checkpoint as import("./task_steering.js").CheckpointContinuationRequest } : {}) });
         writeJson(res, 200, { ok: true, receipt });
       } else {
         const snapshot = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
@@ -114,7 +120,7 @@ export async function handleAssignmentHttpRoute(
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
-      const recovered = recoverRetainedAssignmentCompletionsV2(binding);
+      const recovered = await recoverAssignmentCompletionsV2(binding);
       writeJson(res, 200, { ok: true, assignment_snapshot_v2: recovered.snapshot,
         recovered_operation_ids: recovered.recovered_operation_ids,
         unresolved_operation_ids: recovered.unresolved_operation_ids });
@@ -220,7 +226,9 @@ export async function handleAssignmentHttpRoute(
       writeJson(res, 201, {
         ok: true,
         operation_lease_v2: lease,
-        assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id)
+        ...(prefersCompactOperationHandoff(req)
+          ? { schema: OPERATION_HANDOFF_SCHEMA }
+          : { assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id) })
       });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -241,7 +249,9 @@ export async function handleAssignmentHttpRoute(
         throw new Error("assignment_kernel_v2_operation_binding_mismatch");
       }
       markAssignmentKernelOperationDispatchStartedV2(leaseFromOperation(operation));
-      writeJson(res, 202, { ok: true, assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id) });
+      writeJson(res, 202, { ok: true, ...(prefersCompactOperationHandoff(req)
+        ? { schema: OPERATION_HANDOFF_SCHEMA, operation_id: operation.operation_id }
+        : { assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id) }) });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
@@ -266,7 +276,9 @@ export async function handleAssignmentHttpRoute(
         operation_id: operation.operation_id,
         evidence_refs: settled.evidence_refs,
         evidence_projections: settled.evidence_projections,
-        assignment_snapshot_v2: settled.snapshot
+        ...(prefersCompactOperationHandoff(req)
+          ? { schema: OPERATION_HANDOFF_SCHEMA, result_id: settled.result.result_id }
+          : { assignment_snapshot_v2: settled.snapshot })
       });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -279,9 +291,10 @@ export async function handleAssignmentHttpRoute(
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
-      const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any,
+      const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any, completion_proposal: body?.completion_proposal as any,
         item_id: body?.item_id as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
-        operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number });
+        operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number,
+        followup: body?.followup as any, followup_start: body?.followup_start as number });
       writeJson(res, 200, result);
     } catch (error) { writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
     return true;

@@ -47,28 +47,34 @@ namespace RevitBridge.Logic.Handlers
             if (view.IsTemplate) throw new ArgumentException("Cannot activate a view template.");
 
             var warnings = new List<string>();
-            var activationPending = false;
-
-            if (uidoc.ActiveView == null || uidoc.ActiveView.Id != view.Id)
+            OperatorViewActivationOutcome activation;
+            try
             {
-                try
+                activation = OperatorViewActivation.Attempt(targetViewId,
+                    () => uidoc.ActiveView == null ? (long?)null : ElementIdCompat.GetValue(uidoc.ActiveView.Id),
+                    () => uidoc.ActiveView = view, () => uidoc.RequestViewChange(view), IsTemporarilyDisabled);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to activate view {targetViewId} ('{view.Name}'): {ex.Message}", ex);
+            }
+            var activationPending = activation.ActivationPending;
+            if (activation.DeferredRequestAccepted)
+                warnings.Add("Revit accepted a deferred view-change request; activation is confirmed only by the observed active view.");
+            if (activationPending)
+            {
+                // Never show elements or zoom an earlier active view. Return to
+                // Revit so its asynchronous view change can actually execute.
+                return Task.FromResult<object>(new
                 {
-                    uidoc.ActiveView = view;
-                }
-                catch (Exception ex) when (CanRequestDeferredActivation(p) && IsTemporarilyDisabled(ex))
-                {
-                    // Revit can keep synchronous view activation disabled after
-                    // OpenAndActivateDocument even though the document is otherwise
-                    // healthy. RequestViewChange queues the same non-mutating change
-                    // for the next idle cycle, after this external event returns.
-                    uidoc.RequestViewChange(view);
-                    activationPending = true;
-                    warnings.Add("Synchronous view activation was temporarily disabled; Revit accepted a deferred view-change request.");
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException($"Failed to activate view {targetViewId} ('{view.Name}'): {ex.Message}", ex);
-                }
+                    ok = true, activationPending = true,
+                    focusPending = p.zoomToFit || (p.showElementIds?.Count ?? 0) > 0 || p.bboxMinXyz != null || p.bboxMaxXyz != null,
+                    activeViewId = activation.ActiveViewId, activeViewName = uidoc.ActiveView?.Name,
+                    requestedViewId = targetViewId, requestedViewName = view.Name,
+                    shownElementIds = Array.Empty<long>(), notShownElementIds = Array.Empty<long>(), didZoom = false,
+                    nextAction = "Allow Revit to process the view change, then repeat this request to confirm activation and apply the requested focus. No focus was applied yet.",
+                    warnings
+                });
             }
 
             var shown = new List<long>();
@@ -135,7 +141,13 @@ namespace RevitBridge.Logic.Handlers
             UIView? uiView = null;
             try
             {
-                uiView = uidoc.GetOpenUIViews().FirstOrDefault(v => v.ViewId == view.Id);
+                // ShowElements may itself affect navigation. Never zoom the
+                // requested UIView if it is no longer the displayed view.
+                activationPending = uidoc.ActiveView == null || uidoc.ActiveView.Id != view.Id;
+                if (!activationPending)
+                    uiView = uidoc.GetOpenUIViews().FirstOrDefault(v => v.ViewId == view.Id);
+                else
+                    warnings.Add("The active view changed during focus; repeat activation before requesting further focus.");
             }
             catch (Exception ex)
             {
@@ -190,21 +202,16 @@ namespace RevitBridge.Logic.Handlers
             {
                 ok = true,
                 activationPending,
-                activeViewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                activeViewName = view.Name,
+                focusPending = activationPending,
+                activeViewId = uidoc.ActiveView == null ? (long?)null : ElementIdCompat.GetValue(uidoc.ActiveView.Id),
+                activeViewName = uidoc.ActiveView?.Name,
                 requestedViewId = targetViewId,
+                requestedViewName = view.Name,
                 shownElementIds = shown,
                 notShownElementIds = notShown.Distinct().ToList(),
                 didZoom,
                 warnings
             });
-        }
-
-        private static bool CanRequestDeferredActivation(Params p)
-        {
-            var hasShowElements = p.showElementIds != null && p.showElementIds.Count > 0;
-            var hasBoundingBox = p.bboxMinXyz != null || p.bboxMaxXyz != null;
-            return !hasShowElements && !hasBoundingBox;
         }
 
         private static bool IsTemporarilyDisabled(Exception exception)

@@ -1,14 +1,22 @@
 import { createHash } from "node:crypto";
-import { appendEvent, latestCommandEvent, recentCommandEvents } from "../memory/sqlite_store.js";
+import { appendEvent, latestCommandEvent, recentCommandEvents, getConversationTurn } from "../memory/sqlite_store.js";
+import { getGoal } from "../goals/service.js";
+import { appendCurrentAssignmentKernelEventV2, normalizeAssignmentKernelJournalV2 } from "./assignment_kernel_v2_store.js";
+import { assertAdvisoryCheckpointContinuationV1 } from "../domain/assignment-kernel/reducer.js";
+import { canonicalJsonV2 } from "../domain/assignment-kernel/canonical.js";
 import { activeProviderTurnForBinding } from "../codex/active_turns.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
 import { requestAssignmentInputV2, supplyAssignmentInputResultV2, type AssignmentKernelBindingInputV2 } from "./assignment_kernel_v2_lifecycle.js";
 
 const KIND = "task.steering";
+export type CheckpointContinuationRequest = Readonly<{
+  review_id: string; expected_control_command_id: string | null; document_fingerprint: string;
+}>;
 export type SteeringReceipt = {
   command_id: string; binding: AssignmentKernelBindingInputV2; text: string; thread_id: string | null; turn_id: string | null;
   state: "saved" | "sending" | "accepted" | "delivered" | "unconfirmed" | "rejected";
   updated_at: string; error?: string;
+  checkpoint?: CheckpointContinuationRequest;
 };
 function save(receipt: SteeringReceipt): SteeringReceipt {
   if (!appendEvent(receipt.binding.session_id,"user",KIND,receipt)) throw new Error("The direction could not be saved. It was not sent again.");
@@ -25,14 +33,16 @@ const same = (a: AssignmentKernelBindingInputV2,b: AssignmentKernelBindingInputV
  * against the new direction. The original document/effect authority stays fenced. */
 export async function steerAssignment(input: {
   binding: AssignmentKernelBindingInputV2; command_id: string; text: string; expected_turn_id: string | null;
+  checkpoint?: CheckpointContinuationRequest;
 }): Promise<SteeringReceipt> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(input.command_id) || typeof input.text !== "string" || !input.text.trim() || input.text.length > 8000)
     throw new Error("A direction and a valid command identity are required.");
   if (input.expected_turn_id !== null && (typeof input.expected_turn_id !== "string" || !input.expected_turn_id || input.expected_turn_id.length > 240))
     throw new Error("The current provider-turn fence is required.");
+  if (input.checkpoint !== undefined) return continueAdvisoryCheckpoint(input);
   const previous = latest(input.binding.session_id,input.command_id);
   if (previous) {
-    if (!same(previous.binding,input.binding) || previous.text !== input.text || previous.turn_id !== input.expected_turn_id)
+    if (!same(previous.binding,input.binding) || previous.text !== input.text || previous.turn_id !== input.expected_turn_id || previous.checkpoint)
       throw new Error("This direction identity was already used for different content or a different turn.");
     return previous;
   }
@@ -66,6 +76,53 @@ export async function steerAssignment(input: {
     if (observed?.state === "delivered") return observed;
     return save({...receipt,state:"unconfirmed",updated_at:new Date().toISOString(),error:"The direction is saved, but delivery has not been confirmed. It will not be sent again automatically."});
   }
+}
+
+/** User-only steering seam: retain direction first, release its checkpoint last.
+ * No provider starts here, and a Pause is never changed by this action. */
+function continueAdvisoryCheckpoint(input: {
+  binding: AssignmentKernelBindingInputV2; command_id: string; text: string; expected_turn_id: string | null;
+  checkpoint?: CheckpointContinuationRequest;
+}): SteeringReceipt {
+  const checkpoint = input.checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object" || typeof checkpoint.review_id !== "string" || !checkpoint.review_id || checkpoint.review_id.length > 500
+    || (checkpoint.expected_control_command_id !== null && typeof checkpoint.expected_control_command_id !== "string")
+    || typeof checkpoint.document_fingerprint !== "string" || checkpoint.document_fingerprint.length > 500 || input.expected_turn_id !== null)
+    throw new Error("A current checkpoint, document and execution-control fence are required.");
+  const resolved = assignmentKernelV2ForBinding(input.binding);
+  if (!resolved) throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+  const previous = latest(input.binding.session_id, input.command_id);
+  if (previous && (!same(previous.binding,input.binding) || previous.text !== input.text || previous.turn_id !== null
+    || canonicalJsonV2(previous.checkpoint ?? null) !== canonicalJsonV2(checkpoint)))
+    throw new Error("This direction identity was already used for different content or a different checkpoint.");
+  const variableId = "user_direction_" + createHash("sha256").update(input.command_id).digest("hex").slice(0,32);
+  const body = { event_type: "review_resolved" as const, review_id: checkpoint.review_id, decision: "continue_advisory_checkpoint_v1",
+    continuation: { command_id: input.command_id, expected_control_command_id: checkpoint.expected_control_command_id,
+      document_fingerprint: checkpoint.document_fingerprint, direction_variable_id: variableId, direction_text: input.text } };
+  const eventId = `checkpoint-continued:${input.command_id}`;
+  const priorResolution = normalizeAssignmentKernelJournalV2(getGoal(input.binding.assignment_id)?.assignment_kernel_v2).events.find(event => event.event_id === eventId);
+  if (priorResolution) {
+    // Revalidate the event body through the existing exact-event idempotency path.
+    // An old retry returns its receipt even if a newer checkpoint now exists.
+    appendCurrentAssignmentKernelEventV2({ goal_id: input.binding.assignment_id, binding: resolved.binding,
+      event_id: eventId, actor: "authenticated-user", body });
+    if (!previous) throw new Error("The saved continuation receipt is unavailable. No work was restarted.");
+    return previous;
+  }
+  if (activeProviderTurnForBinding(input.binding)) throw new Error("Wait for the active provider turn to settle before continuing its checkpoint.");
+  assertAdvisoryCheckpointContinuationV1(resolved.snapshot, checkpoint.review_id, body.continuation, new Date().toISOString(), true);
+  const receipt = previous ?? save({command_id:input.command_id,binding:{...input.binding},text:input.text,
+    thread_id:null,turn_id:null,state:"saved",updated_at:new Date().toISOString(),checkpoint:{...checkpoint}});
+  requestAssignmentInputV2({binding:input.binding,clarification_id:input.command_id,variable_ids:[variableId],new_variable_ids:[variableId],question:"Additional direction from the user"});
+  supplyAssignmentInputResultV2({binding:input.binding,clarification_id:input.command_id,external_values:{[variableId]:input.text}});
+  const chat = getConversationTurn(input.binding.session_id,input.command_id).find(entry => entry.role === "user");
+  if (chat && chat.text !== input.text) throw new Error("The saved follow-up conversation entry conflicts with this command.");
+  if (!chat && !appendEvent(input.binding.session_id,"user","chat.message",{text:input.text,message_id:input.command_id,
+    display:{source:"ui_context",message_id:input.command_id,text:input.text},steering:true}))
+    throw new Error("The direction is saved but its conversation entry could not be saved. The checkpoint remains stopped.");
+  appendCurrentAssignmentKernelEventV2({goal_id:input.binding.assignment_id,binding:resolved.binding,
+    event_id:eventId,actor:"authenticated-user",body});
+  return receipt;
 }
 
 export function observeSteeringDelivery(sessionId: string, threadId: string, turnId: string, notification: any): void {

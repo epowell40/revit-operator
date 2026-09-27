@@ -173,7 +173,7 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
       assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
       if (path.basename(file) === "reducer.ts") {
-        assert.match(source, /import \{ nativeArtifactResultEffectV2 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+        assert.match(source, /import \{ nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
       }
       if (path.basename(file) === "operation.ts") {
         assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
@@ -187,6 +187,12 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       if (path.basename(file) === "execution_failure.ts") {
         assert.match(source, /ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA/);
       }
+    }
+    for (const match of source.matchAll(/^\s*(?:import|export)\b[^\r\n]*?from\s+["']([^"']+)["']/gm)) {
+      const specifier = match[1]!;
+      assert.ok(specifier.startsWith("./") || specifier.startsWith("../")
+        || specifier === "@revitoperator/payload-digest-v2" || specifier === "@revitoperator/assignment-kernel-v2-contracts",
+        `${file}: non-domain import ${specifier}`);
     }
     const withoutSharedContracts = source
       .replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract")
@@ -240,13 +246,25 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
   const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
   const barrierAdmissionAt = brain.indexOf("assignmentTerminalBarrier = beginAssignmentKernelTerminalBarrierV2");
   const notificationBindAt = brain.indexOf("bindTurnNotificationSource(activeClient);", barrierAdmissionAt);
-  const providerStartAt = brain.indexOf("return await activeClient.startBoundTurn({", barrierAdmissionAt);
-  assert.ok(barrierAdmissionAt >= 0 && notificationBindAt > barrierAdmissionAt && providerStartAt > notificationBindAt,
-    "terminality must be barred and provider notifications captured before provider execution starts");
+  const providerInputAt = brain.indexOf("const providerInput = await inputForProviderThread(threadId);", notificationBindAt);
+  const providerGuardAt = brain.indexOf("return await startCodexProviderTurnWhenActive({", providerInputAt);
+  const providerStartAt = brain.indexOf("() => activeClient.startBoundTurn({", providerGuardAt);
+  assert.ok(barrierAdmissionAt >= 0 && notificationBindAt > barrierAdmissionAt && providerInputAt > notificationBindAt
+    && providerGuardAt > providerInputAt && providerStartAt > providerGuardAt,
+    "terminality must be barred, notifications bound, and asynchronous input prepared before the final guarded provider start");
   const fallbackNotificationAt = brain.indexOf("bindTurnNotificationSource(c);", providerStartAt);
-  const fallbackStartAt = brain.indexOf("start = await c.startBoundTurn({", fallbackNotificationAt);
-  assert.ok(fallbackNotificationAt > providerStartAt && fallbackStartAt > fallbackNotificationAt,
-    "missing-thread recovery must retain the barrier and bind notifications before its instruction-bound provider start");
+  const fallbackInputAt = brain.indexOf("const providerInput = await inputForProviderThread(threadId);", fallbackNotificationAt);
+  const fallbackGuardAt = brain.indexOf("start = await startCodexProviderTurnWhenActive({", fallbackInputAt);
+  const fallbackStartAt = brain.indexOf("() => c.startBoundTurn({", fallbackGuardAt);
+  assert.ok(fallbackNotificationAt > providerStartAt && fallbackInputAt > fallbackNotificationAt
+    && fallbackGuardAt > fallbackInputAt && fallbackStartAt > fallbackGuardAt,
+    "missing-thread recovery must retain the barrier and recheck control after replacement-thread input setup");
+  assert.equal((brain.match(/\b(?:activeClient|c)\.startBoundTurn\(/g) ?? []).length, 2,
+    "both provider starts must be accounted for by these guarded branches");
+  for (const [guardAt, startAt] of [[providerGuardAt, providerStartAt], [fallbackGuardAt, fallbackStartAt]]) {
+    assert.match(brain.slice(guardAt, startAt), /signal:\s*cb\.abortSignal,\s*binding:\s*assignmentKernelV2\?\.binding,[\s\S]*readSnapshot:\s*\(\) => assignmentKernelV2 \? currentCodexAssignmentSnapshotV2\(assignmentKernelV2\.binding\) : null\s*\},\s*$/,
+      "each immediate start guard must use the current control signal and exact current canonical binding");
+  }
   assert.doesNotMatch(brain, /(?:activeClient|c)\.startTurn\(/, "neither provider start may bypass instruction binding");
   const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
   const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
@@ -288,10 +306,13 @@ test("every V2 provider exit records canonical failure or returns already-earned
     "an already-complete Assignment must return its terminal result instead of an infrastructure error");
   assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
     "a normally returned interrupted Codex turn must not bypass V2 settlement");
-  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding)");
+  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference)");
+  const progressStopAt = brain.indexOf("if (!progression.prompt) {", progressDecisionAt);
+  const progressReturnAt = brain.indexOf("return {", progressStopAt);
   const providerBootstrapAt = brain.indexOf("c = await getClient(workspaceRoot, threadProfile)");
-  assert.ok(progressDecisionAt >= 0 && providerBootstrapAt > progressDecisionAt,
-    "canonical progress must admit reasoning before any provider connection or thread bootstrap");
+  assert.ok(progressDecisionAt >= 0 && progressStopAt > progressDecisionAt && progressReturnAt > progressStopAt
+    && providerBootstrapAt > progressReturnAt,
+    "both default and thin turns must admit canonical progress, returning denied work before provider connection or thread bootstrap");
   assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
     "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
   const startDiagnosticAt = brain.indexOf('recordProviderStartFailureDiagnostic({');
@@ -412,4 +433,17 @@ test("V2 publication and benchmark truth consume the canonical snapshot and prov
   assert.match(protocol, /durable_assignment_kernel_v2/);
   assert.match(protocol, /Historical V1 report compatibility only/);
   assert.match(protocol, /expectedDirect\.length > 0 \? direct/);
+});
+
+
+test("interpreted scope derives the canonical effect field instead of declaring another authority", () => {
+  const root = path.join(process.cwd(), "src/domain/assignment-kernel");
+  const declarations = Object.fromEntries(sourceFiles(root).flatMap(file => {
+    const count = [...readFileSync(file, "utf8").matchAll(/^\s*requested_effect\??\s*:/gm)].length;
+    return count ? [[path.relative(root, file).replaceAll("\\", "/"), count]] : [];
+  }));
+  assert.deepEqual(declarations, {"assignment_spec.ts":2,"operation.ts":1});
+  const scope = readFileSync(path.join(root,"operation_scope.ts"),"utf8");
+  assert.match(scope, /interface InterpretedOperationScopeV1 extends Pick<AssignmentSpecV2, "requested_effect">/);
+  assert.match(scope, /bound\.scope\.requested_effect===spec\.requested_effect/);
 });

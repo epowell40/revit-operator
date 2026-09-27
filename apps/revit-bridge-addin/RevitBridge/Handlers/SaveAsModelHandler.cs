@@ -22,9 +22,14 @@ namespace RevitBridge.Handlers
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
+            var preview = false;
+            var enteredSaveExecution = false;
+            try
+            {
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new Params()
                 : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+            preview = p.dryRun ?? false;
 
             var doc = app.ActiveUIDocument?.Document;
             if (doc == null) throw new InvalidOperationException("No active Revit document.");
@@ -55,23 +60,7 @@ namespace RevitBridge.Handlers
                 isWorkshared = doc.IsWorkshared
             };
 
-            if (p.dryRun ?? false)
-            {
-                return Task.FromResult<object>(new
-                {
-                    status = "Dry Run",
-                    dryRun = true,
-                    plan
-                });
-            }
-
-            Directory.CreateDirectory(parent);
-            if (File.Exists(resolved) && !overwrite)
-            {
-                throw new InvalidOperationException($"Target file already exists: {resolved}. Set overwrite=true to replace.");
-            }
-
-            var options = new SaveAsOptions
+            using var options = new SaveAsOptions
             {
                 OverwriteExistingFile = overwrite,
                 Compact = compact,
@@ -80,24 +69,47 @@ namespace RevitBridge.Handlers
 
             if (doc.IsWorkshared)
             {
-                var ws = new WorksharingSaveAsOptions
+                using var ws = new WorksharingSaveAsOptions
                 {
                     SaveAsCentral = saveAsCentral
                 };
                 options.SetWorksharingOptions(ws);
             }
 
-            doc.SaveAs(resolved, options);
+            enteredSaveExecution = true;
+            var saved = OperatorNativeSaveAsExecution.Execute(resolved, preview, overwrite,
+                () => ReadActiveDocument(app, doc), () => doc.SaveAs(resolved, options));
 
             return Task.FromResult<object>(new
             {
-                status = "Success",
+                status = saved.Status,
+                ok = saved.Ok,
+                error = saved.Error,
+                dryRun = preview,
+                plan,
+                artifact_receipt = saved.Receipt,
                 path = resolved,
                 overwrite,
                 compact,
                 maximumBackups = maxBackups,
                 saveAsCentral = doc.IsWorkshared && saveAsCentral
             });
+            }
+            catch (Exception ex) when (!enteredSaveExecution)
+            {
+                return Task.FromResult<object>(new { status = "Blocked", ok = false, error = ex.Message, dryRun = preview,
+                    artifact_receipt = OperatorNativeArtifactReceipt.BlockedSaveAs(preview) });
+            }
+        }
+
+        private static OperatorNativeSaveDocumentIdentity ReadActiveDocument(UIApplication app, Document expected)
+        {
+            var active = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            string? projectUniqueId = null;
+            try { projectUniqueId = active.ProjectInformation?.UniqueId; } catch { }
+            return new OperatorNativeSaveDocumentIdentity(OperatorNativeDocumentSessionAuthority.GetSessionId(active),
+                OperatorRevitBatchBinding.ComputeProjectFingerprint(active.Title, active.PathName, projectUniqueId), active.PathName,
+                ReferenceEquals(active, expected) || active.Equals(expected));
         }
 
         private static string ResolvePath(Document doc, string requestedPath)
@@ -120,7 +132,8 @@ namespace RevitBridge.Handlers
 
                 if (string.IsNullOrWhiteSpace(docDir))
                 {
-                    docDir = WorkspacePaths.GetWorkspaceRoot();
+                    // Resolve only: the preview must not create the default workspace directory.
+                    docDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RevitOperator", "Workspace");
                 }
 
                 candidate = Path.Combine(docDir, candidate);

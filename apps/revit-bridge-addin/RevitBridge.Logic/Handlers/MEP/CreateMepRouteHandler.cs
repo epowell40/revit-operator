@@ -367,10 +367,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var externalEndpointFailures = 0;
                         if (requiredEndpoint.Length == 0 || requiredEndpoint == "start" || requiredEndpoint == "both")
                             TryConnectExternalEndpoint(doc, created[0], resolvedPoints[0], "start", excludedOwnerIds,
-                                toleranceFt, p.expectedExistingStartOwnerId, connectionAttempts, fittingIds, ref externalEndpointFailures);
+                                toleranceFt, p.expectedExistingStartOwnerId, MepRoutingUtil.SystemTypeService(sysType), connectionAttempts, fittingIds, ref externalEndpointFailures);
                         if (requiredEndpoint.Length == 0 || requiredEndpoint == "end" || requiredEndpoint == "both")
                             TryConnectExternalEndpoint(doc, created[created.Count - 1], resolvedPoints[resolvedPoints.Count - 1], "end", excludedOwnerIds,
-                                toleranceFt, p.expectedExistingEndOwnerId, connectionAttempts, fittingIds, ref externalEndpointFailures);
+                                toleranceFt, p.expectedExistingEndOwnerId, MepRoutingUtil.SystemTypeService(sysType), connectionAttempts, fittingIds, ref externalEndpointFailures);
                         doc.Regenerate();
 
                         if (externalEndpointFailures > 0)
@@ -524,6 +524,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             ISet<long> excludedOwnerIds,
             double toleranceFt,
             long? expectedOwnerId,
+            string? requestedSystemType,
             List<object> connectionAttempts,
             List<long> fittingIds,
             ref int failureCount)
@@ -560,6 +561,26 @@ namespace RevitBridge.Logic.Handlers.MEP
                     error = "No physically open compatible connector on the expected existing owner was found near the route endpoint."
                 });
                 return;
+            }
+
+            var existingService = MepRoutingUtil.ConnectorService(external);
+            if (!string.IsNullOrWhiteSpace(requestedSystemType) &&
+                !MepConnectorServicePolicy.AreCompatible(requestedSystemType, existingService))
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    externalOwnerId = ElementIdCompat.GetValue(external.Owner.Id),
+                    connected = false,
+                    method = "service_mismatch",
+                    requestedSystemType,
+                    existingService,
+                    error = "The existing connector service differs from the requested route service."
+                });
+                throw new InvalidOperationException($"Existing connector service {existingService} differs from requested route service {requestedSystemType}.");
             }
 
             long? fittingId = null;

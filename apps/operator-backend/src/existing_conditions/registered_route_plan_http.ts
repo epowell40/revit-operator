@@ -10,7 +10,7 @@ import {
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1
 } from "./registered_route_connector_snap.js";
-import { registerExistingConditionsStagedWorkflow } from "./staged_repair_ledger.js";
+import { buildNextExistingConditionsStagePlan, registerExistingConditionsStagedWorkflow } from "./staged_repair_ledger.js";
 
 const PATH = "/tools/existing-conditions/plan-duct-continuation";
 type SessionAccessGuard = (res: http.ServerResponse, sessionId: string, principal: RequestPrincipal | undefined) => boolean;
@@ -104,6 +104,8 @@ export async function handleRegisteredDuctContinuationPlanHttp(
       executionBoundary: "staged_execution",
       workflow
     });
+    const nextStage = buildNextExistingConditionsStagePlan({ sessionId: binding.session_id, workflow });
+    if (nextStage.state !== "dry_run") throw new Error("registered_route_snap_initial_stage_not_dry_run");
     writeJson(res, 200, {
       status: "registered_for_staged_dry_run",
       revit_write_performed: false,
@@ -111,7 +113,9 @@ export async function handleRegisteredDuctContinuationPlanHttp(
       connector_observation_id: body.connector_observation_id,
       source_mark_ids,
       snap_receipt: receipt,
-      workflow
+      workflow,
+      next_stage_request: nextStage.request,
+      next_stage_key: nextStage.stage_key
     });
   } catch (error) {
     writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });

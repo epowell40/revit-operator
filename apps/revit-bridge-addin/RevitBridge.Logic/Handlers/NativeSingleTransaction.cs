@@ -13,7 +13,10 @@ namespace RevitBridge.Logic.Handlers
     {
         public static Dictionary<string, object?> Execute(UIApplication app, Document doc, string name,
             Func<ISet<long>, Dictionary<string, object?>> mutate,
-            Func<IEnumerable<long>>? nativeModifiedElements = null)
+            Func<IEnumerable<long>>? nativeModifiedElements = null,
+            NativeTransactionDisposition disposition = NativeTransactionDisposition.Commit,
+            Func<IEnumerable<long>>? nativeDeletedElements = null,
+            Action<Transaction>? configureTransaction = null)
         {
             var inventory = new OperatorNativeChangeInventory(doc);
             var nativeCreated = new HashSet<long>();
@@ -31,9 +34,13 @@ namespace RevitBridge.Logic.Handlers
                 {
                     var result = OperatorNativeTransactionExecution.Execute(
                         () => tx.Start().ToString(), () => tx.Commit().ToString(),
-                        () => tx.RollBack().ToString(), () => tx.GetStatus().ToString(), () => mutate(nativeCreated),
+                        () => tx.RollBack().ToString(), () => tx.GetStatus().ToString(), () =>
+                        {
+                            configureTransaction?.Invoke(tx);
+                            return mutate(nativeCreated);
+                        },
                         inventory.CommittedReceipt,
-                        () => nativeCreated, nativeModifiedElements);
+                        () => nativeCreated, nativeModifiedElements, disposition, nativeDeletedElements);
                     result["changeTracking"] = inventory.Diagnostics();
                     return result;
                 }

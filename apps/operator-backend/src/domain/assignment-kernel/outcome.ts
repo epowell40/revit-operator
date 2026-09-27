@@ -1,3 +1,4 @@
+import { advisoryVerificationV2 } from "./execution_policy.js";
 import { assignmentInputVariablesV2 } from "./input_registry.js";
 import { workPlanPendingV2 } from "./work_plan.js";
 import type { AssignmentInputVariableV2 } from "./assignment_spec.js";
@@ -65,7 +66,7 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot)) {
     return "awaiting_user_input";
   }
-  if (snapshot.pending_review_ids.length > 0) return "awaiting_user_review";
+  if (snapshot.pending_review_ids.length > 0 && (!snapshot.completion_proposal || snapshot.quiescent)) return "awaiting_user_review";
   if (!snapshot.quiescent) return "active";
   if (snapshot.progress_blocker) return "blocked";
   if (snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
@@ -73,6 +74,9 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
   if (executionFailure) return executionFailureOutcomeV2(executionFailure.error_class);
   if (snapshot.provider_budget_exhausted) return "failed";
+
+  // Experimental claims remain unverified even when individual proof facts pass.
+  if (advisoryVerificationV2(snapshot)) return snapshot.completion_proposal ? "awaiting_user_review" : "active";
 
   const requiredSpecs = snapshot.spec.criteria.filter((criterion) => criterion.required);
   const evaluations = requiredEvaluations(snapshot);

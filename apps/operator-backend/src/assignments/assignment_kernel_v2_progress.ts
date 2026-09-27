@@ -1,3 +1,4 @@
+import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { defaultAssignmentWorkBudgetV2 } from "./assignment_work_allowance_v2.js";
 import { buildHostProgressEpochV2 } from "./supporting_discovery_progress.js";
 import { createHash } from "node:crypto";
@@ -181,6 +182,9 @@ export function evaluatePendingAssignmentCriteriaV2(input: Readonly<{
   const now = input.now ?? new Date().toISOString();
   const snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
   if (!snapshot) throw new Error("assignment_kernel_v2_not_found");
+  // Automatic semantic evaluation is observational in this condition. Retain the
+  // facts and pending diagnostics; an optional evaluator must not veto accounting.
+  if (advisoryVerificationV2(snapshot)) return snapshot;
   const pendingCriteria = criteriaPendingEvaluationV2(snapshot);
   const criterionIds = Object.keys(pendingCriteria).sort();
   if (criterionIds.length === 0) return snapshot;
@@ -222,7 +226,7 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
         binding: snapshot.current_binding,
         clarification_id: clarificationIdentityV2(snapshot, variableId),
         variable_ids: [variableId],
-        question: clarificationQuestionV2(variableId)
+        question: snapshot.spec.interpreted_scope?.scope.prerequisites.find(p=>p.variable_id===variableId)?.question??clarificationQuestionV2(variableId)
       });
       variablesWithActiveClarifications.add(variableId);
     }

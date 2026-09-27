@@ -1,6 +1,7 @@
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { appliedOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/outcome.js";
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown): string => typeof value === "string" ? value.replace(/[\r\n\u0000-\u001f]/g, " ").slice(0, 1000) : "";
@@ -94,6 +95,58 @@ function routeSummary(items: NativePayload[]): string | null {
   return summary;
 }
 
+function registeredBranchSummary(snapshot: AssignmentSnapshotV2, items: NativePayload[]): string | null {
+  const validIds = (value: unknown): number[] | null => Array.isArray(value)
+    && value.every(id => Number.isSafeInteger(id) && id > 0)
+    && new Set(value).size === value.length ? value as number[] : null;
+  for (const item of [...items].sort((a, b) => b.observedAt - a.observedAt)) {
+    if (nativePath(item) !== "/revit/existing-conditions-mep-draft-workflow"
+        || item.operation.result?.persistent_effect !== "applied"
+        || item.operation.result.native_transaction_state !== "committed"
+        || !appliedOperationHasVerifiedPostconditionV2(snapshot, item.operation.operation_id)) continue;
+    const payload = item.payload;
+    if (payload.schema !== "operator.existing_conditions_mep_draft_workflow.v1"
+        || payload.status !== "Applied" || payload.dryRun !== false
+        || payload.transactionGroupRolledBack !== false || payload.atomic !== true
+        || payload.operationCount !== 1 || !Array.isArray(payload.operations)
+        || payload.operations.length !== 1) continue;
+    const operation = record(payload.operations[0]);
+    const response = record(operation.response);
+    const selected = record(response.selected);
+    const system = text(record(selected.system).name).trim();
+    const level = text(record(selected.level).name).trim();
+    const size = text(selected.size).trim();
+    const created = validIds(payload.createdElementIds);
+    const split = validIds(response.splitMainSegmentIds);
+    const branch = validIds(response.createdBranchElementIds);
+    const fittings = validIds(response.createdFittingIds);
+    const attempts = Array.isArray(response.connectionAttempts) ? response.connectionAttempts.map(record) : [];
+    if (operation.path !== "/revit/connect-mep-branch"
+        || response.status !== "CreatedWithSplitTee" || response.kind !== "duct"
+        || response.rolledBack !== false || !created
+        || !split || split.length !== 2 || !branch || branch.length < 1 || branch.length > 8
+        || !fittings || fittings.length !== branch.length || created.length !== 1 + branch.length + fittings.length
+        || created.includes(split[0]!)
+        || !created.includes(split[1]!)
+        || new Set([split[1], ...branch, ...fittings]).size !== created.length
+        || ![split[1], ...branch, ...fittings].every(id => created.includes(id))
+        || attempts.length !== fittings.length
+        || attempts[0]?.connection !== "split_main_to_branch_tee" || attempts[0]?.connected !== true
+        || !["new_tee_fitting", "new_tee_fitting_with_temporary_explicit_preference"].includes(text(attempts[0]?.method))
+        || attempts[0]?.fittingId !== fittings[0]
+        || attempts.slice(1).some((attempt, index) => attempt.connection !== "branch_internal"
+          || attempt.connected !== true || attempt.method !== "new_elbow_fitting"
+          || attempt.fittingId !== fittings[index + 1])
+        || response.openConnectorCount !== 1
+        || !["Supply Air", "Return Air", "Exhaust Air"].includes(system)
+        || !/^\d+(?:\.\d+)?"$/.test(size)
+        || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/.test(level)) continue;
+    const elbows = fittings.length - 1;
+    return `Added and verified an ${size.slice(0, -1)}-inch ${system} branch on ${level}: ${branch.length} duct segment${branch.length === 1 ? "" : "s"}, a tee, and ${elbows} elbow${elbows === 1 ? "" : "s"}. One branch end remains open.`;
+  }
+  return null;
+}
+
 /** Present selected native fields without allowing model prose to certify work. */
 export function nativeResultPresentationV2(snapshot: AssignmentSnapshotV2, observationIds: readonly string[]): string | null {
   const lines = new Set<string>();
@@ -145,5 +198,7 @@ export function nativeResultPresentationV2(snapshot: AssignmentSnapshotV2, obser
   }
   const mepRoute = routeSummary(nativePayloads);
   if (mepRoute) lines.add(mepRoute);
+  const registeredBranch = registeredBranchSummary(snapshot, nativePayloads);
+  if (registeredBranch) lines.add(registeredBranch);
   return lines.size ? [...lines].slice(0, 24).join("\n") : null;
 }

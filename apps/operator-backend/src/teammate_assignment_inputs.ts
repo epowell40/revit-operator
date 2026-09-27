@@ -1,6 +1,7 @@
 import type { ChatRequest } from "./contracts.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./domain/assignment-kernel/outcome.js";
+import { validBoundOperationScope } from "./domain/assignment-kernel/operation_scope.js";
 
 export type TeammateTaskRequest = Pick<ChatRequest, "user_text" | "context"> & Partial<Pick<ChatRequest,
   "session_id" | "assignment_id" | "assignment_run_id" | "assignment_generation">>;
@@ -20,6 +21,13 @@ export function canonicalTeammateInputs(req: TeammateTaskRequest): Readonly<Reco
   const resolved = assignmentKernelV2ForBinding({ session_id: req.session_id, assignment_id: req.assignment_id,
     run_id: req.assignment_run_id, generation: Number(req.assignment_generation) });
   return resolved?.snapshot.input_values ?? {};
+}
+
+export function canonicalTeammateOperationScope(req:TeammateTaskRequest) {
+  if(!req.session_id||!req.assignment_id||!req.assignment_run_id||!Number.isSafeInteger(req.assignment_generation))return null;
+  const snapshot=assignmentKernelV2ForBinding({session_id:req.session_id,assignment_id:req.assignment_id,
+    run_id:req.assignment_run_id,generation:Number(req.assignment_generation)})?.snapshot;
+  return snapshot&&validBoundOperationScope(snapshot.spec)?snapshot.spec.interpreted_scope!.scope:null;
 }
 
 export function canonicalTeammateFinalVerification(req: TeammateTaskRequest): { id: string; hash: string } | null {

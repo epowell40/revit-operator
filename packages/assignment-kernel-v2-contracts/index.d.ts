@@ -1,4 +1,6 @@
 export * from "./native-artifact.js";
+export * from "./native-completion.js";
+export * from "./input-schema-gap.js";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA: "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA: "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD: "assignment_kernel_v2_session_index";
@@ -121,3 +123,7 @@ export function parseEvidenceRetrievalSelectorV1(value: unknown): EvidenceRetrie
 export function isEvidenceTargetIdentityFieldV1(value: unknown): boolean;
 export function evidenceTargetIdentityValuesV1(value: unknown): readonly string[];
 export function selectExactEvidenceTargetsV1(payload: unknown, targetSubset: unknown): ExactEvidenceTargetSelectionV1;
+
+/** Parses bounded co-named native failures; does not authorize a retry. */
+export function nativeFailureDependencyLinksV1(value: unknown, declaredTargetIdentities: readonly unknown[]):
+  readonly Readonly<{ element_id: string; target_element_ids: readonly string[] }>[] | undefined;

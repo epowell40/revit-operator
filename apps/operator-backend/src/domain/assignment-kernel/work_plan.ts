@@ -1,3 +1,4 @@
+import { advisoryVerificationV2 } from "./execution_policy.js";
 import { verifiedNativeWorkTargetIdentitiesV2 } from "./verified_work_targets.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
@@ -29,7 +30,7 @@ export function declareWorkPlanV2(snapshot: AssignmentSnapshotV2, declaration: W
     && Array.isArray(declaration.assumptions) && declaration.assumptions.length <= 16
     && declaration.assumptions.every(value => validText(value, 800)), "work_plan_invalid", "Provide bounded scope items and assumptions.");
   const prior = snapshot.work_plan?.items ?? [];
-  kernelAssertV2(prior.length > 0 || !Object.values(snapshot.operations).some(op => op.requested_effect === "apply" && op.dispatch_state !== "not_dispatched"),
+  kernelAssertV2(advisoryVerificationV2(snapshot) || prior.length > 0 || !Object.values(snapshot.operations).some(op => op.requested_effect === "apply" && op.dispatch_state !== "not_dispatched"),
     "work_plan_after_apply", "Declare the drawing scope before its first edit.");
   const ids = new Set(prior.map(item => item.item_id));
   const added = declaration.items.map(item => {
@@ -43,7 +44,7 @@ export function declareWorkPlanV2(snapshot: AssignmentSnapshotV2, declaration: W
     ids.add(item.item_id);
     return { ...item, declared_at: occurredAt, operation_ids: [] };
   });
-  kernelAssertV2(ids.size <= 128 && (!snapshot.spec.work_plan_required || prior.length > 0 || added.length >= 2),
+  kernelAssertV2(ids.size <= 128 && (advisoryVerificationV2(snapshot) || !snapshot.spec.work_plan_required || prior.length > 0 || added.length >= 2),
     "work_plan_scope_incomplete", "Break the multi-part request into at least two independently verifiable work items.");
   const assumptions = [...new Set([...(snapshot.work_plan?.assumptions ?? []), ...declaration.assumptions])];
   kernelAssertV2(assumptions.length <= 32, "work_plan_assumption_limit", "Retain existing assumptions; the plan has reached its bounded assumption limit.");
@@ -64,9 +65,10 @@ export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: s
   const used = new Set(plan!.items.flatMap(candidate => [...candidate.operation_ids]));
   for (const operationId of operationIds) {
     const operation = snapshot.operations[operationId];
+    kernelAssertV2(!operation || Date.parse(operation.opened_at) >= Date.parse(item!.declared_at),
+      "work_plan_operation_predates_item", "This edit occurred before the item was declared. Credit an earlier declared matching item; do not repeat the edit.");
     kernelAssertV2(operation && !used.has(operationId) && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
       && operation.requested_effect === "apply" && operation.persistent_effect === "applied" && operation.settlement_state === "settled"
-      && Date.parse(operation.opened_at) >= Date.parse(item!.declared_at)
       && appliedOperationHasVerifiedPostconditionV2(snapshot, operationId),
       "work_plan_operation_unverified", "Each item needs distinct current independently verified work performed after its declaration.");
   }

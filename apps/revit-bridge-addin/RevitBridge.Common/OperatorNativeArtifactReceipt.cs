@@ -21,6 +21,10 @@ namespace RevitBridge.Common
         public bool? PrintSettingsUntouched { get; private set; }
         [JsonPropertyName("not_started_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? NotStartedReason { get; private set; }
+        [JsonPropertyName("save_io_not_started"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? SaveIoNotStarted { get; private set; }
+        [JsonPropertyName("save_document"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public OperatorNativeSavedDocument? SaveDocument { get; internal set; }
         [JsonPropertyName("phase")] public string Phase { get; }
         [JsonPropertyName("status")] public string Status { get; }
         [JsonPropertyName("expected_output_paths")] public IReadOnlyList<string> ExpectedOutputPaths { get; }
@@ -31,7 +35,7 @@ namespace RevitBridge.Common
         internal OperatorNativeArtifactReceipt(string phase, string status, string[] paths, int expectedCalls,
             bool[] calls, OperatorNativeArtifactFile[] outputs, string path = "/revit/export-pdf", bool? printSettingsRestored = null)
         {
-            if (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx") throw new ArgumentException("Unsupported native file-export route.");
+            if (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx" && path != "/revit/save-as") throw new ArgumentException("Unsupported native file-export route.");
             Path = path; PrintSettingsRestored = printSettingsRestored;
             Phase = phase; Status = status; ExpectedOutputPaths = paths;
             ExpectedExportCalls = expectedCalls; ExportCalls = calls; Outputs = outputs;
@@ -52,6 +56,11 @@ namespace RevitBridge.Common
         private static bool IsPrintPreflightReason(string? reason) => reason == "interactive_printer_destination"
             || reason == "printer_capability_unavailable" || reason == "printer_unavailable" || reason == "no_printer_configured";
 
+        public static OperatorNativeArtifactReceipt BlockedSaveAs(bool preview)
+            => new OperatorNativeArtifactReceipt(preview ? "preview" : "apply", "not_started", Array.Empty<string>(), 0,
+                Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>(), "/revit/save-as")
+                { SaveIoNotStarted = true, NotStartedReason = "save_preflight_failed" };
+
         internal static string[] Normalize(IEnumerable<string> paths, int expectedCalls)
         {
             var result = paths.Select(System.IO.Path.GetFullPath).ToArray();
@@ -68,12 +77,23 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("artifact_receipt", out var value)) return false;
             try
             {
-                if (method != "POST" || (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx")
+                if (method != "POST" || (path != "/revit/export-pdf" && path != "/revit/print" && path != "/revit/export-elements-xlsx" && path != "/revit/save-as")
                     || value.GetProperty("schema").GetString() != Version
                     || value.GetProperty("method").GetString() != method || value.GetProperty("path").GetString() != path)
                     return true;
                 var expected = value.GetProperty("expected_output_paths").EnumerateArray().Select(x => x.GetString() ?? "").ToArray();
                 var expectedCalls = value.GetProperty("expected_export_calls").GetInt32();
+                if (path == "/revit/save-as" && (effect == "apply" || effect == "preview")
+                    && value.GetProperty("phase").GetString() == effect && value.GetProperty("status").GetString() == "not_started"
+                    && expected.Length == 0 && expectedCalls == 0
+                    && value.GetProperty("export_calls").GetArrayLength() == 0 && value.GetProperty("outputs").GetArrayLength() == 0
+                    && (!value.TryGetProperty("save_document", out var unstartedDocument) || unstartedDocument.ValueKind == JsonValueKind.Null)
+                    && value.TryGetProperty("save_io_not_started", out var saveUntouched) && saveUntouched.ValueKind == JsonValueKind.True
+                    && value.TryGetProperty("not_started_reason", out var saveReason) && saveReason.GetString() == "save_preflight_failed")
+                {
+                    settlement = OperatorAttemptSettlement.None(effect, method, path, "native_artifact_export_not_started", "native_receipt", requestDispatched: true);
+                    return true;
+                }
                 if (path == "/revit/print" && (effect == "apply" || effect == "preview")
                     && value.GetProperty("phase").GetString() == effect && value.GetProperty("status").GetString() == "not_started"
                     && expected.Length == 0 && expectedCalls == 0
@@ -94,6 +114,8 @@ namespace RevitBridge.Common
                 var status = value.GetProperty("status").GetString();
                 if (effect == "preview" && phase == "preview" && status == "not_started" && calls.Length == 0 && outputs.Length == 0)
                 {
+                    if (path == "/revit/save-as" && (expected.Length != 1 || expectedCalls != 1
+                        || value.TryGetProperty("save_document", out var previewDocument) && previewDocument.ValueKind != JsonValueKind.Null)) return true;
                     settlement = OperatorAttemptSettlement.None(effect, method, path, "native_artifact_export_not_started", "native_receipt", requestDispatched: true);
                     return true;
                 }
@@ -101,11 +123,15 @@ namespace RevitBridge.Common
                     || calls.Any(x => !x) || outputs.Length != expected.Length) return true;
                 if (path == "/revit/print" && (!value.TryGetProperty("print_settings_restored", out var restored)
                     || restored.ValueKind != JsonValueKind.True)) return true;
+                if (path == "/revit/save-as" && (expected.Length != 1 || expectedCalls != 1
+                    || !value.TryGetProperty("save_document", out var savedDocument)
+                    || !OperatorNativeSavedDocument.IsComplete(savedDocument, expected[0]))) return true;
                 var refs = new List<string>();
                 for (var i = 0; i < outputs.Length; i++)
                 {
                     var file = outputs[i];
                     var hash = file.GetProperty("sha256").GetString() ?? "";
+                    if (path == "/revit/save-as" && (!file.TryGetProperty("stable_read", out var stable) || stable.ValueKind != JsonValueKind.True)) return true;
                     if (file.GetProperty("path").GetString() != expected[i] || file.GetProperty("size_bytes").GetInt64() <= 0
                         || !file.GetProperty("fresh_output").GetBoolean() || hash.Length != 64
                         || hash.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))) return true;
@@ -130,6 +156,7 @@ namespace RevitBridge.Common
         [JsonPropertyName("fresh_output")] public bool FreshOutput { get; internal set; }
         [JsonPropertyName("exists")] public bool Exists { get; internal set; }
         [JsonPropertyName("readable")] public bool Readable { get; internal set; }
+        [JsonPropertyName("stable_read"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? StableRead { get; internal set; }
     }
 
     /// <summary>Capture output state before calling the native exporter, then verify this invocation's files.</summary>

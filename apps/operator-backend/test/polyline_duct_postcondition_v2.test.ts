@@ -1,8 +1,50 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {polylineReadbackMatchesV2 as polylineReadbackDraft} from '../src/verification/polyline_readback_v2.js';
+import {polylineReadbackMatchesV2 as polylineReadbackDraft, createMepRouteReadbackMatchesV2} from '../src/verification/polyline_readback_v2.js';
 import {polylinePhysicalProof} from '../src/verification/polyline_physical_proof_v2.js';
+
+test('C93 exact committed Supply Air route accepts omitted optional endpoint flag only with complete physical proof',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c93-workflow-omitted-endpoint-flag.json','utf8'));
+ const matches=(f:any)=>polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors);
+ assert.equal(Object.hasOwn(fixture.input.body,'requireExistingEndpointConnections'),false);
+ assert.equal(matches(fixture),true,'the exact C93 committed route and combined native readback');
+ for(const [name,change] of Object.entries({
+  invalidFlag:(f:any)=>{f.input.body.requireExistingEndpointConnections='false';},
+  requireBothEnds:(f:any)=>{f.input.body.requireExistingEndpointConnections=true;},
+  wrongSystem:(f:any)=>{f.input.body.systemType='Exhaust Air';},
+  missingFitting:(f:any)=>{f.connectors.results=f.connectors.results.filter((r:any)=>r.category!=='OST_DuctFitting').slice(0,4);},
+  disconnectedStart:(f:any)=>{const duct=f.connectors.results.find((r:any)=>r.category==='OST_DuctCurves'); const port=duct.connectors.find((c:any)=>c.physicalConnectedTo?.some((x:any)=>x.ownerId===1542960));port.physicalConnectedTo=[];}
+ })){const f=structuredClone(fixture);(change as (f:any)=>void)(f);assert.equal(matches(f),false,name);}
+});
+
+test('C86 exact native create-mep-route proves its duct sizes, geometry and physical connections',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c86-create-mep-route-verification.json','utf8'));
+ const matches=(f:any)=>createMepRouteReadbackMatchesV2(f.input,f.apply,f.connectors.verificationParameters,f.connectors);
+ assert.equal(matches(fixture),true);
+ for(const change of [
+  (f:any)=>f.input.body.dryRun=true,
+  (f:any)=>f.input.body.ductTypeId=139185,
+  (f:any)=>f.connectors.verificationParameters.items[0].parameters.Diameter=1,
+  (f:any)=>f.connectors.results[0].connectors[0].physicalConnectedTo=[],
+  (f:any)=>f.input.body.points[1].x+=0.2,
+  (f:any)=>f.input.body.unexpectedMutation=true
+ ]){const f=structuredClone(fixture);change(f);assert.equal(matches(f),false);}
+});
+
+test('C84 native orthogonal route verifies from complete model readback without weakening physical proof',()=>{
+ const fixture=JSON.parse(fs.readFileSync('test/fixtures/c84-orthogonal-route-verification.json','utf8'));
+ const matches=(f:any)=>polylineReadbackDraft(f.input,f.apply,f.parameters,f.connectors);
+ assert.equal(matches(fixture),true,'the exact applied HRU route and native connector readback');
+ const wrongMode=structuredClone(fixture);wrongMode.input.body.routingMode='freeform';
+ assert.equal(matches(wrongMode),false,'unsupported routing mode');
+ const disconnected=structuredClone(fixture);
+ const first=disconnected.connectors.results.find((row:any)=>row.id===fixture.apply.applyResult.segments[0].id);
+ first.connectors[0].physicalConnectedTo=[];
+ assert.equal(matches(disconnected),false,'missing physical edge');
+ const wrongType=structuredClone(fixture);wrongType.input.body.ductTypeId=139185;
+ assert.equal(matches(wrongType),false,'rectangular type cannot verify round route');
+});
 
 test('direct C44 room exercise cannot verify a right-angle duct connection without an elbow',()=>{
  const {proof}=JSON.parse(fs.readFileSync('test/fixtures/direct-c44-missing-corner-fitting.json','utf8'));

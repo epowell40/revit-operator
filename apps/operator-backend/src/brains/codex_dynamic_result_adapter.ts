@@ -18,9 +18,11 @@ export function attachDynamicObservationContext(
       try {
         const payload = JSON.parse(item.text);
         const index = JSON.parse(observationContext);
+        const field = index?.schema === "revit-operator.model-observation-index/v2" ? "model_observation_index"
+          : index?.schema === "revit-operator.advisory-observation-index/v1" ? "advisory_observation_index" : null;
         if (payload?.ok === true && payload?.result?.schema === "revit-operator.evidence-retrieval.v1"
-          && index?.schema === "revit-operator.model-observation-index/v2") {
-          item.text = JSON.stringify({ ...payload, model_observation_index: index });
+          && field) {
+          item.text = JSON.stringify({ ...payload, [field]: index });
           return;
         }
       } catch { /* Preserve the original correction contract below. */ }
@@ -88,7 +90,12 @@ export function adaptMcpToolCallResultToDynamicResponse(
   // Keep complete small instructions visible instead of requiring a retrieval
   // just to learn how to call a tool. Reserve space for the observation index;
   // omitted or oversized results must still use the supplied projection budget.
-  const discovery = context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc" || context?.tool === "operator_discover_capabilities";
+  const registryProjection = context?.projections?.length === 1 ? context.projections[0] : undefined;
+  const registryDiscovery = context?.tool === "revit_tool_registry"
+    && registryProjection?.source === "assignment_kernel_v2:revit_tool_registry"
+    && registryProjection.trust_level === "host_observed"
+    && registryProjection.tool_documentation?.kind === "catalog";
+  const discovery = registryDiscovery || context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc" || context?.tool === "operator_discover_capabilities";
   const textOnly = content.length === 1 && content[0]?.type === "text" && typeof content[0].text === "string";
   const exposeBoundedDiscovery = discovery && textOnly && (context?.omitted ?? 0) === 0
     && Buffer.byteLength(content[0].text, "utf8") <= Math.max(0, getEvidenceContextBudget().item_bytes - 2048);

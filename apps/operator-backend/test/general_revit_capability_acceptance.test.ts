@@ -18,6 +18,7 @@ import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../s
 import { localProcessIsAlive, localRevitProcessGuardTarget } from "../src/benchmark/local_revit_process_liveness.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
 import { loadDurableToolEvidence, verifiedSessionMutationPaths } from "../src/benchmark/durable_tool_evidence.js";
+import { getOperatorAgentBaseInstructions } from "../src/brains/codex_brain.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
 
@@ -968,7 +969,7 @@ test("durable compact evidence counts distinct owners instead of treating two co
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {
-  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const codexPrompt = getOperatorAgentBaseInstructions();
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
   for (const prompt of [codexPrompt, openAiPrompt]) {
     assert.match(prompt, /Sheet\/titleblock parameter reads and verification must preserve sheet identity/);
@@ -980,7 +981,7 @@ test("both backend agent prompts preserve sheet identity while batching multi-sh
 });
 
 test("both backend agent prompts reject API-valid cross-service MEP peer substitutions", () => {
-  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const codexPrompt = getOperatorAgentBaseInstructions();
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
   for (const prompt of [codexPrompt, openAiPrompt]) {
     assert.match(prompt, /MEP peer-precedent rule/);
@@ -1570,7 +1571,7 @@ test("authoritative Revit API assertions accept beyond-document persistence word
 
 test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
   for (const prompt of [
-    source("operator-backend/src/brains/codex_brain.ts"),
+    getOperatorAgentBaseInstructions(),
     source("operator-backend/src/brains/openai_brain.ts")
   ]) {
     assert.match(prompt, /authoritative, current, latest, or version-specific external documentation/);

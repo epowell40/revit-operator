@@ -27,7 +27,8 @@ test("Codex MCP planner forwards IDs and native mapping under the trusted Assign
     async planExistingConditionsDuctContinuation(value) {
       received = value;
       return { status: "registered_for_staged_dry_run", revit_write_performed: false };
-    }
+    },
+    async planExistingConditionsDuctBranch() { throw new Error("unexpected branch path"); }
   }));
   assert.equal(received.assignment_id, "assignment-1");
   assert.equal(received.assignment_run_id, "run-1");
@@ -48,6 +49,29 @@ test("continuation schema admits source IDs but rejects caller-supplied route co
   assert.equal(existingConditionsDuctContinuationInputSchema.safeParse({ ...input, connectorObservationId: input.registrationEvidenceId }).success, false);
 });
 
+test("interior tee variant routes registered IDs and native mapping without accepting raw points", async () => {
+  const branch = {
+    connectionMode: "interior_tee" as const,
+    registrationEvidenceId: input.registrationEvidenceId,
+    primitiveId: "upper-ra",
+    mainConnectorObservationId: input.connectorObservationId,
+    deferredFarEndReason: "North end remains unresolved",
+    nativeMapping: { mainElementId: 1543280, levelName: "L4", elevationZFt: 40.168061,
+      systemType: "Return Air", routeTypeId: 139186, shape: "round" as const, size: '8"' }
+  };
+  assert.equal(existingConditionsDuctContinuationInputSchema.safeParse(branch).success, true);
+  assert.equal(existingConditionsDuctContinuationInputSchema.safeParse({ ...branch, branchPoints: [{x:1,y:2}] }).success, false);
+  assert.equal(existingConditionsDuctContinuationInputSchema.safeParse({ ...branch, dryRun: false }).success, false);
+  let received: any;
+  await runWithAssignmentKernelV2(bindingMeta, async () => handleExistingConditionsDuctContinuation(branch, {
+    async planExistingConditionsDuctContinuation() { throw new Error("unexpected open-end path"); },
+    async planExistingConditionsDuctBranch(value) { received = value; return { status: "registered_for_staged_dry_run" }; }
+  }));
+  assert.equal(received.native_mapping.main_element_id, 1543280);
+  assert.equal(received.main_connector_observation_id, branch.mainConnectorObservationId);
+  assert.equal(received.primitive_id, "upper-ra");
+});
+
 test("continuation tool is an explicitly read-only planning surface", () => {
   let registration: any;
   registerExistingConditionsDuctContinuationTool((name, description, schema, handler) => {
@@ -55,5 +79,7 @@ test("continuation tool is an explicitly read-only planning surface", () => {
   });
   assert.equal(registration.name, "operator_plan_existing_conditions_duct_continuation");
   assert.match(registration.description, /does not modify Revit/i);
+  assert.match(registration.description, /interior_tee/i);
+  assert.match(registration.description, /registered PDF junction/i);
   assert.equal(registration.schema, existingConditionsDuctContinuationInputSchema);
 });

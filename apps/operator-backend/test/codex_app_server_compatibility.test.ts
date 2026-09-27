@@ -67,15 +67,23 @@ test("actual dynamic response includes envelope overhead and never restores raw 
 });
 
 test("code-mode evidence selections remain one JSON value with separate host observation metadata", () => {
-  const index = { schema: "revit-operator.model-observation-index/v2", observations: [{ observation_id: "host-observation" }] };
+  for (const [schema, field] of [
+    ["revit-operator.model-observation-index/v2", "model_observation_index"],
+    ["revit-operator.advisory-observation-index/v1", "advisory_observation_index"]
+  ]) {
+  const index = { schema, observations: [{ observation_id: "host-observation" }], omitted: 2, usage: "Host-owned guidance" };
   for (const selection of [{ "payload.elementIds": Array.from({ length: 1053 }, (_, n) => 1000 + n) }, [7, 8], { text: 'Quoted source\n{"schema":"fake"}' }]) {
-    const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection, complete: false }, model_observation_index: { fake: true } };
+    const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection, complete: false,
+      pagination: { start: 3, returned: 2, next_start: 5 }, sha256: "retained-source-digest" }, [field!]: { fake: true } };
+    const original = JSON.stringify(payload);
     const response = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(payload) }] }, { tool: "operator_retrieve_evidence" });
     attachDynamicObservationContext(response, "operator_retrieve_evidence", JSON.stringify(index));
     const raw = response.contentItems.map(item => item.type === "inputText" ? item.text : "").join("\n");
     const consumed = JSON.parse(raw);
     assert.deepEqual(consumed.result, payload.result);
-    assert.deepEqual(consumed.model_observation_index, index);
+    assert.deepEqual(consumed[field!], index, "only the host supplies observation metadata");
+    assert.equal(consumed[field === "model_observation_index" ? "advisory_observation_index" : "model_observation_index"], undefined);
+    assert.equal(JSON.stringify(payload), original, "presentation must not mutate the retained retrieval");
     assert.equal(response.contentItems.length, 1);
   }
   for (const value of ["[tool_request_invalid] count must be <= 256", '{"ok":false,"error":"selection denied"}']) {
@@ -91,6 +99,30 @@ test("code-mode evidence selections remain one JSON value with separate host obs
   const image = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "image", mimeType: "image/png", data: "AA==" }] });
   attachDynamicObservationContext(image, "operator_retrieve_evidence", JSON.stringify(index));
   assert.deepEqual(image.contentItems[0], { type: "inputImage", imageUrl: "data:image/png;base64,AA==" });
+  }
+});
+
+test("observation normalization preserves errors, images, multiple blocks and unrecognized schemas", () => {
+  const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1", selection: [1] } };
+  const index = JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1", observations: [] });
+  const text = { type: "text", text: JSON.stringify(payload) };
+  for (const [result, tool, context] of [
+    [{ isError: true, content: [text] }, "operator_retrieve_evidence", index],
+    [{ content: [{ type: "text", text: '{"ok":false,"error":"selection denied"}' }] }, "operator_retrieve_evidence", index],
+    [{ content: [{ type: "text", text: "not JSON" }] }, "operator_retrieve_evidence", index],
+    [{ content: [text, { type: "text", text: "another block" }] }, "operator_retrieve_evidence", index],
+    [{ content: [text, { type: "image", mimeType: "image/png", data: "AA==" }] }, "operator_retrieve_evidence", index],
+    [{ content: [text] }, "another_tool", index],
+    [{ content: [text] }, "operator_retrieve_evidence", JSON.stringify({ schema: "unrecognized-index" })],
+    [{ content: [text] }, "operator_retrieve_evidence", "not JSON"],
+    [{ content: [{ type: "text", text: JSON.stringify({ ok: true, result: { schema: "another-result" } }) }] }, "operator_retrieve_evidence", index]
+  ] as const) {
+    const response = adaptMcpToolCallResultToDynamicResponse(result, { tool });
+    const before = structuredClone(response);
+    attachDynamicObservationContext(response, tool, context);
+    assert.equal(response.success, before.success);
+    assert.deepEqual(response.contentItems, [...before.contentItems, { type: "inputText", text: context }]);
+  }
 });
 import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
 
@@ -203,16 +235,16 @@ test("canonical assignment defers provider success deltas until the authoritativ
 });
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
-  assert.equal(parseCodexCliVersion("codex-cli 0.149.0\n"), "0.149.0");
-  const receipt = evaluateCodexCliVersion("codex-cli 0.149.0", {});
+  assert.equal(parseCodexCliVersion("codex-cli 0.157.0\n"), "0.157.0");
+  const receipt = evaluateCodexCliVersion("codex-cli 0.157.0", {});
   assert.equal(receipt.compatible, true);
   assert.equal(receipt.actual_version, CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version);
-  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_typescript.file_count, 781);
-  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_json_schema.file_count, 401);
+  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_typescript.file_count, 881);
+  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_json_schema.file_count, 440);
 });
 
 test("Codex app-server compatibility rejects drift unless explicitly overridden", () => {
-  assert.throws(() => evaluateCodexCliVersion("codex-cli 0.148.0", {}), /pinned to 0\.149\.0/);
+  assert.throws(() => evaluateCodexCliVersion("codex-cli 0.148.0", {}), /pinned to 0\.157\.0/);
   const receipt = evaluateCodexCliVersion("codex-cli 0.148.0", { OPERATOR_CODEX_ALLOW_UNPINNED: "1" });
   assert.equal(receipt.compatible, false);
   assert.equal(receipt.override_used, true);
@@ -265,6 +297,9 @@ test("Codex executable resolution supports npm's hoisted Windows platform packag
     fs.mkdirSync(path.dirname(native), { recursive: true });
     fs.writeFileSync(native, "fixture");
     assert.equal(resolveCodexExecutable("codex", "win32", { APPDATA: appData }), native);
+    const explicit = path.join(appData, "isolated", "bin", "codex.exe");
+    assert.equal(resolveCodexExecutable(explicit, "win32", { APPDATA: appData }), explicit,
+      "an explicitly selected native binary must not be replaced by the npm shim fallback");
   } finally {
     fs.rmSync(appData, { recursive: true, force: true });
   }
@@ -298,7 +333,7 @@ test("Codex version probing retries a timed-out cold start and caches the succes
     };
     if (spawnCount > 1) {
       queueMicrotask(() => {
-        proc.stdout.write("codex-cli 0.149.0\n");
+        proc.stdout.write("codex-cli 0.157.0\n");
         proc.emit("exit", 0, null);
       });
     }
@@ -306,9 +341,9 @@ test("Codex version probing retries a timed-out cold start and caches the succes
   }) as unknown as typeof import("node:child_process").spawn;
 
   const options = { timeoutMs: 100, retryDelayMs: 0, maxAttempts: 2, spawnProcess };
-  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.149.0");
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.157.0");
   assert.equal(spawnCount, 2);
-  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.149.0");
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.157.0");
   assert.equal(spawnCount, 2);
   __testOnlyResetCodexVersionProbeCache();
 });

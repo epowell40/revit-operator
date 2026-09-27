@@ -55,6 +55,8 @@ import {
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
+import { registeredStageNativeBody } from "./lib/registeredStageNativeBody.js";
+import { resolveRegisteredStageBody } from "./lib/resolveRegisteredStageBody.js";
 import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
 import {
   compareToolSearchCandidatesV3,
@@ -621,10 +623,10 @@ server.tool("operator_discover_capabilities", "Discover a bounded set of availab
 }, async (args) => {
   const runtime = getToolExposureRuntimeDecision();
   if (!runtime.certified) {
-    const result = await discoverHostedGeneralAgentCapabilities(args, getToolRegistry);
+    const result = await discoverHostedGeneralAgentCapabilities(args, getToolRegistry, isRegisteredMcpToolExposed);
     return { content: [{ type: "text", text: JSON.stringify({ ...result, runtimeMode: runtime.runtimeMode }, null, 2) }] };
   }
-  return { content: [{ type: "text", text: JSON.stringify(discoverGeneralAgentCapabilities(args), null, 2) }] };
+  return { content: [{ type: "text", text: JSON.stringify(discoverGeneralAgentCapabilities(args, process.env, isRegisteredMcpToolExposed), null, 2) }] };
 });
 
 server.tool("operator_record_execution_strategy", "Record the model's bounded execution-representation choice as telemetry/evidence. This never admits or authorizes execution.", {
@@ -1098,9 +1100,14 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_manage_work_plan", "Retain the complete multi-part task checklist before model edits. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart.",
+server.tool("operator_manage_work_plan", "Manage the saved task checklist and checkpoint. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
   {
-    action: z.enum(["declare", "complete", "status"]),
+    action: z.enum(["declare", "complete", "status", "propose_completion", "update_followup"]),
+    followup: z.object({ command_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/), item_id: z.string().min(1).max(100),
+      expected_version: z.number().int().positive(), disposition: z.enum(["resolved", "deferred", "superseded"]), reason: z.string().min(1).max(1000),
+      replacements: z.array(z.object({ kind: z.enum(["remaining_work", "uncertainties"]), text: z.string().min(1).max(1000) }).strict()).min(1).max(8).optional() }).strict().optional(),
+    followupStart: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    completionProposal: z.object({ claimed_completed: z.array(z.string().min(1).max(1000)).max(24), remaining_work: z.array(z.string().min(1).max(1000)).max(24), uncertainties: z.array(z.string().min(1).max(1000)).max(24) }).strict().optional(),
     start: z.number().int().min(0).max(128).optional(),
     operationStart: z.number().int().min(0).max(100000).optional(),
     assumptionStart: z.number().int().min(0).max(32).optional(),
@@ -1112,12 +1119,19 @@ server.tool("operator_manage_work_plan", "Retain the complete multi-part task ch
     try {
       const binding = currentAssignmentKernelV2Binding();
       if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      if (args.action === "update_followup" && (!args.followup || args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_followup_arguments_invalid");
+      if (args.action !== "update_followup" && args.followup) throw new Error("advisory_followup_arguments_invalid");
+      if (args.action === "propose_completion" && (!args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_proposal_arguments_invalid");
+      if (args.action !== "propose_completion" && args.completionProposal) throw new Error("advisory_proposal_arguments_invalid");
       if (args.action === "declare" && (!args.items || args.itemId || args.operationIds)) throw new Error("work_plan_declaration_arguments_invalid");
       if (args.action === "complete" && (!args.itemId || !args.operationIds || args.items || args.assumptions)) throw new Error("work_plan_completion_arguments_invalid");
       if (args.action === "status" && (args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("work_plan_status_arguments_invalid");
       const result = await createOperatorBackendClient().manageAssignmentWorkPlanV2({
         assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation, session_id: binding.session_id,
         action: args.action,
+        ...(args.completionProposal ? { completion_proposal: args.completionProposal } : {}),
+        ...(args.followup ? { followup: args.followup } : {}),
+        ...(args.followupStart !== undefined ? { followup_start: args.followupStart } : {}),
         ...(args.start !== undefined ? { start: args.start } : {}),
         ...(args.operationStart !== undefined ? { operation_start: args.operationStart } : {}),
         ...(args.assumptionStart !== undefined ? { assumption_start: args.assumptionStart } : {}),
@@ -1438,7 +1452,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
   }
 );
 
-server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use when a primitive exists but has no dedicated MCP wrapper.",
+server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use when a primitive exists but has no dedicated MCP wrapper. For a source-registered /revit/existing-conditions-mep-draft-workflow stage, pass only body {registered_stage_key, stage_phase, dryRun}; stage_phase is dry_run with dryRun true, or apply with dryRun false. The host resolves the exact request; never reconstruct it from preview points.",
   {
     method: z.enum(["GET", "POST"]),
     path: z.string().describe("Must start with /revit/ (e.g., /revit/model-health)."),
@@ -1484,18 +1498,46 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         return mcpPreDispatchFailureResult(genericToolUnknownPathFailure(method, pathInput));
       }
 
-      const normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
-      const preflightFailure = preflightKnownGenericToolBody(registryEntry, normalizedBody);
+      let normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
+      const registeredStage = method === "POST" && pathInput === "/revit/existing-conditions-mep-draft-workflow";
+      if (registeredStage) normalizedBody = await resolveRegisteredStageBody(
+        normalizedBody, currentAssignmentKernelV2Binding(), createOperatorBackendClient()
+      );
+      const dispatchBody = registeredStage ? registeredStageNativeBody(normalizedBody) : normalizedBody;
+      const preflightFailure = preflightKnownGenericToolBody(registryEntry, dispatchBody);
       if (preflightFailure) return mcpPreDispatchFailureResult(preflightFailure);
+      const binding = registeredStage ? currentAssignmentKernelV2Binding() : null;
+      if (registeredStage && !binding) {
+        throw new Error("registered_existing_conditions_stage_v2_binding_required");
+      }
+      const stageBackend = registeredStage ? createOperatorBackendClient() : null;
+      const stageBinding = binding ? {
+        assignment_id: binding.assignment_id,
+        assignment_run_id: binding.run_id,
+        assignment_generation: binding.generation,
+        session_id: binding.session_id,
+        native_body: normalizedBody
+      } : null;
+      if (stageBackend && stageBinding) {
+        // A PDF stage must be the exact host-registered, dependency-ready request.
+        // The model cannot substitute coordinates, route owners, or an apply flag.
+        await stageBackend.authorizeRegisteredExistingConditionsStage(stageBinding);
+      }
       const data = method === "GET"
         ? await callRevit(pathInput, method, undefined, {
             channel: "generic_call",
             assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
           })
-        : await callRevit(pathInput, method, normalizedBody, {
+        : await callRevit(pathInput, method, dispatchBody, {
             channel: "generic_call",
             assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
           });
+      const recordedStage = stageBackend && stageBinding
+        ? await stageBackend.recordRegisteredExistingConditionsStage({
+            ...stageBinding,
+            native_result: data
+          })
+        : null;
       const projected = pathInput === "/revit/find-elements"
         ? projectFindElementsResultForAgent(data)
         : data;
@@ -1506,7 +1548,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       const imageContent = known ? nativeViewImageContent(method, pathInput, output) : null;
       if (imageContent) return imageContent;
       const wrapped = known
-        ? output
+        ? recordedStage && output && typeof output === "object" && !Array.isArray(output)
+          ? { ...(output as Record<string, unknown>), registered_stage: recordedStage }
+          : output
         : {
             warning: "Path not found in current tool registry metadata. Executed as raw bridge call.",
             registryLookupError: registryLookupError || undefined,
@@ -1997,8 +2041,8 @@ server.tool("revit_replace_text_note", "Replace a TextNote's text in the active 
     docId: z.string().max(64).optional(),
     familyDocumentId: z.string().max(64).optional(),
     elementId: z.number().int(),
-    newText: z.string().min(1).max(200),
-    expectedOldText: z.string().max(200).optional(),
+    newText: z.string().min(1).max(16_384),
+    expectedOldText: z.string().max(16_384).optional(),
     dryRun: z.boolean().optional(),
     apply: z.boolean().optional(),
     confirm: z.string().max(120).optional(),
@@ -2058,11 +2102,11 @@ server.tool("revit_close_doc", "Close an open family doc session.",
   }
 );
 
-server.tool("revit_capture_view", "Export a Revit view or sheet and return its image directly. Use mapped view-frame export only when pixel-to-model coordinates are needed.",
-  { viewId: z.number().optional(), imageSize: z.number().default(2048) }, 
-  async ({ viewId, imageSize }) => {
+server.tool("revit_capture_view", "Export a Revit view or sheet and return its image directly. The default is full_view; visible_region requires the requested view to be actually active and captures its current viewport after focusing. Viewport corners are inspection provenance, not a pixel-to-model mapping.",
+  { viewId: z.number().optional(), imageSize: z.number().default(2048), exportMode: z.enum(["full_view", "visible_region"]).optional() }, 
+  async ({ viewId, imageSize, exportMode }) => {
     try {
-      const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize }, {
+      const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize, ...(exportMode === undefined ? {} : { exportMode }) }, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
       return captureImageContent(data, "/revit/export-image");

@@ -2,6 +2,14 @@ import { readSpatialObservationImage, type SpatialObservationImageReader } from 
 import { createHash } from "node:crypto";
 
 const IMAGE_LIMIT_BYTES = 5 * 1024 * 1024;
+const VISIBLE_INVENTORY_PRESENTATION_LIMIT_BYTES = 512 * 1024;
+const VISIBLE_INVENTORY_ITEM_BUDGET_BYTES = 384 * 1024;
+const VISIBLE_INVENTORY_ITEM_LIMIT = 128;
+const REGISTRATION_AND_MEP_CATEGORIES = new Set([
+  "OST_Grids", "OST_MechanicalEquipment", "OST_DuctCurves", "OST_DuctFitting",
+  "OST_DuctTerminal", "OST_DuctAccessory", "OST_FlexDuctCurves", "OST_PipeCurves",
+  "OST_PipeFitting", "OST_PlumbingFixtures", "OST_ElectricalEquipment", "OST_ElectricalFixtures"
+]);
 type ImageContent = {type:"image";data:string;mimeType:string};
 type TextContent = {type:"text";text:string};
 type NativeImageRoute = "/revit/export-view-frame" | "/revit/export-visible-elements";
@@ -92,7 +100,48 @@ function nativeImageContent(data: unknown, expectedRoute: NativeImageRoute, read
     : {ok:false as const,reason:"Native view-frame image contract is missing or unsuccessful"};
   const imageDelivery = image.ok ? {available:true} : {available:false,reason:image.reason,
     instruction:"The view image was not delivered. Obtain a usable view image before interpreting its pixels or claiming visual verification."};
-  const content:Array<TextContent|ImageContent> = [{type:"text",text:JSON.stringify(frame ? {...frame,image_delivery:imageDelivery} : {native_result:data,image_delivery:imageDelivery},null,2)}];
+  const presented = frame && expectedRoute === "/revit/export-visible-elements"
+    ? projectLargeVisibleInventoryForAgent(frame)
+    : frame;
+  const content:Array<TextContent|ImageContent> = [{type:"text",text:JSON.stringify(presented ? {...presented,image_delivery:imageDelivery} : {native_result:data,image_delivery:imageDelivery},null,2)}];
   if(image.ok) content.push({type:"image",data:image.data,mimeType:image.mimeType});
   return {content};
+}
+
+/** Keep the authoritative native payload in the evidence ledger. A floor-wide
+ * inventory can be megabytes of linked walls and doors; the model receives the
+ * same image, frame mapping, grid/MEP anchors, and an explicit partial-inventory
+ * notice so it can request a bounded modelBounds/category read when needed. */
+function projectLargeVisibleInventoryForAgent(frame: Record<string, unknown>): Record<string, unknown> {
+  const items = Array.isArray(frame.items) ? frame.items : null;
+  if (!items || JSON.stringify(frame).length <= VISIBLE_INVENTORY_PRESENTATION_LIMIT_BYTES) return frame;
+  const retained: unknown[] = [];
+  let retainedBytes = 0;
+  const omittedByCategory: Record<string, number> = {};
+  for (const item of items) {
+    const row = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    const category = String(row.categoryToken ?? row.builtInCategory ?? row.category ?? "unknown");
+    const bytes = JSON.stringify(item).length;
+    if (REGISTRATION_AND_MEP_CATEGORIES.has(category)
+      && retained.length < VISIBLE_INVENTORY_ITEM_LIMIT
+      && retainedBytes + bytes <= VISIBLE_INVENTORY_ITEM_BUDGET_BYTES) {
+      retained.push(item);
+      retainedBytes += bytes;
+    } else {
+      omittedByCategory[category] = (omittedByCategory[category] ?? 0) + 1;
+    }
+  }
+  return {
+    ...frame,
+    items: retained,
+    agent_projection: {
+      schema: "revit-operator.visible-inventory-agent-projection.v1",
+      items_complete: false,
+      native_item_count: items.length,
+      included_item_count: retained.length,
+      omitted_item_count: items.length - retained.length,
+      omitted_by_category: omittedByCategory,
+      instruction: "The image and frame mapping are complete, but this text omits inventory rows. Query a smaller modelBounds or category with /revit/export-visible-elements or /revit/find-elements before asserting absence, counting, or selecting an omitted element."
+    }
+  };
 }
