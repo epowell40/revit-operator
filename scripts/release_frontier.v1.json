@@ -206,7 +206,8 @@
     "codex_provider_usage_authority.test.ts",
     "codex_completed_turn_admission.test.ts",
     "codex_usage_brain_boundary.test.ts",
-    "codex_worker_identity.test.ts"
+    "codex_worker_identity.test.ts",
+    "provider_usage_worker_identity_contract.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -3532,6 +3533,7 @@
       "id": "provider-usage-ui-preserves-configured-billing-requested-versus-reported-model-and-explicit-resume",
       "coverage": [
         "backend:codex_worker_identity.test.ts",
+        "backend:provider_usage_worker_identity_contract.test.ts",
         "backend:codex_turn_model_telemetry.test.ts",
         "backend:task_navigation.test.ts",
         "javascript:package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"

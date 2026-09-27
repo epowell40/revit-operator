@@ -7,6 +7,17 @@ const bindingKeys = ["assignment_id", "session_id", "run_id", "generation", "pri
 const budgetKeys = ["max_reasoning_turns", "max_provider_calls", "max_operations", "max_equivalent_operations", "max_no_progress_epochs", "max_reconciliation_attempts", "max_wall_clock_ms", "max_total_tokens"];
 function invalid(reason) { throw new TypeError("assignment_kernel_v2_publication_invalid:provider_usage_hold_" + reason); }
 
+/** Strict non-secret display metadata shared by journal admission and publication. */
+export function validProviderUsageWorkerIdentityV1(value) {
+  const row = object(value);
+  return Boolean(row && keysOnly(row, ["provider", "configured_billing_mode", "requested_model", "requested_reasoning_effort", "reported_model", "reported_model_source"])
+    && row.provider === "openai_codex" && ["chatgpt", "api_key", "unknown"].includes(row.configured_billing_mode)
+    && model(row.requested_model) && model(row.reported_model)
+    && [null, "none", "low", "medium", "high", "xhigh", "max"].includes(row.requested_reasoning_effort)
+    && (row.reported_model === null ? row.reported_model_source === null
+      : row.reported_model_source === "raw_response" || row.reported_model_source === "rerouted"));
+}
+
 /** A safe display projection. Issued transport authority belongs to the controller,
  * not this parser or a caller's provider error text. Zero response receipts are valid. */
 export function parseProviderUsageHoldV1(value, expectedBinding) {
@@ -23,13 +34,7 @@ export function parseProviderUsageHoldV1(value, expectedBinding) {
   let worker;
   if (hold.worker_identity !== undefined) {
     const row = object(hold.worker_identity);
-    if (!row || !keysOnly(row, ["provider", "configured_billing_mode", "requested_model", "requested_reasoning_effort", "reported_model", "reported_model_source"])
-        || row.provider !== "openai_codex" || !["chatgpt", "api_key", "unknown"].includes(row.configured_billing_mode)
-        || !model(row.requested_model)
-        || ![null, "none", "low", "medium", "high", "xhigh", "max"].includes(row.requested_reasoning_effort)
-        || !model(row.reported_model)
-        || ![null, "raw_response", "rerouted"].includes(row.reported_model_source)
-        || (row.reported_model === null) !== (row.reported_model_source === null)) invalid("worker_identity");
+    if (!validProviderUsageWorkerIdentityV1(row)) invalid("worker_identity");
     worker = { provider: row.provider, configured_billing_mode: row.configured_billing_mode,
       requested_model: row.requested_model, requested_reasoning_effort: row.requested_reasoning_effort,
       reported_model: row.reported_model, reported_model_source: row.reported_model_source };

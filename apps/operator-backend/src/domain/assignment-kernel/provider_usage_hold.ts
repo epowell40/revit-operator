@@ -1,3 +1,5 @@
+import { validProviderUsageWorkerIdentityV1 as validSharedProviderUsageWorkerIdentityV1, type ProviderUsageWorkerIdentityV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+export type { ProviderUsageWorkerIdentityV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { kernelAssertV2 } from "./errors.js";
 import { advisoryVerificationV2, validLocalAdvisoryPolicyV1 } from "./execution_policy.js";
 import { sameAssignmentBindingV2, type AssignmentBindingV2 } from "./identity.js";
@@ -9,15 +11,6 @@ import type { OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 
 export const PROVIDER_USAGE_HOLD_V1_SCHEMA = "revit-operator.provider-usage-hold/v1" as const;
-
-export interface ProviderUsageWorkerIdentityV1 {
-  provider: "openai_codex";
-  configured_billing_mode: "chatgpt" | "api_key" | "unknown";
-  requested_model: string | null;
-  requested_reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max" | null;
-  reported_model: string | null;
-  reported_model_source: "raw_response" | "rerouted" | null;
-}
 
 export interface ProviderUsageHoldV1 {
   schema: typeof PROVIDER_USAGE_HOLD_V1_SCHEMA;
@@ -35,23 +28,15 @@ export interface ProviderUsageHoldV1 {
 
 const budgetKeys = ["max_reasoning_turns", "max_provider_calls", "max_operations", "max_equivalent_operations",
   "max_no_progress_epochs", "max_reconciliation_attempts", "max_wall_clock_ms", "max_total_tokens"] as const;
-const identityKeys = ["provider", "configured_billing_mode", "requested_model", "requested_reasoning_effort", "reported_model", "reported_model_source"];
 const bindingKeys = ["assignment_id", "run_id", "generation", "session_id", "principal_id", "document_fingerprint"];
 const holdKeys = ["schema", "hold_id", "binding", "attempt_id", "provider_thread_id", "provider_turn_id", "code", "recorded_at", "resume_budget", "worker_identity"];
 const plain = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const onlyKeys = (value: unknown, keys: readonly string[]) => plain(value) && Object.keys(value).every(key => keys.includes(key));
 const bounded = (value: unknown, max = 240): value is string => typeof value === "string" && value.length > 0
   && value.length <= max && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
-const model = (value: unknown) => value === null || (bounded(value, 160) && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value));
 
 export function validProviderUsageWorkerIdentityV1(value: unknown): value is ProviderUsageWorkerIdentityV1 {
-  if (!onlyKeys(value, identityKeys)) return false;
-  const identity = value as unknown as ProviderUsageWorkerIdentityV1;
-  return identity.provider === "openai_codex" && ["chatgpt", "api_key", "unknown"].includes(identity.configured_billing_mode)
-    && model(identity.requested_model) && model(identity.reported_model)
-    && (identity.requested_reasoning_effort === null || ["none", "low", "medium", "high", "xhigh", "max"].includes(identity.requested_reasoning_effort))
-    && (identity.reported_model === null ? identity.reported_model_source === null
-      : identity.reported_model_source === "raw_response" || identity.reported_model_source === "rerouted");
+  return validSharedProviderUsageWorkerIdentityV1(value);
 }
 
 export function validateProviderUsageHoldV1(snapshot: AssignmentSnapshotV2,

@@ -20,4 +20,5 @@ export interface ProviderUsageHoldV1 {
     max_no_progress_epochs: number; max_reconciliation_attempts: number; max_wall_clock_ms: number; max_total_tokens: number };
   worker_identity?: ProviderUsageWorkerIdentityV1;
 }
+export function validProviderUsageWorkerIdentityV1(value: unknown): value is ProviderUsageWorkerIdentityV1;
 export function parseProviderUsageHoldV1(value: unknown, expectedBinding?: ProviderUsageHoldV1["binding"]): ProviderUsageHoldV1;

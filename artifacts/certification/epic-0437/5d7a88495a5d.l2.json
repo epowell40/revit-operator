@@ -2773,7 +2773,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/provider_usage_hold.ts",
-      "sha256": "sha256:1d17850f57a6835adcf4d68368b79e15ad6d2edafb50eeb5232bbdcf75824a6d"
+      "sha256": "sha256:7b2b0b0f7c0fc378304726bf8303ca9dafdf062a06a27b04fd3f3478d6b9d8bc"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/reducer.ts",
@@ -4089,7 +4089,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:0f9ec9d3e51d9873e961d7d801b82467d37b5dbeed9e8543dad0993e8b591194"
+      "sha256": "sha256:c911ec705773442e9d1b1bd3480d133c497ac9f4e4364d495214f920395b851a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -5460,6 +5460,10 @@
       "sha256": "sha256:4a43f77d979452f937a9378f80a415e10b00e01f2207482d757cbde899e7eb2b"
     },
     {
+      "path": "apps/operator-backend/test/provider_usage_worker_identity_contract.test.ts",
+      "sha256": "sha256:453c2fd1c72310470597c25c21f25932b18ecf45ee5f6113a28919b75f4dc883"
+    },
+    {
       "path": "apps/operator-backend/test/read_attachment.test.ts",
       "sha256": "sha256:46c64b63555ea94d5d1de1f593a51a565b753a9789f23e4ff12f94bc3f50d3ed"
     },
@@ -5677,7 +5681,7 @@
     },
     {
       "path": "apps/operator-backend/test/sidecar_agent_profile_endpoint.test.ts",
-      "sha256": "sha256:1140766763ec5b67dfc70741acccf424224921d0c4235275c92e687a0c4aec5e"
+      "sha256": "sha256:f7d84816bb1fdab5f046450c0ef6e40730ccbcfbffaba1ef921a1ee82e173a0a"
     },
     {
       "path": "apps/operator-backend/test/simple_assistant_presentation.test.ts",
@@ -8514,11 +8518,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.d.ts",
-      "sha256": "sha256:26ffd1e09d08cc0c39716f0d3fd19fe056246299926c92abace60f7e3c5c29d1"
+      "sha256": "sha256:0b03e970d5f157a6822dd2325180e8a5ae1a764aa4fdab280c14b15c50c3e213"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.js",
-      "sha256": "sha256:20a5552b44f6057f1c25200318ae1f09441ef66639112024940e5203379cc582"
+      "sha256": "sha256:ca849fefea7726c59aa3725ecf10054c1e903ae471468c5edc394b2c6a90f8a1"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
@@ -8573,7 +8577,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:1771e87f8d48a6daf126092db24a66ce3a18d73dbbfce44476be5fd7d71400c2",
+  "inputs_hash": "sha256:bb98d516ca6e3f0f4c15fda2fd2896f8addfb8646c021b8bca2c35306bc89cc9",
   "result": {
     "passed": true,
     "checks": [
