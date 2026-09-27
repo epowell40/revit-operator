@@ -74,6 +74,8 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
   if (executionFailure) return executionFailureOutcomeV2(executionFailure.error_class);
   if (snapshot.provider_budget_exhausted) return "failed";
+  // A retained provider hold cannot be mistaken for semantic task completion.
+  if (snapshot.provider_usage_hold) return "active";
 
   // Experimental claims remain unverified even when individual proof facts pass.
   if (advisoryVerificationV2(snapshot)) return snapshot.completion_proposal ? "awaiting_user_review" : "active";

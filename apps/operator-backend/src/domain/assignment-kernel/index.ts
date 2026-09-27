@@ -20,3 +20,4 @@ export * from "./progress/telemetry.js";
 export * from "./progress/replay.js";
 export * from "./reducer.js";
 export * from "./snapshot.js";
+export * from "./provider_usage_hold.js";

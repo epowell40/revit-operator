@@ -41,6 +41,10 @@ const input = readline.createInterface({ input: process.stdin });
 input.on("line", line => {
   const message = JSON.parse(line);
   trace("in", message.method, { params: message.params });
+  if (message.id !== undefined && !message.method) {
+    trace("server-response", String(message.id), { result: message.result, error: message.error });
+    return;
+  }
   if (message.method === "initialized") return;
   const respond = result => send({ id: message.id, result });
   if (message.method === "initialize") {
@@ -75,6 +79,22 @@ input.on("line", line => {
   if (message.method === "turn/start") {
     const turnId = `turn-fixture-${state.nextTurn++}`;
     saveState(state);
+    if (process.env.CODEX_FIXTURE_COMPLETED_ADMISSION === "1") {
+      const request = (id, selectedTurn) => ({ id, method: "item/tool/call", params: {
+        threadId: message.params.threadId, turnId: selectedTurn, callId: id, tool: "fixture-only", arguments: {} } });
+      // One stdout write deliberately prevents promise cleanup between these lines.
+      process.stdout.write([
+        request("admitted-before", turnId),
+        { method: "turn/completed", params: { threadId: message.params.threadId,
+          turn: { id: turnId, status: "failed", error: { message: "Injected usage", codexErrorInfo: "usageLimitExceeded" } } } },
+        request("late-after-completion", turnId),
+        { ...request("missing-thread", turnId), params: { turnId, tool: "fixture-only", arguments: {} } },
+        { ...request("missing-turn", turnId), params: { threadId: message.params.threadId, tool: "fixture-only", arguments: {} } },
+        request("other-turn", "unrelated-turn"),
+        { id: message.id, result: { turn: { id: turnId } } }
+      ].map(value => JSON.stringify(value) + "\n").join(""));
+      return;
+    }
     if (process.env.CODEX_FIXTURE_TURN_ERROR) {
       const failed = { threadId: message.params.threadId, turn: { id: turnId, status: "failed", error: JSON.parse(process.env.CODEX_FIXTURE_TURN_ERROR) } };
       const notifyFailure = () => {

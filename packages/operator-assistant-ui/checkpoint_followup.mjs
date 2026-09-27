@@ -17,6 +17,7 @@ export function checkpointDirectionContext(publication, goal) {
         && snapshot?.spec?.binding?.[key] === binding[key])
       || !document || snapshot.current_binding.document_fingerprint !== document
       || snapshot.spec.binding.document_fingerprint !== document
+      || (snapshot.provider_usage_hold?.hold_id ?? null) !== (goal._providerUsageHold?.hold_id ?? null)
       || (snapshot.execution_control?.command_id ?? null) !== (goal._executionControl?.command_id ?? null)
       || (snapshot.execution_control?.state ?? "running") !== (goal._executionControl?.state ?? "running")) {
     throw new Error("The task or its controls changed. Refresh the task before sending this direction. Your draft is retained.");
@@ -41,7 +42,7 @@ export function checkpointDirectionContext(publication, goal) {
 export function checkpointResumeReady(publication, goal, command) {
   const context = checkpointDirectionContext(publication, goal);
   const snapshot = publication.snapshot;
-  return !context.paused && !context.checkpoint && !snapshot.terminal
+  return !context.paused && !snapshot.provider_usage_hold && !context.checkpoint && !snapshot.terminal
     && snapshot.outcome === "active" && snapshot.quiescent === true
     && snapshot.pending_review_ids?.length === 0
     && snapshot.pending_input_variable_ids?.length === 0

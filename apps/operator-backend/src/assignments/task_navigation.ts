@@ -5,7 +5,7 @@ import { getRequestAssignmentPrincipalId, getRequestContext, isSessionIdBoundToP
 import { reduceAssignmentEventsV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
 
-export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "ready" | "complete" | "failed" | "unknown" | "loading";
+export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "ready" | "complete" | "failed" | "unknown" | "loading" | "stopping_after_usage_limit" | "waiting_for_usage";
 export type TaskNavigationEntry = {
   task_id: string; session_id: string; assignment_id: string | null; title: string;
   state: TaskNavigationState; updated_at: string; summary: string;
@@ -14,6 +14,10 @@ export type TaskNavigationEntry = {
 function taskState(snapshot: AssignmentSnapshotV2): TaskNavigationState {
   if (snapshot.unresolved_unknown_operation_ids.length) return "unknown";
   if (snapshot.execution_control?.state === "paused") return snapshot.quiescent ? "paused" : "pausing";
+  if (!snapshot.terminal && snapshot.provider_usage_hold && snapshot.quiescent
+      && (["blocked", "failed"].includes(snapshot.outcome) || snapshot.progress_blocker
+        || snapshot.provider_budget_exhausted || snapshot.execution_failure_ids.length)) return "failed";
+  if (!snapshot.terminal && snapshot.provider_usage_hold) return snapshot.quiescent ? "waiting_for_usage" : "stopping_after_usage_limit";
   if (!snapshot.quiescent) return "working";
   if (["awaiting_user_input", "awaiting_user_review"].includes(snapshot.outcome)) return "needs_input";
   if (["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome)) return "complete";
@@ -21,8 +25,8 @@ function taskState(snapshot: AssignmentSnapshotV2): TaskNavigationState {
   return "ready";
 }
 
-const rank = (state: TaskNavigationState) => state === "working" || state === "pausing" ? 0
-  : ["paused", "needs_input", "ready", "unknown"].includes(state) ? 1 : 2;
+const rank = (state: TaskNavigationState) => ["working", "pausing", "stopping_after_usage_limit"].includes(state) ? 0
+  : ["paused", "needs_input", "ready", "unknown", "waiting_for_usage"].includes(state) ? 1 : 2;
 
 type NavigationProjection = { invalid: true } | { invalid: false; binding: AssignmentSnapshotV2["current_binding"];
   state: TaskNavigationState; title: string; updated_at: string };
@@ -35,7 +39,8 @@ const navigationProjection = createContentVerifiedProjection<NavigationProjectio
     const snapshot = reduceAssignmentEventsV2(journal.events);
     return { invalid: false, binding: snapshot.current_binding, state: taskState(snapshot),
       title: snapshot.spec.source_user_request.replace(/\s+/g," ").trim().slice(0,180) || "Task",
-      updated_at: snapshot.finished_at || snapshot.execution_control?.changed_at || record.updated_at || snapshot.spec.created_at };
+      updated_at: [snapshot.finished_at, snapshot.execution_control?.changed_at, snapshot.provider_usage_hold?.recorded_at, record.updated_at, snapshot.spec.created_at]
+        .filter((value): value is string => typeof value === "string").sort().at(-1)! };
   } catch { return { invalid: true }; }
 }, { maxEntries: 2048, maxProjectionBytes: 4 * 1024 * 1024 });
 
@@ -85,13 +90,15 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | undefined, Na
     // A durable in-flight receipt can survive a process loss. It is not proof
     // that a worker still owns execution. Keep this live check outside the
     // content cache: acquiring/releasing an owner does not rewrite the journal.
-    const state = projection.invalid ? "unknown" : ["working", "pausing"].includes(projection.state)
+    const state = projection.invalid ? "unknown" : ["working", "pausing", "stopping_after_usage_limit"].includes(projection.state)
       && !assignmentKernelTerminalSettlementDeferredV2(projection.binding) ? "unknown" : projection.state;
     const entry: TaskNavigationEntry = {
       task_id: `session:${sessionId}`, session_id: sessionId, assignment_id: projection.invalid ? goal.id : projection.binding.assignment_id,
       title: titles.get(sessionId) || (projection.invalid ? "Saved task needs checking" : projection.title),
       state, updated_at: projection.invalid ? goal.updated_at : projection.updated_at,
       summary: state === "working" ? "Work is in progress." : state === "pausing" ? "Finishing the current operation."
+        : state === "stopping_after_usage_limit" ? "Usage limit reached. Waiting for admitted work to settle."
+        : state === "waiting_for_usage" ? "Task state is retained. Model changes may be unsaved. Use Resume when usage is available."
         : state === "paused" ? "Work is saved. Resume when ready." : state === "needs_input" ? "Your input or review is needed."
         : state === "unknown" ? "A result needs checking before continuing." : state === "ready" ? "Saved work is ready to continue."
         : state === "failed" ? "Open the conversation to review what remains." : "Open the conversation to see the result."

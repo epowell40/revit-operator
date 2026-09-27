@@ -1,5 +1,5 @@
 export const TASK_NAVIGATION_SCHEMA = 'revit-operator.task-navigation/v1';
-const states = new Set(['working','pausing','paused','needs_input','ready','complete','failed','unknown','loading']);
+const states = new Set(['working','pausing','paused','needs_input','ready','complete','failed','unknown','loading','stopping_after_usage_limit','waiting_for_usage']);
 const text = (value, maximum) => typeof value === 'string' && value.length > 0 && value.length <= maximum;
 
 /** Discovery is for navigation. Opening a row never executes or resumes work;
@@ -21,7 +21,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
   const groups = [{title:'Current task',items:[]},{title:'Working',items:[]},{title:'Needs you',items:[]},{title:'Recent',items:[]}];
   for (const task of tasks) {
     const group = selectedSessionId && task.session_id === selectedSessionId ? 0
-      : ['working','pausing'].includes(task.state) ? 1 : ['paused','needs_input','ready','unknown','failed'].includes(task.state) ? 2 : 3;
+      : ['working','pausing','stopping_after_usage_limit'].includes(task.state) ? 1 : ['paused','needs_input','ready','unknown','failed','waiting_for_usage'].includes(task.state) ? 2 : 3;
     groups[group].items.push(task);
   }
   for (const group of groups) group.items.sort((a,b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
@@ -30,6 +30,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
 
 export function taskStateLabel(state) {
   return {working:'Working',pausing:'Pausing…',paused:'Paused',needs_input:'Needs your input',ready:'Ready to continue',
+    stopping_after_usage_limit:'Stopping after usage limit',waiting_for_usage:'Waiting for usage',
     complete:'Complete',failed:'Needs attention',unknown:'Result needs checking',loading:'Loading saved status…'}[state] || 'Status unavailable';
 }
 
@@ -41,7 +42,7 @@ export function currentTaskState(task, goal, sessionId) {
   if (goal._projection?.truth?.outcome_uncertain || goal._projection?.truth?.reconciliation_required) return 'unknown';
   const phase = goal._assignmentPhase;
   if (['complete','complete_with_issues','verified_noop'].includes(phase)) return 'complete';
-  if (['paused','pausing'].includes(phase)) return phase;
+  if (['paused','pausing','stopping_after_usage_limit','waiting_for_usage'].includes(phase)) return phase;
   if (['awaiting_user_input','awaiting_user_review'].includes(phase)) return 'needs_input';
   if (['failed','blocked'].includes(phase)) return 'failed';
   if (phase === 'active' && task?.assignment_id === goal._bindingV2.assignment_id && task?.state === 'paused')

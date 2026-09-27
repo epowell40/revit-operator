@@ -59,7 +59,7 @@ input.on("line", line => {
   if (message.method === "test/echo") { respond(message.params); return; }
   if (message.method === "test/serverRequest") {
     respond({sent:true});
-    send({id:"fixture-server-request",method:"item/tool/call",params:{fixture:true}});
+    send({id:"fixture-server-request",method:"item/tool/call",params:{fixture:true,threadId:"fixture-thread",turnId:"fixture-turn"}});
     return;
   }
   if (message.method === "thread/start") {

@@ -200,6 +200,9 @@ export class CodexAppServer {
     try { proc?.kill(); } catch {}
   }
 
+  /** Internal host configuration only; never publish the credential directory. */
+  getConfiguredCodexHome(): string { return this.opts.codexHome; }
+
   /** Wait for the exact child to release its state files before reusing them. */
   async stopAndWait(timeoutMs = 5000): Promise<void> {
     const proc = this.proc;
@@ -384,6 +387,13 @@ export class CodexAppServer {
 
   private async handleServerRequest(request: CodexServerRequest, owner: ChildProcessWithoutNullStreams): Promise<void> {
     try {
+      const { threadId, turnId } = request.params ?? {};
+      if (request.method === "item/tool/call" && (typeof threadId !== "string" || !threadId.trim()
+          || typeof turnId !== "string" || !turnId.trim())) throw new Error("Tool request requires exact thread and turn identity.");
+      // This runs synchronously before user callbacks, including in a single stdout
+      // batch. Previously admitted handlers retain their authority to settle.
+      if (typeof threadId === "string" && typeof turnId === "string" && this.turnCompletions.hasCompleted(threadId, turnId))
+        throw new Error("Provider turn is already completed; no new server request was admitted.");
       let result: unknown;
       if (this.serverRequestHandler) {
         result = await this.serverRequestHandler(request);
@@ -517,5 +527,9 @@ export class CodexAppServer {
 
   waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     return this.turnCompletions.wait(opts);
+  }
+
+  isCurrentTurnFailure(error: unknown): boolean {
+    return this.turnCompletions.isCurrentFailure(error);
   }
 }

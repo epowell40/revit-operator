@@ -1,4 +1,5 @@
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
+import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
 import { deriveNativeFailureContextV1 } from "./native_failure_context.js";
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
@@ -96,6 +97,7 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
   const previous = snapshot.provider_calls[event.call_id];
   kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider call requires a stable identity.");
   if (!previous) {
+    kernelAssertV2(!snapshot.provider_usage_hold, "assignment_provider_usage_held", "A provider usage hold admits no new provider request.");
     kernelAssertV2(!snapshot.completion_proposal, "assignment_completion_proposal_pending", "An unverified checkpoint cannot start another provider call.");
     kernelAssertV2(snapshot.execution_control?.state !== "paused", "assignment_execution_paused", "Paused work cannot admit another provider request.");
     kernelAssertV2(event.state === "admitted", "provider_call_not_admitted", "The first provider-call state must be admitted.");
@@ -146,6 +148,7 @@ interface ReducerStateV2 {
   snapshot?: AssignmentSnapshotV2;
   superseded: boolean;
   clarificationByVariable: Map<string, string>;
+  providerUsageHoldIds: Set<string>;
 }
 
 function current(state: ReducerStateV2): AssignmentSnapshotV2 {
@@ -204,6 +207,7 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 }
 
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
+  assertProviderUsageOperationAdmissionV1(snapshot, operation);
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
   const advisory = advisoryVerificationV2(snapshot);
   kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < snapshot.spec.execution_policy!.max_operations, "operation_budget_exhausted", "The immutable local operation budget is exhausted.");
@@ -628,17 +632,16 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
     snapshot = { ...snapshot, assignment_version: event.assignment_version };
     switch (event.event_type) {
       case "execution_control_requested":
-        kernelAssertV2(event.actor === "authenticated-user", "assignment_control_authority_invalid", "Execution controls require an authenticated user.");
-        kernelAssertV2(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(event.command_id), "assignment_control_identity_invalid", "Execution controls require a bounded command identity.");
-        kernelAssertV2(event.expected_command_id === (snapshot.execution_control?.command_id ?? null), "assignment_control_stale", "Execution control changed since this command was prepared.");
-        kernelAssertV2(event.action === "pause" || event.action === "resume", "assignment_control_action_invalid", "Unknown execution control.");
-        if (event.action === "resume") {
-          kernelAssertV2(snapshot.quiescent, "assignment_resume_not_quiescent", "Admitted work must settle before resuming.");
-          kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0, "assignment_resume_reconciliation_required", "Unknown effects must be reconciled before resuming ordinary work.");
-        }
-        snapshot = { ...snapshot, execution_control: { state: event.action === "pause" ? "paused" : "running", command_id: event.command_id, changed_at: event.occurred_at } };
+        snapshot = applyAssignmentExecutionControlV2(snapshot, event);
+        break;
+      case "provider_usage_hold_recorded":
+        validateProviderUsageHoldV1(snapshot, event);
+        kernelAssertV2(!state.providerUsageHoldIds.has(event.hold.hold_id), "provider_usage_hold_identity_reused", "A retired hold identity cannot be resurrected.");
+        state.providerUsageHoldIds.add(event.hold.hold_id);
+        snapshot = { ...snapshot, provider_usage_hold: structuredClone(event.hold) };
         break;
       case "run_superseded":
+        kernelAssertV2(!snapshot.provider_usage_hold, "assignment_provider_usage_held", "A usage hold must be explicitly resumed before replacing its run.");
         kernelAssertV2(event.superseded_by_generation > event.binding.generation, "assignment_generation_not_advanced", "Supersession must advance generation.");
         kernelAssertV2(snapshot.quiescent, "assignment_run_not_quiescent", "A run cannot be superseded while operations are unresolved.");
         state.superseded = true;
@@ -1060,7 +1063,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
 }
 
 export function reduceAssignmentEventsV2(events: readonly AssignmentEventV2[]): AssignmentSnapshotV2 {
-  const state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map() };
+  const state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map(), providerUsageHoldIds: new Set() };
   for (const event of events) applyEvent(state, structuredClone(event));
   return structuredClone(current(state));
 }
@@ -1068,7 +1071,7 @@ export function reduceAssignmentEventsV2(events: readonly AssignmentEventV2[]): 
 export class AssignmentJournalV2 {
   readonly #events: AssignmentEventV2[] = [];
   readonly #byId = new Map<string, AssignmentEventV2>();
-  #state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map() };
+  #state: ReducerStateV2 = { superseded: false, clarificationByVariable: new Map(), providerUsageHoldIds: new Set() };
 
   constructor(events: readonly AssignmentEventV2[] = []) {
     for (const event of events) {
@@ -1096,7 +1099,8 @@ export class AssignmentJournalV2 {
     }
     fork.#state = {
       ...this.#state,
-      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+      clarificationByVariable: new Map(this.#state.clarificationByVariable),
+      providerUsageHoldIds: new Set(this.#state.providerUsageHoldIds)
     };
     return fork;
   }
@@ -1112,7 +1116,8 @@ export class AssignmentJournalV2 {
     const next: ReducerStateV2 = {
       ...this.#state,
       ...(this.#state.snapshot ? { snapshot: structuredClone(this.#state.snapshot) } : {}),
-      clarificationByVariable: new Map(this.#state.clarificationByVariable)
+      clarificationByVariable: new Map(this.#state.clarificationByVariable),
+      providerUsageHoldIds: new Set(this.#state.providerUsageHoldIds)
     };
     const retained = structuredClone(event);
     applyEvent(next, retained);

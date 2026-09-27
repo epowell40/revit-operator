@@ -251,6 +251,7 @@ test("live app-server failure carries the typed code through completion without 
         assert.equal(error.turnId, turnId);
         assert.deepEqual(error.codexErrorInfo, entry.code);
         assert.equal(error.message, "quota-like prose is not the discriminator");
+        assert.equal(client.isCurrentTurnFailure(error), true);
         return true;
       });
       await assert.rejects(client.waitForTurnCompleted({threadId:"wrong-thread",turnId,timeoutMs:0}), /Timed out/);

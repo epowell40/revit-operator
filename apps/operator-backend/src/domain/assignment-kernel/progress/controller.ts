@@ -282,7 +282,7 @@ export function criteriaPendingEvaluationV2(snapshot: AssignmentSnapshotV2): Rea
   return pending;
 }
 
-function budgetBlocker(snapshot: AssignmentSnapshotV2, budget: AssignmentProgressBudgetV2, now: string): string | null {
+export function assignmentProgressBudgetBlockerV2(snapshot: AssignmentSnapshotV2, budget: AssignmentProgressBudgetV2, now: string): string | null {
   const providerCalls = Object.keys(snapshot.provider_calls).length;
   const operationCount = Object.keys(snapshot.operations).length;
   const latest = snapshot.progress_epochs.at(-1);
@@ -372,9 +372,14 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "terminal", snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? "Canonical criteria and operation state derive a terminal outcome."), decision: "terminal", outcome: snapshot.outcome };
   }
   const gaps = deriveProgressGapsV2(snapshot);
-  const exhausted = budgetBlocker(snapshot, budget, now);
+  const exhausted = assignmentProgressBudgetBlockerV2(snapshot, budget, now)
+    ?? (snapshot.provider_usage_hold ? assignmentProgressBudgetBlockerV2(snapshot, snapshot.provider_usage_hold.resume_budget, now) : null);
   if (exhausted) {
     return { ...decisionBase(snapshot, now, "blocked", exhausted), decision: "blocked", outcome: "blocked", gap_ids: gaps.map((gap) => gap.gap_id) };
+  }
+  if (snapshot.provider_usage_hold) {
+    return { ...decisionBase(snapshot, now, "await_provider_resume", "Provider usage is held until an explicit fenced Resume."),
+      decision: "await_provider_resume", hold_id: snapshot.provider_usage_hold.hold_id };
   }
   if (!advisoryVerificationV2(snapshot) && gaps.length === 0) {
     return { ...decisionBase(snapshot, now, "blocked", "Active quiescent Assignment has no admissible unresolved work."), decision: "blocked", outcome: "blocked", gap_ids: [] };
