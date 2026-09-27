@@ -337,7 +337,7 @@ export class CodexAppServer {
         };
         if (n.method === "turn/completed") {
           this.turnCompletions.observe(n.params?.threadId, n.params?.turn?.id,
-            n.params?.turn?.status, n.params?.turn?.error?.message);
+            n.params?.turn?.status, n.params?.turn?.error);
         } else if (n.method === "turn/started" || n.method.startsWith("item/")) {
           this.turnCompletions.observeProgress(n.params?.threadId, n.params?.turnId ?? n.params?.turn?.id);
         }
@@ -463,7 +463,7 @@ export class CodexAppServer {
     const response = await this.requestTyped<ThreadResumeParams, ThreadResumeResponse>("thread/resume", params);
     if (this.proc !== owner) throw new Error("Codex thread resume transport changed.");
     if (response.thread.id !== params.threadId) throw new Error("Codex resumed a different thread.");
-    for (const turn of response.thread.turns ?? []) this.turnCompletions.observe(response.thread.id,turn.id,turn.status,turn.error?.message);
+    for (const turn of response.thread.turns ?? []) this.turnCompletions.observe(response.thread.id,turn.id,turn.status,turn.error);
     this.loadedThreadIds.add(response.thread.id);
     // Rejoining an active thread does not establish that instruction overrides
     // took effect. Monitoring may continue, but a new bound turn must wait.

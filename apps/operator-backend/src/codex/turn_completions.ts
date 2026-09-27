@@ -1,6 +1,8 @@
+import { CodexTurnFailedError, codexTurnErrorReceipt, type CodexTurnErrorReceipt } from "./turn_error.js";
+
 /** Provider completion observations are scoped to one transport lifetime. */
 export type ProviderTurnCompletion = { status: "completed" | "interrupted"; interrupted: boolean };
-type Receipt = { status: "completed" | "interrupted" | "failed"; error: string | null };
+type Receipt = { status: "completed" | "interrupted" | "failed"; error: CodexTurnErrorReceipt; conflicted?: true };
 type Waiter = { settle: (receipt: Receipt) => void; reject: (error: Error) => void; progress: () => void };
 const keyFor = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId]);
 
@@ -9,14 +11,19 @@ export class CodexTurnCompletions {
   private readonly waiters = new Map<string, Set<Waiter>>();
   private pendingCount = 0;
 
-  observe(threadId: unknown, turnId: unknown, status: unknown, errorMessage?: unknown): void {
+  observe(threadId: unknown, turnId: unknown, status: unknown, error?: unknown): void {
     if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) return;
     if (status !== "completed" && status !== "interrupted" && status !== "failed") return;
     const key = keyFor(threadId, turnId);
     const previous = this.receipts.get(key);
-    const receipt: Receipt = previous && previous.status !== status
-      ? { status: "failed", error: "Conflicting provider completion observations." }
-      : { status, error: typeof errorMessage === "string" ? errorMessage.slice(0, 2048) : null };
+    const parsedError = codexTurnErrorReceipt(status === "failed" ? error : null);
+    // Conflicting failure codes are not authoritative even when both statuses are failed.
+    // Once conflicting, later duplicate observations cannot restore a typed failure.
+    const conflicted = previous && (previous.conflicted || previous.status !== status
+      || (status === "failed" && JSON.stringify(previous.error.codexErrorInfo) !== JSON.stringify(parsedError.codexErrorInfo)));
+    const receipt: Receipt = conflicted
+      ? { status: "failed", error: { message: "Conflicting provider completion observations.", codexErrorInfo: null }, conflicted: true }
+      : { status, error: parsedError };
     this.receipts.set(key, receipt);
     while (this.receipts.size > 1024) this.receipts.delete(this.receipts.keys().next().value!);
     for (const waiter of [...(this.waiters.get(key) ?? [])]) waiter.settle(receipt);
@@ -63,7 +70,7 @@ export class CodexTurnCompletions {
         progress: armIdleTimer,
         settle: receipt => {
           if (settled) return;
-          if (receipt.status === "failed") return fail(new Error(receipt.error || "Codex turn failed."));
+          if (receipt.status === "failed") return fail(new CodexTurnFailedError(threadId, turnId, receipt.error));
           settled = true;
           cleanup();
           resolve({ status: receipt.status, interrupted: receipt.status === "interrupted" });

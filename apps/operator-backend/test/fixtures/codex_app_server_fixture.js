@@ -75,6 +75,23 @@ input.on("line", line => {
   if (message.method === "turn/start") {
     const turnId = `turn-fixture-${state.nextTurn++}`;
     saveState(state);
+    if (process.env.CODEX_FIXTURE_TURN_ERROR) {
+      const failed = { threadId: message.params.threadId, turn: { id: turnId, status: "failed", error: JSON.parse(process.env.CODEX_FIXTURE_TURN_ERROR) } };
+      const notifyFailure = () => {
+        notify("turn/completed", failed);
+        if (process.env.CODEX_FIXTURE_DUPLICATE_TURN_ERROR) {
+          notify("turn/completed", { ...failed, turn: { ...failed.turn, error: JSON.parse(process.env.CODEX_FIXTURE_DUPLICATE_TURN_ERROR) } });
+        }
+      };
+      if (process.env.CODEX_FIXTURE_COMPLETE_BEFORE_START_ACK === "1") {
+        notifyFailure();
+        respond({ turn: { id: turnId } });
+      } else {
+        respond({ turn: { id: turnId } });
+        setTimeout(notifyFailure, 20);
+      }
+      return;
+    }
     if (process.env.CODEX_FIXTURE_COMPLETE_BEFORE_START_ACK === "1") {
       notify("turn/completed", { threadId: message.params.threadId, turn: { id: turnId, status: "completed", error: null } });
       respond({ turn: { id: turnId } });
