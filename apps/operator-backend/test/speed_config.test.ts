@@ -49,3 +49,36 @@ test("unified agent defaults are Sol medium and unsafe ids fail closed", () => {
     agent_model: "../../unsafe model", agent_reasoning_effort: "impossible"
   } } }), { model: "gpt-5.6-sol", reasoning_effort: "medium" });
 });
+
+test("provider defaults survive unrelated Codex defaults and retain explicit agent overrides", () => {
+  const prior = { model: process.env.OPERATOR_CODEX_MODEL, effort: process.env.OPERATOR_CODEX_REASONING_EFFORT };
+  process.env.OPERATOR_CODEX_MODEL = "gpt-6-astra";
+  process.env.OPERATOR_CODEX_REASONING_EFFORT = "high";
+  try {
+    const apiDefaults = { model: "gpt-6.1-sol", reasoning_effort: "medium" as const };
+    assert.deepEqual(resolveAgentModelSettings({}, apiDefaults), apiDefaults);
+    assert.deepEqual(resolveAgentModelSettings({ ui: { speed_settings: {
+      agent_model: "gpt-5.6-luna", agent_reasoning_effort: "max"
+    } } }, apiDefaults), { model: "gpt-5.6-luna", reasoning_effort: "max" });
+    assert.deepEqual(resolveAgentModelSettings({}), { model: "gpt-6-astra", reasoning_effort: "high" });
+  } finally {
+    if (prior.model === undefined) delete process.env.OPERATOR_CODEX_MODEL;
+    else process.env.OPERATOR_CODEX_MODEL = prior.model;
+    if (prior.effort === undefined) delete process.env.OPERATOR_CODEX_REASONING_EFFORT;
+    else process.env.OPERATOR_CODEX_REASONING_EFFORT = prior.effort;
+  }
+});
+
+test("GPT-6.1 Sol keeps the requested model and rejects unsupported no-reasoning requests", () => {
+  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+    assert.deepEqual(resolveAgentModelSettings({ ui: { speed_settings: {
+      agent_model: "gpt-6.1-sol", agent_reasoning_effort: effort
+    } } }), { model: "gpt-6.1-sol", reasoning_effort: effort });
+  }
+  assert.throws(() => resolveAgentModelSettings({ ui: { speed_settings: {
+    agent_model: "gpt-6.1-sol", agent_reasoning_effort: "none"
+  } } }), /gpt-6.1-sol.*low.*medium.*high.*xhigh.*max/);
+  assert.equal(resolveAgentModelSettings({ ui: { speed_settings: {
+    agent_model: "gpt-5.6-sol", agent_reasoning_effort: "none"
+  } } }).reasoning_effort, "none");
+});

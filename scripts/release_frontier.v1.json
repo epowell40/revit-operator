@@ -207,7 +207,10 @@
     "codex_completed_turn_admission.test.ts",
     "codex_usage_brain_boundary.test.ts",
     "codex_worker_identity.test.ts",
-    "provider_usage_worker_identity_contract.test.ts"
+    "provider_usage_worker_identity_contract.test.ts",
+    "speed_config.test.ts",
+    "openai_brain_model_call_receipts.test.ts",
+    "desktop_computer_telemetry.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -3537,6 +3540,16 @@
         "backend:codex_turn_model_telemetry.test.ts",
         "backend:task_navigation.test.ts",
         "javascript:package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
+      ]
+    },
+    {
+      "id": "api-model-selection-keeps-provider-defaults-and-rejects-unsupported-effort",
+      "coverage": [
+        "backend:speed_config.test.ts",
+        "backend:openai_brain_model_call_receipts.test.ts",
+        "backend:conversation_intake.test.ts",
+        "backend:desktop_computer_telemetry.test.ts",
+        "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs"
       ]
     }
   ],

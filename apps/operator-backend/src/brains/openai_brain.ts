@@ -18846,7 +18846,10 @@ export async function __testOnlyBuildRedlineExecutionBridgeAsync(args: {
 async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; reason: string }): Promise<string> {
   const history = getHistory(req.session_id);
   const lines: string[] = [];
-  const speedSettings = resolveSpeedSettings(req.context);
+  const speedSettings = resolveSpeedSettings(req.context, {
+    model: normalizeModelId(process.env.OPERATOR_OPENAI_MODEL, "gpt-5.6-sol"),
+    reasoning_effort: getRequestedReasoningEffort(req, normalizeReasoningEffort(process.env.OPERATOR_OPENAI_REASONING_EFFORT, "medium"))
+  });
   const certifiedDirectSidecar = isCertifiedSidecarRequest(req);
   lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
   const turnContract = formatAgentTurnContract(req.user_text, req.context);
@@ -22722,7 +22725,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     r: ChatRequest,
     workbenchNamespaceCorrectionAttempted = false
   ): Promise<OpenAiDecision | { error: string }> {
-    const speedSettings = resolveSpeedSettings(r.context);
+    const speedSettings = resolveSpeedSettings(r.context, { model: defaultModel, reasoning_effort: defaultReasoningEffort });
     const route = selectSpeedRoute(r, speedSettings, { model: defaultModel, reasoning_effort: defaultReasoningEffort });
     const promptStartedMs = Date.now();
     const input = await buildInput(r, { route: route.route, reason: route.reason });

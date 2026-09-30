@@ -3,8 +3,9 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import http from "node:http";
 import { compactUiObservation, mayRouteConversation, retainedIntakeDecision, routeConversation, validateIntakeDecision, intakeDecisionIssues, type IntakeInput } from "../src/conversation_intake.js";
-import { conversationIntakeModelInput, INTAKE_CORRECTION_INSTRUCTIONS } from "../src/brains/conversation_intake_model.js";
+import { conversationIntakeModelInput, INTAKE_CORRECTION_INSTRUCTIONS, ModelConversationIntake } from "../src/brains/conversation_intake_model.js";
 import { appendMessage, getPinnedGoal } from "../src/session_store.js";
 import { __closeForTests, getConversationHistory } from "../src/memory/sqlite_store.js";
 import { formatUiContextConversationHistory } from "../src/conversation_history.js";
@@ -14,6 +15,53 @@ const ui={ok:true,data:{document:{title:"Snowdon HVAC",path:"PRIVATE-PATH",activ
 const answer={route:"answer",answer:null,basis:"ui_identity",question_kind:"ui_identity",identity_fields:["document_title","active_view_name"],read_evidence:"not_applicable",requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
 const expectedAnswer='Open model: "Snowdon HVAC". Active view: "Mechanical L4".';
 const body=(user_text=question,extra={})=>({version:"operator.backend.v1" as const,session_id:"session",message_id:"message",user_text,ui_observation:ui,...extra});
+
+test("Responses intake uses API model defaults, preserves its own override, and rejects unsupported effort before dispatch", {concurrency:false}, async()=>{
+  const keys=["OPERATOR_BRAIN","OPERATOR_OPENAI_API_KEY","OPERATOR_OPENAI_BASE_URL","OPERATOR_OPENAI_MODEL","OPERATOR_CODEX_MODEL","OPERATOR_INTAKE_MODEL","OPERATOR_INTAKE_REASONING_EFFORT"];
+  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  const requests:any[]=[];
+  const server=http.createServer((request,response)=>{
+    const chunks:Buffer[]=[];
+    request.on("data",chunk=>chunks.push(Buffer.from(chunk)));
+    request.on("end",()=>{
+      requests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      response.writeHead(200,{"content-type":"application/json"});
+      response.end(JSON.stringify({id:"resp_intake_model",object:"response",status:"completed",output:[{type:"message",role:"assistant",content:[{type:"output_text",text:JSON.stringify(answer),annotations:[]}]}]}));
+    });
+  });
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  const address=server.address();assert.ok(address&&typeof address==="object");
+  const interpreter=new ModelConversationIntake();
+  const input={user_text:question,recent_conversation:[],ui_observation:compactUiObservation(ui)};
+  try {
+    process.env.OPERATOR_BRAIN="openai";
+    process.env.OPERATOR_OPENAI_API_KEY="test-key";
+    process.env.OPERATOR_OPENAI_BASE_URL=`http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_OPENAI_MODEL="gpt-6.1-sol";
+    process.env.OPERATOR_CODEX_MODEL="gpt-6-astra";
+    delete process.env.OPERATOR_INTAKE_MODEL;
+    delete process.env.OPERATOR_INTAKE_REASONING_EFFORT;
+    const result=await interpreter.interpret(input,new AbortController().signal);
+    assert.deepEqual(result.value,answer);
+    assert.equal(result.telemetry.model,"gpt-6.1-sol");
+    assert.equal(requests[0].model,"gpt-6.1-sol");
+    assert.equal(requests[0].reasoning.effort,"low");
+    assert.equal(requests[0].tools,undefined);
+    assert.equal(requests[0].text.format.type,"json_schema");
+    process.env.OPERATOR_INTAKE_REASONING_EFFORT="none";
+    await assert.rejects(interpreter.interpret(input,new AbortController().signal),/requires reasoning effort/);
+    assert.equal(requests.length,1,"Unsupported effort cannot dispatch a provider call");
+    process.env.OPERATOR_INTAKE_MODEL="gpt-5.6-luna";
+    process.env.OPERATOR_INTAKE_REASONING_EFFORT="high";
+    await interpreter.interpret(input,new AbortController().signal);
+    assert.equal(requests[1].model,"gpt-5.6-luna");
+    assert.equal(requests[1].reasoning.effort,"high");
+  } finally {
+    interpreter.close();
+    for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
+    await new Promise<void>(resolve=>server.close(()=>resolve()));
+  }
+});
 
 test("the actual validator reports distinct eligibility diagnostics and the provider receives correction only as data",()=>{
   const input={user_text:question,recent_conversation:[],ui_observation:compactUiObservation(ui)};

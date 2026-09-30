@@ -4,7 +4,7 @@ import { CodexAppServer } from "../codex/app_server.js";
 import { prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
-import { normalizeModelId, normalizeReasoningEffort } from "../speed_config.js";
+import { assertModelReasoningEffort, normalizeModelId, normalizeReasoningEffort } from "../speed_config.js";
 import { INTAKE_INSTRUCTIONS, INTAKE_SCHEMA, type ConversationIntakeInterpreter, type IntakeInput, type IntakeCorrection } from "../conversation_intake.js";
 
 // An isolated model-only process: no main-agent history, tools, project prompts,
@@ -44,10 +44,11 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
     signal.throwIfAborted();
     const modelInput=conversationIntakeModelInput(input,correction);
     const turnInstructions=correction?{...instructions,developerInstructions:`${instructions.developerInstructions}\n${INTAKE_CORRECTION_INSTRUCTIONS}`}:instructions;
-    const model=normalizeModelId(process.env.OPERATOR_INTAKE_MODEL,
-      normalizeModelId(process.env.OPERATOR_CODEX_MODEL??process.env.OPERATOR_OPENAI_MODEL,"gpt-5.6-sol"));
-    const effort=normalizeReasoningEffort(process.env.OPERATOR_INTAKE_REASONING_EFFORT,"low");
     const brain=(process.env.OPERATOR_BRAIN??"codex").trim();
+    const model=normalizeModelId(process.env.OPERATOR_INTAKE_MODEL,
+      normalizeModelId(brain==="codex"?process.env.OPERATOR_CODEX_MODEL:process.env.OPERATOR_OPENAI_MODEL,"gpt-5.6-sol"));
+    const effort=normalizeReasoningEffort(process.env.OPERATOR_INTAKE_REASONING_EFFORT,"low");
+    assertModelReasoningEffort(model,effort);
     if (brain!=="codex") {
       const key=resolveOpenAiApiKey();
       if (!key || brain==="rule")throw Error("Conversation intake model is unavailable");

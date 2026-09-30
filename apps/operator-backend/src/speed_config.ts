@@ -75,7 +75,15 @@ export function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffo
   return isReasoningEffort(value) ? value.trim().toLowerCase() as ReasoningEffort : fallback;
 }
 
-export function resolveSpeedSettings(context: unknown): SpeedSettings {
+export function assertModelReasoningEffort(model: string, effort: ReasoningEffort): void {
+  // GPT-6.1 Sol does not accept none. Reject explicit unsupported requests
+  // without substituting another model or silently increasing reasoning.
+  if ((model === "gpt-6.1-sol" || /^gpt-6\.1-sol-\d{4}-\d{2}-\d{2}$/.test(model)) && effort === "none") {
+    throw new Error(`${model} requires reasoning effort low, medium, high, xhigh, or max.`);
+  }
+}
+
+export function resolveSpeedSettings(context: unknown, defaults?: AgentModelSettings): SpeedSettings {
   const ui = asRecord(asRecord(context).ui);
   const raw = asRecord(ui.speed_settings ?? ui.speedSettings);
   const envSpeed = boolValue(process.env.OPERATOR_SPEED_MODE, true);
@@ -83,13 +91,14 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
   const agentModel = normalizeModelId(
     raw.agent_model ?? raw.agentModel,
     normalizeModelId(process.env.OPERATOR_AGENT_MODEL,
-      normalizeModelId(process.env.OPERATOR_CODEX_MODEL, "gpt-5.6-sol"))
+      defaults?.model ?? normalizeModelId(process.env.OPERATOR_CODEX_MODEL, "gpt-5.6-sol"))
   );
   const agentReasoningEffort = normalizeReasoningEffort(
     raw.agent_reasoning_effort ?? raw.agentReasoningEffort,
     normalizeReasoningEffort(process.env.OPERATOR_AGENT_REASONING_EFFORT
-      ?? process.env.OPERATOR_CODEX_REASONING_EFFORT, "medium")
+      ?? defaults?.reasoning_effort ?? process.env.OPERATOR_CODEX_REASONING_EFFORT, "medium")
   );
+  assertModelReasoningEffort(agentModel, agentReasoningEffort);
 
   return {
     agent_model: agentModel,
@@ -114,8 +123,8 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
   };
 }
 
-export function resolveAgentModelSettings(context: unknown): AgentModelSettings {
-  const settings = resolveSpeedSettings(context);
+export function resolveAgentModelSettings(context: unknown, defaults?: AgentModelSettings): AgentModelSettings {
+  const settings = resolveSpeedSettings(context, defaults);
   return { model: settings.agent_model, reasoning_effort: settings.agent_reasoning_effort };
 }
 
@@ -153,6 +162,7 @@ function plannerReason(text: string): string | null {
 
 export function selectSpeedRoute(req: ChatRequest, settings: SpeedSettings, defaults: { model: string; reasoning_effort: ReasoningEffort }): SpeedRouteDecision {
   if (!settings.speed_mode) {
+    assertModelReasoningEffort(defaults.model, defaults.reasoning_effort);
     return { route: "classic", reason: "speed mode off", model: defaults.model, reasoning_effort: defaults.reasoning_effort };
   }
   if (!settings.split_planner_executor) {
