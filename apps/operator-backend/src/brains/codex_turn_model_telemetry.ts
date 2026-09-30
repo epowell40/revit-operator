@@ -2,7 +2,8 @@ import type { ModelCallReceipt } from "../contracts.js";
 import { parseProviderTurnUsageV1, PROVIDER_TURN_USAGE_V1_SCHEMA, type ProviderTurnUsageV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import { appendEvent } from "../memory/sqlite_store.js";
 import { createCodexRawModelCallReceipt } from "../model_call_telemetry.js";
-import type { AgentModelSettings } from "../speed_config.js";
+import { isSafeModelId, type AgentModelSettings } from "../speed_config.js";
+import type { CodexReportedModelIdentity } from "./codex_worker_identity.js";
 import type { CodexThreadStartProfile } from "./codex_turn_profile.js";
 
 type CodexNotification = {
@@ -50,6 +51,7 @@ export function createCodexTurnModelTelemetry(args: {
 }): {
   receipts: ModelCallReceipt[]; compactions: string[];
   usageSnapshot: () => CodexUsageSnapshot | null;
+  modelIdentity: () => CodexReportedModelIdentity;
   finish: (messageId: string, disposition: Exclude<ProviderTurnUsageV1["disposition"], "not_started">) => ProviderTurnUsageV1;
   observe: (notification: CodexNotification) => void;
 } {
@@ -57,11 +59,13 @@ export function createCodexTurnModelTelemetry(args: {
   const compactions: string[] = [];
   const startedCompactions = new Set<string>();
   let actualModel = args.settings.model;
+  let reportedModel: CodexReportedModelIdentity = { reported_model: null, reported_model_source: null };
   let latestUsage: CodexUsageSnapshot | null = null;
   return {
     receipts,
     compactions,
     usageSnapshot: () => latestUsage === null ? null : structuredClone(latestUsage),
+    modelIdentity: () => Object.freeze({ ...reportedModel }),
     finish(messageId, disposition) {
       const coverage = parseProviderTurnUsageV1({ schema: PROVIDER_TURN_USAGE_V1_SCHEMA,
         session_id: args.sessionId, message_id: messageId, thread_id: args.threadId,
@@ -121,6 +125,10 @@ export function createCodexTurnModelTelemetry(args: {
         if (params.turnId && params.turnId !== args.turnId) return;
         const candidate = params.toModel ?? params.newModel ?? params.model ?? params.to;
         if (typeof candidate === "string" && candidate.trim()) actualModel = candidate.trim();
+        // Legacy receipt fallback is retained; only an exact-turn event attests this attempt.
+        if (params.turnId === args.turnId && isSafeModelId(candidate)) {
+          reportedModel = { reported_model: candidate.trim(), reported_model_source: "rerouted" };
+        }
         return;
       }
       if (notification.method !== "rawResponse/completed" || params.turnId !== args.turnId) return;
@@ -133,6 +141,9 @@ export function createCodexTurnModelTelemetry(args: {
         turn_id: args.turnId
       });
       if (!receipt || receipts.some(existing => existing.call_id === receipt.call_id)) return;
+      if (isSafeModelId(params.model)) {
+        reportedModel = { reported_model: params.model.trim(), reported_model_source: "raw_response" };
+      }
       receipts.push(receipt);
       args.onReceipt?.(receipt);
       try {

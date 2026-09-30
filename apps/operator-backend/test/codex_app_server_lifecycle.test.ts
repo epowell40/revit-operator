@@ -223,3 +223,127 @@ test("completion before start acknowledgement is available without another provi
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("live app-server failure carries the typed code through completion without retry or message routing", async () => {
+  const cases = [
+    { code: "usageLimitExceeded", beforeAck: false },
+    { code: "usageLimitExceeded", beforeAck: true },
+    { code: "rateLimitExceeded", beforeAck: false },
+    { code: { responseStreamDisconnected: { httpStatusCode: 429 } }, beforeAck: false },
+    { code: null, beforeAck: false }
+  ];
+  for (const entry of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-typed-live-error-"));
+    const tracePath = path.join(root, "trace.jsonl");
+    const client = createClient(root, path.join(root, "state.json"), tracePath, {
+      CODEX_FIXTURE_TURN_ERROR: JSON.stringify({ message: "quota-like prose is not the discriminator", codexErrorInfo: entry.code, additionalDetails: null, misalignment: null }),
+      CODEX_FIXTURE_COMPLETE_BEFORE_START_ACK: entry.beforeAck ? "1" : "0"
+    });
+    try {
+      await client.ensureStarted();
+      const thread = await client.startThread({cwd:root,sandbox:"read-only",approvalPolicy:"never"});
+      const threadId = thread.thread.id;
+      const turn = await client.startTurn({threadId,input:[{type:"text",text:"observe fixture outcome",text_elements:[]}]});
+      const turnId = turn.turn.id;
+      await assert.rejects(client.waitForTurnCompleted({threadId,turnId,timeoutMs:1000}), (error: any) => {
+        assert.equal(error.name, "CodexTurnFailedError");
+        assert.equal(error.threadId, threadId);
+        assert.equal(error.turnId, turnId);
+        assert.deepEqual(error.codexErrorInfo, entry.code);
+        assert.equal(error.message, "quota-like prose is not the discriminator");
+        assert.equal(client.isCurrentTurnFailure(error), true);
+        return true;
+      });
+      await assert.rejects(client.waitForTurnCompleted({threadId:"wrong-thread",turnId,timeoutMs:0}), /Timed out/);
+      const trace = fs.readFileSync(tracePath,"utf8").trim().split(/\r?\n/).map(line => JSON.parse(line) as TraceEntry);
+      assert.equal(trace.filter(row => row.direction === "in" && row.method === "turn/start").length, 1);
+      assert.equal(trace.some(row => row.method === "turn/get" || row.method === "turn/status"), false);
+    } finally {
+      await client.stopAndWait();
+      assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+      assert.ok(path.basename(root).startsWith("operator-typed-live-error-"));
+      fs.rmSync(root,{recursive:true,force:true});
+    }
+  }
+});
+
+test("resumed app-server history preserves the typed failure and exact identity after transport restart", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-typed-resume-error-"));
+  const tracePath = path.join(root,"trace.jsonl");
+  const client = createClient(root,path.join(root,"state.json"),tracePath,{
+    CODEX_FIXTURE_RESUME_TURNS:JSON.stringify([
+      {id:"turn-fixture-1",status:"failed",error:{message:"provider usage exhausted",codexErrorInfo:"usageLimitExceeded",additionalDetails:null,misalignment:null}},
+      {id:"completed-neighbor",status:"completed",error:null},
+      {id:"interrupted-neighbor",status:"interrupted",error:null}
+    ])
+  });
+  try {
+    await client.ensureStarted();
+    const thread = await client.startThread({cwd:root,sandbox:"read-only",approvalPolicy:"never"});
+    const threadId = thread.thread.id;
+    const turn = await client.startTurn({threadId,input:[{type:"text",text:"interrupt-me",text_elements:[]}]});
+    const turnId = turn.turn.id;
+    await client.stopAndWait();
+    await client.ensureStarted();
+    await assert.rejects(client.waitForTurnCompleted({threadId,turnId,timeoutMs:0}),/Timed out/);
+    await client.resumeThread({threadId,cwd:root,sandbox:"read-only",approvalPolicy:"never"});
+    await assert.rejects(client.waitForTurnCompleted({threadId,turnId,timeoutMs:0}), (error: any) => {
+      assert.equal(error.name,"CodexTurnFailedError");
+      assert.equal(error.threadId,threadId);
+      assert.equal(error.turnId,turnId);
+      assert.equal(error.codexErrorInfo,"usageLimitExceeded");
+      assert.equal(error.message,"provider usage exhausted");
+      return true;
+    });
+    await assert.rejects(client.waitForTurnCompleted({threadId:"wrong-thread",turnId,timeoutMs:0}),/Timed out/);
+    assert.deepEqual(await client.waitForTurnCompleted({threadId,turnId:"completed-neighbor",timeoutMs:0}),{status:"completed",interrupted:false});
+    assert.deepEqual(await client.waitForTurnCompleted({threadId,turnId:"interrupted-neighbor",timeoutMs:0}),{status:"interrupted",interrupted:true});
+    const trace = fs.readFileSync(tracePath,"utf8").trim().split(/\r?\n/).map(line => JSON.parse(line) as TraceEntry);
+    assert.equal(trace.filter(row => row.direction === "in" && row.method === "turn/start").length,1);
+    assert.equal(trace.filter(row => row.direction === "in" && row.method === "thread/resume").length,1);
+    assert.equal(trace.some(row => row.method === "turn/get" || row.method === "turn/status"),false);
+  } finally {
+    await client.stopAndWait();
+    assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("operator-typed-resume-error-"));
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test("live and resumed same-turn conflicting failures cannot grant typed usage authority", async () => {
+  for (const source of ["live", "resume"]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(),"operator-conflicting-typed-error-"));
+    const diagnostic = (code: string) => ({message:"same diagnostic",codexErrorInfo:code,additionalDetails:null,misalignment:null});
+    const client = createClient(root,path.join(root,"state.json"),path.join(root,"trace.jsonl"),source === "live" ? {
+      CODEX_FIXTURE_TURN_ERROR:JSON.stringify(diagnostic("rateLimitExceeded")),
+      CODEX_FIXTURE_DUPLICATE_TURN_ERROR:JSON.stringify(diagnostic("usageLimitExceeded")),
+      CODEX_FIXTURE_COMPLETE_BEFORE_START_ACK:"1"
+    } : {
+      CODEX_FIXTURE_RESUME_TURNS:JSON.stringify(["rateLimitExceeded","usageLimitExceeded","usageLimitExceeded"]
+        .map(code => ({id:"turn-fixture-1",status:"failed",error:diagnostic(code)})))
+    });
+    try {
+      await client.ensureStarted();
+      const thread = await client.startThread({cwd:root,sandbox:"read-only",approvalPolicy:"never"});
+      const threadId = thread.thread.id;
+      const turn = await client.startTurn({threadId,input:[{type:"text",text:"interrupt-me",text_elements:[]}]});
+      if(source === "resume") {
+        await client.stopAndWait();
+        await client.ensureStarted();
+        await client.resumeThread({threadId,cwd:root,sandbox:"read-only",approvalPolicy:"never"});
+      }
+      await assert.rejects(client.waitForTurnCompleted({threadId,turnId:turn.turn.id,timeoutMs:0}), (error: any) => {
+        assert.match(error.message,/Conflicting/);
+        assert.equal(error.codexErrorInfo,null);
+        assert.equal(error.threadId,threadId);
+        assert.equal(error.turnId,turn.turn.id);
+        return true;
+      });
+    } finally {
+      await client.stopAndWait();
+      assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+      assert.ok(path.basename(root).startsWith("operator-conflicting-typed-error-"));
+      fs.rmSync(root,{recursive:true,force:true});
+    }
+  }
+});

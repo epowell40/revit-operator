@@ -67,6 +67,7 @@ export type ProgressDecisionV2 = ProgressDecisionBaseV2 & (
   | { decision: "admit_reasoning_turn"; gap_ids: readonly string[]; criterion_ids: readonly CriterionIdV2[]; expected_information: readonly string[] }
   | { decision: "admit_operation"; operation_id: OperationIdV2; gap_ids: readonly string[]; criterion_ids: readonly CriterionIdV2[] }
   | { decision: "await_provider"; provider_call_ids: readonly string[] }
+  | { decision: "await_provider_resume"; hold_id: string }
   | { decision: "await_operation"; operation_ids: readonly OperationIdV2[] }
   | { decision: "reconcile_operation"; operation_id: OperationIdV2; gap_ids: readonly string[] }
   | { decision: "terminal"; outcome: Exclude<AssignmentOutcomeV2, "active" | "awaiting_user_input" | "awaiting_user_review"> }

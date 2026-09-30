@@ -30,6 +30,8 @@
     "index.d.ts",
     "evidence-retrieval-selector-golden-vectors.json",
     "provider-turn-usage.js",
-    "provider-turn-usage.d.ts"
+    "provider-turn-usage.d.ts",
+    "provider-usage-hold.js",
+    "provider-usage-hold.d.ts"
   ]
 }

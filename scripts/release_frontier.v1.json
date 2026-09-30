@@ -200,7 +200,14 @@
     "thin_reference_dynamic_boundary.test.ts",
     "thin_reference_execution.test.ts",
     "assignment_committed_target_retry.test.ts",
-    "assignment_document_checkpoint.test.ts"
+    "assignment_document_checkpoint.test.ts",
+    "assignment_kernel_v2_provider_usage_hold.test.ts",
+    "assignment_provider_usage_boundary.test.ts",
+    "codex_provider_usage_authority.test.ts",
+    "codex_completed_turn_admission.test.ts",
+    "codex_usage_brain_boundary.test.ts",
+    "codex_worker_identity.test.ts",
+    "provider_usage_worker_identity_contract.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -338,11 +345,17 @@
   "failure_families": [
     {
       "id": "saved-pause-direction-must-receive-later-canonical-resume-receipt",
-      "coverage": ["backend:task_steering.test.ts", "backend:codex_instruction_binding.test.ts"]
+      "coverage": [
+        "backend:task_steering.test.ts",
+        "backend:codex_instruction_binding.test.ts"
+      ]
     },
     {
       "id": "completed-provider-turns-without-retained-work-stop-bounded-continuation",
-      "coverage": ["backend:thin_reference_execution.test.ts", "backend:thin_reference_dynamic_boundary.test.ts"]
+      "coverage": [
+        "backend:thin_reference_execution.test.ts",
+        "backend:thin_reference_dynamic_boundary.test.ts"
+      ]
     },
     {
       "id": "ordinary-local-executor-selection-must-be-config-owned-and-stable-at-dispatch",
@@ -3492,6 +3505,39 @@
         "backend:assignment_document_checkpoint.test.ts",
         "backend:native_artifact_contract_v2.test.ts"
       ]
+    },
+    {
+      "id": "provider-usage-hold-requires-current-authentic-typed-completion-and-durable-brain-handoff",
+      "coverage": [
+        "backend:codex_provider_usage_authority.test.ts",
+        "backend:codex_usage_brain_boundary.test.ts",
+        "backend:assignment_provider_usage_boundary.test.ts"
+      ]
+    },
+    {
+      "id": "completed-provider-turn-rejects-late-tool-admission-without-losing-existing-settlement",
+      "coverage": [
+        "backend:codex_completed_turn_admission.test.ts",
+        "backend:codex_app_server_lifecycle.test.ts",
+        "backend:assignment_provider_usage_boundary.test.ts"
+      ]
+    },
+    {
+      "id": "provider-usage-resume-requires-exact-current-hold-binding-budget-and-settlement",
+      "coverage": [
+        "backend:assignment_kernel_v2_provider_usage_hold.test.ts",
+        "backend:assignment_provider_usage_boundary.test.ts"
+      ]
+    },
+    {
+      "id": "provider-usage-ui-preserves-configured-billing-requested-versus-reported-model-and-explicit-resume",
+      "coverage": [
+        "backend:codex_worker_identity.test.ts",
+        "backend:provider_usage_worker_identity_contract.test.ts",
+        "backend:codex_turn_model_telemetry.test.ts",
+        "backend:task_navigation.test.ts",
+        "javascript:package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -3506,6 +3552,7 @@
     "package/operator-assistant-ui/composer_intake.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
-    "package/operator-assistant-ui/checkpoint_followup.test.mjs"
+    "package/operator-assistant-ui/checkpoint_followup.test.mjs",
+    "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
   ]
 }

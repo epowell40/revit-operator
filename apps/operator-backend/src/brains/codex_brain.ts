@@ -7,6 +7,9 @@ import { appendEvent, setCodexThreadId, hasCodexThreadStartedTurn } from "../mem
 import { recoverAssignmentVisualAttachments } from "../attachments/assignment_visual_recovery.js";
 import { recordProviderStartFailureDiagnostic } from "../assignments/chat_execution_failure_diagnostic.js";
 import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
+import { CodexTurnFailedError } from "../codex/turn_error.js";
+import { readCodexWorkerIdentity } from "./codex_worker_identity.js";
+import { recordCodexProviderUsageHoldV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
 import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 import { buildCodexTurnInput } from "./codex_turn_input.js";
 import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
@@ -277,6 +280,7 @@ async function getClient(workspaceRoot: string, profile: CodexThreadStartProfile
 }
 
 function isTransportClosedError(err: unknown): boolean {
+  if (err instanceof CodexTurnFailedError) return false;
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return /transport closed/i.test(msg) || /app-server exited/i.test(msg) || /ECONNRESET/i.test(msg);
 }
@@ -897,6 +901,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
           assignmentBudgetInterrupt?.();
         })
   });
+  const workerIdentity = readCodexWorkerIdentity({ codexHome: c.getConfiguredCodexHome(), settings: agentSettings });
   reconcileStartedProviderTurn = () => {
     for (const notification of earlyTurnNotifications) modelTelemetry.observe(notification);
     providerReceiptRecorder?.reconcile(modelTelemetry.receipts);
@@ -984,6 +989,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   let providerTurnDisposition: "completed" | "interrupted" | "failed" = "failed";
   let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
+  let usageHoldError: unknown = null;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
     ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
@@ -1005,7 +1011,13 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
     providerTurnDisposition = turnCancelled ? "interrupted" : "completed";
   } catch (error) {
-    if (!activeTurnAbort.signal.aborted) {
+    if (!activeTurnAbort.signal.aborted && assignmentKernelV2 && recordCodexProviderUsageHoldV2({
+      binding: assignmentKernelV2.binding, attempt_id: req.message_id, thread_id: threadId, turn_id: turnId,
+      error, is_current_failure: failure => c.isCurrentTurnFailure(failure),
+      worker_identity: { ...workerIdentity, ...modelTelemetry.modelIdentity() }
+    })) {
+      usageHoldError = error;
+    } else if (!activeTurnAbort.signal.aborted) {
       if (!assignmentKernelV2 && assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
         await requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
         const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
@@ -1020,8 +1032,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       }
       throw error;
     }
-    turnCancelled = true;
-    providerTurnDisposition = "interrupted";
+    if (!usageHoldError) { turnCancelled = true; providerTurnDisposition = "interrupted"; }
   } finally {
     unsubscribeTurnNotifications();
     unsubscribeTurnNotifications = () => {};
@@ -1045,6 +1056,16 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         ? providerReceiptReconciliationError.message
         : String(providerReceiptReconciliationError)}`
     );
+  }
+
+  if (usageHoldError && assignmentKernelV2) {
+    if (!c.isCurrentTurnFailure(usageHoldError)) throw new Error("Provider failure changed while task state was settling.");
+    const snapshot = currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding);
+    const message = finalCodexAssignmentMessageV2(snapshot, "Provider usage limit reached; task state is retained.");
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [],
+      model_call_receipts: modelTelemetry.receipts, provider_turn_usage: providerTurnUsage,
+      ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}) };
   }
 
   if (turnCancelled) {

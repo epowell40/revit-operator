@@ -63,7 +63,7 @@ export async function steerAssignment(input: {
   }
   if (!appendEvent(input.binding.session_id,"user","chat.message",{text:input.text,message_id:input.command_id,
     display:{source:"ui_context",message_id:input.command_id,text:input.text},steering:true})) throw new Error("The direction is saved with the task, but its conversation entry could not be saved.");
-  if (!turn) return receipt;
+  if (!turn || resolved.snapshot.provider_usage_hold) return receipt;
   receipt = save({...receipt,state:"sending",updated_at:new Date().toISOString()});
   try {
     const accepted = await turn.steer(input.text,input.command_id);

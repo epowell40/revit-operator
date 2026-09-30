@@ -200,6 +200,9 @@ export class CodexAppServer {
     try { proc?.kill(); } catch {}
   }
 
+  /** Internal host configuration only; never publish the credential directory. */
+  getConfiguredCodexHome(): string { return this.opts.codexHome; }
+
   /** Wait for the exact child to release its state files before reusing them. */
   async stopAndWait(timeoutMs = 5000): Promise<void> {
     const proc = this.proc;
@@ -337,7 +340,7 @@ export class CodexAppServer {
         };
         if (n.method === "turn/completed") {
           this.turnCompletions.observe(n.params?.threadId, n.params?.turn?.id,
-            n.params?.turn?.status, n.params?.turn?.error?.message);
+            n.params?.turn?.status, n.params?.turn?.error);
         } else if (n.method === "turn/started" || n.method.startsWith("item/")) {
           this.turnCompletions.observeProgress(n.params?.threadId, n.params?.turnId ?? n.params?.turn?.id);
         }
@@ -384,6 +387,13 @@ export class CodexAppServer {
 
   private async handleServerRequest(request: CodexServerRequest, owner: ChildProcessWithoutNullStreams): Promise<void> {
     try {
+      const { threadId, turnId } = request.params ?? {};
+      if (request.method === "item/tool/call" && (typeof threadId !== "string" || !threadId.trim()
+          || typeof turnId !== "string" || !turnId.trim())) throw new Error("Tool request requires exact thread and turn identity.");
+      // This runs synchronously before user callbacks, including in a single stdout
+      // batch. Previously admitted handlers retain their authority to settle.
+      if (typeof threadId === "string" && typeof turnId === "string" && this.turnCompletions.hasCompleted(threadId, turnId))
+        throw new Error("Provider turn is already completed; no new server request was admitted.");
       let result: unknown;
       if (this.serverRequestHandler) {
         result = await this.serverRequestHandler(request);
@@ -463,7 +473,7 @@ export class CodexAppServer {
     const response = await this.requestTyped<ThreadResumeParams, ThreadResumeResponse>("thread/resume", params);
     if (this.proc !== owner) throw new Error("Codex thread resume transport changed.");
     if (response.thread.id !== params.threadId) throw new Error("Codex resumed a different thread.");
-    for (const turn of response.thread.turns ?? []) this.turnCompletions.observe(response.thread.id,turn.id,turn.status,turn.error?.message);
+    for (const turn of response.thread.turns ?? []) this.turnCompletions.observe(response.thread.id,turn.id,turn.status,turn.error);
     this.loadedThreadIds.add(response.thread.id);
     // Rejoining an active thread does not establish that instruction overrides
     // took effect. Monitoring may continue, but a new bound turn must wait.
@@ -517,5 +527,9 @@ export class CodexAppServer {
 
   waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     return this.turnCompletions.wait(opts);
+  }
+
+  isCurrentTurnFailure(error: unknown): boolean {
+    return this.turnCompletions.isCurrentFailure(error);
   }
 }

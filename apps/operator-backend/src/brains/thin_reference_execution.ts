@@ -30,6 +30,7 @@ export function startCodexProviderTurnWhenActive<T>(input: Readonly<{
     ? input.signal.reason === "experiment_wall_limit" ? "experiment_wall_limit" : "request_interrupted"
     : input.binding && (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.binding)) ? "assignment_binding_changed"
     : snapshot?.execution_control?.state === "paused" ? "user_requested_pause"
+    : snapshot?.provider_usage_hold ? "provider_usage_hold"
     : snapshot?.completion_proposal ? "advisory_completion_proposed"
     : snapshot?.terminal ? "assignment_terminal"
     : snapshot && snapshot.outcome !== "active" ? snapshot.outcome
@@ -92,6 +93,7 @@ function incompleteProviderStopReason(snapshot: AssignmentSnapshotV2, binding: A
   if (snapshot.unresolved_unknown_operation_ids.length) return "unknown_effect_requires_reconciliation";
   if (snapshot.in_flight_operation_ids.length) return "operation_still_in_flight";
   if (snapshot.in_flight_provider_call_ids.length || !snapshot.quiescent) return "provider_turn_not_completed";
+  if (snapshot.provider_usage_hold) return "provider_usage_hold";
   if (snapshot.pending_input_variable_ids.length) return "awaiting_user_input";
   if (snapshot.terminal) return snapshot.terminal_reason ?? "assignment_terminal";
   const decision = decideAssignmentProgressV2({ snapshot,

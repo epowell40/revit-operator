@@ -18,6 +18,7 @@ export interface AssignmentSnapshotV2 {
   spec: AssignmentSpecV2;
   current_binding: AssignmentBindingV2;
   execution_control?: Readonly<{ state: "paused" | "running"; command_id: string; changed_at: string }>;
+  provider_usage_hold?: Readonly<import("./provider_usage_hold.js").ProviderUsageHoldV1>;
   discovered_inputs?: Readonly<Record<InputVariableIdV2, DiscoveredAssignmentInputV2>>;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
   input_invalidated_operation_ids?: readonly OperationIdV2[];

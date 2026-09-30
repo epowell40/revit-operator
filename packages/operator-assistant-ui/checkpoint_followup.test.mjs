@@ -31,6 +31,7 @@ test("stale publication, binding, document and control views cannot prepare a ch
     p => { p.snapshot.spec.binding = { ...p.snapshot.spec.binding, document_fingerprint: "other" }; },
     p => { p.snapshot.current_binding = { ...p.snapshot.current_binding, document_fingerprint: "other" }; },
     p => { p.snapshot.execution_control = { state: "paused", command_id: "new-pause" }; },
+    p => { p.snapshot.provider_usage_hold = { hold_id: "new-hold" }; },
     p => { p.snapshot.spec.execution_policy.mode = "verified"; },
     p => { p.snapshot.pending_review_ids.push("another-review"); },
     p => { p.snapshot.completion_proposal.verified = true; }
@@ -50,8 +51,9 @@ test("only a fresh active release can proceed to Resume, with Pause, newer revie
     p => { p.snapshot.quiescent = false; }, p => { p.snapshot.terminal = true; },
     p => { p.snapshot.pending_input_variable_ids = ["answer"]; },
     p => { p.snapshot.unresolved_unknown_operation_ids = ["unsettled"]; },
-    p => { p.snapshot.pending_review_ids = ["later"]; }
-  ]) { const blocked = structuredClone(publication); mutate(blocked); assert.equal(checkpointResumeReady(blocked, goal, command), false); }
+    p => { p.snapshot.pending_review_ids = ["later"]; },
+    p => { p.snapshot.provider_usage_hold = { hold_id: "provider-usage" }; }
+  ]) { const blocked = structuredClone(publication); mutate(blocked); assert.equal(checkpointResumeReady(blocked, { ...goal, _providerUsageHold: blocked.snapshot.provider_usage_hold }, command), false); }
   publication.snapshot.execution_control = goal._executionControl = { state: "paused", command_id: "pause" };
   assert.equal(checkpointResumeReady(publication, goal, command), false);
 });

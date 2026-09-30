@@ -1,3 +1,5 @@
+import { parseProviderUsageHoldV1 } from "./provider-usage-hold.js";
+export * from "./provider-usage-hold.js";
 export * from "./native-artifact.js";
 export * from "./native-completion.js";
 export * from "./input-schema-gap.js";
@@ -320,7 +322,9 @@ export function parseAssignmentKernelPublicationV2(value) {
       }
     }
   }
-  return structuredClone(publication);
+  const parsed = structuredClone(publication);
+  if (snapshot.provider_usage_hold !== undefined) parsed.snapshot.provider_usage_hold = parseProviderUsageHoldV1(snapshot.provider_usage_hold, binding);
+  return parsed;
 }
 
 export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA = "revit-operator.assignment-kernel-control-evidence/v2";

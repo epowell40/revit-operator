@@ -6,6 +6,94 @@ import path from "node:path";
 import { recentCommandEvents, __closeForTests } from "../src/memory/sqlite_store.js";
 import { createCodexTurnModelTelemetry } from "../src/brains/codex_turn_model_telemetry.js";
 
+type ReportedIdentity = Readonly<{ reported_model: string | null; reported_model_source: "raw_response" | "rerouted" | null }>;
+function reportedIdentity(telemetry: ReturnType<typeof createCodexTurnModelTelemetry>): ReportedIdentity {
+  // Optional structural access also compiles against the unchanged before source.
+  const accessor = (telemetry as unknown as { modelIdentity?: () => ReportedIdentity }).modelIdentity;
+  assert.equal(typeof accessor, "function", "Provider identity needs an accessor that separates evidence from configured fallback");
+  return accessor!();
+}
+
+function identityFixture(run: (telemetry: ReturnType<typeof createCodexTurnModelTelemetry>) => void): void {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-model-identity-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    run(createCodexTurnModelTelemetry({ sessionId: "identity-test", threadId: "identity-thread", turnId: "identity-turn",
+      settings: { model: "gpt-6-astra", reasoning_effort: "medium" }, startedAtUtc: "2026-09-27T00:00:00Z" }));
+  } finally {
+    __closeForTests();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    const resolved = path.resolve(root);
+    assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(resolved).startsWith("operator-model-identity-"));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  }
+}
+
+const rawIdentity = (responseId: string, model?: unknown, turnId = "identity-turn", threadId = "identity-thread") => ({
+  method: "rawResponse/completed", threadId, params: { turnId, responseId, model, usage: { inputTokens: 10, outputTokens: 2 } }
+});
+
+test("reported worker model is unknown before provider evidence and configured receipt fallback never attests it", () => identityFixture(telemetry => {
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: null, reported_model_source: null });
+  telemetry.observe(rawIdentity("response-fallback"));
+  assert.equal(telemetry.receipts[0]?.model, "gpt-6-astra");
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: null, reported_model_source: null });
+}));
+
+test("raw model identity requires an exact-turn accepted distinct completion and explicit safe model", () => identityFixture(telemetry => {
+  telemetry.observe(rawIdentity("other-thread", "gpt-5.6-sol", "identity-turn", "foreign"));
+  telemetry.observe(rawIdentity("other-turn", "gpt-5.6-sol", "foreign"));
+  telemetry.observe(rawIdentity("invalid response id", "gpt-5.6-sol"));
+  telemetry.observe(rawIdentity("missing-model"));
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: null, reported_model_source: null });
+  telemetry.observe(rawIdentity("actual-response", "gpt-5.6-sol"));
+  const identity = reportedIdentity(telemetry);
+  assert.deepEqual(identity, { reported_model: "gpt-5.6-sol", reported_model_source: "raw_response" });
+  telemetry.observe(rawIdentity("actual-response", "gpt-5.6-luna"));
+  assert.deepEqual(reportedIdentity(telemetry), identity);
+  // Existing receipt semantics remain unchanged until a separate deliberate telemetry migration.
+  assert.equal(telemetry.receipts.at(-1)?.model, "gpt-6-astra");
+}));
+
+test("only exact-turn reroute attests the worker model while old thread-only receipt behavior is preserved", () => identityFixture(telemetry => {
+  telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { toModel: "gpt-5.6-sol" } });
+  telemetry.observe(rawIdentity("legacy-fallback"));
+  assert.equal(telemetry.receipts[0]?.model, "gpt-5.6-sol");
+  telemetry.observe({ method: "model/rerouted", threadId: "foreign", params: { turnId: "identity-turn", toModel: "gpt-5.6-luna" } });
+  telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { turnId: "foreign", toModel: "gpt-5.6-luna" } });
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: null, reported_model_source: null });
+  telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { turnId: "identity-turn", toModel: "gpt-5.6-luna" } });
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: "gpt-5.6-luna", reported_model_source: "rerouted" });
+}));
+
+test("reported identity snapshots are frozen copies and retain their event provenance as later evidence arrives", () => identityFixture(telemetry => {
+  telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { turnId: "identity-turn", toModel: "gpt-5.6-sol" } });
+  const earlier = reportedIdentity(telemetry);
+  assert.ok(Object.isFrozen(earlier)); assert.notEqual(earlier, reportedIdentity(telemetry));
+  assert.throws(() => { (earlier as { reported_model: string }).reported_model = "wrong"; });
+  telemetry.observe(rawIdentity("later-response", "gpt-6-astra"));
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: "gpt-6-astra", reported_model_source: "raw_response" });
+  assert.deepEqual(earlier, { reported_model: "gpt-5.6-sol", reported_model_source: "rerouted" });
+  telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { turnId: "identity-turn", toModel: "gpt-5.6-luna" } });
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: "gpt-5.6-luna", reported_model_source: "rerouted" });
+}));
+
+test("malformed model metadata and unrelated provider fields cannot leak through reported identity", () => identityFixture(telemetry => {
+  let index = 0;
+  for (const invalid of [null, {}, "", " ", "fixture@example.invalid", "C:\\secret\\auth.json", "x".repeat(129), "model\nsecret"]) {
+    telemetry.observe(rawIdentity(`invalid-${index++}`, invalid));
+    telemetry.observe({ method: "model/rerouted", threadId: "identity-thread", params: { turnId: "identity-turn", toModel: invalid } });
+  }
+  telemetry.observe({ ...rawIdentity("safe-response", "gpt-5.6-sol"), params: {
+    ...rawIdentity("safe-response", "gpt-5.6-sol").params, account_id: "fixture-account-secret", access_token: "fixture-token-secret",
+    api_key: "fixture-key-secret", email: "fixture@example.invalid", auth_path: "C:\\secret\\auth.json"
+  } });
+  assert.deepEqual(reportedIdentity(telemetry), { reported_model: "gpt-5.6-sol", reported_model_source: "raw_response" });
+  assert.doesNotMatch(JSON.stringify(reportedIdentity(telemetry)), /fixture-|auth.json|secret|account|token|email|api_key/);
+}));
+
 test("resumed thread usage remains a bounded snapshot and cannot invent provider calls or free cache writes", () => {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
   process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-resumed-usage-"));

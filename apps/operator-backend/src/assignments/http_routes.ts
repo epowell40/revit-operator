@@ -134,10 +134,15 @@ export async function handleAssignmentHttpRoute(
       const body = await readJson(req, 16_000) as JsonMap | null;
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
-      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const current = getAssignmentKernelSnapshotV2(binding.assignment_id);
+      requireV2Principal(current);
+      if (body?.document_fingerprint !== undefined && body.document_fingerprint !== current?.current_binding.document_fingerprint)
+        throw new Error("assignment_control_document_mismatch");
       const snapshot = controlAssignmentExecutionV2({
         binding, command_id: body?.command_id as string,
         expected_command_id: body?.expected_command_id as string | null,
+        ...(body?.expected_hold_id !== undefined ? { expected_hold_id: body.expected_hold_id as string | null } : {}),
+        ...(body?.expected_assignment_version !== undefined ? { expected_assignment_version: body.expected_assignment_version as number } : {}),
         action: body?.action as "pause" | "resume"
       });
       // Save the native admission fence first. Interrupting the model cannot

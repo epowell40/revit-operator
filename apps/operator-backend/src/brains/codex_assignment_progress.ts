@@ -12,6 +12,7 @@ import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_term
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
 import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
+import { providerUsageHoldMessageV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -27,6 +28,7 @@ function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): 
 }
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
+  if (decision.decision === "await_provider_resume") return "The provider usage limit was reached. Task state is retained; Resume explicitly when usage is available.";
   if (decision.decision === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   if (decision.decision === "request_user_input") return "The canonical Assignment is waiting for the required authenticated user input before any more provider work is allowed.";
   if (decision.decision === "request_user_review") return "The canonical Assignment is waiting for bounded user review before any more provider work is allowed.";
@@ -181,6 +183,7 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
   if (snapshot?.unresolved_unknown_operation_ids.length) {
     return "I could not confirm whether the requested change completed. The task and remaining checks are saved; I need to verify the result before retrying.";
   }
+  if (!snapshot?.terminal && snapshot?.provider_usage_hold) return providerUsageHoldMessageV2(snapshot);
   if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   if (snapshot?.terminal) return renderTerminalResultV2(snapshot);
   if (snapshot?.completion_proposal) {
