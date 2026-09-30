@@ -705,6 +705,7 @@ namespace RevitBridge.Operator
                 <span>Agent:</span>
                 <select id=""agentModel"" title=""One model for the complete Operator turn, including planning, tool use, execution, and verification."">
                   <option value=""gpt-5.6-sol"" selected>GPT-5.6 Sol</option>
+                  <option value=""gpt-6.1-sol"">GPT-6.1 Sol (API)</option>
                   <option value=""gpt-6-astra"">GPT-6 Astra</option>
                   <option value=""gpt-5.6-terra"">GPT-5.6 Terra</option>
                   <option value=""gpt-5.6-luna"">GPT-5.6 Luna</option>
@@ -1118,7 +1119,7 @@ namespace RevitBridge.Operator
 
       function normalizeAgentModel(value, fallback) {
         const v = (value || '').toString().trim();
-        if (v === 'gpt-5.6-sol' || v === 'gpt-5.6-terra' || v === 'gpt-5.6-luna' || v === 'gpt-6-astra') return v;
+        if (v === 'gpt-6.1-sol' || v === 'gpt-5.6-sol' || v === 'gpt-5.6-terra' || v === 'gpt-5.6-luna' || v === 'gpt-6-astra') return v;
         return fallback;
       }
 

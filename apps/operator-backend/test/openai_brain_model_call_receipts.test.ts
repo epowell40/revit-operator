@@ -11,7 +11,11 @@ const ENV_KEYS = [
   "OPERATOR_OPENAI_CONTINUATION_ROUNDS",
   "OPERATOR_SPEED_MODE",
   "OPERATOR_AGENT_MODEL",
-  "OPERATOR_AGENT_REASONING_EFFORT"
+  "OPERATOR_AGENT_REASONING_EFFORT",
+  "OPERATOR_OPENAI_MODEL",
+  "OPERATOR_OPENAI_REASONING_EFFORT",
+  "OPERATOR_CODEX_MODEL",
+  "OPERATOR_CODEX_REASONING_EFFORT"
 ] as const;
 
 function request(sessionId: string): ChatRequest {
@@ -136,6 +140,46 @@ test("OpenAI brain returns a content-free receipt when the provider call fails",
     assert.equal(receipt?.tokens.input_tokens, null);
     assert.ok(receipt?.error_code);
     assert.doesNotMatch(JSON.stringify(receipt), /sensitive provider failure detail/);
+  } finally {
+    restoreEnvironment(previous);
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("Responses wire request honors API model and effort despite different Codex settings", { concurrency: false }, async () => {
+  const bodies: any[] = [];
+  const paths: string[] = [];
+  const server = http.createServer((incoming, outgoing) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", chunk => chunks.push(Buffer.from(chunk)));
+    incoming.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      bodies.push(body); paths.push(incoming.url || "");
+      outgoing.writeHead(200, { "content-type": "application/json" });
+      outgoing.end(JSON.stringify({ id: `resp_api_config_${bodies.length}`, object: "response", status: "completed", model: body.model,
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: JSON.stringify({assistant_message:"Fixture response.",actions:[],web_requests:[],dev_actions:[],workbench_actions:[]}) }] }],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address === "object");
+  const previous = saveEnvironment();
+  try {
+    configureProvider(address.port);
+    delete process.env.OPERATOR_AGENT_MODEL; delete process.env.OPERATOR_AGENT_REASONING_EFFORT;
+    process.env.OPERATOR_OPENAI_MODEL = "gpt-6.1-sol"; process.env.OPERATOR_OPENAI_REASONING_EFFORT = "medium";
+    process.env.OPERATOR_CODEX_MODEL = "gpt-6-astra"; process.env.OPERATOR_CODEX_REASONING_EFFORT = "high";
+    for (const speed of ["1", "0"]) {
+      process.env.OPERATOR_SPEED_MODE = speed;
+      const result = await decideOpenAi(request(`api-config-${speed}`));
+      assert.equal(bodies.at(-1).model, "gpt-6.1-sol");
+      assert.equal(bodies.at(-1).reasoning.effort, "medium");
+      assert.equal(bodies.at(-1).temperature, undefined);
+      assert.equal(bodies.at(-1).top_p, undefined);
+      assert.equal(bodies.at(-1).text.format.type, "json_schema");
+      assert.equal(result.model_call_receipts?.[0]?.requested_model, "gpt-6.1-sol");
+    }
+    assert.deepEqual(paths, ["/responses", "/responses"]);
   } finally {
     restoreEnvironment(previous);
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

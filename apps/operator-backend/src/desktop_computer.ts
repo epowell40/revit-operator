@@ -2,6 +2,7 @@ import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import type { ModelCallReceipt } from "./contracts.js";
 import { createOpenAiModelCallReceipt } from "./model_call_telemetry.js";
 import {
+  assertModelReasoningEffort,
   isReasoningEffort,
   isSafeModelId,
   normalizeModelId,
@@ -172,6 +173,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
   const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
+  assertModelReasoningEffort(model, reasoningEffort);
   const startedAtUtc = new Date().toISOString();
   const startedMs = Date.now();
   let response: unknown;

@@ -26,7 +26,7 @@ function boot(storage) {
 }
 
 test('native Settings preserves each offered model through change, reload, and the unified request payload', () => {
-  for (const model of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+  for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     const storage = new Map([['op.speedDefaultsVersion', 'unified-agent-56-v3'], ['op.reasoningEffort', 'high'], ['op.speedMode', '0'], ['op.speedDiet', '0']]);
     const page = boot(storage);
     page.model.value = model;

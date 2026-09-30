@@ -132,7 +132,8 @@ test("desktop relay rejects unsafe explicit model and effort values before dispa
   try {
     for (const [request, expectedMessage] of [
       [{ model: "../../bad model", input: "test" }, /bounded provider model identifier/],
-      [{ reasoning_effort: "maximum", input: "test" }, /none, low, medium, high, xhigh, or max/]
+      [{ reasoning_effort: "maximum", input: "test" }, /none, low, medium, high, xhigh, or max/],
+      [{ model: "gpt-6.1-sol", reasoning_effort: "none", input: "test" }, /requires reasoning effort low, medium, high, xhigh, or max/]
     ]) {
       try {
         await relayDesktopComputerResponse(request as any);
