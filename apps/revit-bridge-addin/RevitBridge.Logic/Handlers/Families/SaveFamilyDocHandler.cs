@@ -35,10 +35,10 @@ namespace RevitBridge.Logic.Handlers
                 if (!string.Equals(Path.GetExtension(saveAsPath), ".rfa", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("save-family-doc.filePath must end in .rfa.");
 
+                if (OperatorFamilySaveReceipt.TryRejectExistingTarget(session.SessionId, saveAsPath, p.overwrite, out var rejected))
+                    return Task.FromResult<object>(rejected!);
                 var directory = Path.GetDirectoryName(saveAsPath);
                 if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-                if (File.Exists(saveAsPath) && !p.overwrite)
-                    throw new InvalidOperationException($"Family file already exists and overwrite=false: {saveAsPath}");
 
                 try
                 {

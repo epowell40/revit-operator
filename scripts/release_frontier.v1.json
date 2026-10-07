@@ -3586,6 +3586,13 @@
       ]
     },
     {
+      "id": "family-save-existing-target-rejection-preserves-known-none-without-clearing-unknown",
+      "coverage": [
+        "dotnet:OperatorFamilySaveReceiptTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
       "id": "followup-retains-native-history-without-current-model-authority",
       "coverage": [
         "backend:prior_assignment_context.test.ts",

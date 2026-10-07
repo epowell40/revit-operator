@@ -9,6 +9,21 @@ namespace RevitBridge.Common
     public static class OperatorFamilySaveReceipt
     {
         public const string Schema = "revit-operator.family-save.v1";
+        // This guard runs before directory creation or any native Save/SaveAs call.
+        public static bool TryRejectExistingTarget(string sessionId, string path, bool overwrite, out object? result)
+        {
+            result = null;
+            if (overwrite || !File.Exists(path)) return false;
+            if (!Guid.TryParseExact(sessionId, "N", out _) || !Path.IsPathRooted(path)
+                || !string.Equals(Path.GetExtension(path), ".rfa", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Family save target identity is invalid.");
+            result = new { ok = false, saved = false, familyDocumentId = sessionId, docId = sessionId,
+                filePath = path, error = "Family file already exists and overwrite=false: " + path,
+                family_save_receipt = new { schema = Schema, status = "rejected", session_id = sessionId, path,
+                    reason = "existing_target_overwrite_disabled", existing_target = true, overwrite = false,
+                    native_save_invoked = false, file_write_performed = false, model_write_performed = false } };
+            return true;
+        }
         // Called only after Save/SaveAs returned. File bytes are read with Revit's
         // open handle shared; changing bytes or an absent file remain unverified.
         public static object Saved(string sessionId, string path, bool documentPathMatches)
@@ -32,6 +47,26 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("family_save_receipt", out var r)) return false;
             try
             {
+                if (r.TryGetProperty("status", out var status) && status.GetString() == "rejected")
+                {
+                    var target = r.GetProperty("path").GetString() ?? "";
+                    if (effect == "apply" && method == "POST" && path == "/revit/save-family-doc"
+                        && root.GetProperty("ok").ValueKind == JsonValueKind.False && root.GetProperty("saved").ValueKind == JsonValueKind.False
+                        && r.GetProperty("schema").GetString() == Schema
+                        && Guid.TryParseExact(r.GetProperty("session_id").GetString(), "N", out _)
+                        && r.GetProperty("session_id").GetString() == root.GetProperty("familyDocumentId").GetString()
+                        && Path.IsPathRooted(target) && string.Equals(Path.GetExtension(target), ".rfa", StringComparison.OrdinalIgnoreCase)
+                        && target == root.GetProperty("filePath").GetString()
+                        && r.GetProperty("reason").GetString() == "existing_target_overwrite_disabled"
+                        && r.GetProperty("existing_target").ValueKind == JsonValueKind.True
+                        && r.GetProperty("overwrite").ValueKind == JsonValueKind.False
+                        && r.GetProperty("native_save_invoked").ValueKind == JsonValueKind.False
+                        && r.GetProperty("file_write_performed").ValueKind == JsonValueKind.False
+                        && r.GetProperty("model_write_performed").ValueKind == JsonValueKind.False)
+                        settlement = OperatorAttemptSettlement.None(effect, method, path,
+                            "native_family_save_rejected_before_save", "native_receipt", requestDispatched: true);
+                    return true;
+                }
                 if (effect != "apply" || method != "POST" || path != "/revit/save-family-doc"
                     || root.GetProperty("ok").ValueKind != JsonValueKind.True || root.GetProperty("saved").ValueKind != JsonValueKind.True
                     || r.GetProperty("schema").GetString() != Schema || r.GetProperty("status").GetString() != "saved"

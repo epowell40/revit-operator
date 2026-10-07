@@ -2518,6 +2518,30 @@ test("reroute planning and observed apply receipts preserve effect separately fr
   }
 });
 
+test("rejected family save preserves failure while native pre-save proof permits known-none settlement", async () => {
+  const route = "/revit/save-family-doc", body = { docId: "a".repeat(32), filePath: "C:\\lab\\existing.rfa", overwrite: false };
+  for (const proven of [false, true]) {
+    const payload = { ok: false, saved: false, familyDocumentId: body.docId, filePath: body.filePath,
+      error: "Family file already exists and overwrite=false: " + body.filePath,
+      ...(proven ? { family_save_receipt: { schema: "revit-operator.family-save.v1", status: "rejected", session_id: body.docId,
+        path: body.filePath, reason: "existing_target_overwrite_disabled", existing_target: true, overwrite: false,
+        native_save_invoked: false, file_write_performed: false, model_write_performed: false } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        request_dispatched: true, effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_receipt" : "native_host",
+        effect_reason: proven ? "native_family_save_rejected_before_save" : "native_handler_failed_after_dispatch", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});
+
 test("retained air schedule plan is known none only with native not-started evidence, never a proven preview", async () => {
   const route="/revit/create-schedule";
   const original=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/air-schedule-plan-unsettled.json", import.meta.url),"utf8"));

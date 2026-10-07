@@ -39,7 +39,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:bdd0ce68982f1930f8396bf02c1de43aaa0d9ebb68538d328be96d79f4679328"
+      "sha256": "sha256:40f7452c2cb5bf2a5c4b652689f6d7551cb2167dc8471aed3efe7d4c25235979"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -6289,7 +6289,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorFamilySaveReceiptTests.cs",
-      "sha256": "sha256:ff210e8512f37142759fc7ba9ee416d77ffc5998ecc6dafd084c864f632eee3d"
+      "sha256": "sha256:e466dc44cab83d4650e209924ea12ef00f9f44a999c739d25d4aa6844aaddf3e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorFamilySessionReceiptTests.cs",
@@ -6921,7 +6921,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorFamilySaveReceipt.cs",
-      "sha256": "sha256:805159d7eb14ec619cbb2782f1b09c2ae022948538a8b3b5332e78fdede1d8cb"
+      "sha256": "sha256:1c60807dc2e0bf21c88611c968af1442a71d52585350c6fa0daf7b3392fe123f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorFamilySessionReceipt.cs",
@@ -7450,7 +7450,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/SaveFamilyDocHandler.cs",
-      "sha256": "sha256:e0e4a0c5ccbc4ff6aabb7d10af0fd798bf604a2f27c57412ddd018d112117a7c"
+      "sha256": "sha256:9641876abe7b87f23399a5ca55c3588df169918c59bd8568b821ee801a391a01"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/SetTextNoteTextHandler.cs",
@@ -8649,7 +8649,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:1fd3b1cfbf6952b048d2c7c37ba51becec49270c70c10e2a2ee60dfba302fb58",
+  "inputs_hash": "sha256:806e2ef78d91e71a35ffaf9ef6a22c90a542ae94948e54a54c56f0010d920612",
   "result": {
     "passed": true,
     "checks": [
