@@ -2566,6 +2566,30 @@ test("retained air schedule plan is known none only with native not-started evid
   }
 });
 
+test("retained placed viewport requires native commit evidence and preserves unknown neighbors", async () => {
+  const route = "/revit/place-view";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/place-view-unsettled.json", import.meta.url), "utf8"));
+  const body = { sheetId: 1542982, viewId: 1542917, x: 1.55, y: 1.3, avoidOverlap: true, dryRun: false };
+  for (const committed of [false, true]) {
+    const payload = { ...original, ...(committed ? { transaction: { status: "committed", committed: true,
+      added_element_ids: [1543012], modified_element_ids: [1542982], affected_element_ids: [1543012,1542982], deleted_element_ids: [] } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply", request_dispatched: true,
+        effect_state: committed ? "applied" : "unknown", effect_authority: committed ? "native_transaction" : "native_host",
+        effect_reason: committed ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+        affected_target_identities: committed ? ["id:1543012", "id:1542982"] : [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, committed ? "applied" : "unknown");
+    assert.equal(result.native_transaction_state, committed ? "committed" : "unknown");
+    assert.equal(result.status, "succeeded");
+  }
+});
+
 test("retained visibility plan has no proven preview and needs native not-started evidence for known none", async () => {
   const route = "/revit/visibility";
   const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/visibility-plan-unsettled.json", import.meta.url), "utf8"));

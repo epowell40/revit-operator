@@ -39,7 +39,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:a8a1696447a155d63489a54d5b59c44162f357fbbcfe44d056368e40edeb8f54"
+      "sha256": "sha256:f11fc7c54bfcec1ed52a329262d12b6575394a6865f41fb7d39fdd8be2585ee0"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -232,6 +232,10 @@
     {
       "path": "apps/mcp-server/src/lib/fixtures/c46-linked-face-placement.json",
       "sha256": "sha256:85c038712b15029283c08990fef683723228f19bd4b8a7e31b9c63ba50086226"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/fixtures/place-view-unsettled.json",
+      "sha256": "sha256:a504f6fc9ffa8e8c93cdcb10881a3eaf43ca8dd88060c81f4fa99674ec64a2a1"
     },
     {
       "path": "apps/mcp-server/src/lib/fixtures/unit403-place-families-map-rejected.json",
@@ -6056,6 +6060,10 @@
       "sha256": "sha256:63b23c357a10b8f725669d7a7cd953c35c3efe39512155db40d6c227b46753e4"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/place-view-unsettled.json",
+      "sha256": "sha256:a504f6fc9ffa8e8c93cdcb10881a3eaf43ca8dd88060c81f4fa99674ec64a2a1"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/read-recovery-connect-mep-elements-applied-unsettled.json",
       "sha256": "sha256:b4618a9623a4f923708b633d88b420ec422091cc7cc7c04c2ea18f2dc9fedd13"
     },
@@ -6468,6 +6476,10 @@
       "sha256": "sha256:78e650d70e83be61d86d16ba90b4eed6bf97d854b797657d7e351b3a31deb40a"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/PlaceViewSettlementTests.cs",
+      "sha256": "sha256:5d8f8e4f9c1909bd18dd63bb723f8e74982cdb172e4ad0f2f4518d657619e3da"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/PowerOutletsRuleEngineTests.cs",
       "sha256": "sha256:de83452f43b2b823300d567d2f4734d7a13f4107cbe6b9d5e221bdb692b4ef81"
     },
@@ -6481,7 +6493,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj",
-      "sha256": "sha256:d10051de098b96ffea019e2449b56c84241816e530c735ac164c43a3a8dae199"
+      "sha256": "sha256:c971f910b2be0668878e419a1d58e5305f15f65b721281f417c27f8289a16cb2"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitRerouteOperationContractTests.cs",
@@ -7682,7 +7694,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/PlaceViewOnSheetHandler.cs",
-      "sha256": "sha256:59e5e0e2c932a026057a54ee32bfd4b39ffa4b9b946809d40b127b0254cf1727"
+      "sha256": "sha256:77be74e1c168b1bb5e3bc01f6623bff9263a5c42f1e4174c6a7d31e04710de90"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/PlanDwellingReceptaclesHandler.cs",
@@ -8258,7 +8270,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PlaceViewOnSheetHandler.cs",
-      "sha256": "sha256:ee80cb5456669dbce47a1775882774aaacb707b590539ee3bf16e5fb659cbe47"
+      "sha256": "sha256:70315446e0bb3447945500de93c2068dd29e2905b1a2e7c33ba60e0716967b56"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PlaceViewsBatchHandler.cs",
@@ -8661,7 +8673,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:9053b5ca27b61cb00cff0b25c7f614de4f931582e961dcb67e5ebb745a6fed88",
+  "inputs_hash": "sha256:275451865c20343fcc72a2ab5501dfffa518a46807646577f4942ac9e39a07e7",
   "result": {
     "passed": true,
     "checks": [
