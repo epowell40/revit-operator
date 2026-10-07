@@ -232,6 +232,17 @@ export async function runThinReferenceTurns(input: Readonly<{
       if (response.actions.length) { stopReason = "pending_client_actions"; break; }
       lastTurnStart = current.snapshot; lastDirections = directions;
     }
+    // This runner can stop on deterministic input/safety gates before invoke.
+    // Only the actual zero-invocation path proves that no provider usage began;
+    // missing telemetry from an invoked turn must remain unknown.
+    if (turns === 0) {
+      response = { ...response, provider_turn_usage: {
+        schema: "revit-operator.provider-turn-usage/v1",
+        session_id: input.request.session_id, message_id: input.request.message_id,
+        thread_id: null, turn_id: null, disposition: "not_started", raw_response_ids: []
+      } };
+      providerTurns.push(response.provider_turn_usage!);
+    }
     return { response: { ...response, model_call_receipts: [...receipts.values()] }, turns,
       stop_reason: stopReason, duration_ms: Math.max(0, now() - started), provider_turns: providerTurns };
   } finally { activeAssignments.delete(key); }

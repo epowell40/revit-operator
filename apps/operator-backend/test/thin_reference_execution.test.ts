@@ -59,6 +59,38 @@ function nativeUnknown(f: ReturnType<typeof start>) {
 }
 
 const reviewProposal = { claimed_completed: ["Saved a best-effort draft."], remaining_work: ["Review unresolved connections."], uncertainties: ["Drawing elevation is ambiguous."] };
+for (const gate of ["missing-input", "abort-before-start"] as const) {
+  test(`zero provider invocations report explicit usage for ${gate}`, () => fixture(async f => {
+    const abort = new AbortController();
+    if (gate === "missing-input") requestAssignmentInputV2({ binding: f.binding,
+      clarification_id: "missing-replacement", variable_ids: ["replacement_text"],
+      new_variable_ids: ["replacement_text"], question: "What exact replacement text should I use?" });
+    else abort.abort("user_cancel");
+    const result = await runThinReferenceTurns({ ...f, signal: abort.signal,
+      invoke: async () => { throw new Error("must not invoke provider"); } });
+    assert.equal(result.turns, 0);
+    assert.equal(result.stop_reason, gate === "missing-input" ? "Authenticated execution-critical input is missing." : "request_interrupted");
+    if (gate === "missing-input") assert.equal(result.response.assignment_snapshot_v2?.outcome, "awaiting_user_input");
+    assert.deepEqual(result.response.provider_turn_usage, {
+      schema: "revit-operator.provider-turn-usage/v1", session_id: f.request.session_id,
+      message_id: f.request.message_id, thread_id: null, turn_id: null,
+      disposition: "not_started", raw_response_ids: []
+    });
+    assert.deepEqual(result.provider_turns, [result.response.provider_turn_usage]);
+    assert.deepEqual(result.response.model_call_receipts, []);
+  }));
+}
+
+test("an invoked turn with absent usage cannot become a zero-call receipt", () => fixture(async f => {
+  const result = await runThinReferenceTurns({ ...f, invoke: async () => ({
+    version: "operator.backend.v1", assistant_message: "Missing usage.", actions: []
+  }) });
+  assert.equal(result.turns, 1);
+  assert.equal(result.response.provider_turn_usage, undefined);
+  assert.deepEqual(result.provider_turns, []);
+  assert.equal(result.stop_reason, "provider_turn_not_completed");
+}));
+
 function interrupted(request: ChatRequest, turn: number): ChatResponse {
   return { ...completed(request, turn), provider_turn_usage: { ...completed(request, turn).provider_turn_usage!, disposition: "interrupted" } };
 }
