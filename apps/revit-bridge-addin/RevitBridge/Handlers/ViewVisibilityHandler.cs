@@ -131,6 +131,8 @@ namespace RevitBridge.Handlers
                     status = "Dry Run",
                     action,
                     dryRun = true,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
+                    previewExecuted = false,
                     input = new
                     {
                         viewId = p.viewId ?? RevitBridge.Common.ElementIdCompat.GetValue(view.Id),

@@ -2565,3 +2565,27 @@ test("retained air schedule plan is known none only with native not-started evid
     assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_id==="task.preview_valid"&&f.value===true),false);
   }
 });
+
+test("retained visibility plan has no proven preview and needs native not-started evidence for known none", async () => {
+  const route = "/revit/visibility";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/visibility-plan-unsettled.json", import.meta.url), "utf8"));
+  const body = { action: "set_template", viewId: 1542917, templateName: "None", dryRun: true };
+  for (const proven of [false, true]) {
+    const payload = { ...original, ...(proven ? { transaction: { status: "not_started", committed: false, affected_element_ids: [] }, previewExecuted: false } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview", request_dispatched: true,
+        effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_transaction" : "native_host",
+        effect_reason: proven ? "native_transaction_not_started" : "native_handler_returned_without_authoritative_settlement", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.error_code, "native_preview_execution_unproven");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, proven ? "not_started" : "unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid" && f.value === true), false);
+  }
+});
