@@ -18,7 +18,7 @@
     "acceptance:mep": "ts-node src/scripts/run_mep_continuity_acceptance.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@revitoperator/assignment-kernel-v2-contracts": "file:../../packages/assignment-kernel-v2-contracts",
     "@revitoperator/payload-digest-v2": "file:../../packages/payload-digest-v2",
     "@revitoperator/revit-action-effect-v1": "file:../../packages/revit-action-effect-v1",

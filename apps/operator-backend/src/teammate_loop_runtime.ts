@@ -20,6 +20,7 @@ import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } fr
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
 import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
+import { familySessionOpenedV1, familySessionReloadedV1, familySessionSavedV1, familySessionClosedV1 } from "./verification/family_session_open_v1.js";
 import {
   explicitTargetAbsenceV2,
   explicitVerificationV2,
@@ -893,7 +894,11 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       const detailedDuplicate = pending.path === "/revit/duplicate-view"
         && objectValue(pending.raw_body).withDetailing === true;
       if ((!detailedDuplicate && verificationMatches(state, evidence, true))
-          || explicitDocumentOpenCompletion(pending, evidence)) {
+          || explicitDocumentOpenCompletion(pending, evidence)
+          || familySessionOpenedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionReloadedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionSavedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionClosedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))) {
         markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }

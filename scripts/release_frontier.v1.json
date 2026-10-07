@@ -210,7 +210,11 @@
     "provider_usage_worker_identity_contract.test.ts",
     "speed_config.test.ts",
     "openai_brain_model_call_receipts.test.ts",
-    "desktop_computer_telemetry.test.ts"
+    "desktop_computer_telemetry.test.ts",
+    "parameter_drafting_readback.test.ts",
+    "air_device_retained_replay.test.ts",
+    "family_session_open_v1.test.ts",
+    "prior_assignment_context.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -343,7 +347,12 @@
     "OrdinaryMutationTransactionTests",
     "SaveAsArtifactReceiptTests",
     "TakeoffConnectorIdentityTests",
-    "TextNoteTypeLookupTests"
+    "TextNoteTypeLookupTests",
+    "OperatorFamilySessionReceiptTests",
+    "OperatorFamilySaveReceiptTests",
+    "OperatorFamilyReloadReceiptTests",
+    "OperatorFamilyCloseReceiptTests",
+    "ScheduleSettlementTests"
   ],
   "failure_families": [
     {
@@ -3550,6 +3559,37 @@
         "backend:conversation_intake.test.ts",
         "backend:desktop_computer_telemetry.test.ts",
         "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs"
+      ]
+    },
+    {
+      "id": "native-family-session-lifecycle-requires-exact-session-and-observed-save-load-close",
+      "coverage": [
+        "backend:family_session_open_v1.test.ts",
+        "dotnet:OperatorFamilySessionReceiptTests",
+        "dotnet:OperatorFamilySaveReceiptTests",
+        "dotnet:OperatorFamilyReloadReceiptTests",
+        "dotnet:OperatorFamilyCloseReceiptTests"
+      ]
+    },
+    {
+      "id": "air-device-drafting-readback-verifies-native-values-before-next-write",
+      "coverage": [
+        "backend:parameter_drafting_readback.test.ts",
+        "backend:air_device_retained_replay.test.ts"
+      ]
+    },
+    {
+      "id": "schedule-planning-is-known-none-without-inventing-preview-execution",
+      "coverage": [
+        "dotnet:ScheduleSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "followup-retains-native-history-without-current-model-authority",
+      "coverage": [
+        "backend:prior_assignment_context.test.ts",
+        "backend:conversation_assignment_isolation.test.ts"
       ]
     }
   ],

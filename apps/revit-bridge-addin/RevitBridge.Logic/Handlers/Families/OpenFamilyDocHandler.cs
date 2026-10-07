@@ -44,6 +44,7 @@ namespace RevitBridge.Logic.Handlers
                 if (!string.Equals(ext, ".rfa", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("open-family-doc currently supports .rfa files only.");
 
+                FamilyEditSessionStore.EnsureCapacity();
                 var famDoc = app.Application.OpenDocumentFile(fp);
                 if (famDoc == null) throw new InvalidOperationException("Failed to open family document.");
 
@@ -56,7 +57,8 @@ namespace RevitBridge.Logic.Handlers
                     familyDocumentId = session.SessionId,
                     title = famDoc.Title,
                     familyName = session.FamilyName,
-                    sourceFilePath = fp
+                    sourceFilePath = fp,
+                    family_session_receipt = FamilyEditSessionStore.OpenReceipt(session, "file", fp)
                 });
             }
 
@@ -64,6 +66,7 @@ namespace RevitBridge.Logic.Handlers
             {
                 var fam = projectDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.familyId.Value)) as Family;
                 if (fam == null) throw new InvalidOperationException($"Family {p.familyId.Value} not found in the active document.");
+                FamilyEditSessionStore.EnsureCapacity();
                 var famDoc = projectDoc.EditFamily(fam);
                 var session = FamilyEditSessionStore.Create(projectDoc, famDoc, fam, titleblockTypeId: 0);
                 return Task.FromResult<object>(new
@@ -73,7 +76,8 @@ namespace RevitBridge.Logic.Handlers
                     familyDocId = session.SessionId,
                     familyDocumentId = session.SessionId,
                     title = famDoc.Title,
-                    familyName = session.FamilyName
+                    familyName = session.FamilyName,
+                    family_session_receipt = FamilyEditSessionStore.OpenReceipt(session, "family", p.familyId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))
                 });
             }
 

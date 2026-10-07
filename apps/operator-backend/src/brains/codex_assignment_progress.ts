@@ -1,4 +1,5 @@
 import { advisoryFollowupsContextV2, advisoryFollowupsHandoffV2, projectAdvisoryFollowupsV2 } from "../assignments/advisory_followups_projection.js";
+import { loadPriorAssignmentContext } from "../assignments/prior_assignment_context.js";
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
 import type { ModelCallReceipt } from "../contracts.js";
@@ -113,7 +114,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
       : progressPrompt(progression.snapshot, progression.decision);
   return {
     snapshot: progression.snapshot,
-    prompt: prompt ? [prompt, executionControlContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
+    prompt: prompt ? [prompt, executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
       : finalCodexAssignmentMessageV2(progression.snapshot, progressMessage(progression.decision))

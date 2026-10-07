@@ -165,6 +165,24 @@ function normalizedSheetName(value: string): string {
   return value.trim().replace(/[a-z]/g, character => character.toUpperCase());
 }
 
+// Match the ASCII drafting-text policy of native SetParameterHandler. This is
+// an expected-value transformation, never case-insensitive evidence matching.
+function setParameterSemanticInput(value: unknown): unknown {
+  const input = objectValue(value);
+  if (!Array.isArray(input.changes)) return value;
+  const protectedTerms = ["url", "uri", "email", "path", "file", "folder", "directory", "guid", "uuid", "token", "password", "secret", "key"];
+  const draftingTerms = ["name", "title", "description", "comment", "text", "note", "label", "abbreviation", "prefix", "suffix", "drawn", "checked", "approved", "issued"];
+  return { ...input, changes: input.changes.map(candidate => {
+    const row = objectValue(candidate);
+    if ((row.preserveTextCase ?? input.preserveTextCase ?? false) === true || typeof row.value !== "string") return candidate;
+    const name = String(row.parameterName ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const text = row.value;
+    if (protectedTerms.some(term => name.includes(term)) || !draftingTerms.some(term => name.includes(term))
+      || text.includes("://") || (text.includes("@") && text.includes(".")) || text.includes("\\") || text.trim().startsWith("/")) return candidate;
+    return { ...row, value: text.replace(/[a-z]/g, character => character.toUpperCase()) };
+  }) };
+}
+
 function scheduleFilterToken(value: unknown): string | null {
   const row = objectValue(value);
   const field = typeof row.field === "string" ? row.field.trim().toLowerCase() : "";
@@ -378,7 +396,8 @@ export function expectedPostconditionValuesV2(
   const values = new Set<string>();
   const useRevitTextSemantics = textNoteOperation(value, contract);
   const operationPath = operationContractPath(value, contract);
-  const semanticInput = semanticApplyInput(value);
+  const semanticInput = operationPath === "/revit/set-parameter"
+    ? setParameterSemanticInput(semanticApplyInput(value)) : semanticApplyInput(value);
   if (operationPath === "/revit/create-view" && objectValue(semanticInput).action === "rename_batch")
     return exactViewRenameValues(semanticInput);
   if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
@@ -501,6 +520,14 @@ export function observedPostconditionValuesV2(value: unknown, contract: Postcond
       const row = node as Record<string, unknown>;
       const directTargets = parameterTargetIdentities(row);
       const targets = directTargets.length > 0 ? directTargets : inheritedTargets;
+      if (operationContractPath({}, contract) === "/revit/set-parameter" && normalizedContainer === "verification") {
+        // The handler's expectedValue is not an observation. Bind only its
+        // actual readback to the exact parameter and element on a verified row.
+        if (row.status === "verified" && directTargets.length > 0 && typeof row.parameterName === "string") {
+          for (const token of parameterMapTokens({ [row.parameterName]: row.actual }, directTargets, true)) values.add(token);
+        }
+        return;
+      }
       if (row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters)) {
         for (const token of parameterMapTokens(row.parameters, targets, true)) values.add(token);
       }
