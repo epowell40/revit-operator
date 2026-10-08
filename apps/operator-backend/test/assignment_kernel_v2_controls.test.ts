@@ -1382,9 +1382,10 @@ import { AssignmentJournalV2, type AssignmentEventV2 } from "../src/domain/assig
 import { retainNativeCompletionDispatchV1, readNativeCompletionDispatchV1, readLateNativeCompletionV1 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { __testOnlyOpenNativeRequest, __testOnlyProtectNativeResponse, NATIVE_TRANSPORT_CONTENT_TYPE } from "../src/brains/native_revit_transport.js";
 
+for (const completionRoute of ["/revit/move-elements", "/revit/tag-elements"])
 for (const requestedEffect of ["apply", "preview"] as const)
 for (const variant of ["committed", "rolled_back", "not_started", "pending", "not_found", "unknown", "wrong_document", "wrong_nonce", "changed_document", "body_tamper", "missing_map", "map_tamper", "changed_epoch", "typed_child", "binding_changed", "wrong_effect", "wrong_schema", "contradictory_transaction", "missing_transaction"] as const)
-test(`late native completion HTTP ${requestedEffect} ${variant} preserves the timeout, Pause, budgets and evidence authority`, () => workspace(async root => {
+test(`late native completion HTTP ${completionRoute} ${requestedEffect} ${variant} preserves the timeout, Pause, budgets and evidence authority`, () => workspace(async root => {
   const previous = Object.fromEntries(["LOCALAPPDATA", "OPERATOR_TOKEN", "REVIT_OPERATOR_MODE", "OPERATOR_TOOL_EXPOSURE_PROFILE"].map(k => [k, process.env[k]]));
   const token = "test-native-completion-token-0123456789", epoch = Buffer.alloc(32, 7).toString("base64url"), fingerprint = "a".repeat(64);
   process.env.LOCALAPPDATA = root; process.env.OPERATOR_TOKEN = token;
@@ -1392,20 +1393,20 @@ test(`late native completion HTTP ${requestedEffect} ${variant} preserves the ti
   const prepared = prepareAssignmentTurn({ sessionId: `late-${requestedEffect}-${variant}`, messageId: "first", userText: "Move Revit element 42 up one foot.",
     toolResults: [], source: "chat", createdBy: null, requestContext: { revit: { document: { projectIdentity: { fingerprint } } } } })!;
   const binding = prepared.bindingV2!, initial = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
-  const requestBody = { ids: [42], mode: "vector", vectorX: 0, vectorY: 0, vectorZ: 1, moveTogether: true,
+  const requestBody = completionRoute === "/revit/tag-elements" ? { elementIds: [42], viewId: 7, tagTypeId: 8, onlyUntagged: true, placementMode: "geometry_aware", dryRun: requestedEffect === "preview" } : { ids: [42], mode: "vector", vectorX: 0, vectorY: 0, vectorZ: 1, moveTogether: true,
     behavior: "allOrNothing", dryRun: requestedEffect === "preview" };
   const parentLease = openAssignmentKernelOperationV2({ snapshot: initial, controller_request_id: "move", provider_turn_id: "turn",
-    capability_id: "revit_call_tool", classified_effect: requestedEffect, arguments: { method: "POST", path: "/revit/move-elements", body: requestBody } });
+    capability_id: "revit_call_tool", classified_effect: requestedEffect, arguments: { method: "POST", path: completionRoute, body: requestBody } });
   const lease = variant === "typed_child" ? openAssignmentKernelChildOperationV2({ binding, parent_operation_id: parentLease.operation_id,
-    child_ordinal: 0, operation_role: "child", capability_id: "native:POST:/revit/move-elements", classified_effect: requestedEffect,
-    method: "POST", path: "/revit/move-elements", arguments: { method: "POST", path: "/revit/move-elements", body: requestBody },
+    child_ordinal: 0, operation_role: "child", capability_id: `native:POST:${completionRoute}`, classified_effect: requestedEffect,
+    method: "POST", path: completionRoute, arguments: { method: "POST", path: completionRoute, body: requestBody },
     fulfillment_role: "supporting_control", blocks_parent_settlement: true }) : parentLease;
   markAssignmentKernelOperationDispatchStartedV2(lease);
   const requestId = "b".repeat(64), sha = (value: string) => `sha256:${nativeCompletionHash("sha256").update(value, "utf8").digest("hex")}`;
   const timeout = { content: [], structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: {
     schema: "revit-operator.operation-result/v2", result_id: `timeout:${lease.operation_id}`, operation_id: lease.operation_id, binding: lease.binding,
     status: "failed_after_dispatch", dispatch_state: "dispatched", persistent_effect: "unknown", native_transaction_state: "unknown",
-    authority: "native-host", result_schema_id: "operator-native/POST:/revit/move-elements/v2", observation_required: false,
+    authority: "native-host", result_schema_id: `operator-native/POST:${completionRoute}/v2`, observation_required: false,
     native_correlation_id: requestId, request_identity: lease.request_identity, completed_at: "2026-09-27T00:00:01.000Z", error_code: "native_operation_failed" } } };
   const key = completionOutboxKeyV2(root);
   retainCompletionOutboxV2(root, key, lease, timeout);
@@ -1420,7 +1421,7 @@ test(`late native completion HTTP ${requestedEffect} ${variant} preserves the ti
   }
   controlAssignmentExecutionV2({ binding, command_id: "paused", expected_command_id: null, action: "pause" });
   const native = { request_id: requestId, request_nonce_sha256: sha("original-nonce"), server_epoch: epoch, method: "POST" as const,
-    path: "/revit/move-elements", body_present: true as const, source_body_sha256: sha(JSON.stringify(requestBody)),
+    path: completionRoute, body_present: true as const, source_body_sha256: sha(JSON.stringify(requestBody)),
     channel: "generic_call" as const, alias: "revit_call_tool", transport_receipt_sha256: sha("receipt"), expected_document_fingerprint: fingerprint };
   if (variant !== "missing_map") retainNativeCompletionDispatchV1(root, key, lease, native);
   if (variant === "map_tamper") {
@@ -1442,7 +1443,7 @@ test(`late native completion HTTP ${requestedEffect} ${variant} preserves the ti
       const known = ["committed", "rolled_back", "not_started", "typed_child", "binding_changed"].includes(variant);
       const status = ["typed_child", "binding_changed"].includes(variant) ? "rolled_back" : known ? variant : "pending";
       const body = JSON.stringify({ status: "Failed", success: false, error: "Line is too short.",
-        movedIds: [], snapshots: [], skipped: [], warnings: [], movedTogether: true,
+        taggedCount: completionRoute === "/revit/tag-elements" && status === "committed" ? 1 : 0, deferredElementIds: [43, 44], continuationRequired: true, movedIds: [], snapshots: [], skipped: [], warnings: [], movedTogether: true,
         failureRollbackRequested: true, rolledBack: status === "rolled_back" ? true : null,
         capturedFailures: [{ severity: "Error", message: "Line is too short.", elementIds: [42],
           failureDefinitionId: "native-short-line", captureErrors: [] }],

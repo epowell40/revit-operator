@@ -5,6 +5,16 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class TagWorkPolicyTests
     {
+        [Theory]
+        [InlineData(true, 0, 0, false)]
+        [InlineData(true, 4, 19999, false)]
+        [InlineData(true, 5, 0, true)]
+        [InlineData(true, 0, 20000, true)]
+        [InlineData(true, 50, 193000, true)]
+        [InlineData(false, 50, 193000, false)]
+        public void GeometryBatchDefersBeforeStartingAnotherTarget(bool geometry, int attempted, long elapsed, bool expected)
+            => Assert.Equal(expected, TagWorkPolicy.DeferGeometryTarget(geometry, attempted, elapsed));
+
         [Fact]
         public void ApplyWithNoUntaggedWorkDoesNotResolveFamily()
         {

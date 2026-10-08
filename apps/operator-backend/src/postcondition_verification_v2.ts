@@ -285,7 +285,7 @@ function namedParameterTokens(
 function observedScheduleContractTokens(value: unknown): readonly string[] {
   const tokens = new Set<string>();
   const appearanceProperties = new Set(["showtitle", "showheaders", "stripedrows", "hasstripedrows", "freezeheaders"]);
-  const settingProperties = new Set(["showgrandtotal", "showgrandtotals", "filterbysheet", "isfilteredbysheet"]);
+  const settingProperties = new Set(["showgrandtotal", "showgrandtotals", "filterbysheet", "isfilteredbysheet", "isitemized"]);
   const visit = (node: unknown, depth = 0): void => {
     if (node === null || node === undefined || depth > 8) return;
     if (typeof node === "string" && /^[\[{]/.test(node.trim())) {
@@ -299,6 +299,14 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
     if (typeof node !== "object") return;
     const row = node as Record<string, unknown>;
     const entries = Object.entries(row);
+    const schedule = objectValue(row.schedule);
+    const scheduleId = schedule.id;
+    if (typeof scheduleId === "number" || typeof scheduleId === "string") {
+      for (const source of [schedule, objectValue(row.settings)]) {
+        if (typeof source.isItemized === "boolean")
+          tokens.add(targetPropertyValueToken(String(scheduleId), "isItemized", source.isItemized));
+      }
+    }
     const filterEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitions");
     if (filterEntry && Array.isArray(filterEntry[1])) {
       const filterTokens = filterEntry[1]
@@ -477,10 +485,12 @@ export function expectedPostconditionValuesV2(
       const token = scheduleFieldToken(field);
       if (token) values.add(token);
     }
-    for (const property of ["showGrandTotals", "filterBySheet"] as const) {
+    for (const property of ["showGrandTotals", "filterBySheet", "isItemized"] as const) {
       const propertyValue = scheduleInput[property];
       if (propertyValue !== null && propertyValue !== undefined) {
         values.add(schedulePropertyValueToken(property, propertyValue));
+        if (property === "isItemized" && scheduleInput.scheduleId !== undefined)
+          values.add(targetPropertyValueToken(String(scheduleInput.scheduleId), property, propertyValue));
       }
     }
   }

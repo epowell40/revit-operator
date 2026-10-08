@@ -20,7 +20,7 @@ namespace RevitBridge.Common.Tests
             Assert.False(OperatorNativeCompletionStore.SupportsRequestedEffect("read"));
             Assert.False(OperatorNativeCompletionStore.SupportsRequestedEffect("unknown"));
             foreach (var path in new[] { "/revit/move-elements", "/revit/rotate-elements", "/revit/delete", "/revit/set-parameter",
-                "/revit/create-text", "/revit/place-families", "/revit/set-text-note-text", "/revit/replace-text-note" })
+                "/revit/create-text", "/revit/place-families", "/revit/set-text-note-text", "/revit/replace-text-note", "/revit/tag-elements" })
             {
                 Assert.True(OperatorNativeCompletionStore.SupportsActiveDocument("POST", path, "{}"));
                 Assert.True(OperatorNativeCompletionStore.SupportsActiveDocument("POST", path, "{\"docId\":null,\"familyDocumentId\":\" \"}"));
@@ -35,8 +35,35 @@ namespace RevitBridge.Common.Tests
             foreach (var path in new[] { "/revit/open-model", "/revit/close-active-model", "/revit/save-as", "/revit/open-family-doc",
                 "/revit/save-family-doc", "/revit/load-family-doc", "/revit/close-doc", "/revit/edit-family-from-instance",
                 "/revit/reload-family-edit-session", "/revit/create-family-from-template", "/revit/apply-family-evolution",
-                "/revit/tag-elements", "/revit/dynamic-runtime/apply", "/revit/connect-existing-mep-branch", "/revit/future-writer" })
+                "/revit/dynamic-runtime/apply", "/revit/connect-existing-mep-branch", "/revit/future-writer" })
                 Assert.False(OperatorNativeCompletionStore.SupportsActiveDocument("POST", path, "{}"));
+        }
+
+        [Fact]
+        public void TagCompletionExcludesFamilyLifecycles()
+        {
+            foreach (var field in new[] { "autoLoadTagFamily", "inspectTagFamilyElements" })
+            {
+                foreach (var value in new object[] { true, "true", 1 })
+                    Assert.False(OperatorNativeCompletionStore.SupportsActiveDocument("POST", "/revit/tag-elements",
+                        JsonSerializer.Serialize(new Dictionary<string, object> { [field] = value })));
+                Assert.True(OperatorNativeCompletionStore.SupportsActiveDocument("POST", "/revit/tag-elements",
+                    JsonSerializer.Serialize(new Dictionary<string, object> { [field] = false })));
+            }
+        }
+
+        [Fact]
+        public void TagCompletionRetainsPartialCommitWithoutInferringSuccess()
+        {
+            using var f = new DirectCompletionFixture("apply", "/revit/tag-elements");
+            var reservation = f.Reserve();
+            const string body = "{\"success\":false,\"taggedCount\":3,\"deferredCount\":45,\"transaction\":{\"status\":\"committed\",\"committed\":true}}";
+            OperatorNativeCompletionCapture.Execute(f.Store, reservation,
+                () => new OperatorNativeCompletionReply(200, body), () => f.Document,
+                "POST", "/revit/tag-elements", "request", "apply");
+            using var lookup = JsonDocument.Parse(f.Lookup().BodyJson);
+            using var record = JsonDocument.Parse(lookup.RootElement.GetProperty("record_json").GetString()!);
+            Assert.Equal(body, record.RootElement.GetProperty("terminal").GetProperty("body_json").GetString());
         }
 
         [Theory]
@@ -161,11 +188,11 @@ namespace RevitBridge.Common.Tests
             internal OperatorNativeCompletionStore Store;
             internal OperatorNativeTransportRequestContext Request;
             internal OperatorNativeTransportProtectedRequest? LastProtected;
-            internal DirectCompletionFixture(string requestedEffect = "apply")
+            internal DirectCompletionFixture(string requestedEffect = "apply", string route = "/revit/rotate-elements")
             {
                 Store = new OperatorNativeCompletionStore(Token, Epoch, Root);
                 var now = DateTimeOffset.UtcNow;
-                var wire = OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, "POST", "/revit/rotate-elements",
+                var wire = OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, "POST", route,
                     JsonSerializer.Serialize(new { ids = new[] { 42 }, dryRun = requestedEffect == "preview" }), "", now);
                 Request = OperatorNativeTransportCodec.OpenRequest(Token, Epoch, Encoding.UTF8.GetBytes(wire.EnvelopeJson), "POST",
                     OperatorNativeTransportProtocol.TransportPath, false, now, new OperatorNativeTransportReplayCache());

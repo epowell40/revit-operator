@@ -275,6 +275,7 @@ namespace RevitBridge.Handlers
         {
             return new
             {
+                isItemized = schedule.Definition.IsItemized,
                 showGrandTotals = TryGetScheduleBoolProperty(schedule, new[] { "ShowGrandTotal", "ShowGrandTotals" }),
                 filterBySheet = TryGetScheduleBoolProperty(schedule, new[] { "IsFilteredBySheet", "FilterBySheet", "FilteredBySheet" })
             };

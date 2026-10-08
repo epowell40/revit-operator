@@ -367,6 +367,20 @@ test("native Parameter.Set verification admits the assigned argument but not tra
   }, { path: "/revit/native-api-mutation-ops" }), false);
 });
 
+test("schedule summary itemization requires exact schedule and typed boolean readback", () => {
+  for (const requested of [false, true]) {
+    const input = { scheduleId: 1542917, isItemized: requested, dryRun: false };
+    const check = (payload: unknown) => postconditionSatisfiedByPayloadV2(input, payload, { path: "/revit/configure-schedule" });
+    assert.equal(check({ schedule: { id: 1542917 }, settings: { isItemized: requested } }), true);
+    assert.equal(check({ schedule: { id: 1542917, isItemized: requested } }), true);
+    assert.equal(check({ schedule: { id: 1542917 }, settings: { isItemized: !requested } }), false);
+    assert.equal(check({ schedule: { id: 1542918 }, settings: { isItemized: requested } }), false);
+    assert.equal(check({ schedule: { id: 1542917 }, settings: { showGrandTotals: requested } }), false);
+    assert.equal(check({ schedule: { id: 1542917 }, table: { rows: [{ isItemized: requested }] } }), false);
+    assert.equal(check({ schedule: { id: 1542917 }, request: { isItemized: requested } }), false);
+  }
+});
+
 test("schedule appearance verification binds the requested property instead of an unrelated true flag", () => {
   const input = { scheduleId: 1542984, appearance: { stripedRows: true }, dryRun: false };
   assert.equal(postconditionSatisfiedByPayloadV2(input, {

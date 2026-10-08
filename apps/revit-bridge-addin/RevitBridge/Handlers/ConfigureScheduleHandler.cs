@@ -91,6 +91,7 @@ namespace RevitBridge.Handlers
             public List<SortGroupSpec>? sortGroup { get; set; }
             public bool? replaceSortGroup { get; set; }
             public bool? showGrandTotals { get; set; }
+            public bool? isItemized { get; set; }
 
             public List<ColumnWidthSpec>? columnWidths { get; set; }
             public List<RowHeightSpec>? rowHeights { get; set; }
@@ -130,9 +131,9 @@ namespace RevitBridge.Handlers
             var hasAppearance = p.appearance != null;
             var hasFilterBySheet = p.filterBySheet.HasValue;
 
-            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
             {
-                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet).");
+                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet, isItemized).");
             }
 
             var dryRun = p.dryRun ?? false;
@@ -163,7 +164,8 @@ namespace RevitBridge.Handlers
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
                     name = schedule.Name,
-                    fieldCount = ScheduleSelectionHelper.SafeGetFieldCount(schedule.Definition)
+                    fieldCount = ScheduleSelectionHelper.SafeGetFieldCount(schedule.Definition),
+                    isItemized = schedule.Definition.IsItemized
                 },
                 applied = applySummary
             });
@@ -311,6 +313,7 @@ namespace RevitBridge.Handlers
                     stripedRows = p.appearance?.stripedRows,
                     freezeHeaders = p.appearance?.freezeHeaders
                 },
+                isItemized = new { before = definition.IsItemized, requested = p.isItemized },
                 filterBySheet = p.filterBySheet
             };
         }
@@ -332,6 +335,9 @@ namespace RevitBridge.Handlers
             using (var tx = new Transaction(doc, "Configure Schedule"))
             {
                 tx.Start();
+
+                if (p.isItemized.HasValue)
+                    schedule.Definition.IsItemized = p.isItemized.Value;
 
                 if (p.addFields != null)
                 {

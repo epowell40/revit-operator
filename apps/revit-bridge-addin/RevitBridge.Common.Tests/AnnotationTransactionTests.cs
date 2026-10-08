@@ -87,6 +87,19 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DeferredTagBatchRetainsCommittedIdsButDoesNotClaimCompleteWork()
+        {
+            var stage = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed", () => "RolledBack", () => "Committed",
+                () => new Dictionary<string, object?> { ["success"] = false, ["taggedCount"] = 3, ["deferredElementIds"] = new[] { 43L, 44L }, ["continuationRequired"] = true },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(new[] { 301L, 302L, 303L }, Array.Empty<long>(), Array.Empty<long>()));
+            var result = TagNativeStages.CompleteNativeStages(stage, new[] { stage });
+            Assert.Equal(false, result["success"]);
+            Assert.Equal("applied", OperatorAttemptSuccessfulSettlement.Classify(result, "apply", "POST", "/revit/tag-elements").EffectState);
+            Assert.Equal(3, Assert.IsType<OperatorNativeTransactionReceipt>(result["transaction"]).AddedElementIds.Count);
+            Assert.Equal(2, ((JsonElement)result["deferredElementIds"]!).GetArrayLength());
+        }
+
+        [Fact]
         public void ExactTenDuctTagPlanNeedsNativeNotStartedProofAndNeverClaimsExecutedPreview()
         {
             var historical = HistoricalTagPreview();

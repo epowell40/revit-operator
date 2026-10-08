@@ -68,13 +68,21 @@ namespace RevitBridge.Common
             {
                 case "/revit/move-elements": case "/revit/rotate-elements": case "/revit/delete":
                 case "/revit/set-parameter": case "/revit/create-text": case "/revit/place-families":
-                case "/revit/set-text-note-text": case "/revit/replace-text-note": break;
+                case "/revit/set-text-note-text": case "/revit/replace-text-note":
+                case "/revit/tag-elements": break;
                 default: return false;
             }
             try
             {
                 using var body = JsonDocument.Parse(bodyJson);
                 if (body.RootElement.ValueKind != JsonValueKind.Object) return false;
+                // Only in-document tagging/repair is covered. Family import and
+                // family-editor inspection have separate lifecycles and remain excluded.
+                if (path == "/revit/tag-elements")
+                    foreach (var field in new[] { "autoLoadTagFamily", "inspectTagFamilyElements" })
+                        if (body.RootElement.TryGetProperty(field, out var flag)
+                            && flag.ValueKind != JsonValueKind.False && flag.ValueKind != JsonValueKind.Null)
+                            return false;
                 foreach (var property in body.RootElement.EnumerateObject())
                     if (string.Equals(property.Name, "docId", StringComparison.OrdinalIgnoreCase)
                         || string.Equals(property.Name, "familyDocumentId", StringComparison.OrdinalIgnoreCase))

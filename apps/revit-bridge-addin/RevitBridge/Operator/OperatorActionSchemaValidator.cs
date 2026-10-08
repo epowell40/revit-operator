@@ -8454,6 +8454,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "replaceFilters", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "replaceSortGroup", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "showGrandTotals", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "isItemized", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "filterBySheet", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "addFields", maxCount: 200, maxLen: 128, out error)) return false;
@@ -8793,9 +8794,10 @@ namespace RevitBridge.Operator
                     if (!ValidateOptionalBool(ap, "freezeHeaders", out error)) return false;
                 }
 
+                var hasItemization = obj.Value.TryGetProperty("isItemized", out var itemized) && itemized.ValueKind != JsonValueKind.Null;
                 var hasGrandTotals = obj.Value.TryGetProperty("showGrandTotals", out var gt) && gt.ValueKind != JsonValueKind.Null;
                 var hasFilterBySheet = obj.Value.TryGetProperty("filterBySheet", out var fbs) && fbs.ValueKind != JsonValueKind.Null;
-                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
                 {
                     error = "configure-schedule requires at least one operation.";
                     return false;
