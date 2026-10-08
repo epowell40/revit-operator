@@ -1,3 +1,4 @@
+import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
@@ -343,6 +344,12 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
     kernelAssertV2(Boolean(operation.retry_basis), "operation_retry_basis_missing", "A retry must state the material correction that permits it.");
+    if (operation.retry_basis === "family_session_capacity_released") {
+      const correction = familyCapacityRetryV2(snapshot, operation);
+      kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
+        && correction?.retry_after_operation_id === operation.retry_after_operation_id,
+        "operation_family_capacity_retry_invalid", "Retry requires a retained native capacity refusal and an unused later confirmed no-save close.");
+    }
     if (operation.retry_basis === "committed_target_change") {
       const correction = committedTargetChangeRetryV2(snapshot, operation);
       kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
@@ -361,7 +368,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   } else {
     kernelAssertV2(!operation.retry_basis, "operation_retry_basis_unbound", "Retry basis requires a predecessor operation.");
   }
-  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change",
+  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change" || operation.retry_basis === "family_session_capacity_released",
     "operation_retry_change_unbound", "A committed-change reference requires its typed retry basis.");
   if (operation.purpose === "verification") {
     const subject = operation.verification_of_operation_id

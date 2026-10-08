@@ -44,7 +44,7 @@ namespace RevitBridge.Logic.Handlers
                 if (!string.Equals(ext, ".rfa", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("open-family-doc currently supports .rfa files only.");
 
-                FamilyEditSessionStore.EnsureCapacity();
+                if (FamilyEditSessionStore.TryGetCapacityRefusal(out var refusal)) return Task.FromResult(refusal);
                 var famDoc = app.Application.OpenDocumentFile(fp);
                 if (famDoc == null) throw new InvalidOperationException("Failed to open family document.");
 
@@ -66,7 +66,7 @@ namespace RevitBridge.Logic.Handlers
             {
                 var fam = projectDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.familyId.Value)) as Family;
                 if (fam == null) throw new InvalidOperationException($"Family {p.familyId.Value} not found in the active document.");
-                FamilyEditSessionStore.EnsureCapacity();
+                if (FamilyEditSessionStore.TryGetCapacityRefusal(out var refusal)) return Task.FromResult(refusal);
                 var famDoc = projectDoc.EditFamily(fam);
                 var session = FamilyEditSessionStore.Create(projectDoc, famDoc, fam, titleblockTypeId: 0);
                 return Task.FromResult<object>(new

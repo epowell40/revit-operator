@@ -9,6 +9,17 @@ namespace RevitBridge.Common
     {
         public const string Schema = "revit-operator.family-session-open.v1";
 
+        public static object CapacityRefusal(int retainedCount, int limit)
+        {
+            if (limit <= 0 || retainedCount < limit) throw new ArgumentOutOfRangeException(nameof(retainedCount));
+            return new { ok = false, code = "family_session_capacity_reached",
+                error = "Close an existing family edit session before opening another; retained edits were not discarded.",
+                hint = "Use close-doc with an existing docId and saveChanges:false only when its edits may be discarded, then retry opening the family.",
+                family_session_receipt = new { schema = Schema, status = "capacity_rejected",
+                    retained_count = retainedCount, limit, native_open_started = false,
+                    retained_sessions_unchanged = true, model_write_performed = false, file_write_performed = false } };
+        }
+
         public static object Opened(string sessionId, string sourceKind, string sourceId,
             bool documentValid, bool sessionRegistered)
         {
@@ -28,6 +39,22 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("family_session_receipt", out var r)) return false;
             try
             {
+                if (r.GetProperty("status").GetString() == "capacity_rejected")
+                {
+                    if (effect != "apply" || method != "POST" || (path != "/revit/open-family-doc" && path != "/revit/edit-family-from-instance")
+                        || root.GetProperty("ok").ValueKind != JsonValueKind.False
+                        || root.GetProperty("code").GetString() != "family_session_capacity_reached"
+                        || r.GetProperty("schema").GetString() != Schema
+                        || r.GetProperty("limit").GetInt32() <= 0
+                        || r.GetProperty("retained_count").GetInt32() < r.GetProperty("limit").GetInt32()
+                        || r.GetProperty("native_open_started").ValueKind != JsonValueKind.False
+                        || r.GetProperty("retained_sessions_unchanged").ValueKind != JsonValueKind.True
+                        || r.GetProperty("model_write_performed").ValueKind != JsonValueKind.False
+                        || r.GetProperty("file_write_performed").ValueKind != JsonValueKind.False) return true;
+                    settlement = OperatorAttemptSettlement.None(effect, method, path,
+                        "family_session_capacity_reached", "native_receipt", requestDispatched: true);
+                    return true;
+                }
                 if (effect != "apply" || method != "POST" || (path != "/revit/open-family-doc" && path != "/revit/edit-family-from-instance")
                     || root.GetProperty("ok").ValueKind != JsonValueKind.True
                     || r.GetProperty("schema").GetString() != Schema || r.GetProperty("status").GetString() != "opened"

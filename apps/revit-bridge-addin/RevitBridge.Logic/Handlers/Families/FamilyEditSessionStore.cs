@@ -23,13 +23,20 @@ namespace RevitBridge.Logic.Handlers
         private static readonly Dictionary<string, Session> _sessions = new Dictionary<string, Session>(StringComparer.OrdinalIgnoreCase);
         private const int MaxSessions = 3;
 
-        public static void EnsureCapacity()
+        // Called only before EditFamily/OpenDocumentFile. Registration failures
+        // after opening retain their existing uncertain failure semantics.
+        public static bool TryGetCapacityRefusal(out object refusal)
         {
             lock (_lock)
             {
                 CleanupLocked();
                 if (_sessions.Count >= MaxSessions)
-                    throw new InvalidOperationException("Close an existing family edit session before opening another; retained edits were not discarded.");
+                {
+                    refusal = RevitBridge.Common.OperatorFamilySessionReceipt.CapacityRefusal(_sessions.Count, MaxSessions);
+                    return true;
+                }
+                refusal = null!;
+                return false;
             }
         }
 

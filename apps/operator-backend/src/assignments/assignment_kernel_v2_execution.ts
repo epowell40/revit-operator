@@ -1,3 +1,4 @@
+import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
 import { committedTargetChangeRetryV2 } from "../domain/assignment-kernel/committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
@@ -499,7 +500,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   };
   assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
   if (!operation.retry_of_operation_id) {
-    const correction = committedTargetChangeRetryV2(snapshot, operation);
+    const correction = familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
     if (correction) Object.assign(operation, correction);
     const checkpoint = documentCheckpointContinuationV2(snapshot, operation, nativeDocumentCheckpointResultV2);
     if (checkpoint) Object.assign(operation, checkpoint);
