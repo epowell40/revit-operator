@@ -744,7 +744,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_factory.ts",
-      "sha256": "sha256:1cd0bca7743db06adfd8de4e1924c94ffce07160ddb59af1ccbad53e2e751e63"
+      "sha256": "sha256:c8e406f9eb015b95046740963314c3864b8195dc9135918cf99b12d989d1f77c"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_input_adapter.ts",
@@ -841,6 +841,10 @@
     {
       "path": "apps/operator-backend/src/assignments/external_assignment_start.ts",
       "sha256": "sha256:099bfbf88e9f29e85049efd4e3559e4fbe2a6ce0fe48083a58f380c2794f17c6"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/external_provider_lifecycle.ts",
+      "sha256": "sha256:b5408ecc9624b289c14c8de7f1b4e96a7c12f9aab30f10ec60c11a63a8f9ca19"
     },
     {
       "path": "apps/operator-backend/src/assignments/fresh_request.ts",
@@ -1020,7 +1024,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts",
-      "sha256": "sha256:6114fbeef614590fcc9f65f54410f3b2a47aa8e0a25a2181e513a2cd9b4cc1cd"
+      "sha256": "sha256:3926570e12a8c7166d00579c8f66ba91f5aa375ad9ddb745d0d5a8f060e2d2e2"
     },
     {
       "path": "apps/operator-backend/src/benchmark/bound_native_review_evidence.ts",
@@ -1104,7 +1108,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:2d5157b7d8c147764bcfd65c841d973ad1a916f1db2089ebdf5228d0797e30c5"
+      "sha256": "sha256:1b6fbee0cfffe6057fc00234db505c9c29473331c88e339772256b6cd8e532da"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_report.ts",
@@ -3585,7 +3589,7 @@
     },
     {
       "path": "apps/operator-backend/src/revit_mutation_intent.ts",
-      "sha256": "sha256:2909b4d3cbf7e36de16b4918a140edfc3a3e179c55190fefb22244a68286cda0"
+      "sha256": "sha256:866d9b86cca5278e518cf249d8b7a451dab38a28e549451fe75f3b1e80b6d657"
     },
     {
       "path": "apps/operator-backend/src/runtime_mode.ts",
@@ -3657,7 +3661,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:cf52f3ae8c8857547546649417a79bfc380e74dc4803215d96f3a29ac646615e"
+      "sha256": "sha256:88d1b38032f72ad8952069e5fc6d96c33edda5bdc6979fa83e96584dba62db33"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
@@ -4109,7 +4113,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_auto_goal_admission.test.ts",
-      "sha256": "sha256:be275971079cec35fed10db5ea233c010c6f96aea23f03720e9d327a52db67d2"
+      "sha256": "sha256:fe0219c14a404a7805b2c18d1015e6a2f7e6578fddf0f3cf8806d97f733bd637"
     },
     {
       "path": "apps/operator-backend/test/assignment_committed_target_retry.test.ts",
@@ -4329,7 +4333,7 @@
     },
     {
       "path": "apps/operator-backend/test/bound_native_review_evidence.test.ts",
-      "sha256": "sha256:855d6abee2947c55ff843d288e356e004392fded4b4d6b04a7df2bd03ed98d1a"
+      "sha256": "sha256:eb13eb97078a8fd18b2307769f1a9d37efdd80fc576d00b63c558e775dc0f563"
     },
     {
       "path": "apps/operator-backend/test/bounded_evidence_delivery.test.ts",
@@ -4589,7 +4593,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_http_routes.test.ts",
-      "sha256": "sha256:f7c521bd16386177187b5a3a0f45c58524d013de0bb111129e5fa512ca8bfe7f"
+      "sha256": "sha256:20b13301c08492925bb09fe38ccda42b356c30f67a960d18f38574ec46d70ee8"
     },
     {
       "path": "apps/operator-backend/test/evidence_item_projection.test.ts",
@@ -4910,6 +4914,10 @@
     {
       "path": "apps/operator-backend/test/external_provider_brain.test.ts",
       "sha256": "sha256:ab98dd8573b089a11b09d4989ca4d178ec1d95a218dbe59a8ec5879678cb7777"
+    },
+    {
+      "path": "apps/operator-backend/test/external_provider_lifecycle.test.ts",
+      "sha256": "sha256:0925706a61eab31b5e3a6ca72e8e0928a8483143e32bec6c241297fc33d12e09"
     },
     {
       "path": "apps/operator-backend/test/family_placement_postcondition_v2.test.ts",
@@ -8745,7 +8753,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:4b4f1ad208e714512aa64902572e6afb15538a88b0d5346168c956d3ba20a908",
+  "inputs_hash": "sha256:b0696881fc6054bfb6cc0895787914102ca32c3e0caf7614614e748d28731984",
   "result": {
     "passed": true,
     "checks": [
