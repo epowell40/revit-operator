@@ -3516,6 +3516,14 @@
       ]
     },
     {
+      "id": "template-reassignment-requires-native-counter-state-and-reducer-revalidation",
+      "coverage": [
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_document_checkpoint.test.ts"
+      ]
+    },
+    {
       "id": "document-checkpoint-repeat-requires-complete-native-save-and-new-committed-document-change",
       "coverage": [
         "backend:assignment_document_checkpoint.test.ts",

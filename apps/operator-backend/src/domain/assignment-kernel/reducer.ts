@@ -5,6 +5,7 @@ import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution
 import { deriveNativeFailureContextV1 } from "./native_failure_context.js";
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "./document_checkpoint.js";
+import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "./template_reassignment.js";
 import { validBoundOperationScope, prerequisiteValueSatisfied } from "./operation_scope.js";
 import { advisoryVerificationV2 } from "./execution_policy.js";
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
@@ -210,6 +211,7 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
   assertProviderUsageOperationAdmissionV1(snapshot, operation);
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
   const advisory = advisoryVerificationV2(snapshot);
   kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < snapshot.spec.execution_policy!.max_operations, "operation_budget_exhausted", "The immutable local operation budget is exhausted.");
   kernelAssertV2(!snapshot.completion_proposal || Boolean(operation.parent_operation_id), "assignment_completion_proposal_pending", "A proposed checkpoint admits no new root work.");
@@ -283,8 +285,15 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && checkpoint!.checkpoint_after_operation_id === operation.checkpoint_after_operation_id,
     "operation_document_checkpoint_invalid", "A checkpoint requires an unused complete native save and a later committed change to the same document.");
   }
+  const reassignment = operation.reassignment_of_operation_id || operation.reassignment_after_operation_id
+    ? templateReassignmentV1(snapshot, operation) : null;
+  if (operation.reassignment_of_operation_id !== undefined || operation.reassignment_after_operation_id !== undefined) {
+    kernelAssertV2(!!reassignment && reassignment.reassignment_of_operation_id === operation.reassignment_of_operation_id
+      && reassignment.reassignment_after_operation_id === operation.reassignment_after_operation_id,
+    "operation_template_reassignment_invalid", "Reassignment requires an unused native committed counter-state on the exact view.");
+  }
   const equivalent = Object.values(snapshot.operations).find((candidate) => operationProgressIdentityV2(candidate) === operationProgressIdentityV2(operation));
-  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || operation.purpose === "reconciliation",
+  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || operation.purpose === "reconciliation",
     "operation_progress_equivalent_repeat", "Equivalent operation requires a typed retry or reconciliation basis.");
   if (advisory && operation.requested_effect === "apply" && operation.request_identity) {
     const duplicateWrite = Object.values(snapshot.operations).some(prior => prior.requested_effect === "apply"
@@ -293,7 +302,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && prior.request_identity?.path === operation.request_identity!.path
       && prior.request_identity?.request_signature === operation.request_identity!.request_signature
       && (prior.persistent_effect !== "none" || prior.settlement_state !== "settled"));
-    kernelAssertV2(!duplicateWrite || Boolean(checkpoint), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
+    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
   }
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
@@ -888,6 +897,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         }
         const nativeFailureContext = deriveNativeFailureContextV1(operation, nativeFailureDependencyLinksV1(
           operation.observation_commit?.raw_payload, [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]));
+        const nativeTemplateState = deriveNativeTemplateStateV1(operation);
         const settledOperation = {
           ...operation,
           settlement_state: "settled" as const,
@@ -895,6 +905,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           settled_assignment_version: event.assignment_version,
           observation_retention_error: undefined,
           ...(nativeFailureContext ? { native_failure_context: nativeFailureContext } : {}),
+          ...(nativeTemplateState ? { native_template_state: nativeTemplateState } : {}),
           // The exact payload remains in the immutable result event and the
           // authoritative evidence store. Only pending retention needs another
           // in-memory copy; settled duplicate delivery rehydrates the evidence.

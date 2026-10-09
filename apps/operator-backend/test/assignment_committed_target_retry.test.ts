@@ -17,6 +17,7 @@ import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_ker
 import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2,
   settleAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { AssignmentJournalV2, canonicalJsonV2, type OperationV2, type AssignmentEventV2 } from "../src/domain/assignment-kernel/index.js";
+import { templateReassignmentV1 } from "../src/domain/assignment-kernel/template_reassignment.js";
 
 async function workspace(fn: () => unknown, maxOperations = "256") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-target-retry-"));
@@ -45,6 +46,92 @@ function setup() {
 type Fixture = ReturnType<typeof setup>;
 type Lease = ReturnType<typeof openAssignmentKernelOperationV2>;
 
+function templateFixture() {
+  const f = setup();
+  const assign = (request: string, templateName: string) => openAssignmentKernelOperationV2({
+    snapshot: f.state(), provider_turn_id: "turn", controller_request_id: request,
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:11"],
+    arguments: { method: "POST", path: "/revit/visibility", body: {
+      viewId: 11, action: "set_template", templateName
+    } }
+  });
+  const commit = (lease: Lease, templateId: number) => {
+    settle(f, lease, true, 11, undefined, { status: "Success", success: true, dryRun: false, action: "set_template",
+      view: { id: 11, viewTemplateId: templateId, viewTemplate: templateId === 21 ? "Working template" : "Original template" }, changedElementIds: [11],
+      transaction: { status: "committed" } });
+    const result = f.state().operations[lease.operation_id]!;
+    assert.equal(result.persistent_effect, "applied");
+    assert.equal(result.settlement_state, "settled");
+    assert.equal(result.result?.native_transaction_state, "committed");
+  };
+  const original = assign("first-assignment", "Working template"); commit(original, 21);
+  assert.throws(() => assign("blind-repeat", "Working template"));
+  const counter = assign("restore-original", "Original template"); commit(counter, 22);
+  assert.equal(f.state().unresolved_unknown_operation_ids.length, 0);
+  const proposed = structuredClone(f.state().operations[original.operation_id]!);
+  proposed.operation_id = "reassignment-proposal";
+  delete proposed.native_template_state;
+  return { f, assign, commit, original, counter, proposed };
+}
+
+test("template reassignment after a settled counter-assignment remains actionable", () => workspace(() => {
+  const { f, assign, commit, original, counter } = templateFixture();
+  const lease = assign("reapply-after-restoration", "Working template");
+  const op = f.state().operations[lease.operation_id]!;
+  assert.equal(op.reassignment_of_operation_id, original.operation_id);
+  assert.equal(op.reassignment_after_operation_id, counter.operation_id);
+  assert.equal(op.retry_of_operation_id, undefined);
+  assert.throws(() => assign("concurrent-repeat", "Working template"));
+  commit(lease, 21);
+  assert.throws(() => assign("settled-blind-repeat", "Working template"));
+  assert.deepEqual(f.journal().snapshot(), f.state());
+}));
+
+for (const scenario of ["document", "generation", "unknown", "unsettled", "same_template", "wrong_view",
+  "missing_state", "payload_hash", "missing_observation", "non_native", "uncommitted", "ordering", "used_counter", "later_view_edit"] as const) {
+  test(`template reassignment rejects ${scenario} proof`, () => workspace(() => {
+    const { f, counter, proposed } = templateFixture();
+    const snapshot = structuredClone(f.state()), op = snapshot.operations[counter.operation_id]!;
+    if (scenario === "document") op.binding = { ...op.binding, document_fingerprint: "another-document" };
+    if (scenario === "generation") op.binding = { ...op.binding, generation: op.binding.generation + 1 };
+    if (scenario === "unknown") op.persistent_effect = "unknown";
+    if (scenario === "unsettled") op.settlement_state = "awaiting_result";
+    if (scenario === "same_template") op.native_template_state!.template_id = 21;
+    if (scenario === "wrong_view") op.native_template_state!.view_id = 12;
+    if (scenario === "missing_state") delete op.native_template_state;
+    if (scenario === "payload_hash") op.native_template_state!.raw_payload_hash = "wrong";
+    if (scenario === "missing_observation") op.observation_ids = [];
+    if (scenario === "non_native") op.result = { ...op.result!, authority: "backend" };
+    if (scenario === "uncommitted") op.result = { ...op.result!, native_transaction_state: "unknown" };
+    if (scenario === "ordering") op.admitted_assignment_version = 1;
+    if (scenario === "used_counter") snapshot.operations = { ...snapshot.operations,
+      consumed: { ...op, operation_id: "consumed", reassignment_after_operation_id: counter.operation_id } };
+    if (scenario === "later_view_edit") snapshot.operations = { ...snapshot.operations,
+      later: { ...op, operation_id: "later", input: { method: "POST", path: "/revit/set-parameter", body: {} },
+        admitted_assignment_version: op.settled_assignment_version! + 1 } };
+    assert.equal(templateReassignmentV1(snapshot, proposed), null);
+  }));
+}
+
+test("template reassignment reducer rejects forged counter proof and caller-provided native state", () => workspace(() => {
+  const { f, original, counter } = templateFixture();
+  const journal = f.journal(), prior = journal.snapshot().operations[original.operation_id]!;
+  const event = retryEvent(journal, prior, counter.operation_id);
+  if (event.event_type !== "operation_admitted") throw Error("test admission");
+  delete event.operation.retry_of_operation_id;
+  delete event.operation.retry_basis;
+  delete event.operation.retry_after_operation_id;
+  event.operation.reassignment_of_operation_id = original.operation_id;
+  event.operation.reassignment_after_operation_id = counter.operation_id;
+  assert.throws(() => journal.append(event), { code: "operation_native_template_state_forbidden" });
+  delete event.operation.native_template_state;
+  event.operation.reassignment_after_operation_id = "invented";
+  assert.throws(() => journal.append(event), { code: "operation_template_reassignment_invalid" });
+  event.operation.reassignment_after_operation_id = counter.operation_id;
+  journal.append(event);
+  assert.equal(journal.snapshot().operations.retry!.reassignment_after_operation_id, counter.operation_id);
+}));
+
 function connect(f: Fixture, id: string) {
   return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
     capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:11", "id:12"],
@@ -58,13 +145,13 @@ function change(f: Fixture, id: string, element = 11) {
     arguments: { method: "POST", path: "/revit/set-parameter", body: {
       changes: [{ elementId: element, parameterName: "Duct Radius", value: '4"' }], apply: true, dryRun: false } } });
 }
-function settle(f: Fixture, lease: Lease, applied = false, element = 11, transform?: (result: any) => void) {
+function settle(f: Fixture, lease: Lease, applied = false, element = 11, transform?: (result: any) => void, nativePayload?: Record<string, unknown>) {
   markAssignmentKernelOperationDispatchStartedV2(lease);
   const op = f.state().operations[lease.operation_id]!;
   // Producer-shaped native preflight failure followed by a committed parameter change.
-  const payload = applied ? { status: "Applied and Verified", changedElementIds: [element],
+  const payload = nativePayload ?? (applied ? { status: "Applied and Verified", changedElementIds: [element],
     diffs: [{ elementId: element, parameterName: "Duct Radius", before: 0.5, after: 1 / 3 }], transaction: { status: "committed" } }
-    : { status: "Blocked", blockReason: "Not enough compatible open connector pairs were found within tolerance.", transaction: { status: "not_started" } };
+    : { status: "Blocked", blockReason: "Not enough compatible open connector pairs were found within tolerance.", transaction: { status: "not_started" } });
   const envelope = { content: [], structuredContent: {
     schema: "revit-operator.assignment-kernel-mcp-result/v2",
     operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `result:${lease.operation_id}`, operation_id: lease.operation_id,
