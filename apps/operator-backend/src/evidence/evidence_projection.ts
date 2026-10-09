@@ -1,6 +1,7 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
+import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
   evidenceTargetIdentityValuesV1,
@@ -303,7 +304,14 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     const isEnvelope = row && (Array.isArray(row.content) || Object.prototype.hasOwnProperty.call(row, "structuredContent"));
     const payload = isEnvelope ? extractMcpStructuredPayload(raw)?.payload : row;
     if (payload !== undefined && payload !== null) {
-      const expanded = { ...candidate, inline_payload: payload };
+      // V2 sends retained native evidence, replacing MCP presentation text.
+      // Build the complete detailing summary here using the verifier's admission
+      // rules; never substitute partial counts for a complete comparison.
+      const detailing = viewOwnedDetailingSummaryV2(payload);
+      const expanded = detailing
+        ? { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,
+            inline_payload: detailing, truncated: false }
+        : { ...candidate, inline_payload: payload };
       if (projectionBytes(expanded) <= maxBytes) candidate = expanded;
     }
   }

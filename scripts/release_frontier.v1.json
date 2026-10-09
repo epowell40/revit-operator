@@ -73,6 +73,7 @@
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
     "view_owned_detailing_v2.test.ts",
+    "detailing_model_projection.test.ts",
     "provider_dynamic_program.test.ts",
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
@@ -3604,7 +3605,8 @@
       "id": "complete-detailing-agent-projection-preserves-signature-multiplicity",
       "coverage": [
         "mcp:lib/viewOwnedDetailingAgentProjection.test.ts",
-        "backend:view_owned_detailing_v2.test.ts"
+        "backend:view_owned_detailing_v2.test.ts",
+        "backend:detailing_model_projection.test.ts"
       ]
     }
   ],
