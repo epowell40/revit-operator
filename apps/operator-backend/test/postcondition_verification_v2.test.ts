@@ -84,8 +84,8 @@ test("sheet creation verifies actual native name policy and sheet parameter voca
     { parameters: { Comments: "MIXED CASE" } }), false);
 });
 
-test("view creation verifies requested name and scale without sheet uppercasing", () => {
-  for (const path of ["/revit/create-view", "/revit/create-drafting-view"]) {
+test("drafting view creation verifies requested name and scale without sheet uppercasing", () => {
+  for (const path of ["/revit/create-drafting-view"]) {
     const input = { path, body: { name: " Working Draft ", scale: 50 } };
     assert.equal(postconditionSatisfiedByPayloadV2(input, { id: 1543005, name: "Working Draft", scale: 50 }), true);
     assert.equal(postconditionSatisfiedByPayloadV2(input, { items: [{ id: 1543005, parameters: { "View Name": "Working Draft", "View Scale": 50 } }] }), true);

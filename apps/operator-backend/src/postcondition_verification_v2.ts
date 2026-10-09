@@ -1,3 +1,4 @@
+import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -598,6 +599,11 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === "/revit/create-view") {
+    const request = objectValue(semanticApplyInput(applyInput));
+    if (["create_floor_plan", "floor_plan"].includes(String(request.action ?? "create_floor_plan").trim().toLowerCase()))
+      return createdPlanSatisfiedV2(request, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  }
   if (operationPath === "/revit/duplicate-view") {
     const request = objectValue(semanticApplyInput(applyInput));
     if (request.withDetailing === true) {
