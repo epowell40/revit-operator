@@ -873,3 +873,15 @@ test("C48 missing required_fields metadata retains all valid catalogue identitie
     assert.equal(storeEvidence({scope,source:"assignment_kernel_v2:revit_search_tools",trust_level:"host_observed",raw:changed},8192).projection.tool_documentation,undefined);
   }
 }));
+
+test("Sidecar file-stat receipt exposes attributes without certifying content or native effect", () => withWorkspace(() => {
+  const raw={ok:true,exists:true,path:"C:\\fixture\\M000.pdf",is_file:true,size_bytes:3677921,last_write_time_utc:"2026-10-09T22:20:48.354Z"};
+  const result=storeEvidence({scope,source:"operator_desktop.function.verify_local_file",trust_level:"untrusted_caller",raw},8192);
+  for(const key of ["exists","path","is_file","size_bytes","last_write_time_utc"])
+    assert.equal(result.projection.key_facts[key],raw[key as keyof typeof raw]);
+  assert.equal(result.ref.trust_level,"untrusted_caller");assert.equal(result.projection.effect_state,null);
+  assert.equal(result.projection.inline_payload,undefined);assert(result.projection.projected_bytes<=8192);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(result.ref,scope).toString()),raw);
+  const missing=storeEvidence({scope,source:"operator_desktop.function.verify_local_file",trust_level:"untrusted_caller",raw:{...raw,exists:false,is_file:false,size_bytes:0,last_write_time_utc:""}},8192);
+  assert.equal(missing.projection.key_facts["exists"],false);assert.equal(missing.projection.key_facts["size_bytes"],0);
+}));

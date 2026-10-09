@@ -40,3 +40,9 @@ test('fresh printer request selects available computer lane while preserving exi
   assert.throws(() => selectChatSubmissionMode({ ...state, backendConfigStatus: 'timeout' }, prompt), /Reconnect/);
   assert.equal(selectChatSubmissionMode({ ...state, streaming: true, activeRunKind: 'computer' }, prompt), 'computer-interject');
 });
+
+import { startsFreshComputerConversation } from './composer_intake.mjs';
+test('fresh computer conversation requires empty session, empty saved assignment and idle composer',()=>{
+ assert.equal(startsFreshComputerConversation({}),true);
+ for(const state of [{sessionId:'old'},{taskNavigationAssignmentId:'old'},{streaming:true}])assert.equal(startsFreshComputerConversation(state),false);
+});

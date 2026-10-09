@@ -30,3 +30,8 @@ export function selectChatSubmissionMode(state, prompt = "") {
   }
   return state.computerUseAvailable ? (state.streaming ? "computer-interject" : "computer-run") : "backend";
 }
+
+/** Freeze New Chat intent at submission; later polling must not select an old session. */
+export function startsFreshComputerConversation(state) {
+  return !state.sessionId && !state.taskNavigationAssignmentId && !state.streaming;
+}

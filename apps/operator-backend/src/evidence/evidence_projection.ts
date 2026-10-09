@@ -9,7 +9,7 @@ import {
 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 const COUNT_KEY = /(?:^|_)(?:count|total|length|matched|created|updated|deleted|failed|succeeded)$/i;
-const ACCEPTANCE_KEY = /(?:^|_)(?:id|name|number|value|status|state|result|effect_state|before_hash|after_hash|sha256|hash|level|host|side|system|orientation|circuit|category|type)$/i;
+const ACCEPTANCE_KEY = /(?:^|_)(?:id|name|number|value|status|state|result|effect_state|before_hash|after_hash|sha256|hash|level|host|side|system|orientation|circuit|category|type|exists|is_file|size_bytes|last_write_time_utc|path)$/i;
 const DIAGNOSTIC_KEY = /(?:error|warning|diagnostic|failure|reason|message)/i;
 const STRUCTURED_TEXT_KEY = /^(?:text|output|result_json|structuredContent)$/i;
 const IDENTITY_ARRAY_KEY = /^(?:items|elements|results)$/i;
