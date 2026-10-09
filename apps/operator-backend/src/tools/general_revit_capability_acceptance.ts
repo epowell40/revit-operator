@@ -10,7 +10,7 @@ import {
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
-import { extractGeneralRevitToolCalls } from "../benchmark/general_revit_tool_call_projection.js";
+import { dynamicReceiptActions, sidecarFunctionReceiptActions, extractGeneralRevitToolCalls } from "../benchmark/general_revit_tool_call_projection.js";
 import { verifySnowdonArchitecturalFixtureBeforeAgent } from "../benchmark/snowdon_architectural_fixture_preflight.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -189,35 +189,6 @@ function assistantTextFromComputerState(state: JsonRecord): string {
     .map((message) => String(message.text || "").trim())
     .filter(Boolean)
     .at(-1) || "";
-}
-
-function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
-  const receipts = Array.isArray(state.dynamicProgramReceipts) ? state.dynamicProgramReceipts.map(asRecord) : [];
-  return receipts.map((receipt, index) => {
-    const mode = String(receipt.requested_mode || "preview").toLowerCase() === "apply" ? "apply" : "preview";
-    return {
-      action_id: String(receipt.run_id || `dynamic-${index + 1}`),
-      method: "POST",
-      path: `/revit/dynamic-runtime/${mode}`,
-      request_effect: mode,
-      request_dispatched: receipt.execution_ok === true,
-      status: receipt.execution_ok === true ? "success" : "failed",
-      receipt
-    };
-  });
-}
-
-function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
-  const receipts = Array.isArray(state.functionToolReceipts) ? state.functionToolReceipts.map(asRecord) : [];
-  return receipts.map((receipt, index) => ({
-    action_id: String(receipt.call_id || `function-${index + 1}`),
-    method: "POST",
-    path: String(receipt.path || ""),
-    request_effect: String(receipt.request_effect || "read"),
-    request_dispatched: receipt.request_dispatched === true,
-    status: String(receipt.status || "failed"),
-    receipt
-  }));
 }
 
 function teammateLoopReceiptFromFunctionState(state: JsonRecord): JsonRecord | null {
