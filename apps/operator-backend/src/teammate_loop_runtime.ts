@@ -7,7 +7,7 @@ import { canonicalNativeNoChangeForTeammate } from "./teammate_canonical_settlem
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
-import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { hasExplicitMutationVerb, hasAffirmativeMutationVerb } from "./revit_mutation_intent.js";
 import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifact_export_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
@@ -230,7 +230,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
   const previewOnly = hasEffectiveNoWriteFraming(text) || hasNoncommittingChangePreviewRequest(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
-  const explicitMutation = containsMutationVerb(text);
+  const explicitMutation = hasAffirmativeMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
   if (authoritativeLeadingNoWrite) return "inspection";
