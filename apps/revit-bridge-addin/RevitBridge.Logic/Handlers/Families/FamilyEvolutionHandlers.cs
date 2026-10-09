@@ -448,6 +448,8 @@ namespace RevitBridge.Logic.Handlers
 
             Family? loadedFamily = null;
             FamilySymbol? loadedSymbol = null;
+            var existingFamilyIds = new HashSet<long>(new FilteredElementCollector(plan.ProjectDoc)
+                .OfClass(typeof(Family)).ToElementIds().Select(ElementIdCompat.GetValue));
             long beforeTypeId = ElementIdCompat.GetValue(plan.Instance.GetTypeId());
             var result = NativeSingleTransaction.Execute(app, plan.ProjectDoc,
                 "Load selected equipment family and swap instance", created =>
@@ -455,6 +457,12 @@ namespace RevitBridge.Logic.Handlers
                 var loaded = plan.ProjectDoc.LoadFamily(plan.SavePath, new FamilyLoadOptions(), out loadedFamily);
                 if (!loaded || loadedFamily == null)
                     throw new InvalidOperationException("The cloned family was not loaded as a new family.");
+                if (existingFamilyIds.Contains(ElementIdCompat.GetValue(loadedFamily.Id)))
+                    throw new InvalidOperationException("The artifact resolved to an existing project family; the load was rolled back.");
+                // Revit derives the loaded family name from the RFA basename. A unique
+                // artifact filename must not change the requested project family name.
+                if (!string.Equals(loadedFamily.Name, plan.NewFamilyName, StringComparison.Ordinal))
+                    loadedFamily.Name = plan.NewFamilyName;
                 if (!string.Equals(loadedFamily.Name, plan.NewFamilyName, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException($"Loaded family name '{loadedFamily.Name}' did not match planned name '{plan.NewFamilyName}'.");
                 loadedSymbol = loadedFamily.GetFamilySymbolIds()
@@ -483,6 +491,8 @@ namespace RevitBridge.Logic.Handlers
             // compound operation unresolved on failure rather than claiming no effect.
             if (projectTransaction.CommittedValue != true)
             {
+                // The project rolled back, but the saved family artifact persists.
+                // Keep the compound outcome unresolved until both effects reconcile.
                 return new
                 {
                     status = "Failed",
