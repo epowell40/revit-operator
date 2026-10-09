@@ -3,6 +3,9 @@ import test from "node:test";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { boundNativeReviewEvidence } from "../src/benchmark/bound_native_review_evidence.js";
 import { assignmentKernelAcceptanceTruthV2 } from "../src/benchmark/assignment_kernel_v2_acceptance.js";
+import { boundNativePreviewPathsV2 } from "../src/benchmark/assignment_kernel_v2_native_evidence.js";
+import { evaluateGeneralRevitCapabilityAttempt, type GeneralRevitCapabilityCase } from "../src/benchmark/general_revit_capability_acceptance.js";
+import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js";
 
 function fixture(): any {
   const binding={assignment_id:"task",run_id:"run",generation:1,session_id:"session",principal_id:"local",document_fingerprint:"doc"};
@@ -27,6 +30,63 @@ function fixture(): any {
     provider_ledger:{schema:"revit-operator.assignment-provider-ledger/v2",assignment_id:"task",run_id:"run",generation:1,
       call_ids:[],calls:{},in_flight_call_ids:[]}}]};
 }
+
+function previewFixture(): any {
+  const b = fixture(), s = b.assignments[0].snapshot;
+  s.spec.requested_effect = "preview";
+  s.operations.read.requested_effect = "preview";
+  s.operations.read.result.native_transaction_state = "rolled_back";
+  // Publication exposes the bound payload reference, not arbitrary trace actions.
+  delete s.operations.read.observation_commit;
+  return b;
+}
+
+const previewCase: GeneralRevitCapabilityCase = {
+  case_id: "bound-preview", source: "user_basic", operation_family: "preview",
+  prompt: "Preview the requested change without committing it.", probe_prompt: "Preview the change.",
+  capability_paths: ["/revit/sheets"], dispatch_any_of: ["/revit/sheets"],
+  expected_effect: "preview", production_expected_effect: "apply", probe_expected_effect: "preview",
+  epic0441_task_refs: []
+};
+
+test("native rollback dispatch survives absent wrapper actions without becoming verified task acceptance", () => {
+  const b = previewFixture();
+  assert.deepEqual(boundNativePreviewPathsV2(b), ["/revit/sheets"]);
+  const attempt = { ok: true, actions: [], rounds: [], assignment_kernel_v2: b };
+  const evaluated = evaluateGeneralRevitCapabilityAttempt(previewCase, attempt);
+  assert.equal(evaluated.tier, "previewed");
+  assert.equal(evaluated.dispatched, true);
+  assert.equal(evaluated.apply_dispatched, false);
+  assert.equal(evaluated.verified, false);
+  assert.equal(assignmentKernelAcceptanceTruthV2(b).verified, false);
+  const protocol = buildBenchmarkCaseResultV2({runId:"replay",lane:"controlled_capability",testCase:previewCase,
+    trace:{tool_results:{raw_sidecar_response:attempt,durable_assignment_kernel_v2:b}},rawTraceRef:"private-replay",
+    judgedAt:"2026-10-09T12:00:00Z"});
+  assert.equal(protocol.current_evaluator_verdict.verdict, "previewed");
+});
+
+test("unbound, plan-only, pending and unknown previews cannot supply native dispatch credit", () => {
+  const mutations: ((s:any)=>void)[] = [
+    s=>{s.operations.read.result.native_transaction_state="not_started";},
+    s=>{s.operations.read.result.native_transaction_state="pending";},
+    s=>{s.operations.read.result.authority="operator-mcp-transport";},
+    s=>{s.operations.read.binding={...s.current_binding,document_fingerprint:"other"};},
+    s=>{s.observations.obs.binding={...s.current_binding,generation:2};},
+    s=>{s.observations.obs.raw_payload_hash="wrong";},
+    s=>{s.operations.read.request_identity={method:"POST",path:"/revit/delete"};},
+    s=>{s.operations.read.result.persistent_effect="unknown";},
+    s=>{s.operations.read.observation_ids=[];},
+    s=>{s.operations.read.result.completed_at="2026-10-09T10:00:00Z";}
+  ];
+  for (const mutate of mutations) {
+    const b=previewFixture(); mutate(b.assignments[0].snapshot);
+    assert.deepEqual(boundNativePreviewPathsV2(b), []);
+  }
+  const b=previewFixture();b.assignments[0].snapshot.unresolved_unknown_operation_ids=["old-unknown"];
+  const evaluated=evaluateGeneralRevitCapabilityAttempt(previewCase,{ok:true,assignment_kernel_v2:b});
+  assert.equal(evaluated.outcome_unknown,true);
+  assert.equal(evaluated.tier,"failed");
+});
 
 test("advisory native readback resolves without granting task acceptance",()=>{
   const bundle=fixture(), resolved=boundNativeReviewEvidence(bundle);

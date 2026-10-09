@@ -201,3 +201,38 @@ export function assignmentKernelNativeEvidenceProjectionV2(value: unknown): Assi
       || left.operation_id.localeCompare(right.operation_id))
   };
 }
+
+/** Execution evidence only: a bound native rollback proves that a preview ran,
+ * not that its impact, targets, collateral scope or presentation were verified. */
+export function boundNativePreviewPathsV2(value: unknown): readonly string[] {
+  const projection = assignmentKernelNativeEvidenceProjectionV2(value);
+  if (!projection.present || projection.malformed) return [];
+  const publications = records(record(value).assignments);
+  const paths = new Set<string>();
+  const bindingKeys = ["assignment_id", "run_id", "generation", "session_id", "principal_id", "document_fingerprint"];
+  for (const evidence of projection.operations) {
+    if (evidence.requested_effect !== "preview" || evidence.outcome !== "completed") continue;
+    const matches = publications.filter(p => p.assignment_id === evidence.assignment_id);
+    if (matches.length !== 1) continue;
+    const snapshot = record(matches[0]!.snapshot), binding = record(snapshot.current_binding);
+    const operation = record(record(snapshot.operations)[evidence.operation_id]), result = record(operation.result);
+    const sameBinding = (other: unknown) => bindingKeys.every(key =>
+      binding[key] !== undefined && binding[key] === record(other)[key]);
+    if (typeof binding.document_fingerprint !== "string" || !binding.document_fingerprint.trim()
+        || !sameBinding(operation.binding) || !sameBinding(result.binding)
+        || !boundNativeOperationIdentityV2(operation)
+        || operation.persistent_effect !== "none" || result.persistent_effect !== "none"
+        || result.native_transaction_state !== "rolled_back"
+        || typeof result.raw_payload_hash !== "string" || !result.raw_payload_hash
+        || result.result_id !== evidence.result_id) continue;
+    const start = Date.parse(evidence.dispatched_at ?? ""), end = Date.parse(evidence.completed_at ?? "");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
+    const observed = evidence.observation_ids.some(id => {
+      const observation = record(record(snapshot.observations)[id]);
+      return observation.authority === "native-host" && sameBinding(observation.binding)
+        && observation.raw_payload_hash === result.raw_payload_hash;
+    });
+    if (observed) paths.add(evidence.path);
+  }
+  return [...paths];
+}
