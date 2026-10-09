@@ -1501,6 +1501,7 @@ namespace RevitBridge.Handlers
                 // Some view types do not support filters.
             }
             var categoryOverride = BuildCategoryOverrideState(doc, view, p?.categoryName);
+            var associatedLevel = view.GenLevel;
 
             return new Dictionary<string, object?>
             {
@@ -1511,6 +1512,11 @@ namespace RevitBridge.Handlers
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                     name = view.Name,
+                    isTemplate = view.IsTemplate,
+                    viewType = view.ViewType.ToString(),
+                    levelId = associatedLevel == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(associatedLevel.Id),
+                    levelName = associatedLevel?.Name,
+                    levelElevationFeet = associatedLevel == null ? (double?)null : associatedLevel.Elevation,
                     scale = view.Scale,
                     detailLevel,
                     discipline,
