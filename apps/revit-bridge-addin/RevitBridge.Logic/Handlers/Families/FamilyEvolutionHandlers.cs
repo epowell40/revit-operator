@@ -523,7 +523,7 @@ namespace RevitBridge.Logic.Handlers
                     ["width"] = ParameterReceipt(plan.WidthParameterName, plan.SourceWidthFt, ReadProjectLength(persistedSymbol, plan.WidthParameterName), plan.WidthFormula, plan.WidthIsInstance),
                     ["depth"] = ParameterReceipt(plan.DepthParameterName, plan.SourceDepthFt, ReadProjectLength(persistedSymbol, plan.DepthParameterName), plan.DepthFormula, plan.DepthIsInstance)
                 };
-            });
+            }, requestedChangesComplete: !plan.HasClearance);
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Applied");
             try { app.ActiveUIDocument.RefreshActiveView(); } catch { }
             return result;

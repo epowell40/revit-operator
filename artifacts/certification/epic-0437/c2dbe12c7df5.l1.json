@@ -1136,7 +1136,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_model_telemetry.ts",
-      "sha256": "sha256:8994458b6ba121ae1517f910a4d1ddf0c90b53d87eb99535d18f9d0dc354af41"
+      "sha256": "sha256:2f0c7c7bf3749312b573eac4d94757d0bf79aabfdd6e823fee1c120ff448a125"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_qualification_preflight.ts",
@@ -1388,7 +1388,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
-      "sha256": "sha256:66b6b10c83c66569db86c030818e9c7120b1b70a61744f9c632a71f0ea344212"
+      "sha256": "sha256:a34c6046ab1dc7565ee88ac39b62005b93e6ba6ce687b68d27c25130f015881f"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
@@ -1440,7 +1440,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_profile.ts",
-      "sha256": "sha256:de4449a88e24ca4ccd6241c16878f4e32d5c56fc1613867bbfda6e98fe7e77ab"
+      "sha256": "sha256:adce0e10bfbb927a43fcb7a45a0916bcf4f03a19deb7b0527236bc0c4a770031"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_visual_input.ts",
@@ -5245,7 +5245,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_campaign_completion.test.ts",
-      "sha256": "sha256:192baa42185bd42b7225ad98bd2b1e50ad5eac692fa23c5f648399ab8aa6d49e"
+      "sha256": "sha256:e826e9b041c28d4172151a5274a99ec9b3b50a2702ecd545509fd000b120b715"
     },
     {
       "path": "apps/operator-backend/test/general_revit_campaign_memory.test.ts",
@@ -5281,7 +5281,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
-      "sha256": "sha256:0bb057bb2e0dec085df4c448019a5456ff14bdae1ffacf37792ece32fca6df13"
+      "sha256": "sha256:3b1d210a0f405a05ea0b5d7dcefd8fe154f20b53c6edc0c336363ed3e7e40267"
     },
     {
       "path": "apps/operator-backend/test/general_revit_qualification_preflight.test.ts",
@@ -6066,6 +6066,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/FamilyEvolutionPlanTests.cs",
       "sha256": "sha256:b3c6a73530f2afe39df2983a01bdf1dff3b76bb7177d56b03cf048fd8077a4b8"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/FamilyEvolutionSettlementTests.cs",
+      "sha256": "sha256:d3b3befe2f8adf2147338e7d9900752e3b1e4f759f3e3aeb907919592f175135"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/FamilyPlacementRecoveryTests.cs",
@@ -7494,7 +7498,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/FamilyEvolutionHandlers.cs",
-      "sha256": "sha256:d79eabf4a3649127e253a671e9404896b028b880a3ea670c494b486d57e261cb"
+      "sha256": "sha256:c8d66a61511661e466ec19c0d265e66ff42cd79ec56bf209e0711cb77b225f44"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/FindFamilyTextNotesHandler.cs",
@@ -8394,7 +8398,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SchedulesHandler.cs",
-      "sha256": "sha256:50705fa52297039a1fb78833f652957f5d4151a4a3417432054754dd14960f60"
+      "sha256": "sha256:50c2f69b78720046478f45498a3738ff9cd94bc1c178975bd0d22768ed1a4bda"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SelectionHandlerProxies.cs",
@@ -8741,7 +8745,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:d3fa9d2ac570a6867edde4175e51f65da3712e7254c915c6a35face7fdd5f22c",
+  "inputs_hash": "sha256:9360d57834d857b76c5a4e5d44580b9b56bab00ec7bfb0def40e0f84ca318b5a",
   "result": {
     "passed": true,
     "checks": [
