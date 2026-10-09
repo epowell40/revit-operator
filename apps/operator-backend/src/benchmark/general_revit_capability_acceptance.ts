@@ -1169,7 +1169,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
         ? "Rollback preview lacks target-bound post-rollback model-state verification."
         : requiredEffectMissing
         ? testCase.expected_effect === "apply"
-          ? "Mutation case did not dispatch a verified apply operation."
+          ? canonicalV2.native_committed_task_paths.some(path => expectedPaths.has(canonicalBenchmarkRevitPath(path)))
+            ? "A native apply committed on an expected route, but independent whole-task verification is missing."
+            : "Mutation case did not dispatch a verified apply operation."
           : `Case did not produce the requested ${testCase.expected_effect} effect.`
         : "Attempt failed or has an uncertain outcome."
         : fixtureBlockerAccepted ? "Fixture-grounded inspection proved that this sample lacks a semantically compatible target; the agent correctly stopped without previewing or applying an invalid substitution."

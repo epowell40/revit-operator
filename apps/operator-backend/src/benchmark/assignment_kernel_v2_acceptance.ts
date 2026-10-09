@@ -39,6 +39,8 @@ export type AssignmentKernelAcceptanceTruthV2 = Readonly<{
   apply_dispatched: boolean;
   requested_effects: readonly GeneralRevitExpectedEffect[];
   successful_task_paths: readonly string[];
+  /** Native commits observed independently of task-level acceptance. Diagnostic only. */
+  native_committed_task_paths: readonly string[];
 }>;
 
 const EMPTY: AssignmentKernelAcceptanceTruthV2 = Object.freeze({
@@ -51,7 +53,8 @@ const EMPTY: AssignmentKernelAcceptanceTruthV2 = Object.freeze({
   dispatched: false,
   apply_dispatched: false,
   requested_effects: [],
-  successful_task_paths: []
+  successful_task_paths: [],
+  native_committed_task_paths: []
 });
 
 /**
@@ -85,6 +88,7 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
   let applyDispatched = false;
   const requestedEffects = new Set<GeneralRevitExpectedEffect>();
   const successfulTaskPaths = new Set<string>();
+  const nativeCommittedTaskPaths = new Set<string>();
 
   for (const candidate of publications) {
     let publication: JsonRecord;
@@ -156,6 +160,22 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
         && String(observation.result_schema_id ?? "") === String(result.result_schema_id ?? ""));
       if (matchingObservations.length === 0) continue;
 
+      // Advisory execution intentionally has no automatic criterion evaluations.
+      // Preserve the distinction between a native commit and a verified task;
+      // this diagnostic must never grant completion or acceptance by itself.
+      const nativePath = nativeOperationIdentityFromResultSchemaV2(result.result_schema_id)?.path;
+      if (nativePath && operation.requested_effect === "apply"
+          && operation.persistent_effect === "applied"
+          && result.persistent_effect === "applied"
+          && result.native_transaction_state === "committed"
+          && result.authority === "native-host"
+          && binding.document_fingerprint === operationBinding.document_fingerprint
+          && binding.document_fingerprint === resultBinding.document_fingerprint
+          && record(operation.request_identity).path === nativePath
+          && record(result.request_identity).path === nativePath) {
+        nativeCommittedTaskPaths.add(nativePath);
+      }
+
       const observationIds = new Set(matchingObservations.map((observation) => String(observation.observation_id ?? "")));
       const supported = eligibleCriterionIds.every((criterionId) => {
         const evaluation = record(criteria[criterionId]);
@@ -201,6 +221,7 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
     dispatched,
     apply_dispatched: applyDispatched,
     requested_effects: [...requestedEffects],
-    successful_task_paths: [...successfulTaskPaths]
+    successful_task_paths: [...successfulTaskPaths],
+    native_committed_task_paths: malformed ? [] : [...nativeCommittedTaskPaths]
   };
 }
