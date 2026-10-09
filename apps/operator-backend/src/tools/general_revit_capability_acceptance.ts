@@ -1,4 +1,5 @@
 import { createGeneralRevitRequest } from "../benchmark/general_revit_request.js";
+import { waitForGeneralRevitAssignmentSettlement } from "../benchmark/general_revit_assignment_settlement.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -649,7 +650,7 @@ async function runCase(
   const finalHealthPromise = requestJson(baseUrl, finalHealthPath, {}, healthTimeoutMs())
     .catch((error) => ({ ok: false, error: String(error) }))
     .finally(() => { finalHealthDurationMs = Date.now() - finalHealthStartedAt; });
-  const [finalState, assignmentProjection, assignmentKernelV2] = await Promise.all([
+  const [finalState, assignmentProjection, initialAssignmentKernelV2] = await Promise.all([
     finalHealthPromise,
     (sessionId
       ? requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
@@ -657,6 +658,16 @@ async function runCase(
       .catch((error) => ({ ok: false, error: String(error) })),
     loadAssignmentKernelPublicationsV2(baseUrl, sessionId, requestJson)
   ]);
+  const assignmentSettlement = await waitForGeneralRevitAssignmentSettlement({
+    initial: initialAssignmentKernelV2, sessionId,
+    read: async remainingMs => {
+      const deadline = Date.now() + remainingMs;
+      return loadAssignmentKernelPublicationsV2(baseUrl, sessionId, (base, route, options, timeout) =>
+        requestJson(base, route, options, Math.max(1, Math.min(timeout ?? 30_000, deadline - Date.now()))),
+      { attempts: 1, retryDelayMs: 0 });
+    }
+  });
+  const assignmentKernelV2 = assignmentSettlement.bundle;
   const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, assignmentKernelV2, requestJson);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
@@ -725,6 +736,7 @@ async function runCase(
       reconciliation_required: attempt.reconciliation_required === true,
       durable_assignment_projection: assignmentProjection,
       durable_assignment_kernel_v2: assignmentKernelV2,
+      harness_assignment_settlement: assignmentSettlement.receipt,
       durable_tool_evidence: durableToolEvidence,
       durable_work_packets: durableWorkPackets,
       raw_sidecar_response_sha256: sha256(evaluatedAttempt),
