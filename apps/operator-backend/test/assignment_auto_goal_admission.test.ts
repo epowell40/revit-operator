@@ -67,6 +67,9 @@ test("multiline engineering briefs survive normal admission, provider binding an
 });
 
 for (const [effect, prompt, facts] of [
+  ["apply", "In this disposable Snowdon model, find every mechanical-equipment instance whose Mark begins with HRU and change only that prefix to ERU. Preserve every remaining character exactly, preflight collisions and read-only/grouped targets, apply the complete bounded set, then query all affected IDs and prove the HRU count is zero and the ERU replacement count equals the original HRU count.", ["task.result_available"]],
+  ["apply", "Change every supply device Mark prefix from OLD to NEW, preserve the suffix, and count the updated devices by type to verify the change.", ["task.result_available"]],
+  ["preview", "Preview changing every equipment Mark prefix from OLD to NEW and report the count by type. Do not apply any changes.", ["task.preview_valid"]],
   ...navigationPreservationRequests.map(prompt => ["read", prompt, ["task.result_available"]] as const),
   ...scopedFurtherChangeRequests.map(prompt => ["apply", prompt, ["task.result_available"]] as const),
   ["apply", "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.", ["task.result_available"]],
