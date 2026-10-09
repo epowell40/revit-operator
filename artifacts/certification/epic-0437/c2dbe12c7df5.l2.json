@@ -736,7 +736,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:704427e79cad42d95de94f79cb05febc636e2df58e2f1d335be85366aeaffd1d"
+      "sha256": "sha256:b85cff53982ca1fa0655ef660161d031e4eb52cc0c2977f740b7723a26b4e0fe"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -2833,7 +2833,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/template_reassignment.ts",
-      "sha256": "sha256:c7f4d5b459664c57de82264fbe8a3b24caaacd48f029c5bc8e93d643f71472f7"
+      "sha256": "sha256:34ff819bab1993bb1672ec8585d2c135098dcfedf555f179c96ecdc80d3fcb30"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/verified_work_targets.ts",
@@ -4113,7 +4113,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_committed_target_retry.test.ts",
-      "sha256": "sha256:65a2d92f7786cc1bab608d4576616dcde40fca8372d34ae9f1d55b114f994b60"
+      "sha256": "sha256:fc9814e38454ee8269cf4d3720b17ee4e147eab39d2ce43773690cc00cad3588"
     },
     {
       "path": "apps/operator-backend/test/assignment_control_plane.test.ts",
@@ -8729,7 +8729,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:78c88323a05a78820d307128f1e1b74a7df01520ae38a76a0df0248a58d35955",
+  "inputs_hash": "sha256:0aa50e03ad46f039d0fce9028991d9448e3749cda60daf6414b918d6e48ec61d",
   "result": {
     "passed": true,
     "checks": [
