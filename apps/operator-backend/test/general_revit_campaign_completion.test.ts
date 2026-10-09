@@ -117,10 +117,10 @@ test("settled task failures are measurable, but lost receipts and model drift st
   assert.equal(valid.model_call_receipts[0]!.tokens.total_tokens, 120);
 });
 
-test("GPT-6 Sol exact usage can settle a measured campaign case", () => {
+for (const model of ["gpt-6-sol", "gpt-6.1-sol"]) test(`${model} exact usage can settle a measured campaign case`, () => {
   const valid = measuredTrace();
-  valid.model_call_receipts[0]!.model = "gpt-6-sol";
-  const sol = { agent_model: "gpt-6-sol", agent_reasoning_effort: "medium" };
+  valid.model_call_receipts[0]!.model = model;
+  const sol = { agent_model: model, agent_reasoning_effort: "medium" };
   assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(valid, sol));
   assert.equal(finishGeneralRevitCampaignCase(valid, null, sol), null);
   const missingCostBucket = structuredClone(valid);
