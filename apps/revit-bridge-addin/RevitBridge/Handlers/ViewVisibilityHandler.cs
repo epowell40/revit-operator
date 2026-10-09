@@ -1490,6 +1490,7 @@ namespace RevitBridge.Handlers
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(id),
                             name = f?.Name,
+                            definition = RevitBridge.Common.ViewFilterReadback.Read(f),
                             visible,
                             @override = BuildFilterOverrideState(doc, view, id)
                         };

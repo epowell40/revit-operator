@@ -1,3 +1,4 @@
+import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
@@ -604,6 +605,8 @@ export function postconditionSatisfiedByPayloadV2(
     if (["create_floor_plan", "floor_plan"].includes(String(request.action ?? "create_floor_plan").trim().toLowerCase()))
       return createdPlanSatisfiedV2(request, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
   }
+  if (operationPath === "/revit/visibility" && objectValue(semanticApplyInput(applyInput)).action === "create_view_filter")
+    return createdViewFilterSatisfiedV2(objectValue(semanticApplyInput(applyInput)), structuredValue(verificationPayload));
   if (operationPath === "/revit/duplicate-view") {
     const request = objectValue(semanticApplyInput(applyInput));
     if (request.withDetailing === true) {
