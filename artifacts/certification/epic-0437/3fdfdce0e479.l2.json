@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_acceptance.ts",
-      "sha256": "sha256:866469b852fb32af5e711aec7a8f624e44cbf6010e338d386a2d9d05303e097f"
+      "sha256": "sha256:85927e441c64ed7146dc98b1c86e0d49f83f739ff6b71771165fadc11f41e335"
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts",
@@ -1020,7 +1020,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts",
-      "sha256": "sha256:bf7a7b5c348e295de615c086e836e90ad081294d5315ffc466c7370d96ce5f70"
+      "sha256": "sha256:6114fbeef614590fcc9f65f54410f3b2a47aa8e0a25a2181e513a2cd9b4cc1cd"
     },
     {
       "path": "apps/operator-backend/src/benchmark/bound_native_review_evidence.ts",
@@ -2725,7 +2725,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/family_capacity_retry.ts",
-      "sha256": "sha256:81e87556e84319af4496a9d6189753efcabd34dae18812ffb2d42aa0ffb5d416"
+      "sha256": "sha256:b800f05724a041b7b6bc6c3debc165c8da219e0059f721000793fa03c6c592ab"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/feature_flag.ts",
@@ -2833,7 +2833,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/template_reassignment.ts",
-      "sha256": "sha256:34ff819bab1993bb1672ec8585d2c135098dcfedf555f179c96ecdc80d3fcb30"
+      "sha256": "sha256:df7c0131bbfe4453a2308de4f6f4a20721a650ca657386a65c07ab7151e72462"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/verified_work_targets.ts",
@@ -4145,7 +4145,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:c911ec705773442e9d1b1bd3480d133c497ac9f4e4364d495214f920395b851a"
+      "sha256": "sha256:09a6490055aab3f969e81c3bd2d0b732a721ae9e7e15d650d8ac5ca97687799a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -4357,7 +4357,7 @@
     },
     {
       "path": "apps/operator-backend/test/candidate53_v2_native_evidence_authority.test.ts",
-      "sha256": "sha256:54e76f5c10686b485acdb5d8b85eedaa08ba9be346bfd869c486c28a135b9082"
+      "sha256": "sha256:ccee9deee955783a0741d40a5ab1fbd3b3d65c8943f58d65a4ef8c70cf307020"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -8626,11 +8626,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.d.ts",
-      "sha256": "sha256:44b504fb3cba917cb2602ae2f7abf4df7f5cc69f9d68ae8c989af4337eeba95d"
+      "sha256": "sha256:08a2912c44f6fbba4781ea10f3f2c8439743273c20ef8a0b0a3868d5b3c65ed3"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:332d20ffa92d81aa6cf6d4a17495c3959812a0280da4b0bb034db8356734c22d"
+      "sha256": "sha256:c990882d125606ba53ac31bd064a903385e61a940194acd98ee2382c6d4c9cac"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/input-schema-gap.d.ts",
@@ -8657,8 +8657,20 @@
       "sha256": "sha256:0b7cd56c3946d26215c3f3a6e43dd6bafab99166c8c1a184b9d3f26965430279"
     },
     {
+      "path": "packages/assignment-kernel-v2-contracts/native-continuation.d.ts",
+      "sha256": "sha256:b639adf43579dc4401af8c6823002ce6d75487c7f2c11a668ca52c7653be23a3"
+    },
+    {
+      "path": "packages/assignment-kernel-v2-contracts/native-continuation.js",
+      "sha256": "sha256:93c19c7a3a73f5e2bb6eec8bfe361e33aa228baaf07cf8215a436425b3534c9e"
+    },
+    {
+      "path": "packages/assignment-kernel-v2-contracts/native-continuation.test.mjs",
+      "sha256": "sha256:8a1fd5db0db01e41cf8b079f71dc94703034881dbf630a99dd028398c6001a04"
+    },
+    {
       "path": "packages/assignment-kernel-v2-contracts/package.json",
-      "sha256": "sha256:6d2b3e2ac009f83b9eaf43c9476a755cfd0c58597ae7a5651f1d3674fabe89c9"
+      "sha256": "sha256:878ec467ff43ff715e1689e017a7eee542c6edf68064edf6a013ec952610be57"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-turn-usage.d.ts",
@@ -8729,7 +8741,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:0aa50e03ad46f039d0fce9028991d9448e3749cda60daf6414b918d6e48ec61d",
+  "inputs_hash": "sha256:177dcf250aa1c09f3b34623afc268edef093833a385f10d61e42063c5dc89db5",
   "result": {
     "passed": true,
     "checks": [

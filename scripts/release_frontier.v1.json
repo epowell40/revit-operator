@@ -203,6 +203,7 @@
     "thin_reference_dynamic_boundary.test.ts",
     "thin_reference_execution.test.ts",
     "assignment_committed_target_retry.test.ts",
+    "assignment_family_capacity_retry.test.ts",
     "assignment_document_checkpoint.test.ts",
     "assignment_kernel_v2_provider_usage_hold.test.ts",
     "assignment_provider_usage_boundary.test.ts",
