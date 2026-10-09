@@ -3658,6 +3658,7 @@
   ],
   "javascript_tests": [
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
+    "package/operator-assistant-ui/session_start.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
