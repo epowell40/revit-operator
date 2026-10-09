@@ -516,14 +516,17 @@ namespace RevitBridge.Logic.Handlers
                     throw new InvalidOperationException("Persisted family/type identity did not match the requested change.");
                 VerifyProjectLength(persistedSymbol, plan.WidthParameterName, plan.TargetWidthFt);
                 VerifyProjectLength(persistedSymbol, plan.DepthParameterName, plan.TargetDepthFt);
+                if (plan.HasClearance) VerifyPersistedClearance(plan, persistedSymbol.Family);
                 return new Dictionary<string, object?>
                 {
+                    ["verificationScope"] = "persisted_family_identity_dimensions_and_clearance_geometry",
+                    ["visualAppearanceVerified"] = false,
                     ["familyName"] = persistedSymbol.Family.Name,
                     ["typeName"] = persistedSymbol.Name,
                     ["width"] = ParameterReceipt(plan.WidthParameterName, plan.SourceWidthFt, ReadProjectLength(persistedSymbol, plan.WidthParameterName), plan.WidthFormula, plan.WidthIsInstance),
                     ["depth"] = ParameterReceipt(plan.DepthParameterName, plan.SourceDepthFt, ReadProjectLength(persistedSymbol, plan.DepthParameterName), plan.DepthFormula, plan.DepthIsInstance)
                 };
-            }, requestedChangesComplete: !plan.HasClearance);
+            });
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Applied");
             try { app.ActiveUIDocument.RefreshActiveView(); } catch { }
             return result;
@@ -544,6 +547,7 @@ namespace RevitBridge.Logic.Handlers
             var curves = new List<object>();
             long? linePatternId = null;
             string? linePatternName = null;
+            object? linePatternSegments = null;
             int? lineWeight = null;
             int[]? lineColor = null;
             Document? familyDoc = null;
@@ -562,7 +566,10 @@ namespace RevitBridge.Logic.Handlers
                         {
                             var patternId = subcategory.GetLinePatternId(GraphicsStyleType.Projection);
                             linePatternId = ElementIdCompat.GetValue(patternId);
-                            linePatternName = (familyDoc.GetElement(patternId) as LinePatternElement)?.Name;
+                            var pattern = familyDoc.GetElement(patternId) as LinePatternElement;
+                            linePatternName = pattern?.Name;
+                            linePatternSegments = pattern?.GetLinePattern().GetSegments()
+                                .Select(segment => new { type = segment.Type.ToString(), lengthInternalFeet = segment.Length }).ToArray();
                         }
                         catch { }
                         try { lineWeight = subcategory.GetLineWeight(GraphicsStyleType.Projection); } catch { }
@@ -610,6 +617,7 @@ namespace RevitBridge.Logic.Handlers
                     lineStyleName = request.lineStyleName,
                     linePatternId,
                     linePatternName,
+                    linePatternSegments,
                     lineWeight,
                     color = lineColor,
                     symbolicCurveCount = curves.Count,
@@ -745,6 +753,23 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
+        private static void VerifyPersistedClearance(PreparedPlan plan, Family family)
+        {
+            Document? persisted = null;
+            try
+            {
+                persisted = plan.ProjectDoc.EditFamily(family);
+                var curves = new FilteredElementCollector(persisted).OfClass(typeof(CurveElement))
+                    .Cast<CurveElement>().Where(curve => curve.CurveElementType == CurveElementType.SymbolicCurve
+                        && string.Equals((curve.LineStyle as GraphicsStyle)?.GraphicsStyleCategory?.Name,
+                            plan.LineStyleName, StringComparison.OrdinalIgnoreCase)).ToList();
+                var category = (curves.FirstOrDefault()?.LineStyle as GraphicsStyle)?.GraphicsStyleCategory
+                    ?? throw new InvalidOperationException("Persisted clearance subcategory was not found.");
+                VerifyClearanceCurves(persisted, curves.Select(curve => ElementIdCompat.GetValue(curve.Id)).ToArray(), category, plan);
+            }
+            finally { if (persisted != null) persisted.Close(false); }
+        }
+
         private static void VerifyClearanceCurves(
             Document familyDoc,
             IReadOnlyCollection<long> createdCurveIds,
@@ -786,9 +811,14 @@ namespace RevitBridge.Logic.Handlers
             if (plan.LinePatternName.Length > 0)
             {
                 var patternId = subcategory.GetLinePatternId(GraphicsStyleType.Projection);
-                var patternName = (familyDoc.GetElement(patternId) as LinePatternElement)?.Name ?? "";
+                var pattern = familyDoc.GetElement(patternId) as LinePatternElement;
+                var patternName = pattern?.Name ?? "";
                 if (!string.Equals(patternName, plan.LinePatternName, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Clearance line pattern readback did not match the plan.");
+                var segments = pattern?.GetLinePattern().GetSegments();
+                if (segments == null || !segments.Any(segment => segment.Type == LinePatternSegmentType.Dash && segment.Length > 0)
+                    || !segments.Any(segment => segment.Type == LinePatternSegmentType.Space && segment.Length > 0))
+                    throw new InvalidOperationException("Clearance pattern must contain positive dash and space segments.");
             }
         }
 
@@ -835,8 +865,9 @@ namespace RevitBridge.Logic.Handlers
                     var definition = new LinePattern(plan.LinePatternName);
                     definition.SetSegments(new List<LinePatternSegment>
                     {
-                        new LinePatternSegment(LinePatternSegmentType.Dash, 0.5),
-                        new LinePatternSegment(LinePatternSegmentType.Space, 0.25)
+                        // Pattern lengths are paper-space feet: 1/8-inch dash, 1/16-inch gap.
+                        new LinePatternSegment(LinePatternSegmentType.Dash, 1.0 / 96.0),
+                        new LinePatternSegment(LinePatternSegmentType.Space, 1.0 / 192.0)
                     });
                     pattern = LinePatternElement.Create(familyDoc, definition);
                 }
