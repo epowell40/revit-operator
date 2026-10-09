@@ -9,6 +9,27 @@ namespace RevitBridge.Common.Tests
 {
     public class VisibilityPlanSettlementTests
     {
+        [Theory]
+        [InlineData("RolledBack", "none", true)]
+        [InlineData("Pending", "unknown", false)]
+        public void ExactViewRangePreviewRequiresActualRollback(string status, string effect, bool success)
+        {
+            var historical = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "view-range-preview-unsettled.json")))!;
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(historical, "preview", "POST", "/revit/visibility").EffectState);
+            int mutations = 0, rollbacks = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => throw new Exception("preview must not commit"),
+                () => { rollbacks++; return status; }, () => status,
+                () => { mutations++; return historical; }, () => throw new Exception("no committed inventory"),
+                disposition: NativeTransactionDisposition.Rollback);
+            response["previewExecuted"] = response["success"] is true;
+            Assert.Equal(1, mutations);
+            Assert.Equal(1, rollbacks);
+            Assert.Equal(success, response["previewExecuted"]);
+            Assert.Equal(success, response.ContainsKey("proposed"));
+            Assert.Equal(effect, OperatorAttemptSuccessfulSettlement.Classify(response, "preview", "POST", "/revit/visibility").EffectState);
+        }
+
         [Fact]
         public void RetainedPlanRequiresNativeNotStartedReceipt()
         {

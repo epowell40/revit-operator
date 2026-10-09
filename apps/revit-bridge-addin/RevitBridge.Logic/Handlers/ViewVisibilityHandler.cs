@@ -103,15 +103,24 @@ namespace RevitBridge.Logic.Handlers
             if (dryRun && action == "set_view_range")
             {
                 var current = BuildViewState(doc, view, "Ok", "get", dryRun: false, p);
-                object proposed;
-                using (var tx = new Transaction(doc, "Preview View Range"))
-                {
-                    tx.Start();
-                    ApplyAction(doc, view, action, p);
-                    proposed = BuildViewState(doc, view, "Preview", action, dryRun: true, p);
-                    tx.RollBack();
-                }
-                return Task.FromResult<object>(new { status = "Dry Run", action, dryRun = true, current, proposed });
+                var preview = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(
+                    app, doc, "Preview View Range", _ =>
+                    {
+                        ApplyAction(doc, view, action, p);
+                        doc.Regenerate();
+                        return new Dictionary<string, object?>
+                        {
+                            ["current"] = current,
+                            ["proposed"] = BuildViewState(doc, view, "Preview", action, dryRun: true, p)
+                        };
+                    }, disposition: NativeTransactionDisposition.Rollback);
+                preview["status"] = preview["success"] is true ? "Dry Run" : "Failed";
+                preview["action"] = action;
+                preview["dryRun"] = true;
+                preview["previewExecuted"] = preview["success"] is true;
+                if (preview["success"] is true)
+                    preview["after"] = BuildViewState(doc, view, "Ok", "get", dryRun: false, p);
+                return Task.FromResult<object>(preview);
             }
             if (dryRun)
             {

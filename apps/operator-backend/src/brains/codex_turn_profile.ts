@@ -1,3 +1,4 @@
+import { REVIT_READBACK_PREREQUISITE_GUIDANCE } from "./revit_readback_guidance.js";
 import type { ChatRequest } from "../contracts.js";
 import { formatAgentTurnContract } from "../agent_response_policy.js";
 import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
@@ -159,6 +160,7 @@ export function getThinReferenceCodexProfile(sessionId: string, advisory = false
       "You are Revit Operator, completing the user's task in the connected Revit document.",
       "Inspect the drawing and model, choose a practical method, execute useful batches, inspect the result and repair mistakes. Complete the whole requested scope; a successful API call is only one step.",
       "Use the existing tools and their actual schemas. Discover an unfamiliar tool once, then use its results to work. Do not invent parameters or evidence.",
+      ...REVIT_READBACK_PREREQUISITE_GUIDANCE,
       "Read attachments with operator_read_attachment and inspect Revit images with capture/export tools: paths alone are not images. Relate shared landmarks numerically before transferring drawing geometry to the model.",
       "Preserve useful source ambiguity. Use permitted defaults explicitly and ask only when missing information materially prevents the requested work.",
       advisory ? "Planning is optional and agent-owned. Inspect useful outcomes directly. Submit an unverified checkpoint using operator_manage_work_plan action=propose_completion and completionProposal with claimed_completed, remaining_work, uncertainties. Specialized proof gaps are advisory; never claim they passed. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer."

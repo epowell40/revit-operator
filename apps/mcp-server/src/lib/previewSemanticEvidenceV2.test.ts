@@ -268,3 +268,22 @@ test("retained delete preview binds requested identities and exact dependency di
   for(const request of [{ids:body.ids},{...body,apply:true,dryRun:false},{...body,dryRun:"true"},{...body,ids:[999]},
     {...body,ids:[...body.ids,body.ids[0]]}]) assert.equal(evaluate(original,request).admitted,false);
 });
+
+test("view range preview rejects mismatched native state and uncertain rollback", () => {
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/view-range-preview-unsettled.json", import.meta.url), "utf8"));
+  const requestBody = { viewId: 1542918, action: "set_view_range", viewRangeBottomLevelId: 9946, viewRangeBottomOffsetFeet: 1, viewRangeDepthLevelId: 9946, viewRangeDepthOffsetFeet: 1, dryRun: true };
+  const good = { ...original, success: true, previewExecuted: true, after: structuredClone(original.current), transaction: { status: "rolled_back", committed: false, affected_element_ids: [] } };
+  const check = (payload: any, request = requestBody) => previewSemanticEvidenceV2({ path: "/revit/visibility", payload, requestBody: request, requestedEffect: "preview", authoritativePreview: true });
+  assert.equal(check(good).admitted, true);
+  for (const mutate of [
+    (p: any) => { p.transaction.status = "pending"; },
+    (p: any) => { p.transaction.affected_element_ids = [1542918]; },
+    (p: any) => { p.after.view.viewRange.bottom.offsetFeet = 1; },
+    (p: any) => { delete p.after; },
+    (p: any) => { p.proposed.view.id = 42; },
+    (p: any) => { p.proposed.view.viewRange.bottom.offsetFeet = 2; },
+    (p: any) => { p.proposed.view.viewRange.cut.offsetFeet = 5; },
+    (p: any) => { p.proposed.view.scale = 50; },
+    (p: any) => { p.previewExecuted = false; }
+  ]) { const bad = structuredClone(good); mutate(bad); assert.equal(check(bad).admitted, false); assert.deepEqual(check(bad).facts, []); }
+});

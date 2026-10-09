@@ -232,6 +232,22 @@ function projectionBytes(value: Omit<EvidenceProjectionV1, "projected_bytes">): 
   return Buffer.byteLength(JSON.stringify(value), "utf8") + 24;
 }
 
+function completeElementIdInventory(raw: unknown): Record<string, unknown> | null {
+  const row = safeRecord(raw);
+  if (!row || row.status !== "Ok" || !safeRecord(row.scope)
+      || !Array.isArray(row.elementIds) || row.elementIds.length > 5000
+      || row.count !== row.elementIds.length || row.truncated !== false
+      || row.scanCapReached !== false || row.identityExpansionScanCapReached !== false
+      || row.elementIds.some(id => !Number.isSafeInteger(id) || id <= 0)
+      || new Set(row.elementIds).size !== row.elementIds.length) return null;
+  // This is an exact ID-list presentation, not full element detail or proof of
+  // project-wide coverage. Retain every native scope/filter fact so a bounded
+  // view, text, or family query cannot be mistaken for a whole-model inventory.
+  const { items, elementIds, canonical_attempt_settlement, ...scopeAndFilters } = row;
+  return { ...scopeAndFilters, schema: "revit-operator.element-id-inventory-summary/v1",
+    elementIds, ids_complete: true, items_omitted: true };
+}
+
 export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_192): EvidenceProjectionV1 {
   const extracted = extractDeterministicEvidenceFacts(raw);
   const base = {
@@ -313,6 +329,23 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
             inline_payload: detailing, truncated: false }
         : { ...candidate, inline_payload: payload };
       if (projectionBytes(expanded) <= maxBytes) candidate = expanded;
+      else if (!detailing) {
+        // Extracted scalar facts repeat the payload and can crowd out its exact
+        // nested values. Prefer the complete screened native result when it
+        // fits without those duplicates. Keep identity and receipt
+        // metadata; this changes presentation, never evidence authority.
+        const complete = { ...base, key_counts: {}, key_facts: {},
+          inline_payload: payload, truncated: false };
+        if (projectionBytes(complete) <= maxBytes) candidate = complete;
+        else {
+          const inventory = completeElementIdInventory(payload);
+          if (inventory) {
+            const compact = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,
+              inline_payload: inventory, truncated: true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
+        }
+      }
     }
   }
   const projected_bytes = projectionBytes(candidate);

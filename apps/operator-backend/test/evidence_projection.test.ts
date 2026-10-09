@@ -29,6 +29,56 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("complete native IDs survive bulky details without claiming the entire payload is complete", () => withWorkspace(() => {
+  const ids=Array.from({length:509},(_,i)=>1370000+i);
+  const raw={status:"Ok",scope:{kind:"Document",viewIds:[],sheetId:null},count:509,elementIds:ids,
+    categoryFilterApplied:true,resolvedCategories:[{name:"Air Terminals",builtInToken:"OST_DuctTerminal",categoryId:-2008013}],
+    textFilterApplied:false,identityFilterApplied:false,truncated:false,scanCapReached:false,identityExpansionScanCapReached:false,
+    items:ids.map(elementId=>({elementId,description:"large native detail ".repeat(40)}))};
+  const result=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw},8192);
+  const summary=result.projection.inline_payload as any;
+  assert.equal(summary?.schema,"revit-operator.element-id-inventory-summary/v1");
+  assert.deepEqual(summary.elementIds,ids);assert.equal(summary.ids_complete,true);
+  assert.deepEqual(summary.scope,raw.scope);assert.equal(summary.items_omitted,true);
+  assert.equal(result.projection.truncated,true);assert(result.projection.projected_bytes<=8192);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(result.ref,scope).toString()),raw);
+  for(const change of [{count:510},{elementIds:[...ids.slice(0,-1),ids[0]]},{truncated:true},{scanCapReached:true}]){
+    const invalid=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw:{...raw,...change}},8192);
+    assert.notEqual((invalid.projection.inline_payload as any)?.ids_complete,true);
+  }
+  const untrusted=storeEvidence({scope,source:"attachment",trust_level:"untrusted_caller",raw},8192);
+  assert.equal(untrusted.projection.inline_payload,undefined);
+  const small=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw},4096);
+  assert.equal(small.projection.inline_payload,undefined);
+  const bounded={...raw,scope:{kind:"View",viewIds:[42],sheetId:null},textFilterApplied:true,textSearch:"supply"};
+  const filtered=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw:bounded},8192).projection.inline_payload as any;
+  assert.deepEqual(filtered.scope,bounded.scope);assert.equal(filtered.textFilterApplied,true);
+  assert.equal(filtered.textSearch,"supply");assert.equal(filtered.ids_complete,true);
+}));
+
+test("complete bounded native preview takes priority over duplicated extracted facts", () => withWorkspace(() => {
+  const state = (offset: number) => ({ status: "Ok", view: {
+    id: 101, name: "Preview test", scale: 96, discipline: "Mechanical",
+    viewRange: Object.fromEntries(["top", "cut", "bottom", "viewDepth"].map(plane => [plane, {
+      levelId: 10, levelName: "Level A", offsetFeet: plane === "bottom" || plane === "viewDepth" ? offset : 4
+    }])),
+    viewFilters: Array.from({ length: 9 }, (_, i) => ({ id: 200+i, name: `Synthetic filter ${i}`, visible: false,
+      override: { lineWeight: -1, linePatternId: -1, linePatternName: null, color: null } }))
+  }});
+  const raw = { current: state(0), proposed: state(1), after: state(0), success: true,
+    transaction: { status: "rolled_back", committed: false, affected_element_ids: [] },
+    status: "Dry Run", action: "set_view_range", dryRun: true, previewExecuted: true };
+  const input = { scope, source: "native:synthetic-range-preview", trust_level: "authoritative_native" as const, raw };
+  const projected = storeEvidence(input, 8192).projection;
+  assert.deepEqual(projected.inline_payload, raw);
+  assert.equal(projected.truncated, false);
+  assert.ok(projected.projected_bytes <= 8192);
+  assert.equal(projected.assignment_id, scope.assignment_id);
+  assert.equal(projected.attempt_id, scope.attempt_id);
+  assert.equal(storeEvidence({ ...input, trust_level: "untrusted_caller" }, 8192).projection.inline_payload, undefined);
+  assert.equal(storeEvidence(input, 4096).projection.inline_payload, undefined);
+}));
+
 // Synthetic native producer shape: no project/model evidence belongs here.
 function connectorFixture() {
   const ref = (ownerId: number, connectorId: number): any => ({ ownerId, connectorId, connectorIdBasis: "revit_native_connector_id", connectorType: "End", domain: "DomainHvac", isMepSystem: false, isPhysicalElement: true, isConnectedTo: true });

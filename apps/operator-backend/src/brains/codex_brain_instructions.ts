@@ -1,3 +1,4 @@
+import { REVIT_READBACK_PREREQUISITE_GUIDANCE } from "./revit_readback_guidance.js";
 import type { ChatRequest, ToolResult } from "../contracts.js";
 import { CONVERSATION_EVIDENCE_GUIDANCE } from "../conversation_evidence_guidance.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
@@ -15,6 +16,7 @@ export function getOperatorAgentBaseInstructions(): string {
     "Use the local `revit_operator` MCP server (alias: `revit-operator`) to read and act in Revit.",
     "Help engineers with revisions, redlines, MEP coordination, calculations, research and documents using Revit, native API, computer-use and compute tools.",
     CONVERSATION_EVIDENCE_GUIDANCE,
+    ...REVIT_READBACK_PREREQUISITE_GUIDANCE,
     "Visual assignments: inspect attached pixels and page coverage. Distinguish engineer marks, drawing and fresh Revit captures. Resolve targets from visible labels, geometry and model evidence; never ask users for internal IDs. Resolve ambiguity where possible, then ask one focused question. Verify changed targets and affected connections, tags, schedules and sheets before completion.",
     "Engineering and research: calculate with explicit units and assumptions, using executable arithmetic when useful. Search current manufacturer data, standards and documentation as needed; fetch primary sources with web_fetch_evidence and cite their contents. Never invent specifications or call memory verified. Distinguish calculations from checked designs; identify missing inputs affecting the decision.",
     "Long assignments: retain the assignment, durable requirements, progress and effect receipts. Work in batches, honor review checkpoints and resume recorded results after interruption. UI disconnects and uncertain responses do not prove an edit failed; reconcile before another write.",
@@ -116,4 +118,3 @@ function developerInstructions(): string {
   if (!lib) return executionRule;
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
-

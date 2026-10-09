@@ -39,7 +39,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:a4c0a0170b736a6c283b594e34c54b812a8dd395c64a0af172fba35f9864876d"
+      "sha256": "sha256:ce72c9654947ffddae8801feccbb2acd1013c8b6742f60c630c2fb1d0dfdd276"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -254,6 +254,10 @@
       "sha256": "sha256:6d8083bf380b862c1a9e29505f648833eddc49b0e6268161abbbbfbbea7c47d7"
     },
     {
+      "path": "apps/mcp-server/src/lib/fixtures/view-range-preview-unsettled.json",
+      "sha256": "sha256:5bc1a5d7cd2ef2ea79362b3b097f7a125139a490e71dd8776dc5a0ba6a5e82f6"
+    },
+    {
       "path": "apps/mcp-server/src/lib/fixtures/visibility-plan-unsettled.json",
       "sha256": "sha256:3aadea7b6887e79f4d40049ef51ade6f8d09c0e3b3f0f230fb1344a2a7ae6362"
     },
@@ -339,11 +343,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/previewSemanticEvidenceV2.test.ts",
-      "sha256": "sha256:e8bfca5af34fd57b76fc31611f2d68e95890ee3c56614064503b2b35954ec080"
+      "sha256": "sha256:9226c74037f2df08bec777665c2d4e2194a7c7cfeda6314499d6700c8de72d5f"
     },
     {
       "path": "apps/mcp-server/src/lib/previewSemanticEvidenceV2.ts",
-      "sha256": "sha256:7f71da2738ac49f60f4c3868673cadfe18e787140a8e4bc2c3054158d781909f"
+      "sha256": "sha256:851821ff6b9f63d5c02a4c59d30ef20c2e7ebcc89ac847f2c4ca93e7923ca0b0"
     },
     {
       "path": "apps/mcp-server/src/lib/registeredStageNativeBody.test.ts",
@@ -6172,6 +6176,10 @@
       "sha256": "sha256:302d124c4560ece7d3f18259aec0607a1ae59e09b1de80d2f03a807f44d87c77"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/view-range-preview-unsettled.json",
+      "sha256": "sha256:5bc1a5d7cd2ef2ea79362b3b097f7a125139a490e71dd8776dc5a0ba6a5e82f6"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/visibility-plan-unsettled.json",
       "sha256": "sha256:3aadea7b6887e79f4d40049ef51ade6f8d09c0e3b3f0f230fb1344a2a7ae6362"
     },
@@ -6573,7 +6581,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj",
-      "sha256": "sha256:f090f6edfc3de93e533c8056ef6c7529f594ac0489dcbf9f02a4842954ee0320"
+      "sha256": "sha256:e826d20c719e6f827f7437d13336eff916973c07c0164a545ee4c125800d2f03"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitRerouteOperationContractTests.cs",
@@ -6669,7 +6677,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/VisibilityPlanSettlementTests.cs",
-      "sha256": "sha256:c6c42a84022bc958dae48acf08481788bdca9d17177e2fcefacabd88140fe18e"
+      "sha256": "sha256:19cad7e1365366d216b5a878b886b2c9a05647c043d740ed0dbc7c62c74a8c3b"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/packages.lock.json",
@@ -7986,7 +7994,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/ViewVisibilityHandler.cs",
-      "sha256": "sha256:3e0c57dd419c73147fb5101ce834e031df0070e027eb8d9d351248c4e190c586"
+      "sha256": "sha256:22180151510c5f5f29ef8443512e5a521779c6c4ab0fe3fe9421dbd02454ffe1"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/LogicService.cs",
@@ -8478,7 +8486,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ViewVisibilityHandler.cs",
-      "sha256": "sha256:ed6991045293bb88dec32e894482dbf123423ca8a57a15b1d8074439cab91673"
+      "sha256": "sha256:cc2fb2c87fb7619f838fdcaee04d6ecaa34c6d2c9da22ab5fa8d2d035cc5c625"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/WorksetsHandler.cs",
@@ -8769,7 +8777,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:43fc51e28fa2ba90795cd9c576fbbfd1c362d8a61c9a0f92a5a373b381bdf463",
+  "inputs_hash": "sha256:1b79135acf16af5af2f224079c85c39b97ac4be46d12bc923a6c928edae25457",
   "result": {
     "passed": true,
     "checks": [

@@ -2692,3 +2692,26 @@ test("retained native delete rollback requires both settlement and exact impact 
     assert.deepEqual(result.affected_target_identities,[]);
   }
 });
+
+ test("exact view-range preview needs native rollback, not transient proposed values", async () => {
+  const route = "/revit/visibility";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/view-range-preview-unsettled.json", import.meta.url), "utf8"));
+  const body = { viewId: 1542918, action: "set_view_range", viewRangeBottomLevelId: 9946, viewRangeBottomOffsetFeet: 1, viewRangeDepthLevelId: 9946, viewRangeDepthOffsetFeet: 1, dryRun: true };
+  for (const proven of [false, true]) {
+    const payload = { ...original, ...(proven ? { success: true, previewExecuted: true, after: structuredClone(original.current), transaction: { status: "rolled_back", committed: false, affected_element_ids: [] } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview", request_dispatched: true,
+        effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_rollback" : "native_host",
+        effect_reason: proven ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, proven ? "succeeded" : "failed_after_dispatch");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, proven ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});

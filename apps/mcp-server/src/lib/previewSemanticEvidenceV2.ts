@@ -186,6 +186,36 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
+  if (path === "/revit/visibility" && object(input.requestBody).action === "set_view_range") {
+    const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
+    const current = object(object(result.current).view), proposed = object(object(result.proposed).view), after = object(object(result.after).view);
+    const beforeRange = object(current.viewRange), proposedRange = object(proposed.viewRange);
+    const stable = (value: unknown): string => JSON.stringify(value, (_, v) => v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
+    let requestedPlanes = 0;
+    const planesMatch = [["Top", "top"], ["Cut", "cut"], ["Bottom", "bottom"], ["Depth", "viewDepth"]].every(([prefix, plane]) => {
+      const before = object(beforeRange[plane!]), next = object(proposedRange[plane!]);
+      if (!Number.isSafeInteger(before.levelId) || !Number.isSafeInteger(next.levelId)
+        || typeof before.offsetFeet !== "number" || !Number.isFinite(before.offsetFeet)
+        || typeof next.offsetFeet !== "number" || !Number.isFinite(next.offsetFeet)) return false;
+      const id = request[`viewRange${prefix}LevelId`], name = request[`viewRange${prefix}LevelName`], offset = request[`viewRange${prefix}OffsetFeet`];
+      const hasId = id !== undefined && id !== null, hasName = typeof name === "string" && name.trim().length > 0, hasOffset = offset !== undefined && offset !== null;
+      if (hasId || hasName || hasOffset) requestedPlanes++;
+      if (hasId ? !Number.isSafeInteger(id) || id !== next.levelId
+        : hasName ? typeof next.levelName !== "string" || next.levelName.toLowerCase() !== name.trim().toLowerCase()
+        : next.levelId !== before.levelId) return false;
+      return hasOffset ? typeof offset === "number" && Number.isFinite(offset) && Math.abs(next.offsetFeet - offset) <= 1e-8 : next.offsetFeet === before.offsetFeet;
+    });
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview" && request.dryRun === true
+      && result.success === true && result.status === "Dry Run" && result.action === "set_view_range" && result.dryRun === true && result.previewExecuted === true
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["affected_element_ids", "created_element_ids", "modified_element_ids", "deleted_element_ids"].every(k => tx[k] === undefined || Array.isArray(tx[k]) && (tx[k] as unknown[]).length === 0)
+      && Number.isSafeInteger(current.id) && (current.id as number) > 0 && proposed.id === current.id
+      && (request.viewId === undefined || request.viewId === current.id)
+      && stable(current) === stable(after)
+      && stable({ ...current, viewRange: null }) === stable({ ...proposed, viewRange: null }) && planesMatch && requestedPlanes > 0;
+    return { recognized: true, admitted, facts: admitted ? [{ fact_id: "task.preview_valid", fact_class: "domain", value: true }] : [] };
+  }
   if (path === "/revit/delete") {
     const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
     const ids = (value: unknown): value is number[] => Array.isArray(value)
