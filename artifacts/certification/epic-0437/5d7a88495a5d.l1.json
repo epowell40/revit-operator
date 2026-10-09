@@ -2893,7 +2893,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_projection.ts",
-      "sha256": "sha256:af87ebe46b26003db09075323e67d803dd7d315f95278cda89cbeb922a9a25ad"
+      "sha256": "sha256:ca9ccdf06db7b7fd3bc31e669d14218796a51c5e71b4fb5b06b185c39f425d75"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
@@ -3905,7 +3905,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/view_owned_detailing_v2.ts",
-      "sha256": "sha256:98561103c50925ddc7a00ae0e61bc793660a5764a40ab20b5e68bd4f89c95e1c"
+      "sha256": "sha256:879b376233c9b86eb1098a729f099739b2e07389e7575f237b45c805b1b07433"
     },
     {
       "path": "apps/operator-backend/src/verification/visibility_view_contract_v2.ts",
@@ -4502,6 +4502,10 @@
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
       "sha256": "sha256:10c990ecd02aca44ca0d1aaf6276dd5477b2278aeaa5eb515719a85ed45358fd"
+    },
+    {
+      "path": "apps/operator-backend/test/detailing_model_projection.test.ts",
+      "sha256": "sha256:37e1bc1111db20fdd307425e9f21ba082bb5f5761b77016fc9f8c0d75e059e66"
     },
     {
       "path": "apps/operator-backend/test/deterministic_raster_registration.test.ts",
@@ -8697,7 +8701,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:571c6d3500e9c457746a10e5bb7381dcbc237173b8d5f3f37f8e05df4bcfc374",
+  "inputs_hash": "sha256:0608f33934a0ee7350997d41c40d8954cf666bed1a00b935cf4f268edaf25556",
   "result": {
     "passed": true,
     "checks": [
