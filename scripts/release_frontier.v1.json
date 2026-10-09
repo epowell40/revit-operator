@@ -3591,6 +3591,14 @@
       ]
     },
     {
+      "id": "view-rename-plan-native-not-started-without-preview-proof",
+      "coverage": [
+        "dotnet:RenameViewPlanSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:rename_view_plan_receipt.test.ts"
+      ]
+    },
+    {
       "id": "schedule-planning-is-known-none-without-inventing-preview-execution",
       "coverage": [
         "dotnet:ScheduleSettlementTests",
