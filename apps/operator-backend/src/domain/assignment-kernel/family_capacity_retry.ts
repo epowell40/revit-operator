@@ -1,9 +1,10 @@
+import { nativeFamilySessionRequestV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { canonicalJsonV2 } from "./canonical.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 
-const openRoutes = new Set(["/revit/open-family-doc", "/revit/edit-family-from-instance"]);
+const isOpen = (operation: OperationV2) => nativeFamilySessionRequestV1(operation)?.kind === "open";
 
 /** One retry after a native-confirmed no-save close frees a retained family slot.
  * Recomputed by the reducer: provider labels, clocks, and wrapper success are
@@ -11,7 +12,7 @@ const openRoutes = new Set(["/revit/open-family-doc", "/revit/edit-family-from-i
 export function familyCapacityRetryV2(snapshot: AssignmentSnapshotV2, operation: OperationV2) {
   const request = operation.request_identity;
   if (operation.requested_effect !== "apply" || (operation.operation_role ?? "root") !== "root"
-      || !request || request.method !== "POST" || !openRoutes.has(request.path ?? "")
+      || !request || request.method !== "POST" || !isOpen(operation)
       || operation.input.path !== request.path || operation.input.method !== request.method
       || !operation.binding.document_fingerprint
       || operation.target.document_fingerprint !== operation.binding.document_fingerprint
@@ -49,20 +50,20 @@ export function familyCapacityRetryV2(snapshot: AssignmentSnapshotV2, operation:
       || prior.result.error_code !== "family_session_capacity_reached"
       || operations.some(o => o.retry_of_operation_id === prior.operation_id)) return null;
   const closed = operations.filter(o => {
-    const body = o.input.body as Record<string, unknown> | undefined;
-    const sid = body?.docId ?? body?.familyDocumentId;
+    const close = nativeFamilySessionRequestV1(o);
+    const sid = close?.kind === "close_without_save" ? close.session_id : undefined;
     if (!nativeNone(o) || o.result?.status !== "succeeded" || o.request_identity?.method !== "POST"
-        || o.request_identity.path !== "/revit/close-doc" || body?.saveChanges !== false
+        || close?.kind !== "close_without_save"
         || typeof sid !== "string" || !/^[a-f0-9]{32}$/i.test(sid)
         || o.admitted_assignment_version! <= prior.settled_assignment_version!
         || !hasFacts(o, { ok: true, closed: true, saved: false, family_document_id: sid })
         || operations.some(used => used.retry_after_operation_id === o.operation_id)) return false;
     // The freed slot must be one this same assignment demonstrably held.
     const opened = operations.some(p => nativeNone(p) && p.result?.status === "succeeded"
-      && openRoutes.has(p.request_identity?.path ?? "") && p.settled_assignment_version! < prior.admitted_assignment_version!
+      && isOpen(p) && p.settled_assignment_version! < prior.admitted_assignment_version!
       && hasFacts(p, { ok: true, family_document_id: sid }));
     // A later successful open has already consumed the available capacity.
-    return opened && !operations.some(p => openRoutes.has(p.request_identity?.path ?? "")
+    return opened && !operations.some(p => isOpen(p)
       && p.result?.status === "succeeded" && p.admitted_assignment_version! > o.settled_assignment_version!);
   }).sort((a, b) => b.settled_assignment_version! - a.settled_assignment_version!)[0];
   return closed ? { retry_of_operation_id: prior.operation_id,

@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
+import { boundNativeOperationIdentityV2 } from "../src/benchmark/assignment_kernel_v2_native_evidence.js";
 import { loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
 import { summarizeGeneralRevitLatency } from "../src/benchmark/general_revit_latency.js";
+
+test("native identity comes from the result contract and rejects contradictory wrapper metadata", () => {
+  const request = { method: "POST", path: "/revit/set-parameter" };
+  const op = { request_identity: request, result: { authority: "native-host", result_schema_id: "operator-native/POST:/revit/set-parameter/v2", request_identity: request } };
+  assert.deepEqual(boundNativeOperationIdentityV2(op), request);
+  assert.equal(boundNativeOperationIdentityV2({ ...op, request_identity: { ...request, path: "/revit/delete-elements" } }), null);
+  assert.equal(boundNativeOperationIdentityV2({ ...op, result: { ...op.result, request_identity: { ...request, method: "GET" } } }), null);
+  assert.equal(boundNativeOperationIdentityV2({ ...op, result: { ...op.result, result_schema_id: "operator-capability/revit_call_tool/v2" } }), null);
+  assert.equal(boundNativeOperationIdentityV2({ ...op, result: { ...op.result, authority: "operator-mcp-transport" } }), null);
+});
 
 const sessionId = "candidate-53-session";
 const assignmentId = "candidate-53-assignment";

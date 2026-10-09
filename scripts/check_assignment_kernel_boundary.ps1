@@ -37,8 +37,10 @@ foreach ($file in $domainFiles) {
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
     $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
-    # The reducer also validates the shared native artifact receipt; this package has no transport or I/O dependencies.
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts") -contains $relative
+    # Shared wire decoders contain no transport or I/O. The kernel independently
+    # validates provenance and history; importing a decoder never waives the
+    # forbidden route/payload interpretation checks below.
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }

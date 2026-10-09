@@ -45,6 +45,16 @@ export type AssignmentKernelNativeOperationOutcomeV2 =
   | "failed"
   | "outcome_unknown";
 
+/** Derive the route exclusively from the native result schema, then reject
+ * contradictory request metadata. A wrapper route can never supply identity. */
+export function boundNativeOperationIdentityV2(value: unknown): { method: "GET" | "POST"; path: string } | null {
+  const operation = record(value), result = record(operation.result);
+  const identity = nativeOperationIdentityFromResultSchemaV2(result.result_schema_id);
+  if (!identity || result.authority !== "native-host") return null;
+  return [record(operation.request_identity), record(result.request_identity)].every(request =>
+    request.method === identity.method && request.path === identity.path) ? identity : null;
+}
+
 export type AssignmentKernelNativeOperationEvidenceV2 = Readonly<{
   assignment_id: string;
   operation_id: string;

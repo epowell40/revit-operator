@@ -360,6 +360,15 @@
     "ScheduleSettlementTests"
   ],
   "failure_families": [
+    {
+      "id": "native-continuation-wire-decoding-cannot-authorize-kernel-replay",
+      "coverage": [
+        "javascript:package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_family_capacity_retry.test.ts",
+        "backend:candidate53_v2_native_evidence_authority.test.ts"
+      ]
+    },
     {"id":"advisory-independent-review-native-evidence-binding","coverage":["backend:bound_native_review_evidence.test.ts","backend:assignment_kernel_v2_benchmark_consumers.test.ts","backend:general_revit_acceptance_review.test.ts"]},
     {
       "id": "saved-pause-direction-must-receive-later-canonical-resume-receipt",
@@ -3647,6 +3656,7 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",

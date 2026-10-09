@@ -1,5 +1,5 @@
 import type { GeneralRevitExpectedEffect } from "./general_revit_capability_acceptance.js";
-import { nativeOperationIdentityFromResultSchemaV2 } from "./assignment_kernel_v2_native_evidence.js";
+import { boundNativeOperationIdentityV2, nativeOperationIdentityFromResultSchemaV2 } from "./assignment_kernel_v2_native_evidence.js";
 import {
   ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
@@ -163,16 +163,14 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
       // Advisory execution intentionally has no automatic criterion evaluations.
       // Preserve the distinction between a native commit and a verified task;
       // this diagnostic must never grant completion or acceptance by itself.
-      const nativePath = nativeOperationIdentityFromResultSchemaV2(result.result_schema_id)?.path;
+      const nativePath = boundNativeOperationIdentityV2(operation)?.path;
       if (nativePath && operation.requested_effect === "apply"
           && operation.persistent_effect === "applied"
           && result.persistent_effect === "applied"
           && result.native_transaction_state === "committed"
           && result.authority === "native-host"
           && binding.document_fingerprint === operationBinding.document_fingerprint
-          && binding.document_fingerprint === resultBinding.document_fingerprint
-          && record(operation.request_identity).path === nativePath
-          && record(result.request_identity).path === nativePath) {
+          && binding.document_fingerprint === resultBinding.document_fingerprint) {
         nativeCommittedTaskPaths.add(nativePath);
       }
 

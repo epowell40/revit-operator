@@ -803,3 +803,5 @@ export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) 
   return [...dependencies.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([element_id, linked]) => ({ element_id, target_element_ids: [...linked].sort() }));
 }
+
+export * from "./native-continuation.js";
