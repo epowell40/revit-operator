@@ -89,6 +89,9 @@ for (const [effect, prompt, facts] of [
   ["read", "Use custom C# to count a sample of up to twenty ducts by type. Make no model changes.", ["task.result_available"]],
   ["read", "Exercise C# compile repair and group the sampled ducts by TypeName. Use snapshot_limit 20. Make no model changes.", ["task.result_available"]],
   ["read", "Count all ducts by type in this sample model.", ["inventory.complete", "inventory.total", "inventory.group"]],
+  ["read", "Verify the existing PDF. The print already happened: do not print again, launch Revit, modify the PDF, or change a model. Inspect the file and its visible contents, confirm whether it contains the Snowdon Towers M000 cover sheet, and report its page count and actual file size. Refresh the PDF viewer if it still shows an error from opening the file before printing finished.", ["task.result_available"]],
+  ["read", "Count the pages in the existing PDF and report the file size. Do not modify anything.", ["task.result_available"]],
+  ["read", "Report the PDF page count, then count all ducts by type in the Revit model. Do not change anything.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["read", "Inspect a sample, then count all ducts in the model by type.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["apply", "Check the view scale, then set it to 100.", ["task.result_available"]],
   ["apply", "Report its name and scale the view to 100.", ["task.result_available"]],
@@ -144,7 +147,7 @@ for (const [effect, prompt, facts] of [
         });
         assert.equal(prepared?.kernelVersion, 2);
         const snapshot = getAssignmentKernelSnapshotV2(prepared!.assignmentId)!;
-        assert.equal(snapshot.spec.requested_effect, effect);
+        assert.equal(snapshot.spec.requested_effect, effect, prompt);
         if (prompt.startsWith("Continue drafting the existing HVAC for Studio Unit 404")) {
           assert.equal(snapshot.spec.work_plan_required, true, "the multi-chunk route must retain scope beyond one preview or edit");
           assert.equal(snapshot.spec.work_units.some(unit => unit.requested_effect === "apply"), true);
@@ -181,6 +184,13 @@ for (const [effect, prompt, facts] of [
         const externalRun = startExternalAssignmentRun({ goal: externalGoal, sessionId: "external-session", actor: "test" });
         assert.equal(getAssignmentKernelSnapshotV2(externalRun.assignmentId)!.spec.requested_effect, effect,
           "external controller and ordinary chat must create the same immutable effect contract");
+        if (/page count|count the pages/i.test(prompt)) {
+          const externalSnapshot = getAssignmentKernelSnapshotV2(externalRun.assignmentId)!;
+          assert.deepEqual(externalSnapshot.spec.criteria[0]!.semantic_fact_requirements, facts,
+            "Sidecar artifact inspection must not acquire unrelated Revit inventory requirements");
+          assert.equal(externalSnapshot.terminal, false);
+          assert.deepEqual(externalSnapshot.criteria, {}, "correct intake does not prove the file result");
+        }
         const guard = buildTeammateTurnContract(bound);
         assert.equal(guard.write_authorized, effect === "apply", prompt);
         if (effect === "preview") assert.equal(guard.preview_required, true, prompt);
