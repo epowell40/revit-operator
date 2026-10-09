@@ -3516,6 +3516,14 @@
       ]
     },
     {
+      "id": "typed-template-parameter-reassignment-requires-bound-native-child-and-current-counter-value",
+      "coverage": [
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2.test.ts"
+      ]
+    },
+    {
       "id": "template-reassignment-requires-native-counter-state-and-reducer-revalidation",
       "coverage": [
         "backend:assignment_committed_target_retry.test.ts",

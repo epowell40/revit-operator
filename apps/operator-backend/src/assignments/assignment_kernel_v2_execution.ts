@@ -661,6 +661,8 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     opened_at: openedAt,
     deadline_at: boundedDeadline(openedAt)
   };
+  const reassignment = templateReassignmentV1(snapshot, operation);
+  if (reassignment) Object.assign(operation, reassignment);
   appendCurrentAssignmentKernelEventV2({
     goal_id: snapshot.spec.binding.assignment_id,
     binding: snapshot.current_binding,

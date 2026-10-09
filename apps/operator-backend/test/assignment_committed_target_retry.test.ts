@@ -14,10 +14,10 @@ import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
-import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2,
+import { openAssignmentKernelOperationV2, openAssignmentKernelChildOperationV2, markAssignmentKernelOperationDispatchStartedV2,
   settleAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { AssignmentJournalV2, canonicalJsonV2, type OperationV2, type AssignmentEventV2 } from "../src/domain/assignment-kernel/index.js";
-import { templateReassignmentV1 } from "../src/domain/assignment-kernel/template_reassignment.js";
+import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "../src/domain/assignment-kernel/template_reassignment.js";
 
 async function workspace(fn: () => unknown, maxOperations = "256") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-target-retry-"));
@@ -45,6 +45,107 @@ function setup() {
 }
 type Fixture = ReturnType<typeof setup>;
 type Lease = ReturnType<typeof openAssignmentKernelOperationV2>;
+
+function parameterTemplateFixture() {
+  const f = setup();
+  const assign = (request: string, value: string, expectedOldValue: string) => openAssignmentKernelOperationV2({
+    snapshot: f.state(), provider_turn_id: "turn", controller_request_id: request,
+    capability_id: "revit_set_parameters", classified_effect: "apply", target_tokens: ["id:11"],
+    arguments: { changes: [{ elementId: 11, parameterName: "View Template", value, expectedOldValue }], apply: true, dryRun: false }
+  });
+  const commit = (parent: Lease, value: number, before: number) => {
+    markAssignmentKernelOperationDispatchStartedV2(parent);
+    const child = openAssignmentKernelChildOperationV2({ binding: parent.binding, parent_operation_id: parent.operation_id,
+      child_ordinal: 0, operation_role: "child", capability_id: "native:POST:/revit/set-parameter", classified_effect: "apply",
+      method: "POST", path: "/revit/set-parameter", arguments: { method: "POST", path: "/revit/set-parameter", body: f.state().operations[parent.operation_id]!.input },
+      fulfillment_role: "delegated_task_execution", delegation_authority_id: parent.delegation_authority_id,
+      eligible_criterion_ids: parent.eligible_criterion_ids });
+    settle(f, child, true, 11, undefined, { status: "Applied and Verified", dryRun: false,
+      requestedCount: 1, effectiveCount: 1, excludedCount: 0, changedCount: 1, writeFailedCount: 0,
+      changedElementIds: [11], missingAfterElementIds: [], verificationPerformed: true, verifiedCount: 1,
+      verificationFailedCount: 0, unresolvedElementIds: [],
+      verification: [{ elementId: 11, parameterName: "View Template", expectedValue: String(value), status: "verified",
+        actual: { storageType: "ElementId", value, valueString: value === 21 ? "Working template" : "Original template" }, error: null }],
+      diffs: [{ elementId: 11, parameterName: "View Template", ok: true, changed: true,
+        before: { storageType: "ElementId", value: before }, after: { storageType: "ElementId", value } }],
+      transaction: { status: "committed", committed: true, modified_element_ids: [11], affected_element_ids: [11],
+        added_element_ids: [], deleted_element_ids: [] } });
+    settleAssignmentKernelOperationV2(parent, { content: [], structuredContent: {
+      schema: "revit-operator.assignment-kernel-mcp-result/v2", operation_result_v2: {
+        schema: "revit-operator.operation-result/v2", result_id: `parent:${parent.operation_id}`, operation_id: parent.operation_id,
+        binding: parent.binding, status: "completed_without_native_dispatch", dispatch_state: "not_dispatched",
+        persistent_effect: "none", native_transaction_state: "not_applicable", authority: "operator-mcp-transport",
+        result_schema_id: "operator-capability/revit_set_parameters/v2", observation_required: false,
+        request_identity: f.state().operations[parent.operation_id]!.request_identity, completed_at: new Date().toISOString()
+      }
+    } });
+    return child;
+  };
+  const original = assign("parameter-first", "21", "22"); const originalChild = commit(original, 21, 22);
+  assert.throws(() => assign("parameter-blind-repeat", "21", "22"), /equivalent_repeat/);
+  const counter = assign("parameter-restore", "22", "21"); const counterChild = commit(counter, 22, 21);
+  return { f, assign, commit, original, counter, originalChild, counterChild };
+}
+
+test("typed template parameter reassignment uses its settled native children through both admission boundaries", () => workspace(() => {
+  const { f, assign, commit, original, counter, originalChild, counterChild } = parameterTemplateFixture();
+  const repeat = assign("parameter-reapply", "21", "22");
+  assert.equal(f.state().operations[repeat.operation_id]!.reassignment_of_operation_id, original.operation_id);
+  assert.equal(f.state().operations[repeat.operation_id]!.reassignment_after_operation_id, counter.operation_id);
+  const child = commit(repeat, 21, 22);
+  assert.equal(f.state().operations[child.operation_id]!.reassignment_of_operation_id, originalChild.operation_id);
+  assert.equal(f.state().operations[child.operation_id]!.reassignment_after_operation_id, counterChild.operation_id);
+  assert.throws(() => assign("parameter-blind-reapply", "21", "22"), /equivalent_repeat/);
+  assert.deepEqual(new AssignmentJournalV2(f.journal().events()).snapshot(), f.state());
+}));
+
+for (const scenario of ["missing_child", "extra_child", "wrong_parent", "wrong_root", "different_body", "different_target",
+  "unsettled_child", "non_native_child", "missing_native_state", "wrong_binding", "late_child", "parent_claims_apply",
+  "consumed_parent", "unrelated_open_apply", "unexpected_counter_value"] as const) {
+  test(`typed template reassignment rejects ${scenario}`, () => workspace(() => {
+    const { f, original, counter, counterChild } = parameterTemplateFixture();
+    const snapshot = structuredClone(f.state()), parent = snapshot.operations[counter.operation_id]!, child = snapshot.operations[counterChild.operation_id]!;
+    const operations = { ...snapshot.operations }; snapshot.operations = operations;
+    const proposed = structuredClone(snapshot.operations[original.operation_id]!); proposed.operation_id = "proposed-reassignment";
+    if (scenario === "missing_child") delete operations[child.operation_id];
+    if (scenario === "extra_child") operations.extra = { ...child, operation_id: "extra" };
+    if (scenario === "wrong_parent") child.parent_operation_id = original.operation_id;
+    if (scenario === "wrong_root") child.root_operation_id = original.operation_id;
+    if (scenario === "different_body") child.input = { ...child.input, body: { ...child.input.body as any, dryRun: true } };
+    if (scenario === "different_target") child.target = { ...child.target, target_id: "id:12" };
+    if (scenario === "unsettled_child") child.settlement_state = "awaiting_result";
+    if (scenario === "non_native_child") child.result = { ...child.result!, authority: "backend" };
+    if (scenario === "missing_native_state") delete child.native_template_state;
+    if (scenario === "wrong_binding") child.binding = { ...child.binding, session_id: "different-session" };
+    if (scenario === "late_child") child.settled_assignment_version = parent.settled_assignment_version! + 1;
+    if (scenario === "parent_claims_apply") parent.result = { ...parent.result!, persistent_effect: "applied" };
+    if (scenario === "consumed_parent") operations.consumed = { ...parent, operation_id: "consumed", reassignment_after_operation_id: parent.operation_id };
+    if (scenario === "unrelated_open_apply") operations.open = { ...child, operation_id: "open", settlement_state: "awaiting_result" };
+    if (scenario === "unexpected_counter_value") child.native_template_state!.template_id = 23;
+    assert.equal(templateReassignmentV1(snapshot, proposed), null);
+  }));
+}
+
+test("typed template native state requires exact verified parameter value and unchanged expected old value", () => workspace(() => {
+  const { f, counterChild } = parameterTemplateFixture();
+  const event = f.journal().events().find(e => e.event_type === "operation_result_recorded" && e.result.operation_id === counterChild.operation_id)!;
+  if (event.event_type !== "operation_result_recorded") throw Error("missing result event");
+  for (const scenario of ["before", "after", "verification", "unverified", "extra_change", "other_parameter", "missing_expected", "hash"] as const) {
+    const op = structuredClone(f.state().operations[counterChild.operation_id]!);
+    op.observation_commit = structuredClone(event.observation_commit);
+    const raw = op.observation_commit!.raw_payload as any;
+    if (scenario === "before") raw.diffs[0].before.value = 999;
+    if (scenario === "after") raw.diffs[0].after.value = 999;
+    if (scenario === "verification") raw.verification[0].actual.value = 999;
+    if (scenario === "unverified") raw.verificationPerformed = false;
+    if (scenario === "extra_change") (op.input.body as any).changes.push({ elementId: 12, parameterName: "Comments", value: "unexpected" });
+    if (scenario === "other_parameter") (op.input.body as any).changes[0].parameterName = "Comments";
+    if (scenario === "missing_expected") delete (op.input.body as any).changes[0].expectedOldValue;
+    if (scenario === "hash") raw.changedCount = 2;
+    else op.result = { ...op.result!, raw_payload_hash: createHash("sha256").update(canonicalJsonV2(raw)).digest("hex") };
+    assert.equal(deriveNativeTemplateStateV1(op), undefined, scenario);
+  }
+}));
 
 function templateFixture() {
   const f = setup();
