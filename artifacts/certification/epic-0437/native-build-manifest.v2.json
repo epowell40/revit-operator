@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:dd60d383751e505199cd7a2aa73bb860ca39c9352c0acf3665c8458ecc32eec7",
-  "source_inputs_hash": "sha256:1f8a72138d0a80006ac589cfa202daccec08979b03298cff8e335dfea0c85cbb",
+  "policy_hash": "sha256:67ae482155bf548a15e910c2c642bc51678be52f9b477b60885680c5920a1cde",
+  "source_inputs_hash": "sha256:571c6d3500e9c457746a10e5bb7381dcbc237173b8d5f3f37f8e05df4bcfc374",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -434,6 +434,14 @@
       "sha256": "sha256:f42162f63c1511a3269538590145cfdb07303a142d19eb2b4936f223805bc4c7"
     },
     {
+      "path": "apps/mcp-server/src/lib/viewOwnedDetailingAgentProjection.test.ts",
+      "sha256": "sha256:a90049e2207e1970cc302a783d18bd790fcd3a0b406f0635294737739cc6bfae"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/viewOwnedDetailingAgentProjection.ts",
+      "sha256": "sha256:894a83c0f1adaed8bdfb47e128081673403c4e7ecfa2ed6bd1426f9f7e59db2c"
+    },
+    {
       "path": "apps/mcp-server/src/lib/webResearch.ts",
       "sha256": "sha256:1d6c20f25d0ef6a4016160105888ddd95ce8c56d45f8761b7b05ae8079f5f041"
     },
@@ -507,7 +515,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:4918db372446d91392eb23cb70666c87ca5f42030443dc5a3f699ed5591418a4"
+      "sha256": "sha256:38c60539040cc8dbe54fd77047c51863acfa8189037d9089557be07a5fa01ea9"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -8685,15 +8693,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:7c9f453101f58634768755cb9f54edb218c25288e3a85cac7e76896bd618044f"
+      "sha256": "sha256:3d14008dafa7afe0ff27873f5ac580a74ac8dd474ee4f172d78deec7a909aed3"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:f7bbc0ad7bc6cd40017a2349681e9d9ddf51a5adc877618150a92fb50eb9cea4"
+      "sha256": "sha256:da1136bbee1bd4eedd4b0a7897e1ceb4fbbb7eeba0fa97a006f7ca8fd3a60b89"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:1a9c7eda9a78d7999b5a90b59b2c678a5423ebf11538a93ce9b5bd87adbb24ae"
+      "sha256": "sha256:02040a01fc460477e17a7534a05314458b197526a41aed6ad3eb191b1384b3f3"
     }
   },
   "runtime_dependencies": [
@@ -8740,19 +8748,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:7c9f453101f58634768755cb9f54edb218c25288e3a85cac7e76896bd618044f",
+      "sha256": "sha256:3d14008dafa7afe0ff27873f5ac580a74ac8dd474ee4f172d78deec7a909aed3",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:1a9c7eda9a78d7999b5a90b59b2c678a5423ebf11538a93ce9b5bd87adbb24ae",
+      "sha256": "sha256:02040a01fc460477e17a7534a05314458b197526a41aed6ad3eb191b1384b3f3",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:f7bbc0ad7bc6cd40017a2349681e9d9ddf51a5adc877618150a92fb50eb9cea4",
+      "sha256": "sha256:da1136bbee1bd4eedd4b0a7897e1ceb4fbbb7eeba0fa97a006f7ca8fd3a60b89",
       "host": null
     },
     {
@@ -8840,6 +8848,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:119585d9989996fbc043e93cbc71fe0d95bb1394f0e9dc569e81657d7d29876f",
-  "built_at_utc": "2026-10-09T10:46:08.214Z"
+  "runtime_dependencies_hash": "sha256:e2fbe45e6c311710469735ddb52932d4a8af6ce58341225924c674607dfd686d",
+  "built_at_utc": "2026-10-09T11:05:29.827Z"
 }
