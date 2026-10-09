@@ -406,7 +406,7 @@ namespace RevitBridge.Handlers
             var fieldCount = SafeGetFieldCount(definition);
             var categoryId = TryGetCategoryId(definition);
             var categoryName = categoryId.HasValue
-                ? doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(categoryId.Value))?.Name
+                ? Category.GetCategory(doc, RevitBridge.Common.ElementIdCompat.Create(categoryId.Value))?.Name
                 : null;
 
             return new
@@ -541,7 +541,7 @@ namespace RevitBridge.Handlers
             {
                 var p = definition.GetType().GetProperty("CategoryId", BindingFlags.Instance | BindingFlags.Public);
                 var raw = p?.GetValue(definition, null);
-                if (raw is ElementId id && RevitBridge.Common.ElementIdCompat.GetValue(id) > 0) return RevitBridge.Common.ElementIdCompat.GetValue(id);
+                if (raw is ElementId id && id != ElementId.InvalidElementId) return RevitBridge.Common.ElementIdCompat.GetValue(id);
             }
             catch
             {
