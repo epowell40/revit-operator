@@ -35,6 +35,7 @@
     "assignment_kernel_v2_architecture.test.ts",
     "chat_execution_failure_diagnostic.test.ts",
     "assignment_kernel_v2_benchmark_consumers.test.ts",
+    "bound_native_review_evidence.test.ts",
     "assignment_kernel_v2_candidate3_semantic_replay.test.ts",
     "assignment_kernel_v2_execution.test.ts",
     "assignment_kernel_v2_native_presentation.test.ts",
@@ -357,6 +358,7 @@
     "ScheduleSettlementTests"
   ],
   "failure_families": [
+    {"id":"advisory-independent-review-native-evidence-binding","coverage":["backend:bound_native_review_evidence.test.ts","backend:assignment_kernel_v2_benchmark_consumers.test.ts","backend:general_revit_acceptance_review.test.ts"]},
     {
       "id": "saved-pause-direction-must-receive-later-canonical-resume-receipt",
       "coverage": [
