@@ -39,7 +39,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:f11fc7c54bfcec1ed52a329262d12b6575394a6865f41fb7d39fdd8be2585ee0"
+      "sha256": "sha256:b59118575def75cbeb9f84ecd4636b1199131d4a4e94e5759e01e426a9bfc23b"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -236,6 +236,10 @@
     {
       "path": "apps/mcp-server/src/lib/fixtures/place-view-unsettled.json",
       "sha256": "sha256:a504f6fc9ffa8e8c93cdcb10881a3eaf43ca8dd88060c81f4fa99674ec64a2a1"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/fixtures/rename-view-plan-unsettled.json",
+      "sha256": "sha256:1297bde88341cbc31284e5f0edb4b767409c364e38f36a23b1b15d90a80f14b2"
     },
     {
       "path": "apps/mcp-server/src/lib/fixtures/unit403-place-families-map-rejected.json",
@@ -5624,6 +5628,10 @@
       "sha256": "sha256:56f1531d438a356c330e9fc26c6579e8a1d75dfd418a90430d602e8fe2d4765b"
     },
     {
+      "path": "apps/operator-backend/test/rename_view_plan_receipt.test.ts",
+      "sha256": "sha256:ce13f79466e68dec1be92ea7bbb64583b15a57c63d3c10ad70c295c661ef272c"
+    },
+    {
       "path": "apps/operator-backend/test/requirements_parallel_planning.test.ts",
       "sha256": "sha256:6f01b95555cdbc93930ffc64a70d45ebce1b9b4095064a3d0bbf01db6c541a74"
     },
@@ -6108,6 +6116,10 @@
       "sha256": "sha256:b4618a9623a4f923708b633d88b420ec422091cc7cc7c04c2ea18f2dc9fedd13"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/rename-view-plan-unsettled.json",
+      "sha256": "sha256:1297bde88341cbc31284e5f0edb4b767409c364e38f36a23b1b15d90a80f14b2"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/reset-reference-rotate-preview-unsettled.json",
       "sha256": "sha256:74b1c23c371a20ee709bee330b8472e81f283a502d2ab3761c02ec67a252fb75"
     },
@@ -6532,8 +6544,12 @@
       "sha256": "sha256:ad41616a74da1ea1f9fd6a91b9514575c7b4d6021002afd4405c14be991e1b94"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RenameViewPlanSettlementTests.cs",
+      "sha256": "sha256:117f9fa1e87492c81432b5f39ebd13468fb72f57d0c678f28a54b2610062ea7d"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj",
-      "sha256": "sha256:c971f910b2be0668878e419a1d58e5305f15f65b721281f417c27f8289a16cb2"
+      "sha256": "sha256:5e0ab188307fd3de520c3402eb29af2bd0ccb2f0face9274cd94c017aa584431"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitRerouteOperationContractTests.cs",
@@ -8142,7 +8158,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateViewHandler.cs",
-      "sha256": "sha256:b4b347797e39607881696a9cfa5998c95efdb3736562b0c7c96679e42de50914"
+      "sha256": "sha256:dc26bb19c38a17c61d8f043c1a0a47fe169f13675d8fa0dd106e94257ea8349e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/DatumsHandler.cs",
@@ -8713,7 +8729,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:402978d39ebfdff34a24f09b6a51bfeef350933baba44f4838c15dd48e3270d8",
+  "inputs_hash": "sha256:78c88323a05a78820d307128f1e1b74a7df01520ae38a76a0df0248a58d35955",
   "result": {
     "passed": true,
     "checks": [
