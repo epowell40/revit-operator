@@ -55,6 +55,7 @@ import {
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
+import { projectViewOwnedDetailingForAgent } from "./lib/viewOwnedDetailingAgentProjection.js";
 import { registeredStageNativeBody } from "./lib/registeredStageNativeBody.js";
 import { resolveRegisteredStageBody } from "./lib/resolveRegisteredStageBody.js";
 import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
@@ -1540,7 +1541,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         : null;
       const projected = pathInput === "/revit/find-elements"
         ? projectFindElementsResultForAgent(data)
-        : data;
+        : pathInput === "/revit/view-owned-detailing"
+          ? projectViewOwnedDetailingForAgent(data, dispatchBody)
+          : data;
       const output =
         projected && typeof projected === "object" && !Array.isArray(projected)
           ? addWorkspaceLinks(projected as Record<string, any>)

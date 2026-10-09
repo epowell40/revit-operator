@@ -251,7 +251,8 @@
     "tools/existingConditionsDuctContinuationTool.test.ts",
     "tools/existingConditionsRegistrationHandoffTool.test.ts",
     "lib/operatorBackendClient.test.ts",
-    "captureViewArguments.test.ts"
+    "captureViewArguments.test.ts",
+    "lib/viewOwnedDetailingAgentProjection.test.ts"
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
@@ -3597,6 +3598,13 @@
       "coverage": [
         "backend:prior_assignment_context.test.ts",
         "backend:conversation_assignment_isolation.test.ts"
+      ]
+    },
+    {
+      "id": "complete-detailing-agent-projection-preserves-signature-multiplicity",
+      "coverage": [
+        "mcp:lib/viewOwnedDetailingAgentProjection.test.ts",
+        "backend:view_owned_detailing_v2.test.ts"
       ]
     }
   ],
