@@ -186,6 +186,79 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
+  if (path === "/revit/delete") {
+    const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
+    const ids = (value: unknown): value is number[] => Array.isArray(value)
+      && value.every(id => Number.isSafeInteger(id) && id > 0) && new Set(value).size === value.length;
+    const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every(id => b.includes(id));
+    const requested = request.ids, reported = result.requestedIds, impacted = result.impactedIds, dependent = result.dependentIds;
+    const details = Array.isArray(result.requestedDetails) ? result.requestedDetails.map(object) : [];
+    const detailIds = details.map(row => row.elementId);
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && (request.dryRun === undefined || request.dryRun === null || typeof request.dryRun === "boolean")
+      && (request.apply === undefined || request.apply === null || typeof request.apply === "boolean")
+      && (request.dryRun === true || request.apply === false)
+      && result.success === true && result.dryRun === true && result.status === "Dry Run"
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["added_element_ids", "modified_element_ids", "deleted_element_ids", "affected_element_ids"]
+        .every(key => Array.isArray(tx[key]) && (tx[key] as unknown[]).length === 0)
+      && ids(requested) && requested.length > 0 && ids(reported) && sameSet(requested, reported)
+      && result.requestedCount === requested.length
+      && ids(impacted) && result.impactedCount === impacted.length && requested.every(id => impacted.includes(id))
+      && ids(dependent) && sameSet(dependent, impacted.filter(id => !requested.includes(id)))
+      && ids(detailIds) && sameSet(detailIds, requested)
+      && details.every(row => row.exists === true && typeof row.uniqueId === "string" && row.uniqueId.trim().length > 0)
+      && new Set(details.map(row => row.uniqueId)).size === details.length
+      && (result.warnings === undefined || (Array.isArray(result.warnings) && result.warnings.length === 0))
+      && (result.error === undefined || result.error === null);
+    // Impact evidence describes a rolled-back proposal, never permission to delete.
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "task.preview_delete_requested_count", fact_class: "domain", value: (requested as number[]).length },
+      { fact_id: "task.preview_delete_impact_count", fact_class: "domain", value: (impacted as number[]).length }
+    ] : [] };
+  }
+  if (path === "/revit/transaction-plan") {
+    const request = object(input.requestBody), result = object(input.payload);
+    const tx = object(result.transaction), impact = object(result.impact);
+    const actions = Array.isArray(request.actions) ? request.actions.map(object) : [];
+    const outcomes = Array.isArray(result.actions) ? result.actions.map(object) : [];
+    const ids = (value: unknown): value is number[] => Array.isArray(value)
+      && value.every(id => Number.isSafeInteger(id) && id > 0) && new Set(value).size === value.length;
+    const requested: number[] = [];
+    const actionsValid = actions.length > 0 && actions.length <= 100 && actions.length === outcomes.length
+      && actions.every((action, index) => {
+        const row = outcomes[index]!;
+        if (action.kind !== "delete" || !ids(action.ids) || action.ids.length === 0) return false;
+        requested.push(...action.ids);
+        return row.index === index && row.kind === "delete" && row.success === true
+          && row.attemptedOperations === action.ids.length && row.succeededOperations === action.ids.length
+          && row.failedOperations === 0 && Array.isArray(row.errors) && row.errors.length === 0
+          && Array.isArray(row.producedElementIds) && row.producedElementIds.length === 0;
+      });
+    const identities = Array.isArray(impact.deleteRequested) ? impact.deleteRequested.map(object) : [];
+    const identityIds = identities.map(row => row.elementId);
+    const deleted = impact.deleted;
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && result.success === true && result.dryRun === true && result.status === "Dry Run"
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["added_element_ids", "modified_element_ids", "deleted_element_ids", "affected_element_ids"]
+        .every(key => Array.isArray(tx[key]) && (tx[key] as unknown[]).length === 0)
+      && actionsValid && new Set(requested).size === requested.length
+      && ids(identityIds) && identityIds.length === requested.length
+      && requested.every(id => identityIds.includes(id))
+      && identities.every(row => typeof row.uniqueId === "string" && row.uniqueId.length > 0)
+      && ids(deleted) && requested.every(id => deleted.includes(id))
+      && ["added", "modified", "parameterDiffs", "addedInstances"].every(key => Array.isArray(impact[key]) && (impact[key] as unknown[]).length === 0)
+      && Array.isArray(result.warnings) && result.warnings.length === 0;
+    // Other action kinds require their own typed impact checks. A valid preview
+    // reports dependency deletions; it does not authorize applying that impact.
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "task.preview_delete_requested_count", fact_class: "domain", value: requested.length },
+      { fact_id: "task.preview_delete_impact_count", fact_class: "domain", value: (deleted as number[]).length }
+    ] : [] };
+  }
   if (path === "/revit/existing-conditions-mep-draft-workflow") {
     const request = object(input.requestBody), result = object(input.payload);
     const requested = Array.isArray(request.operations) ? request.operations.map(object) : [];

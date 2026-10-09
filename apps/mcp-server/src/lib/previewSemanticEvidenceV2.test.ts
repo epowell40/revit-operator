@@ -129,14 +129,16 @@ test("proposal mismatch, missing echo, target mismatch, changed contradiction, a
 });
 
 test("native status alone cannot admit an unknown preview route", () => {
+  for (const route of ["/revit/unknown-preview", "/revit/delete"]) {
   const evidence = previewSemanticEvidenceV2({
-    path: "/revit/delete",
+    path: route,
     payload: { ok: true, dryRun: true, proposed: { deleteIds: [1] } },
     requestBody: { elementIds: [1], dryRun: true },
     requestedEffect: "preview",
     authoritativePreview: true
   });
-  assert.deepEqual(evidence, { recognized: false, admitted: false, facts: [] });
+  assert.deepEqual(evidence, { recognized: route === "/revit/delete", admitted: false, facts: [] });
+  }
 });
 
 test("C81 native family preview must admit its exact rolled-back proposal and reject altered placement", () => {
@@ -211,4 +213,58 @@ test("workbook preview binds the exact selected instances, parameters, and outpu
   }
   assert.equal(evaluate(payload, { ...requestBody, elementIds: [42, 42] }).admitted, false);
   assert.equal(evaluate(payload, { ...requestBody, parameterNames: ["Area", "area"] }).admitted, false);
+});
+
+test("deletion-plan preview binds complete action and dependency impact to requested IDs", () => {
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/transaction-plan-delete-unsettled.json", import.meta.url), "utf8"));
+  const request = {actions:[{kind:"delete",ids:[1379181,1379280,1379283,1365662]}]};
+  const valid = {...original,success:true,dryRun:true,status:"Dry Run",transaction:{status:"rolled_back",committed:false,
+    added_element_ids:[],modified_element_ids:[],deleted_element_ids:[],affected_element_ids:[]}};
+  const evaluate = (payload:any, requestBody:any=request, authoritativePreview=true) => previewSemanticEvidenceV2({
+    path:"/revit/transaction-plan",payload,requestBody,requestedEffect:"preview",authoritativePreview});
+  assert.equal(evaluate(original).admitted,false);
+  assert.equal(evaluate(valid).admitted,true);
+  assert.equal(evaluate(valid).facts.find(f=>f.fact_id==="task.preview_delete_impact_count")?.value,7);
+  assert.equal(evaluate(valid,request,false).admitted,false);
+  for(const mutate of [
+    (p:any)=>{p.success=false;}, (p:any)=>{p.transaction.status="pending";},
+    (p:any)=>{p.transaction.deleted_element_ids=[1379181];},
+    (p:any)=>{p.actions=[];}, (p:any)=>{p.actions[0].success=false;},
+    (p:any)=>{p.actions[0].attemptedOperations=3;}, (p:any)=>{p.actions[0].index=1;},
+    (p:any)=>{p.actions[0].errors=["failed"];}, (p:any)=>{p.warnings=["partial impact"];},
+    (p:any)=>{p.impact.deleteRequested.pop();}, (p:any)=>{p.impact.deleteRequested[0].elementId=999;},
+    (p:any)=>{p.impact.deleteRequested[0].uniqueId="";},
+    (p:any)=>{p.impact.deleted=p.impact.deleted.filter((id:number)=>id!==1379181);},
+    (p:any)=>{p.impact.deleted.push(p.impact.deleted[0]);},
+    (p:any)=>{p.impact.modified=[42];}, (p:any)=>{p.impact.addedInstances=[{}];}
+  ]){const p=structuredClone(valid);mutate(p);assert.equal(evaluate(p).admitted,false);}
+  assert.equal(evaluate(valid,{actions:[{kind:"delete",ids:[999]}]}).admitted,false);
+  assert.equal(evaluate(valid,{actions:[{kind:"move",ids:request.actions[0].ids}]}).admitted,false);
+});
+
+test("retained delete preview binds requested identities and exact dependency difference", () => {
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/delete-preview-rollback.json", import.meta.url), "utf8"));
+  const body = {ids:[1379181,1379280,1379283,1365662],apply:false,dryRun:true};
+  const evaluate = (payload:any=original, requestBody:any=body, authoritativePreview=true) => previewSemanticEvidenceV2({
+    path:"/revit/delete",payload,requestBody,requestedEffect:"preview",authoritativePreview});
+  assert.equal(evaluate().admitted,true);
+  for (const request of [{ids:body.ids,dryRun:true},{ids:body.ids,apply:false},
+    {...body,dryRun:false},{...body,apply:true}]) assert.equal(evaluate(original,request).admitted,true);
+  assert.equal(evaluate().facts.find(f=>f.fact_id==="task.preview_delete_impact_count")?.value,7);
+  assert.equal(evaluate(original,body,false).admitted,false);
+  for(const mutate of [
+    (p:any)=>{p.success=false;}, (p:any)=>{p.dryRun=false;}, (p:any)=>{p.status="Deleted";},
+    (p:any)=>{delete p.transaction;}, (p:any)=>{p.transaction.status="pending";},
+    (p:any)=>{p.transaction.committed=true;}, (p:any)=>{p.transaction.deleted_element_ids=[1379181];},
+    (p:any)=>{p.requestedCount=3;}, (p:any)=>{p.impactedCount=6;},
+    (p:any)=>{p.requestedIds[0]=999;}, (p:any)=>{p.requestedIds.push(p.requestedIds[0]);},
+    (p:any)=>{p.impactedIds=p.impactedIds.filter((id:number)=>id!==1379181);p.impactedCount--;},
+    (p:any)=>{p.dependentIds.pop();}, (p:any)=>{p.dependentIds.push(1379181);},
+    (p:any)=>{p.requestedDetails.pop();}, (p:any)=>{p.requestedDetails[0].exists=false;},
+    (p:any)=>{p.requestedDetails[0].uniqueId="";}, (p:any)=>{p.requestedDetails[0].elementId=999;},
+    (p:any)=>{p.requestedDetails[0].uniqueId=p.requestedDetails[1].uniqueId;},
+    (p:any)=>{p.warnings=["partial"];}, (p:any)=>{p.error="failed";}
+  ]){const p=structuredClone(original);mutate(p);assert.equal(evaluate(p).admitted,false);}
+  for(const request of [{ids:body.ids},{...body,apply:true,dryRun:false},{...body,dryRun:"true"},{...body,ids:[999]},
+    {...body,ids:[...body.ids,body.ids[0]]}]) assert.equal(evaluate(original,request).admitted,false);
 });

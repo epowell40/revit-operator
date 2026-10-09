@@ -16,6 +16,8 @@ import {
 import { assertBoundedModelEvidencePayload, type ModelEvidencePayloadUsage } from "./evidence/model_context_budget.js";
 import { appendEvidenceTelemetry } from "./evidence/evidence_store.js";
 import { localExecutorCapability, type LocalExecutorCapabilityV1 } from "./assignments/local_advisory_policy.js";
+import { executeExternalProviderCallV2 } from "./assignments/external_provider_lifecycle.js";
+import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -47,6 +49,13 @@ class DesktopComputerProviderError extends Error {
 
 export function getDesktopComputerProviderErrorReceipt(error: unknown): ModelCallReceipt | null {
   return error instanceof DesktopComputerProviderError ? error.modelCallReceipt : null;
+}
+
+export function desktopComputerErrorResponse(error: unknown): { error: string; model_call_receipts?: ModelCallReceipt[] } {
+  const receipt = getDesktopComputerProviderErrorReceipt(error);
+  return receipt
+    ? { error: "Desktop computer provider request failed.", model_call_receipts: [receipt] }
+    : { error: error instanceof Error ? error.message : "Unknown OpenAI error" };
 }
 
 function resolveDesktopComputerModel(): string {
@@ -208,4 +217,19 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
   });
   recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
   return simplifyRelayResponse(response, receipt);
+}
+
+/** The authenticated HTTP edge supplies this binding, never the model input. */
+export async function relayBoundDesktopComputerResponse(rawBody: unknown,
+  binding: AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 }): Promise<DesktopComputerRelayResponse> {
+  if (binding.kernelVersion === 1) return relayDesktopComputerResponse(rawBody);
+  const body = normalizeRelayRequest(rawBody);
+  const model = body.model || resolveDesktopComputerModel();
+  const reasoning = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
+  assertModelReasoningEffort(model, reasoning);
+  assertBoundedModelEvidencePayload(body.input);
+  if (!resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
+  return executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
+    invoke: () => relayDesktopComputerResponse(rawBody), receipt: result => result.model_call_receipt,
+    errorReceipt: getDesktopComputerProviderErrorReceipt });
 }

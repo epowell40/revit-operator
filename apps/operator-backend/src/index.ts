@@ -76,8 +76,8 @@ import { requiresMemoryAuthentication } from "./memory/requirements_route_policy
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import {
   getDesktopComputerConfig,
-  getDesktopComputerProviderErrorReceipt,
-  relayDesktopComputerResponse
+  desktopComputerErrorResponse,
+  relayBoundDesktopComputerResponse
 } from "./desktop_computer.js";
 import {
   authenticateRequest,
@@ -1872,18 +1872,13 @@ const server = http.createServer(async (req, res) => {
         const body = await readJson(req, 30_000_000);
         const bound = requireProviderAssignmentBinding(body, "desktop_computer");
         if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
-        const response = await relayDesktopComputerResponse(body);
+        const response = await relayBoundDesktopComputerResponse(body, {
+          session_id: bound.sessionId, assignment_id: bound.assignmentId, run_id: bound.runId,
+          generation: bound.generation, kernelVersion: bound.kernelVersion
+        });
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
-        const modelCallReceipt = getDesktopComputerProviderErrorReceipt(err);
-        if (modelCallReceipt) {
-          return writeJson(res, 500, {
-            error: "Desktop computer provider request failed.",
-            model_call_receipts: [modelCallReceipt]
-          });
-        }
-        const message = err instanceof Error ? err.message : "Unknown OpenAI error";
-        return writeJson(res, 500, { error: message });
+        return writeJson(res, 500, desktopComputerErrorResponse(err));
       }
     }
 

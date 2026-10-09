@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="Fixtures\transaction-plan-delete-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\place-view-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\visibility-plan-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\rename-view-plan-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
