@@ -53,19 +53,41 @@ namespace RevitBridge.Common.Tests
             Assert.Throws<InvalidOperationException>(() => Snapshot(Enumerable.Range(1, CategoryVisibilitySnapshot.Limit + 1).Select(x => State(x))));
         }
         [Fact]
-        public void MissingReadIsDistinctFromNativeUnsupportedCapability()
+        public void NonEditableCategoriesStillRequireActualReadableState()
         {
             var a = State(1); a.hidden = null;
             Assert.Throws<InvalidOperationException>(() => Snapshot(new[] { a }));
-            a.canHide = false; a.overridable = false; a.graphics = null;
-            Assert.True(Snapshot(new[] { a }).GetProperty("complete").GetBoolean());
-            a.overridable = true;
+            a.canHide = false; a.overridable = false;
             Assert.Throws<InvalidOperationException>(() => Snapshot(new[] { a }));
+            a.hidden = false;
+            Assert.True(Snapshot(new[] { a }).GetProperty("complete").GetBoolean());
+            a.graphics = null;
+            Assert.Throws<InvalidOperationException>(() => Snapshot(new[] { a }));
+        }
+        [Fact]
+        public void NonEditableValueChangesAreNotHiddenByCapabilityFlags()
+        {
+            var a = State(1); var b = State(2); b.canHide = false; b.overridable = false;
+            var before = Snapshot(new[] { a, b }); b.hidden = true;
+            Assert.NotEqual(Hash(before, "otherCategoriesSha256"), Hash(Snapshot(new[] { a, b }), "otherCategoriesSha256"));
+            b.hidden = false; b.graphics!["halftone"] = true;
+            Assert.NotEqual(Hash(before, "otherCategoriesSha256"), Hash(Snapshot(new[] { a, b }), "otherCategoriesSha256"));
         }
         [Fact]
         public void CategoryIdentityChangesAffectCoverageDigest()
         {
             Assert.NotEqual(Hash(Snapshot(new[] { State(1), State(2) }), "categoryIdsSha256"), Hash(Snapshot(new[] { State(1), State(3) }), "categoryIdsSha256"));
+        }
+        [Fact]
+        public void CopiedCategoryValuesCanMatchAcrossDifferentEditability()
+        {
+            var a = State(1); var before = Snapshot(new[] { a });
+            a.canHide = false; a.overridable = false;
+            var controlled = Snapshot(new[] { a });
+            Assert.Equal(Hash(before, "categoryValuesSha256"), Hash(controlled, "categoryValuesSha256"));
+            Assert.NotEqual(Hash(before, "allCategoriesSha256"), Hash(controlled, "allCategoriesSha256"));
+            a.hidden = true;
+            Assert.NotEqual(Hash(before, "categoryValuesSha256"), Hash(Snapshot(new[] { a }), "categoryValuesSha256"));
         }
     }
 }

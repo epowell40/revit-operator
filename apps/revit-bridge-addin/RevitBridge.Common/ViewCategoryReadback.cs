@@ -24,9 +24,9 @@ namespace RevitBridge.Common
                     {
                         id = pair.Key, name = category.Name,
                         parentId = category.Parent == null ? (long?)null : ElementIdCompat.GetValue(category.Parent.Id),
-                        canHide = canHide, hidden = canHide ? (bool?)view.GetCategoryHidden(category.Id) : null,
+                        canHide = canHide, hidden = view.GetCategoryHidden(category.Id),
                         overridable = overridable,
-                        graphics = overridable ? Graphics(view.GetCategoryOverrides(category.Id)) : null
+                        graphics = Graphics(view.GetCategoryOverrides(category.Id))
                     });
                 }
                 return CategoryVisibilitySnapshot.Build(rows, target == null ? (long?)null : ElementIdCompat.GetValue(target.Id));

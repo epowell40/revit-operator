@@ -1,5 +1,6 @@
 import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
+import { createdTemplateSatisfiedV2 } from './verification/created_template_postcondition_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -602,6 +603,8 @@ export function postconditionSatisfiedByPayloadV2(
   const operationPath = operationContractPath(applyInput, contract);
   if (operationPath === "/revit/create-view") {
     const request = objectValue(semanticApplyInput(applyInput));
+    if (["create_view_template", "view_template"].includes(String(request.action ?? "").trim().toLowerCase()))
+      return createdTemplateSatisfiedV2(request, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
     if (["create_floor_plan", "floor_plan"].includes(String(request.action ?? "create_floor_plan").trim().toLowerCase()))
       return createdPlanSatisfiedV2(request, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
   }

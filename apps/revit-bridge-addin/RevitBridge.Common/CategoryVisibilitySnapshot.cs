@@ -33,7 +33,9 @@ namespace RevitBridge.Common
             var rows = source.Take(Limit + 1).OrderBy(x => x.id).ToArray();
             if (rows.Length > Limit || rows.Select(x => x.id).Distinct().Count() != rows.Length)
                 throw new InvalidOperationException("category_inventory_incomplete");
-            if (rows.Any(x => string.IsNullOrEmpty(x.name) || x.canHide != x.hidden.HasValue || x.overridable != (x.graphics != null)))
+            // Editability does not imply readability: template-controlled values
+            // can still be read. Missing getter results must never be a complete snapshot.
+            if (rows.Any(x => string.IsNullOrEmpty(x.name) || !x.hidden.HasValue || x.graphics == null))
                 throw new InvalidOperationException("category_state_incomplete");
             var target = targetId.HasValue ? rows.SingleOrDefault(x => x.id == targetId.Value) : null;
             if (targetId.HasValue && target == null) throw new InvalidOperationException("target_category_missing");
@@ -44,6 +46,7 @@ namespace RevitBridge.Common
                 count = rows.Length, targetCategoryId = targetId, target,
                 categoryIdsSha256 = Digest(rows.Select(x => x.id).ToArray()),
                 allCategoriesSha256 = Digest(rows),
+                categoryValuesSha256 = Digest(rows.Select(x => new { x.id, x.parentId, x.name, x.hidden, x.graphics }).ToArray()),
                 otherCategoriesSha256 = targetId.HasValue ? Digest(rows.Where(x => x.id != targetId.Value).ToArray()) : null
             };
         }
