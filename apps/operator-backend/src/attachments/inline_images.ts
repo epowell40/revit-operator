@@ -64,20 +64,19 @@ function decodeStrictBase64(value: string, maxBytes: number): Buffer | null {
 }
 
 export function readLocalWorkspaceFile(localPath: string, maxBytes: number, hooks: InlineImageReadHooks = {}): Buffer | null {
+  const roots: string[] = [];
+  try { roots.push(getWorkspaceRoot()); } catch { /* unavailable */ }
+  const localAppData = (process.env.LOCALAPPDATA || "").trim();
+  if (localAppData) roots.push(path.join(localAppData, "RevitOperator", "Workspace"));
+  return readLocalFileUnderRoots(localPath, maxBytes, roots, hooks);
+}
+
+/** Roots are supplied by host policy, never document/tool input. */
+export function readLocalFileUnderRoots(localPath: string, maxBytes: number, allowedRoots: string[], hooks: InlineImageReadHooks = {}): Buffer | null {
   let fd: number | null = null;
   try {
     const p = localPath.trim();
-    if (!p) return null;
-
-    const allowedRoots: string[] = [];
-    try {
-      allowedRoots.push(getWorkspaceRoot());
-    } catch {
-      // ignore
-    }
-    const localAppData = (process.env.LOCALAPPDATA || "").trim();
-    if (localAppData) allowedRoots.push(path.join(localAppData, "RevitOperator", "Workspace"));
-
+    if (!p || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) return null;
     const candidate = path.resolve(p);
     if (!allowedRoots.some(root => root && isUnderDir(candidate, root))) return null;
     const realRoots = allowedRoots.flatMap(root => {

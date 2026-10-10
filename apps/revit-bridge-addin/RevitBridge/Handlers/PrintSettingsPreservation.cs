@@ -11,6 +11,7 @@ namespace RevitBridge.Handlers
         private readonly Document document;
         private PrintManager restoreManager;
         private readonly OperatorPrintSettingsGuard guard;
+        internal IReadOnlyList<OperatorPrintSettingsGuard.SettingReadback> RestorationReadback => guard.RestorationReadback;
 
         internal PrintSettingsPreservation(Document document, bool selectedSet, bool collateRequested)
         {

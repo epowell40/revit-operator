@@ -8254,6 +8254,9 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "requireUniqueQuery", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeSchedulableFields", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "schedulableFieldOffset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxSchedulableFields", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeData", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "rowOffset", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "columnOffset", out error)) return false;
@@ -8285,7 +8288,7 @@ namespace RevitBridge.Operator
                     }
                 }
 
-                foreach (var field in new[] { "rowOffset", "columnOffset" })
+                foreach (var field in new[] { "rowOffset", "columnOffset", "schedulableFieldOffset" })
                 {
                     if (obj.Value.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null &&
                         (!value.TryGetInt32(out var parsed) || parsed < 0 || parsed > 1000000))
@@ -8298,6 +8301,12 @@ namespace RevitBridge.Operator
                     (!maxRows.TryGetInt32(out var rows) || rows < 1 || rows > 500))
                 {
                     error = "schedules.maxRows must be an integer from 1 through 500.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxSchedulableFields", out var maxEligible) && maxEligible.ValueKind != JsonValueKind.Null &&
+                    (!maxEligible.TryGetInt32(out var eligibleLimit) || eligibleLimit < 1 || eligibleLimit > 200))
+                {
+                    error = "schedules.maxSchedulableFields must be an integer from 1 through 200.";
                     return false;
                 }
                 if (obj.Value.TryGetProperty("maxColumns", out var maxColumns) && maxColumns.ValueKind != JsonValueKind.Null &&
@@ -8496,6 +8505,13 @@ namespace RevitBridge.Operator
                             return false;
                         }
                         if (!ValidateOptionalString(f, "field", maxLen: 128, out error)) return false;
+                        if (!ValidateOptionalInt(f, "fieldId", out error)) return false;
+                        if (f.TryGetProperty("fieldId", out var filterFieldId) && filterFieldId.ValueKind != JsonValueKind.Null
+                            && filterFieldId.GetInt32() < 0) { error = "Schedule fieldId must be nonnegative."; return false; }
+                        if (!ValidateOptionalString(f, "valueType", maxLen: 32, out error)) return false;
+                        if (f.TryGetProperty("valueType", out var filterValueType) && filterValueType.ValueKind == JsonValueKind.String
+                            && !new[] { "string", "element_id", "integer", "double", "display" }.Contains((filterValueType.GetString() ?? "").Trim().ToLowerInvariant()))
+                        { error = "Unsupported schedule filter valueType."; return false; }
                         if (!ValidateOptionalString(f, "op", maxLen: 32, out error)) return false;
                         if (!ValidateOptionalString(f, "value", maxLen: 256, out error)) return false;
                     }

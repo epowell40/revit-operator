@@ -203,6 +203,29 @@ test("document support read never completes a live model-read criterion and obey
   } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); runtime.endAssignmentKernelV2Lease(v2); }
 }));
 
+test("output PDF inspection never completes a model criterion and obeys pause", () => workspace(async root => {
+  const { prepared, binding } = start("Review the attached checklist and check the open model against it.");
+  const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "checklist.pdf", data_base64: attachmentPdf().toString("base64") });
+  const outputPath = path.join(root, "artifacts", "prints", "existing.pdf");
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.copyFileSync(path.resolve(root, attachment.relative_path!), outputPath);
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const auth = runtime.beginBackendAuthLease("controls-session", createOperatorBackendAuth("shared_token", "test-only"));
+  const v2 = runtime.beginAssignmentKernelV2Lease(binding);
+  runtime.bindAssignmentKernelV2LeaseTurn(v2, "model-doc-turn");
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session", user_text: "Review the attached checklist and check the open model against it." } as any);
+  const request = { id: "support-page", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "model-doc-turn", tool: "operator_read_output_pdf", arguments: { file_path: outputPath, sha256: attachment.sha256, pages: [8] } } } as any;
+  try {
+    const before = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, true);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before);
+    controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-current-docs", expected_command_id: null });
+    const paused = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), paused);
+  } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); runtime.endAssignmentKernelV2Lease(v2); }
+}));
+
 test("successful generated support report settles as no-effect control evidence while the model task remains incomplete", () => workspace(async () => {
   const { binding, snapshot } = start("Use a custom C# program to set Comments to CHECKED on one duct and verify the edit.");
   const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "support-report", provider_turn_id: "support-turn",

@@ -16,6 +16,25 @@ const savedDocument = (value, path) => {
     && r.project_binding_changed === (before.project_fingerprint !== after.project_fingerprint);
 };
 
+/** Full captured printer-setting comparison; not PDF content or spooler completion proof. */
+export function nativePrintSettingsRestorationVerifiedV1(value) {
+  const r = record(value), rows = r.print_settings_restoration_readback;
+  const required = ['PrinterName', 'PrintToFile', 'CombinedFile', 'PrintToFileName', 'PrintRange', 'CopyNumber', 'PrintOrderReverse'];
+  const allowed = new Set([...required, 'Collate', 'ViewSelection']);
+  const scalar = x => typeof x === 'string' || typeof x === 'boolean' || typeof x === 'number' && Number.isFinite(x);
+  if (r.path !== '/revit/print' || r.print_settings_restored !== true || !Array.isArray(rows)
+      || rows.length < required.length || rows.length > allowed.size) return false;
+  const fields = new Set();
+  for (const row of rows) {
+    const item = record(row);
+    if (!allowed.has(item.field) || fields.has(item.field) || item.read_succeeded !== true
+        || item.matches !== true || item.error !== null || !scalar(item.before)
+        || !scalar(item.after) || item.before !== item.after) return false;
+    fields.add(item.field);
+  }
+  return required.every(name => fields.has(name));
+}
+
 /** The wire receipt describes native file effects, never a Revit transaction. */
 export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffect) {
   const r = record(value);
@@ -43,6 +62,8 @@ export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffe
   }
   if (requestedEffect !== "apply" || r.phase !== "apply" || r.status !== "complete"
       || (path === "/revit/print" && r.print_settings_restored !== true)
+      || (path === "/revit/print" && r.print_settings_restoration_readback !== undefined
+          && !nativePrintSettingsRestorationVerifiedV1(r))
       || r.export_calls.length !== r.expected_export_calls || !r.export_calls.every(c => c === true)
       || r.outputs.length !== paths.length) return null;
   if (path === "/revit/save-as" && (paths.length !== 1 || r.expected_export_calls !== 1 || !savedDocument(r.save_document, paths[0]))) return null;

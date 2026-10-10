@@ -6,7 +6,7 @@ export const WORK_REPORT_TOOL = {
     properties: Object.fromEntries(["claimed_completed", "remaining_work", "uncertainties"].map(key => [key, { type: "array", maxItems: 24, items: { type: "string", minLength: 1, maxLength: 1000 } }])),
     required: ["claimed_completed", "remaining_work", "uncertainties"] }
 };
-export async function submitWorkReportForReview(assignment, proposal, request) {
+export async function submitWorkReportForReview(assignment, proposal, request, options = {}) {
   if (assignment?.kernel_version !== 2 || !assignment.session_id || !assignment.goal_id || !assignment.run_id
       || !Number.isSafeInteger(assignment.generation) || assignment.generation < 1)
     throw new Error("work_report_current_binding_required");
@@ -21,6 +21,8 @@ export async function submitWorkReportForReview(assignment, proposal, request) {
   const status = await send({ action: "status" });
   if (status?.verification_policy !== "advisory") throw new Error("work_report_advisory_policy_required");
   if (status.completion_proposal) throw new Error("work_report_already_retained");
+  // Host-owned preconditions cannot be supplied or overridden by proposal prose.
+  if (options.beforePropose) await options.beforePropose();
   // The backend rechecks binding, policy, stop/unknown state and provider drain.
   // No automatic POST retry: an interrupted reply may already have been retained.
   return send({ action: "propose_completion", completion_proposal: proposal });
@@ -37,4 +39,15 @@ export function retainedWorkReportMessage(toolCall, functionOutput) {
   if (!sections.every(([,items]) => Array.isArray(items) && items.every(item => typeof item === "string"))) return null;
   return "Work report saved for independent review.\n\n" + sections.filter(([,items]) => items.length)
     .map(([title,items]) => title + ":\n" + items.map(item => "- " + item).join("\n")).join("\n\n");
+}
+
+// Responsiveness is necessary for a desktop handoff, never sufficient proof
+// of artifact delivery or model correctness. Capabilities alone are not idle.
+export function assertDesktopHandoffNativeReady(health) {
+  const context = health?.context;
+  if (health?.ok !== true || !context || context.ok === false
+      || context.readiness?.revit_launched !== true
+      || !Number.isSafeInteger(context.process_id) || context.process_id <= 0) {
+    throw new Error("desktop_handoff_native_readiness_unproven: Revit has not returned a fresh native context after desktop input. Inspect the current dialog or pending operation and reconcile it before ending this task. Do not resubmit the operation.");
+  }
 }

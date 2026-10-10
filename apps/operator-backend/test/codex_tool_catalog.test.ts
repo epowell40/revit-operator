@@ -38,6 +38,7 @@ test("actual runtime advertisement includes the host PDF reader eagerly even whe
   (runtime as any).client = { listTools: async () => ({ tools: [{ name: "old_reader", inputSchema: { type: "object" } }] }) };
   const catalog = await runtime.getDynamicToolNamespace();
   assert.deepEqual(catalog.tools[0], READ_ATTACHMENT_TOOL);
+  assert.equal(catalog.tools.filter((t: any) => t.name === "operator_read_output_pdf" && t.deferLoading === false).length, 1);
   assert.equal(catalog.tools.filter((t: any) => t.name === "operator_read_attachment").length, 1);
   const reordered = [{ ...catalog, tools: [...catalog.tools].reverse() }];
   assert.equal(codexToolCatalogHash([catalog]), codexToolCatalogHash(reordered));

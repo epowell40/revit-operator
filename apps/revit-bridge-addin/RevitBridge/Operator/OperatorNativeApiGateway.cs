@@ -1421,15 +1421,7 @@ namespace RevitBridge.Operator
             if (value is View view) return new { id = ElementIdCompat.GetValue(view.Id), name = Safe(() => view.Name), view_type = view.ViewType.ToString() };
             if (value is IEnumerable seq)
             {
-                var outItems = new List<object?>();
-                var i = 0;
-                foreach (var item in seq)
-                {
-                    outItems.Add(ReturnShape(item, depth + 1));
-                    i++;
-                    if (i >= 50) break;
-                }
-                return new { count = i, items = outItems };
+                return RevitBridge.Common.BoundedNativeSequence.Project(seq, item => ReturnShape(item, depth + 1));
             }
             return new { type = value.GetType().FullName ?? value.GetType().Name, text = Trim(value.ToString(), 600) };
         }

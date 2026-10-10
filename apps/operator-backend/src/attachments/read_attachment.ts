@@ -82,6 +82,13 @@ export async function readRegisteredPdfAttachment(sessionId: string, rawArgument
   if (!bytes) throw new Error("Cannot safely read this attachment within the 32 MiB limit.");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   if (sha256 !== record.sha256!.toLowerCase()) throw new Error("The attachment changed since upload; upload the intended version again.");
+  return renderPdfPages(bytes, { filename: record.filename || path.basename(relative), identity: { attachment_id: args.attachment_id } }, args);
+}
+
+/** Shared rendering only. Each caller must establish its own file-read authority. */
+export async function renderPdfPages(bytes: Buffer, source: { filename: string; identity: { attachment_id: string } | { file_path: string } }, selection: { pages: number[]; region?: PageRegion }): Promise<{ content: Content[] }> {
+  const args = parseArguments({ attachment_id: "render", ...selection });
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   if (bytes.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("This reader currently supports PDF attachments only.");
   const pdfjs = await loadPdfJsForNode();
   const document = await pdfjs.getDocument({ ...buildPdfJsDocumentOptions(new Uint8Array(bytes)), isEvalSupported: false }).promise;
@@ -113,7 +120,7 @@ export async function readRegisteredPdfAttachment(sessionId: string, rawArgument
         // Rendering has already populated pdfjs's operator-list cache. These
         // bounded source candidates avoid estimating circle centers from pixels.
         const sourceLandmarks = extractCircularLabelCandidates({ operatorList: await page.getOperatorList(), textContent: extracted, viewport: base, OPS: pdfjs.OPS });
-        const pageResult = { source: record.filename, attachment_id: args.attachment_id, sha256, page: pageNumber, page_count: document.numPages, extracted_text: "",
+        const pageResult = { source: source.filename, ...source.identity, sha256, page: pageNumber, page_count: document.numPages, extracted_text: "",
           page_geometry: { width_points: base.width, height_points: base.height, rotation_degrees: base.rotation },
           image_geometry: { width_px: canvas.width, height_px: canvas.height, requested_region: args.region ?? null,
             pixel_to_normalized_page: { u_offset: x0 / full.width, v_offset: y0 / full.height, u_per_pixel: 1 / full.width, v_per_pixel: 1 / full.height } },
@@ -126,7 +133,7 @@ export async function readRegisteredPdfAttachment(sessionId: string, rawArgument
         content.push({ type: "image", mimeType: "image/png", data: png.toString("base64") });
       } finally { page.cleanup(); }
     }
-    content.unshift({ type: "text", text: JSON.stringify({ source: record.filename, attachment_id: args.attachment_id, sha256, page_count: document.numPages, pages_returned: args.pages, coverage,
+    content.unshift({ type: "text", text: JSON.stringify({ source: source.filename, ...source.identity, sha256, page_count: document.numPages, pages_returned: args.pages, coverage,
       pages_not_returned_count: document.numPages - args.pages.length, fully_rendered_pages: args.region ? [] : args.pages,
       coverage_scope: "This call only. Combine with explicit initial image coverage and earlier reads of this exact source hash; do not claim uninspected pages were reviewed." }) });
     if (content.reduce((sum, item) => sum + (item.type === "text" ? item.text.length + 1 : 0), 0) > 47_500) throw new Error("The attachment metadata exceeds the output budget; no partial inspection result was returned.");

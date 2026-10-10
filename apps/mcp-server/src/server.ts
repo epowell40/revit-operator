@@ -1611,7 +1611,7 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells.",
+server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells. For eligible columns not yet added, request detail with includeSchedulableFields; follow nextOffset until hasMore=false before claiming a field is absent. Names are exact native names, not aliases.",
   {
     action: z.enum(["list", "detail"]).optional().default("list"),
     scheduleId: z.number().int().optional(),
@@ -1619,6 +1619,9 @@ server.tool("revit_list_schedules", "List schedules or read one schedule's bound
     exact: z.boolean().optional().default(false),
     max: z.number().int().min(1).max(500).optional(),
     includeFields: z.boolean().optional(),
+    includeSchedulableFields: z.boolean().optional(),
+    schedulableFieldOffset: z.number().int().min(0).optional(),
+    maxSchedulableFields: z.number().int().min(1).max(200).optional(),
     includeData: z.boolean().optional(),
     rowOffset: z.number().int().min(0).optional(),
     columnOffset: z.number().int().min(0).optional(),

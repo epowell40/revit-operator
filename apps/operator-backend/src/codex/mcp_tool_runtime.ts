@@ -10,6 +10,7 @@ import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_ke
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
 import { McpInputValidator } from "./mcp_input_validation.js";
 import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
+import { READ_OUTPUT_PDF_TOOL, readOutputPdf } from "../attachments/read_output_pdf.js";
 import { describeCodeModeImageTool } from "./code_mode_images.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/feature_flag.js";
 
@@ -279,6 +280,13 @@ export class CodexMcpToolRuntime {
     return result;
   }
 
+  async readOutputPdfForTurn(args: unknown, binding: { turnId: unknown; sessionId: string }): Promise<unknown> {
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    const result = await readOutputPdf(args);
+    this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
+    return result;
+  }
+
   async getDynamicToolNamespace(): Promise<any> {
     if (this.dynamicNamespace) return this.dynamicNamespace;
     await this.ensureStarted();
@@ -290,7 +298,7 @@ export class CodexMcpToolRuntime {
       type: "namespace",
       name: "revit_operator",
       description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
-      tools: [READ_ATTACHMENT_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name
+      tools: [READ_ATTACHMENT_TOOL, READ_OUTPUT_PDF_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name && tool.name !== READ_OUTPUT_PDF_TOOL.name
         && !(assignmentKernelV2Enabled(this.opts.spawnEnv)
           && ["operator_submit_read_completion", "operator_submit_noop_completion"].includes(tool.name))).map(tool => ({
         type: "function",

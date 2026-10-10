@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb, hasAffirmativeMutationVerb } from "./revit_mutation_intent.js";
-import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifact_export_intent.js";
+import { authorizedArtifactExportPath, requestedArtifactExportPaths } from "./artifact_export_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
@@ -335,8 +335,8 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
   const scope=canonicalTeammateOperationScope(req);
   const savedInputs = canonicalTeammateInputs(req);
   const pendingPrerequisites=scope?.prerequisites.filter(p=>!Object.hasOwn(savedInputs,p.variable_id)||(p.kind==="approval"&&savedInputs[p.variable_id]!==true))??[];
-  const workbookExport = requestedWorkbookExport(text);
-  const turnKind:AgentTurnKind = scope?(scope.requested_effect==="read"?"inspection":"mutation"):workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
+  const fileExportPaths = requestedArtifactExportPaths(text);
+  const turnKind:AgentTurnKind = scope?(scope.requested_effect==="read"?"inspection":"mutation"):fileExportPaths.length > 0 ? "mutation" : classifyAgentTurn(text, req.context);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = scope?(pendingPrerequisites.length?"material":"none"):ambiguityFor(text, turnKind);
   const noWrite = scope?scope.model_effect!=="apply":hasNoWriteAuthority(text);
@@ -360,7 +360,7 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
     no_write: noWrite,
     ...(scope?{model_effect_limit:scope.model_effect}:{}),
     write_authorized: authorized,
-    ...(workbookExport ? { file_export_paths: ["/revit/export-elements-xlsx"] } : {}),
+    ...(fileExportPaths.length > 0 ? { file_export_paths: fileExportPaths } : {}),
     preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",

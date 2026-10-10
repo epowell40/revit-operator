@@ -19,7 +19,7 @@ export function formatTeammateTurnContractValue(contract: TeammateTurnContract):
     document_signature: contract.document_signature
   };
   const rules = contract.file_export_paths
-    ? "Read the exact model scope and representative parameter names, export the requested workbook in one bulk call, then verify its exact file digest with inspect-exported-files. Preserve all model-edit restrictions."
+    ? "Read the exact model scope and representative parameter names, export the requested artifact using the authorized file capability, then verify its exact file digest with inspect-exported-files. Preserve all model-edit restrictions."
     : contract.turn_kind === "conversation"
     ? "Answer naturally; do not call Revit for a conceptual answer."
     : contract.required_user_inputs.length > 0
@@ -39,7 +39,7 @@ export function formatTeammateTurnContractValue(contract: TeammateTurnContract):
     : requestedOperation === "delete"
       ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. Preserve the material comparison facts used to rank the candidate. Distinguish the exact elements and physical connections that would be affected if the preview were committed, including the predicted remaining connected-system state, from the later rollback-restoration state. After rollback, re-read the previewed member and any requested connection/system state; explicitly report whether the target still exists and whether its connections were restored. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
       : "";
-  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.file_export_paths ? " The requested workbook export is authorized as a file effect and must be verified with inspect-exported-files; any model-preservation constraint still forbids Revit edits." : contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
+  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.file_export_paths ? " The requested artifact export is authorized as a file effect and must be verified with inspect-exported-files; any model-preservation constraint still forbids Revit edits." : contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
 }
 
 export function requestedPreviewOperation(text: string): string | null {
