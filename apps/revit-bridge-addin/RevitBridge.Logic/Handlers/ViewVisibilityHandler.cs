@@ -67,6 +67,7 @@ namespace RevitBridge.Logic.Handlers
             public double? annotationCropMarginFeet { get; set; }
             public bool? annotationCropActive { get; set; }
             public bool? includeLinkedModels { get; set; }
+            public bool? includeCategoryState { get; set; }
             public long? linkedModelInstanceId { get; set; }
             public long? linkedModelId { get; set; }
             public long? revitLinkInstanceId { get; set; }
@@ -1396,6 +1397,7 @@ namespace RevitBridge.Logic.Handlers
                     temporaryModes,
                     viewFilters,
                     categoryOverride,
+                    categorySnapshot = p?.includeCategoryState == true ? RevitBridge.Common.ViewCategoryReadback.Read(doc, view, ResolveCategory(doc, p.categoryName), !string.IsNullOrWhiteSpace(p.categoryName)) : null,
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }

@@ -4564,6 +4564,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "scopeBoxId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "scopeBoxName", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeLinkedModels", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeCategoryState", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "linkedModelInstanceId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "linkedModelId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "revitLinkInstanceId", out error)) return false;
