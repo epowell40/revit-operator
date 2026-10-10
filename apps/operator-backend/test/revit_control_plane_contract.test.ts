@@ -214,7 +214,9 @@ test("view visibility exposes a typed rollback-previewed Plan View Range setter"
     assert.match(source, /PlanViewPlane\.TopClipPlane/);
     assert.match(source, /PlanViewPlane\.ViewDepthPlane/);
     assert.match(source, /plan\.SetViewRange\(range\)/);
-    assert.match(source, /new Transaction\(doc, "Preview View Range"\)[\s\S]{0,500}tx\.RollBack\(\)/);
+    assert.match(source, /NativeSingleTransaction\.Execute\([\s\S]{0,100}app, doc, "Preview View Range"[\s\S]{0,700}disposition: (?:RevitBridge\.Common\.)?NativeTransactionDisposition\.Rollback/);
+    assert.match(source, /preview\["previewExecuted"\] = preview\["success"\] is true/);
+    assert.match(source, /if \(preview\["success"\] is true\)[\s\S]{0,150}preview\["after"\] = BuildViewState/);
     assert.match(source, /current[\s\S]{0,250}proposed/);
     assert.match(source, /viewRange = BuildViewRangeState/);
   }

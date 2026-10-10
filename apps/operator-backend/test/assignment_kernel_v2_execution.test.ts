@@ -2142,7 +2142,9 @@ test("sheet and view creation bind verification to native-created identities wit
     const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
     const readNew = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-created-${id}`, provider_turn_id: "verify-created",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`],
-      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: isSheet ? ["Sheet Number", "Sheet Name"] : ["View Name"] } } });
+      arguments: route === "/revit/create-view"
+        ? { method: "POST", path: "/revit/visibility", body: { action: "get", viewId: id } }
+        : { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: isSheet ? ["Sheet Number", "Sheet Name"] : ["View Name"] } } });
     assertSupportingRead(readNew(9999));
     const read = readNew(1542977);
     const stored = getAssignmentKernelSnapshotV2(create.binding.assignment_id)!;
@@ -2150,7 +2152,10 @@ test("sheet and view creation bind verification to native-created identities wit
     assert.equal(Object.values(stored.operations).filter(op => op.requested_effect === "apply").length, 1);
     markAssignmentKernelOperationDispatchStartedV2(read);
     const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
-      { items: [{ id: 1542977, parameters: isSheet
+      route === "/revit/create-view"
+        ? { status: "Ok", action: "get", dryRun: false, view: { id: 1542977, name: "Working Draft",
+            viewType: "FloorPlan", isTemplate: false, levelId: 9946, levelName: "L2", discipline: "Mechanical" } }
+        : { items: [{ id: 1542977, parameters: isSheet
         ? { "Sheet Number": "TEMP-M000", "Sheet Name": "COVER SHEET - WORKING COPY" }
         : { "View Name": "Working Draft" } }] })).snapshot;
     assert.ok(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
