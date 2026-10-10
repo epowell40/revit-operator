@@ -8,6 +8,22 @@ import {
   recordOpenAiUsageTelemetry
 } from "../src/model_call_telemetry.js";
 
+test("desktop Responses usage retains explicit cache writes without inventing missing values", () => {
+  for (const cacheWrite of [0, 83000]) {
+    const receipt = createOpenAiModelCallReceipt({
+      route: "desktop_computer", requested_model: "gpt-6.1-sol", reasoning_effort: "medium",
+      started_at_utc: "2026-10-10T01:33:13.888Z", duration_ms: 3463,
+      response: { id: "resp_desktop_cache", status: "completed", model: "gpt-6.1-sol",
+        usage: { input_tokens: 1088471, input_tokens_details: { cached_tokens: 1005471, cache_write_tokens: cacheWrite },
+          output_tokens: 1140, total_tokens: 1089611 } }
+    });
+    assert.equal(receipt.tokens.cache_write_input_tokens, cacheWrite);
+  }
+  for (const value of [undefined, null, -1, "5", NaN]) {
+    assert.equal(extractOpenAiTokenUsage({ input_tokens_details: { cache_write_tokens: value } }).cache_write_input_tokens ?? null, null);
+  }
+});
+
 test("OpenAI token usage retains cached and reasoning detail without inference", () => {
   assert.deepEqual(extractOpenAiTokenUsage({
     input_tokens: 120,

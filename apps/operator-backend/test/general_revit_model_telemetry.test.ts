@@ -347,3 +347,28 @@ test("malformed V2 telemetry publication fails explicitly instead of impersonati
     assignments: [{ ...publication, provider_ledger: { ...ledger, run_id: "run-foreign" } }]
   }), /assignment_kernel_v2_telemetry_invalid:publication:0:assignment_kernel_v2_publication_invalid:provider_ledger_binding/);
 });
+
+
+test("direct receipt recovered from the canonical ledger is counted once and cache conflicts fail", () => {
+  const direct = receipt({ route: "desktop_computer", model: "gpt-5.6-sol", requested_model: "gpt-5.6-sol",
+    reasoning_effort: "medium", started_at_utc: "2026-09-02T00:00:00.123Z", duration_ms: 77 });
+  const tokens = direct.tokens as Record<string, number>;
+  const call = providerCall("external:one", { controller_turn_id: undefined,
+    upstream_receipt: { call_id: direct.call_id, route: direct.route, model: direct.model,
+      requested_model: direct.requested_model, started_at_utc: direct.started_at_utc, duration_ms: direct.duration_ms },
+    usage: { input_tokens: tokens.input_tokens, cached_input_tokens: tokens.cached_input_tokens,
+      cache_write_input_tokens: tokens.cache_write_input_tokens, output_tokens: tokens.output_tokens,
+      reasoning_tokens: tokens.reasoning_output_tokens, total_tokens: tokens.total_tokens, estimated_cost_usd: null }
+  });
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(telemetryPublicationBundle({ "external:one": call }, "assignment-direct", 7));
+  assert.equal(recovered[0]!.call_id, direct.call_id);
+  assert.equal(recovered[0]!.canonical_call_id, "external:one");
+  assert.equal(recovered[0]!.route, "desktop_computer");
+  const merged = modelCallReceiptsFromSources({ model_call_receipts: recovered }, { model_call_receipts: [direct] });
+  assert.equal(merged.length, 1);
+  for (const field of ["cached_input_tokens", "cache_write_input_tokens"]) {
+    assert.throws(() => modelCallReceiptsFromSources({ model_call_receipts: recovered }, {
+      model_call_receipts: [{ ...direct, tokens: { ...tokens, [field]: tokens[field]! + 1 } }]
+    }), /model_call_receipt_conflict/);
+  }
+});

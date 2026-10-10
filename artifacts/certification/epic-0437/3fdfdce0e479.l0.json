@@ -776,7 +776,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_progress.ts",
-      "sha256": "sha256:48b8266f6b6b1fab737fdd3902bb592abf04ee3d67f3a4d8f1202a6f02ccb2dc"
+      "sha256": "sha256:3551836ef5f7ac87c7b711896dc3219bb2dc89df721d188b9f44327ceda36f6f"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_provider_budget.ts",
@@ -856,7 +856,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/external_provider_lifecycle.ts",
-      "sha256": "sha256:b5408ecc9624b289c14c8de7f1b4e96a7c12f9aab30f10ec60c11a63a8f9ca19"
+      "sha256": "sha256:705888c3d79a7812f39770dc7b4bbd8488e433c1435a7df7fce428907653517d"
     },
     {
       "path": "apps/operator-backend/src/assignments/fresh_request.ts",
@@ -1032,7 +1032,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts",
-      "sha256": "sha256:e36b911b073d1e2a8cf04396bae5874058babcbae9643cbda76946fb7db09685"
+      "sha256": "sha256:1090ea329447d2857b3f7c24ada7260d023a9e7f99e55fea707a7e6c59f5ffaf"
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts",
@@ -1152,7 +1152,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_model_telemetry.ts",
-      "sha256": "sha256:2f0c7c7bf3749312b573eac4d94757d0bf79aabfdd6e823fee1c120ff448a125"
+      "sha256": "sha256:00e44441353726100cbbd668a6506bcd9e336054e7fde449e57169adf557cb65"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_qualification_preflight.ts",
@@ -2625,7 +2625,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:e3b7a26121801a60fb0a12a1bb9de4a226ebb644db1dfa7fc57fbc3463ad6ab4"
+      "sha256": "sha256:2ca5e20b8eacdf9e1cf6fd3ee581fac355119ac806dc25d772aa3b9bc802aa38"
     },
     {
       "path": "apps/operator-backend/src/deterministic/aec_level_identity.ts",
@@ -2737,7 +2737,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/events.ts",
-      "sha256": "sha256:fca8f0d76c7d1afa4eddfc68b89111a1f7c9bc58efbeb368234d417be017b833"
+      "sha256": "sha256:1c0d87f57cdecbc7518b0d39c99fbde6b9c5169ccb1b9f808870addddd263c6f"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/execution_policy.ts",
@@ -2817,7 +2817,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/provider_call.ts",
-      "sha256": "sha256:c31df644720470d4ed1bb068750a52d3d9d2d4a7eccd8ea70e3f98181e932298"
+      "sha256": "sha256:c9469c070fb4116fbfa9dc793f7a9c223702ba63ace8dc92d99969085d12b2d6"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/ready_native_preview.ts",
@@ -2837,7 +2837,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/reducer.ts",
-      "sha256": "sha256:a24fcd2c7d67274176d440503dfc86c47827f47c1f5701707fd64da3a74e5e1a"
+      "sha256": "sha256:c60f2ff8b4aba073bdee4b6784bc352244367c3c3ee4a5263bbba48b90bfbc7e"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/result_delivery.ts",
@@ -3461,7 +3461,7 @@
     },
     {
       "path": "apps/operator-backend/src/model_call_telemetry.ts",
-      "sha256": "sha256:7879035c96cef13fba14862115b772af64b5e444d8f7985d102a8a01a344cf02"
+      "sha256": "sha256:07c42a5c373f0ad9e7f5794f1fe110b4ba450fd239e0273e61dd5e05feedd155"
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
@@ -4557,7 +4557,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:260f33639ab13e61086a59ccba5695190818cee17438b723358cc1e6e1b3bb06"
+      "sha256": "sha256:16f247eef57d85f75b7627601be0a572381490e792b5c114900f6f8f8b24288d"
     },
     {
       "path": "apps/operator-backend/test/detailing_model_projection.test.ts",
@@ -5325,7 +5325,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
-      "sha256": "sha256:3b1d210a0f405a05ea0b5d7dcefd8fe154f20b53c6edc0c336363ed3e7e40267"
+      "sha256": "sha256:457649b044fc86112eba0c81a14fc1c18c2c1b2fb4e1341cc13fc15ae615a00a"
     },
     {
       "path": "apps/operator-backend/test/general_revit_qualification_preflight.test.ts",
@@ -5445,7 +5445,7 @@
     },
     {
       "path": "apps/operator-backend/test/model_call_telemetry.test.ts",
-      "sha256": "sha256:47267c34a170e35256805b8c53ad48a8f95a675d13179851f61675562187f7c4"
+      "sha256": "sha256:4ccef9d9991cc04b4416ea8caa0f5ae540ca30a72c9bd771cdc763d1f0137978"
     },
     {
       "path": "apps/operator-backend/test/model_redline_guard_v2.test.ts",
@@ -8710,7 +8710,7 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:c990882d125606ba53ac31bd064a903385e61a940194acd98ee2382c6d4c9cac"
+      "sha256": "sha256:9b5a29981f81ee385e792e0f144ce96dddfcef85c5d9cdbd93c99c2e8a533fa7"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/input-schema-gap.d.ts",
@@ -8753,12 +8753,16 @@
       "sha256": "sha256:878ec467ff43ff715e1689e017a7eee542c6edf68064edf6a013ec952610be57"
     },
     {
+      "path": "packages/assignment-kernel-v2-contracts/provider-response-usage.test.mjs",
+      "sha256": "sha256:e7bef90586b9cf3f0214999e969439a9de05b931bbffe916d82b6da79a17033b"
+    },
+    {
       "path": "packages/assignment-kernel-v2-contracts/provider-turn-usage.d.ts",
-      "sha256": "sha256:94e11909a63c01706a704aeb02e9c5bc7a76d05cd89162d779bd2beaaa61b3e7"
+      "sha256": "sha256:f5d457278798cdcefbd13dbb52f6c4ed4de385800f7e4d090d10a7e50f888b23"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-turn-usage.js",
-      "sha256": "sha256:91398cb95434a9f48adbd685bea6d4930dd96e279109e0bd087eeb9b9b8101cb"
+      "sha256": "sha256:2e4a6422b8a49e1e56e461bfae726afcf0924b4fef00e17daa2ab376c120d69a"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.d.ts",
@@ -8821,7 +8825,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:7f487184a9dc1dfdda274565edf6f857b6d9784d79e6fa57b4c843a4223215a5",
+  "inputs_hash": "sha256:fd5b71d2a8eb453d275ada9f5479cc50783ca12bc7c1476d2be55a8d02cf6b63",
   "result": {
     "passed": true,
     "checks": [

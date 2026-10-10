@@ -40,7 +40,11 @@ export async function executeExternalProviderCallV2<T>(input: {
     if (receipt) storeEvidence({ scope: { session_id: binding.session_id, assignment_id: binding.assignment_id,
       run_id: binding.run_id, generation: binding.generation }, source: "external-provider.receipt",
       trust_level: "host_observed", raw: { canonical_call_id: callId, receipt } });
-    if (receipt) record("usage_received", { usage: {
+    if (receipt) record("usage_received", {
+      ...(receipt.route === "desktop_computer" ? { upstream_receipt: {
+        call_id: receipt.call_id, route: receipt.route, requested_model: receipt.requested_model,
+        model: receipt.model, started_at_utc: receipt.started_at_utc, duration_ms: receipt.duration_ms
+      } } : {}), usage: {
       input_tokens: receipt.tokens.input_tokens, output_tokens: receipt.tokens.output_tokens,
       reasoning_tokens: receipt.tokens.reasoning_output_tokens, total_tokens: receipt.tokens.total_tokens,
       ...(receipt.tokens.cached_input_tokens == null ? {} : { cached_input_tokens: receipt.tokens.cached_input_tokens }),

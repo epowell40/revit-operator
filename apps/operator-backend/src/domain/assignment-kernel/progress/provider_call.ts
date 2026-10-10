@@ -21,10 +21,21 @@ export interface ProviderUsageV2 {
   estimated_cost_usd: number | null;
 }
 
+/** Content-free upstream identity retained by the authenticated provider boundary. */
+export interface UpstreamProviderReceiptV2 {
+  call_id: string;
+  route: "desktop_computer";
+  requested_model: string;
+  model: string;
+  started_at_utc: string;
+  duration_ms: number | null;
+}
+
 export interface ProviderCallV2 {
   schema: typeof PROVIDER_CALL_V2_SCHEMA;
   call_id: string;
   controller_turn_id?: string;
+  upstream_receipt?: UpstreamProviderReceiptV2;
   binding: AssignmentBindingV2;
   state: ProviderCallStateV2;
   provider: string;

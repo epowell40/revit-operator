@@ -106,6 +106,9 @@ function mergeReceipt(left: JsonRecord, right: JsonRecord): JsonRecord {
     ["started_at_utc", left.started_at_utc, right.started_at_utc],
     ["success", left.success, right.success],
     ["input_tokens", leftTokens.input_tokens, rightTokens.input_tokens],
+    ["cached_input_tokens", leftTokens.cached_input_tokens, rightTokens.cached_input_tokens],
+    ["cache_write_input_tokens", leftTokens.cache_write_input_tokens, rightTokens.cache_write_input_tokens],
+    ["duration_ms", left.duration_ms, right.duration_ms],
     ["output_tokens", leftTokens.output_tokens, rightTokens.output_tokens],
     ["reasoning_output_tokens", leftTokens.reasoning_output_tokens, rightTokens.reasoning_output_tokens],
     ["total_tokens", leftTokens.total_tokens, rightTokens.total_tokens]

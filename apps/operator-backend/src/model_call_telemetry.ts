@@ -56,6 +56,8 @@ export function extractOpenAiTokenUsage(usageValue: unknown): ModelCallTokenUsag
   return {
     input_tokens: nonNegativeInteger(usage.input_tokens),
     cached_input_tokens: nonNegativeInteger(inputDetails.cached_tokens),
+    ...(Object.prototype.hasOwnProperty.call(inputDetails, "cache_write_tokens")
+      ? { cache_write_input_tokens: nonNegativeInteger(inputDetails.cache_write_tokens) } : {}),
     output_tokens: nonNegativeInteger(usage.output_tokens),
     reasoning_output_tokens: nonNegativeInteger(outputDetails.reasoning_tokens),
     total_tokens: nonNegativeInteger(usage.total_tokens)

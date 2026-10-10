@@ -125,6 +125,19 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
   if (event.state === "usage_received") kernelAssertV2(Boolean(event.usage), "provider_call_usage_missing", "Usage state requires provider usage data.");
   if (event.state === "completed") kernelAssertV2(typeof event.success === "boolean", "provider_call_completion_missing", "Provider completion requires success truth.");
   if (event.state === "response_transport_completed") kernelAssertV2(Boolean(previous.completed_at), "provider_transport_before_completion", "Downstream response transport cannot complete before provider completion.");
+  if (event.upstream_receipt) {
+    const receipt = event.upstream_receipt;
+    const bounded = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value);
+    kernelAssertV2(event.state === "usage_received" && receipt.route === "desktop_computer"
+      && bounded(receipt.call_id) && bounded(receipt.model) && bounded(receipt.requested_model)
+      && bounded(receipt.started_at_utc) && Number.isFinite(Date.parse(receipt.started_at_utc))
+      && (receipt.duration_ms === null || Number.isSafeInteger(receipt.duration_ms) && receipt.duration_ms >= 0),
+      "provider_upstream_receipt_invalid", "Upstream receipt requires bounded host-observed identity and timing.");
+    kernelAssertV2(!previous.upstream_receipt || canonicalJsonV2(previous.upstream_receipt) === canonicalJsonV2(receipt),
+      "provider_upstream_receipt_conflict", "Upstream receipt identity is immutable.");
+    kernelAssertV2(!Object.values(snapshot.provider_calls).some(call => call.call_id !== event.call_id
+      && call.upstream_receipt?.call_id === receipt.call_id), "provider_upstream_receipt_reused", "One upstream receipt cannot settle two provider calls.");
+  }
   const timestamp = providerTimestampField(event.state);
   if (event.state === "usage_received" && previous.usage) {
     kernelAssertV2(canonicalJsonV2(previous.usage) === canonicalJsonV2(event.usage), "provider_call_usage_conflict", "Replayed provider usage must agree with retained usage.");
@@ -140,6 +153,7 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
     state: nextState,
     [timestamp]: previous[timestamp] ?? event.occurred_at,
     ...(event.usage ? { usage: structuredClone(event.usage) } : {}),
+    ...(event.upstream_receipt ? { upstream_receipt: structuredClone(event.upstream_receipt) } : {}),
     ...(event.success !== undefined ? { success: event.success } : {}),
     ...(event.error_class ? { error_class: event.error_class } : {})
   } as ProviderCallV2;

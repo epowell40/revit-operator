@@ -1,3 +1,4 @@
+import { parseProviderResponseUsageV1, type ProviderResponseUsageV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import type { ModelCallReceipt } from "./contracts.js";
 import { createOpenAiModelCallReceipt } from "./model_call_telemetry.js";
@@ -35,10 +36,12 @@ type DesktopComputerRelayResponse = {
   output: unknown[];
   model?: string;
   model_call_receipt: ModelCallReceipt;
+  provider_response_usage?: ProviderResponseUsageV1;
 };
 
 class DesktopComputerProviderError extends Error {
   readonly modelCallReceipt: ModelCallReceipt;
+  providerResponseUsage?: ProviderResponseUsageV1;
 
   constructor(modelCallReceipt: ModelCallReceipt, cause: unknown) {
     super("Desktop computer provider request failed.", { cause });
@@ -51,10 +54,11 @@ export function getDesktopComputerProviderErrorReceipt(error: unknown): ModelCal
   return error instanceof DesktopComputerProviderError ? error.modelCallReceipt : null;
 }
 
-export function desktopComputerErrorResponse(error: unknown): { error: string; model_call_receipts?: ModelCallReceipt[] } {
+export function desktopComputerErrorResponse(error: unknown): { error: string; model_call_receipts?: ModelCallReceipt[]; provider_response_usage?: ProviderResponseUsageV1 } {
   const receipt = getDesktopComputerProviderErrorReceipt(error);
   return receipt
-    ? { error: "Desktop computer provider request failed.", model_call_receipts: [receipt] }
+    ? { error: "Desktop computer provider request failed.", model_call_receipts: [receipt], ...(error instanceof DesktopComputerProviderError && error.providerResponseUsage
+      ? { provider_response_usage: error.providerResponseUsage } : {}) }
     : { error: error instanceof Error ? error.message : "Unknown OpenAI error" };
 }
 
@@ -222,7 +226,25 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
 /** The authenticated HTTP edge supplies this binding, never the model input. */
 export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   binding: AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 }): Promise<DesktopComputerRelayResponse> {
-  if (binding.kernelVersion === 1) return relayDesktopComputerResponse(rawBody);
+  const request = rawBody && typeof rawBody === "object" ? rawBody as Record<string, unknown> : {};
+  const messageId = request.message_id;
+  if (messageId !== undefined && (typeof messageId !== "string" || !messageId.length || messageId.length > 256 || /[\u0000-\u001f]/.test(messageId)))
+    throw new Error("desktop_provider_message_identity_invalid");
+  const usage = (receipt: ModelCallReceipt) => messageId === undefined ? undefined : parseProviderResponseUsageV1({
+    schema: "revit-operator.provider-response-usage/v1", session_id: binding.session_id, message_id: messageId,
+    disposition: receipt.success ? "completed" : "failed", raw_response_ids: [receipt.call_id]
+  });
+  const invoke = async () => {
+    try {
+      const result = await relayDesktopComputerResponse(rawBody);
+      const observed = usage(result.model_call_receipt);
+      return { ...result, ...(observed ? { provider_response_usage: observed } : {}) };
+    } catch (error) {
+      if (error instanceof DesktopComputerProviderError) error.providerResponseUsage = usage(error.modelCallReceipt);
+      throw error;
+    }
+  };
+  if (binding.kernelVersion === 1) return invoke();
   const body = normalizeRelayRequest(rawBody);
   const model = body.model || resolveDesktopComputerModel();
   const reasoning = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
@@ -230,6 +252,6 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   assertBoundedModelEvidencePayload(body.input);
   if (!resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
   return executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
-    invoke: () => relayDesktopComputerResponse(rawBody), receipt: result => result.model_call_receipt,
+    invoke, receipt: result => result.model_call_receipt,
     errorReceipt: getDesktopComputerProviderErrorReceipt });
 }
