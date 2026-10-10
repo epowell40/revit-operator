@@ -393,6 +393,6 @@ export function requestedVsObservedComputerAgent(
     codex_agent_observed: buckets.some((bucket) => String(bucket.route || "") === "codex_agent"),
     desktop_computer_observed: buckets.some((bucket) => String(bucket.route || "") === "desktop_computer"),
     comparable_configuration: roles[0]?.configuration_match === true
-      && buckets.some((bucket) => String(bucket.route || "") === "codex_agent")
+      && buckets.some((bucket) => ["codex_agent", "desktop_computer"].includes(String(bucket.route || "")))
   };
 }

@@ -128,6 +128,29 @@ for (const model of ["gpt-6-sol", "gpt-6.1-sol"]) test(`${model} exact usage can
   assert.throws(() => assertGeneralRevitCaseMeasurement(missingCostBucket, sol), /cost_incomplete/);
 });
 
+test("desktop-only exact usage can finish a case but missing coverage, cost, or configuration cannot", () => {
+  const valid = measuredTrace();
+  const call = valid.model_call_receipts[0]!;
+  call.route = "desktop_computer";
+  call.model = "gpt-6.1-sol";
+  const ledger = createProviderUsageLedgerV1();
+  ledger.begin("session", "message", "desktop_computer");
+  ledger.observe("session", "message", { provider_response_usage: {
+    schema: "revit-operator.provider-response-usage/v1", session_id: "session", message_id: "message",
+    disposition: "completed", raw_response_ids: [call.call_id]
+  } });
+  valid.provider_usage_turns = [ledger.snapshot(valid.model_call_receipts)];
+  const config = { agent_model: call.model, agent_reasoning_effort: "medium" };
+  assert.doesNotThrow(() => assertGeneralRevitCaseMeasurement(valid, config));
+  assert.equal(finishGeneralRevitCampaignCase(valid, null, config), null);
+  assert.throws(() => assertGeneralRevitCaseMeasurement({ ...valid, provider_usage_turns: [] }, config), /coverage_incomplete/);
+  const missing = structuredClone(valid);
+  delete (missing.model_call_receipts[0]!.tokens as Record<string, unknown>).cache_write_input_tokens;
+  assert.throws(() => assertGeneralRevitCaseMeasurement(missing, config), /cost_incomplete/);
+  assert.throws(() => assertGeneralRevitCaseMeasurement(valid, { ...config, agent_model: "gpt-6-astra" }), /configuration_mismatch/);
+  assert.throws(() => assertGeneralRevitCaseMeasurement(valid, { ...config, agent_reasoning_effort: "high" }), /configuration_mismatch/);
+});
+
 test("baseline8-shaped clarification retains an uncertified first request instead of borrowing continuation receipts", () => {
   const continuation = measuredTrace();
   const first = createProviderUsageLedgerV1();

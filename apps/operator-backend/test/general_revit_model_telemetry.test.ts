@@ -149,6 +149,22 @@ test("model comparison coverage fails closed when any delegated case lacks recei
   assert.equal(modelTelemetryCaseCoverage([{ ...covered, provider_usage_turns: undefined }]).complete, false);
 });
 
+test("direct desktop and Codex routes both establish configuration, without masking model or effort drift", () => {
+  const requested = { agent_model: "gpt-6.1-sol", agent_reasoning_effort: "medium" };
+  const direct = receipt({ route: "desktop_computer", model: requested.agent_model, reasoning_effort: "medium" });
+  const compare = (calls: unknown[]) => requestedVsObservedComputerAgent(requested, aggregateModelCallReceipts(calls));
+  assert.equal(compare([direct]).comparable_configuration, true);
+  assert.equal(compare([direct]).codex_agent_observed, false);
+  assert.equal(compare([direct]).desktop_computer_observed, true);
+  assert.equal(compare([{ ...direct, route: "codex_agent" }]).comparable_configuration, true);
+  assert.equal(compare([]).comparable_configuration, false);
+  assert.equal(compare([{ ...direct, route: "unknown" }]).comparable_configuration, false);
+  for (const drift of [{ model: "gpt-6-astra" }, { reasoning_effort: "high" }]) {
+    assert.equal(compare([{ ...direct, ...drift }]).comparable_configuration, false);
+    assert.equal(compare([direct, { ...direct, call_id: "second", route: "codex_agent", ...drift }]).comparable_configuration, false);
+  }
+});
+
 test("raw Codex completion becomes an exact content-free provider receipt", () => {
   const value = createCodexRawModelCallReceipt({
     params: { responseId: "resp_codex", usage: { inputTokens: 1000, cachedInputTokens: 600,
