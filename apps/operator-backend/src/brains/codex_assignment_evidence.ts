@@ -15,10 +15,17 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
     })
     .sort((a, b) => b.observed_at.localeCompare(a.observed_at) || a.observation_id.localeCompare(b.observation_id));
   if (!observations.length) return "";
+  const pendingVerification = Object.values(snapshot.operations)
+    .filter(op => op.requested_effect === "apply" && op.persistent_effect === "applied" && op.settlement_state === "settled"
+      && sameAssignmentBindingV2(op.binding, snapshot.current_binding) && !appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id))
+    .slice(0, 8).map(op => ({ operation_id: op.operation_id, affected_targets: op.result?.affected_target_identities ?? [],
+      next_inspection: pendingDuctVerificationRequestV2(op),
+      guidance: verificationCapabilityGuidanceV2({ capability_id: op.capability_id, path: op.request_identity?.path, target_id: op.target.target_id }) }));
   if (advisoryVerificationV2(snapshot)) return JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
     observations: observations.slice(0, 16).map(observation => ({ observation_id: observation.observation_id, operation_id: observation.operation_id,
       evidence_id: observation.raw_payload_ref.replace(/^evidence:/, ""), capability_id: snapshot.operations[observation.operation_id]?.capability_id })),
-    omitted: Math.max(0, observations.length - 16), usage: "Retained actual results. Retrieve missing native fields by evidence_id; inspect useful geometry and connections. This index does not certify task completion." });
+    pending_verification: pendingVerification,
+    omitted: Math.max(0, observations.length - 16), usage: "Retained actual results. Retrieve missing native fields by evidence_id; inspect useful geometry and connections. Pending verification lists committed edits without a recognized postcondition and suggests read-only inspection, not reapplying the edit. A missing specialized proof does not invalidate an actual readback; report any unresolved scope honestly. This index does not certify task completion." });
   return JSON.stringify({
     schema: "revit-operator.model-observation-index/v2",
     observations: observations.slice(0, 32).map(observation => ({
@@ -30,12 +37,7 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
       eligible_criterion_ids: observation.eligible_criterion_ids,
       capability_id: snapshot.operations[observation.operation_id]?.capability_id
     })),
-    pending_verification: Object.values(snapshot.operations)
-      .filter(op => op.requested_effect === "apply" && op.persistent_effect === "applied" && op.settlement_state === "settled"
-        && sameAssignmentBindingV2(op.binding, snapshot.current_binding) && !appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id))
-      .slice(0, 8).map(op => ({ operation_id: op.operation_id, affected_targets: op.result?.affected_target_identities ?? [],
-        next_inspection: pendingDuctVerificationRequestV2(op),
-        guidance: verificationCapabilityGuidanceV2({ capability_id: op.capability_id, path: op.request_identity?.path, target_id: op.target.target_id }) })),
+    pending_verification: pendingVerification,
     omitted: Math.max(0, observations.length - 32),
     usage: "Criteria use eligible_criterion_ids. resultItems require eligibility=result; diagnostic permits execution_status/diagnostics/logs only. Retrieve missing fields by evidence_id. Never substitute operation IDs."
   });
