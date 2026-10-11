@@ -221,7 +221,8 @@
     "parameter_drafting_readback.test.ts",
     "air_device_retained_replay.test.ts",
     "family_session_open_v1.test.ts",
-    "prior_assignment_context.test.ts"
+    "prior_assignment_context.test.ts",
+    "desktop_response_store.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -3686,6 +3687,13 @@
       "coverage": [
         "backend:artifact_delivery_profile.test.ts",
         "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "desktop-provider-late-response-recovery-without-redispatch",
+      "coverage": [
+        "backend:desktop_response_store.test.ts",
+        "backend:desktop_computer_telemetry.test.ts"
       ]
     }
   ],

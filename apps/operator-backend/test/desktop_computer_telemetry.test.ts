@@ -234,8 +234,17 @@ test("desktop relay does not claim a provider call when API configuration is mis
 test("desktop endpoint returns one content-free failed receipt for a dispatched provider error", { concurrency: false }, async (t) => {
   const rawProviderMessage = "provider raw body contains prompt=DO_NOT_EXPOSE and secret=sk-private";
   let providerCalls = 0;
+  let delayedSuccess = false;
   const provider = http.createServer((_request, response) => {
     providerCalls += 1;
+    if (delayedSuccess) {
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: "late-http-response", model: "gpt-5.6-luna", output: [{ type: "message", content: [{ type: "output_text", text: "retained result" }] }],
+          usage: { input_tokens: 11, output_tokens: 2, total_tokens: 13 } }));
+      }, 100);
+      return;
+    }
     response.writeHead(400, { "content-type": "application/json" });
     response.end(JSON.stringify({
       error: {
@@ -307,6 +316,7 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
       assignment_id: binding.assignment_id,
       assignment_run_id: binding.run_id,
       assignment_generation: binding.generation,
+      message_id: "retained-error-request",
       model: "gpt-5.6-luna",
       reasoning_effort: "max",
       input: "sensitive prompt that must not be returned"
@@ -346,4 +356,36 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
   assert.equal(responseText.includes(rawProviderMessage), false);
   assert.equal(responseText.includes("sensitive prompt"), false);
   assert.equal(responseText.includes("sk-private"), false);
+  const recoveryBody = { session_id: sessionId, assignment_id: binding.assignment_id,
+    assignment_run_id: binding.run_id, assignment_generation: binding.generation, message_id: "retained-error-request" };
+  const recover = (body: unknown, authToken = token) => fetch(`http://127.0.0.1:${backendPort}/desktop/computer/result`, {
+    method: "POST", headers: { "content-type": "application/json", "x-operator-token": authToken }, body: JSON.stringify(body) });
+  const recovered = await recover(recoveryBody);
+  assert.equal(recovered.status, 200);
+  const saved = await recovered.json() as any;
+  assert.equal(saved.status, "error");
+  assert.deepEqual(saved.failure.model_call_receipts, payload.model_call_receipts);
+  assert.notEqual((await recover(recoveryBody, "wrong-token")).status, 200);
+  assert.notEqual((await recover({ ...recoveryBody, assignment_generation: binding.generation + 1 })).status, 200);
+  assert.notEqual((await recover({ ...recoveryBody, session_id: "wrong-session" })).status, 200);
+  delayedSuccess = true;
+  const abort = new AbortController();
+  const lateBody = { ...recoveryBody, message_id: "late-http-request", model: "gpt-5.6-luna", reasoning_effort: "max", input: "late" };
+  const lost = fetch(`http://127.0.0.1:${backendPort}/desktop/computer/respond`, {
+    method: "POST", headers: { "content-type": "application/json", "x-operator-token": token },
+    body: JSON.stringify(lateBody), signal: abort.signal });
+  const lostObserved = assert.rejects(lost, /abort/i);
+  while (providerCalls < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  abort.abort(); await lostObserved;
+  let late: any;
+  for (let i=0;i<100;i++) {
+    late = await (await recover({ ...recoveryBody, message_id: "late-http-request" })).json();
+    if(late.status === "complete") break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(late.status, "complete"); assert.equal(late.response.id, "late-http-response");
+  assert.equal(late.response.model_call_receipt.tokens.total_tokens, 13);
+  const duplicate = await fetch(`http://127.0.0.1:${backendPort}/desktop/computer/respond`, {
+    method: "POST", headers: { "content-type": "application/json", "x-operator-token": token }, body: JSON.stringify(lateBody) });
+  assert.notEqual(duplicate.status, 200); assert.equal(providerCalls, 2);
 });

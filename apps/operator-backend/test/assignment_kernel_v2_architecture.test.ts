@@ -289,7 +289,7 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
 test("every V2 provider exit records canonical failure or returns already-earned terminal truth", () => {
   const sourceRoot = path.join(process.cwd(), "src");
   const router = readFileSync(path.join(sourceRoot, "brain.ts"), "utf8");
-  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8");
+  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8").replace(/\r\n/g, "\n");
   const boundary = readFileSync(path.join(sourceRoot, "assignments", "chat_execution_failure_boundary.ts"), "utf8");
   const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
   const failure = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution_failure.ts"), "utf8");

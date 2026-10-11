@@ -1,3 +1,5 @@
+import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
+import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed } from "./desktop_response_store.js";
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
 import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
@@ -714,6 +716,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/voice/speak" ||
     pathname === "/desktop/computer/config" ||
     pathname === "/desktop/computer/respond" ||
+    pathname === "/desktop/computer/result" ||
     pathname.startsWith("/evidence/") ||
     pathname === "/attachments/upload" ||
     pathname === "/api/agent-goal" ||
@@ -1874,15 +1877,36 @@ const server = http.createServer(async (req, res) => {
 
     if (await handleEvidenceHttpRoute(req, res, url)) return;
 
+    if (req.method === "POST" && url.pathname === "/desktop/computer/result") {
+      try {
+        const body = await readJson(req, 16_384);
+        const bound = requireProviderAssignmentBinding(body, "desktop_computer_result");
+        if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
+        const record = readDesktopResponse({ session_id: bound.sessionId, assignment_id: bound.assignmentId,
+          run_id: bound.runId, generation: bound.generation, kernelVersion: bound.kernelVersion }, (body as any).message_id);
+        if (record?.status === "complete" && bound.kernelVersion === 2) {
+          const state = assignmentKernelV2ForBinding(record.binding)?.snapshot;
+          if (!desktopResponseContinuationAllowed(state))
+            throw new Error("desktop_response_continuation_not_admitted");
+        }
+        res.setHeader("cache-control", "no-store");
+        return writeJson(res, 200, record || { status: "missing" });
+      } catch (err) { return writeJson(res, 409, desktopComputerErrorResponse(err)); }
+    }
+
     if (req.method === "POST" && url.pathname === "/desktop/computer/respond") {
       try {
         const body = await readJson(req, 30_000_000);
         const bound = requireProviderAssignmentBinding(body, "desktop_computer");
         if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
-        const response = await relayBoundDesktopComputerResponse(body, {
+        const binding = {
           session_id: bound.sessionId, assignment_id: bound.assignmentId, run_id: bound.runId,
           generation: bound.generation, kernelVersion: bound.kernelVersion
-        });
+        };
+        const response = (body as any).message_id === undefined
+          ? await relayBoundDesktopComputerResponse(body, binding)
+          : await retainDesktopResponse(binding, (body as any).message_id, body,
+              () => relayBoundDesktopComputerResponse(body, binding), desktopComputerErrorResponse);
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
         return writeJson(res, 500, desktopComputerErrorResponse(err));
