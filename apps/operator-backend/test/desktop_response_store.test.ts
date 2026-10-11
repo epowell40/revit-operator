@@ -3,8 +3,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed } from '../src/desktop_response_store.js';
+import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from '../src/desktop_response_store.js';
 const binding = { session_id:'s', assignment_id:'a', run_id:'r', generation:1, kernelVersion:2 as const };
+
+test('cancelled-run accounting projection exposes usage but never saved actions or text', () => {
+ const usage={schema:'revit-operator.provider-response-usage/v1',session_id:'s',message_id:'m',disposition:'completed',raw_response_ids:['response']};
+ const receipt={call_id:'response',tokens:{total_tokens:42}};
+ const record={binding,message_id:'m',request_hash:'hash',status:'complete' as const,response:{
+  model_call_receipt:receipt,provider_response_usage:usage,output_text:'Do more work',output:[{type:'computer_call'}]}};
+ assert.deepEqual(desktopResponseTelemetry(record),{status:'complete',binding,message_id:'m',telemetry:{model_call_receipt:receipt,provider_response_usage:usage}});
+ assert.deepEqual(desktopResponseTelemetry({...record,status:'error',failure:{error:'private',model_call_receipts:[receipt],provider_response_usage:usage}}),
+  {status:'error',binding,message_id:'m',telemetry:{model_call_receipts:[receipt],provider_response_usage:usage}});
+ assert.deepEqual(desktopResponseTelemetry({...record,status:'pending',response:undefined}),{status:'pending',binding,message_id:'m',telemetry:{}});
+ assert.deepEqual(desktopResponseTelemetry(null),{status:'missing'});
+});
 test('late response survives transport loss; duplicate identities never invoke provider again', async () => {
  const old=process.env.OPERATOR_WORKSPACE_ROOT; process.env.OPERATOR_WORKSPACE_ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'desktop-result-'));
  try {

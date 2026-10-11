@@ -35,6 +35,19 @@ export function readDesktopResponse(binding: Binding, messageId: unknown): Store
   const id = identity(binding, messageId);
   return load(id.file, binding, id.messageId);
 }
+/** Accounting recovery is not permission to consume or execute a saved response. */
+export function desktopResponseTelemetry(record: Stored | null): unknown {
+  if (!record) return { status: "missing" };
+  const payload = (record.status === "complete" ? record.response : record.failure) as Record<string, unknown> | undefined;
+  return {
+    status: record.status, binding: record.binding, message_id: record.message_id,
+    telemetry: {
+      ...(payload?.model_call_receipt ? { model_call_receipt: payload.model_call_receipt } : {}),
+      ...(Array.isArray(payload?.model_call_receipts) ? { model_call_receipts: payload.model_call_receipts } : {}),
+      ...(payload?.provider_response_usage ? { provider_response_usage: payload.provider_response_usage } : {})
+    }
+  };
+}
 /** Claim before dispatch. An interrupted pending claim never authorizes redispatch. */
 export async function retainDesktopResponse<T>(binding: Binding, messageId: unknown, request: unknown,
   invoke: () => Promise<T>, errorPayload: (error: unknown) => unknown): Promise<T> {

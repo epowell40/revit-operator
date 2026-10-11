@@ -385,6 +385,18 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
   }
   assert.equal(late.status, "complete"); assert.equal(late.response.id, "late-http-response");
   assert.equal(late.response.model_call_receipt.tokens.total_tokens, 13);
+  const telemetryBody = { ...recoveryBody, message_id: "late-http-request", telemetry_only: true };
+  const accounting = await recover(telemetryBody);
+  assert.equal(accounting.status, 200);
+  const projection = await accounting.json() as any;
+  assert.equal(projection.status, "complete");
+  assert.deepEqual(projection.telemetry.model_call_receipt, late.response.model_call_receipt);
+  assert.deepEqual(projection.telemetry.provider_response_usage, late.response.provider_response_usage);
+  assert.equal(projection.response, undefined);
+  assert.equal(projection.telemetry.output, undefined);
+  assert.notEqual((await recover(telemetryBody, "wrong-token")).status, 200);
+  assert.notEqual((await recover({...telemetryBody, assignment_generation:binding.generation+1})).status, 200);
+  assert.notEqual((await recover({...telemetryBody, session_id:"wrong-session"})).status, 200);
   const duplicate = await fetch(`http://127.0.0.1:${backendPort}/desktop/computer/respond`, {
     method: "POST", headers: { "content-type": "application/json", "x-operator-token": token }, body: JSON.stringify(lateBody) });
   assert.notEqual(duplicate.status, 200); assert.equal(providerCalls, 2);

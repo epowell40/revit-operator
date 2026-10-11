@@ -1,5 +1,5 @@
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
-import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed } from "./desktop_response_store.js";
+import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from "./desktop_response_store.js";
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
 import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
@@ -1884,6 +1884,10 @@ const server = http.createServer(async (req, res) => {
         if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
         const record = readDesktopResponse({ session_id: bound.sessionId, assignment_id: bound.assignmentId,
           run_id: bound.runId, generation: bound.generation, kernelVersion: bound.kernelVersion }, (body as any).message_id);
+        res.setHeader("cache-control", "no-store");
+        // Exact authenticated binding is still required. This projection never
+        // returns output/tool calls, even when a paused run cannot continue.
+        if ((body as any).telemetry_only === true) return writeJson(res, 200, desktopResponseTelemetry(record));
         if (record?.status === "complete" && bound.kernelVersion === 2) {
           const state = assignmentKernelV2ForBinding(record.binding)?.snapshot;
           if (!desktopResponseContinuationAllowed(state))

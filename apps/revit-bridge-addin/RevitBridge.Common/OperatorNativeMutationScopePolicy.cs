@@ -26,7 +26,8 @@ namespace RevitBridge.Common
             IEnumerable<long>? allowedExistingElementIds,
             bool allowCreate,
             int maxAffectedElements,
-            bool allowUnexpectedExistingForRollback = false)
+            bool allowUnexpectedExistingForRollback = false,
+            IEnumerable<long>? preexistingElementIds = null)
         {
             if (maxAffectedElements < 1 || maxAffectedElements > 64)
                 throw new ArgumentOutOfRangeException(nameof(maxAffectedElements), "maxAffectedElements must be between 1 and 64.");
@@ -38,6 +39,17 @@ namespace RevitBridge.Common
             var affected = new HashSet<long>(added);
             affected.UnionWith(modified);
             affected.UnionWith(deleted);
+            // The host captures a complete document-id baseline before starting the
+            // transaction. Revit can report transient created/deleted elements only
+            // as modified/deleted; those ids must not become existing-element grants.
+            // Without a baseline retain the conservative historical classification.
+            if (preexistingElementIds != null)
+            {
+                var preexisting = new HashSet<long>(Normalize(preexistingElementIds));
+                added = affected.Where(id => !preexisting.Contains(id)).OrderBy(id => id).ToArray();
+                modified = modified.Concat(affected.Where(preexisting.Contains))
+                    .Except(deleted).Distinct().OrderBy(id => id).ToArray();
+            }
             var addedSet = new HashSet<long>(added);
             var unexpectedExisting = modified
                 .Concat(deleted)

@@ -17,6 +17,8 @@ test("printer guidance preserves effect uncertainty and requested delivery seman
   assert.match(PRINT_EXECUTION_GUIDANCE, /never retry an uncertain or pending attempt/);
   assert.match(PRINT_EXECUTION_GUIDANCE, /Honor requests not to print/);
   assert.match(PDF_EXPORT_TOOL_GUIDANCE, /not a printer-driver/);
+  assert.match(PRINT_EXECUTION_GUIDANCE, /word print alone does not require a driver/);
+  assert.match(PRINT_EXECUTION_GUIDANCE, /Preserve explicit named-printer and physical-print requests/);
 });
 import { waitForLocalArtifact } from './print_execution_policy.mjs';
 

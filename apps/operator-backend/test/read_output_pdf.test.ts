@@ -29,11 +29,26 @@ test("existing output returns real page images, immutable digest, dimensions and
   assert.equal(coverage.page_count, 4); assert.deepEqual(coverage.pages_returned, [2, 3, 4]);
   assert.equal(coverage.pages_not_returned_count, 1); assert.equal(coverage.sha256, args.sha256);
   assert.equal(coverage.file_path, args.file_path); assert.equal(coverage.attachment_id, undefined);
+  const page = JSON.parse((result.content[1] as {text:string}).text);
+  assert.equal(page.rendered_color_observation.observation, "color_detected");
+  assert.ok(page.rendered_color_observation.chromatic_pixel_count > 0, "actual red PDF line must be observed after rendering");
   const adapted = adaptMcpToolCallResultToDynamicResponse(result);
   assert.equal(adapted.contentItems.filter(i => i.type === "inputImage").length, 3);
   assert.match(JSON.stringify(result.content.filter(i => i.type === "text")), /Fixture page 4/);
   assert.equal(fs.statSync(args.file_path).mtimeMs, before.mtimeMs);
   assert.equal(createHash("sha256").update(fs.readFileSync(args.file_path)).digest("hex"), args.sha256);
+});
+
+test("monochrome rendered content is observed without promoting partial page coverage", async t => {
+  const bytes = Buffer.from(attachmentPdf(2).toString().replaceAll("1 0 0 RG", "0 0 0 RG"));
+  const { args } = fixture(t, bytes);
+  const result = await readOutputPdf({ ...args, pages: [1] });
+  const coverage = JSON.parse((result.content[0] as {text:string}).text);
+  const page = JSON.parse((result.content[1] as {text:string}).text);
+  assert.equal(page.rendered_color_observation.chromatic_pixel_count, 0);
+  assert.equal(page.rendered_color_observation.observation, "no_color_detected_at_render_resolution");
+  assert.equal(coverage.pages_not_returned_count, 1);
+  assert.match(page.rendered_color_observation.limitation, /finer details/);
 });
 
 test("output folders use the OS account while an authentication profile overrides the environment home", async t => {
