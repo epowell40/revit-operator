@@ -1,6 +1,10 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "artifact_delivery_profile.test.ts",
+    "external_provider_lifecycle.test.ts",
+    "sidecar_execution_failure.test.ts",
+    "rename_view_plan_receipt.test.ts",
     "sidecar_agent_profile_endpoint.test.ts",
     "registered_duct_branch.test.ts",
     "registered_stage_duct_branch_readback_v2.test.ts",
@@ -35,6 +39,7 @@
     "assignment_kernel_v2_architecture.test.ts",
     "chat_execution_failure_diagnostic.test.ts",
     "assignment_kernel_v2_benchmark_consumers.test.ts",
+    "bound_native_review_evidence.test.ts",
     "assignment_kernel_v2_candidate3_semantic_replay.test.ts",
     "assignment_kernel_v2_execution.test.ts",
     "assignment_kernel_v2_native_presentation.test.ts",
@@ -73,6 +78,7 @@
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
     "view_owned_detailing_v2.test.ts",
+    "detailing_model_projection.test.ts",
     "provider_dynamic_program.test.ts",
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
@@ -200,6 +206,7 @@
     "thin_reference_dynamic_boundary.test.ts",
     "thin_reference_execution.test.ts",
     "assignment_committed_target_retry.test.ts",
+    "assignment_family_capacity_retry.test.ts",
     "assignment_document_checkpoint.test.ts",
     "assignment_kernel_v2_provider_usage_hold.test.ts",
     "assignment_provider_usage_boundary.test.ts",
@@ -210,7 +217,12 @@
     "provider_usage_worker_identity_contract.test.ts",
     "speed_config.test.ts",
     "openai_brain_model_call_receipts.test.ts",
-    "desktop_computer_telemetry.test.ts"
+    "desktop_computer_telemetry.test.ts",
+    "parameter_drafting_readback.test.ts",
+    "air_device_retained_replay.test.ts",
+    "family_session_open_v1.test.ts",
+    "prior_assignment_context.test.ts",
+    "desktop_response_store.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -247,7 +259,8 @@
     "tools/existingConditionsDuctContinuationTool.test.ts",
     "tools/existingConditionsRegistrationHandoffTool.test.ts",
     "lib/operatorBackendClient.test.ts",
-    "captureViewArguments.test.ts"
+    "captureViewArguments.test.ts",
+    "lib/viewOwnedDetailingAgentProjection.test.ts"
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
@@ -266,6 +279,7 @@
     "test/task_navigation.test.js"
   ],
   "dotnet_test_classes": [
+    "RenameViewPlanSettlementTests",
     "NativeApiPolicyMethodBoundaryContractTests",
     "ViewOwnedDetailingInventoryContractTests",
     "OperatorDesktopLaunchPlanTests",
@@ -277,6 +291,7 @@
     "OperatorAttemptSettlementTests",
     "MepRouteEndpointContractTests",
     "MepConnectorServicePolicyTests",
+    "ConnectorReadStateTests",
     "MepSystemTypeNamePolicyTests",
     "OperatorNativeTransactionExecutionTests",
     "OperatorRevitQueueDiagnosticTests",
@@ -343,9 +358,54 @@
     "OrdinaryMutationTransactionTests",
     "SaveAsArtifactReceiptTests",
     "TakeoffConnectorIdentityTests",
-    "TextNoteTypeLookupTests"
+    "TextNoteTypeLookupTests",
+    "OperatorFamilySessionReceiptTests",
+    "OperatorFamilySaveReceiptTests",
+    "OperatorFamilyReloadReceiptTests",
+    "OperatorFamilyCloseReceiptTests",
+    "ScheduleSettlementTests"
   ],
   "failure_families": [
+    {
+      "id": "sidecar-v2-stopped-execution-preserves-native-unknown",
+      "coverage": [
+        "backend:sidecar_execution_failure.test.ts",
+        "backend:sidecar_agent_profile_endpoint.test.ts",
+        "backend:assignment_kernel_v2_provider_failure.test.ts",
+        "backend:external_provider_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "connector-read-failure-is-not-open-port",
+      "coverage": [
+        "dotnet:ConnectorReadStateTests",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "dynamic-embedded-settlement-facts-survive-projection",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "desktop:test/server_smoke.test.js"
+      ]
+    },
+    {
+      "id": "native-continuation-wire-decoding-cannot-authorize-kernel-replay",
+      "coverage": [
+        "javascript:package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_family_capacity_retry.test.ts",
+        "backend:candidate53_v2_native_evidence_authority.test.ts"
+      ]
+    },
+    {
+      "id": "advisory-independent-review-native-evidence-binding",
+      "coverage": [
+        "backend:bound_native_review_evidence.test.ts",
+        "backend:assignment_kernel_v2_benchmark_consumers.test.ts",
+        "backend:general_revit_acceptance_review.test.ts"
+      ]
+    },
     {
       "id": "saved-pause-direction-must-receive-later-canonical-resume-receipt",
       "coverage": [
@@ -3503,6 +3563,22 @@
       ]
     },
     {
+      "id": "typed-template-parameter-reassignment-requires-bound-native-child-and-current-counter-value",
+      "coverage": [
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_kernel_v2.test.ts"
+      ]
+    },
+    {
+      "id": "template-reassignment-requires-native-counter-state-and-reducer-revalidation",
+      "coverage": [
+        "backend:assignment_committed_target_retry.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:assignment_document_checkpoint.test.ts"
+      ]
+    },
+    {
       "id": "document-checkpoint-repeat-requires-complete-native-save-and-new-committed-document-change",
       "coverage": [
         "backend:assignment_document_checkpoint.test.ts",
@@ -3551,6 +3627,74 @@
         "backend:desktop_computer_telemetry.test.ts",
         "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs"
       ]
+    },
+    {
+      "id": "native-family-session-lifecycle-requires-exact-session-and-observed-save-load-close",
+      "coverage": [
+        "backend:family_session_open_v1.test.ts",
+        "dotnet:OperatorFamilySessionReceiptTests",
+        "dotnet:OperatorFamilySaveReceiptTests",
+        "dotnet:OperatorFamilyReloadReceiptTests",
+        "dotnet:OperatorFamilyCloseReceiptTests"
+      ]
+    },
+    {
+      "id": "air-device-drafting-readback-verifies-native-values-before-next-write",
+      "coverage": [
+        "backend:parameter_drafting_readback.test.ts",
+        "backend:air_device_retained_replay.test.ts"
+      ]
+    },
+    {
+      "id": "view-rename-plan-native-not-started-without-preview-proof",
+      "coverage": [
+        "dotnet:RenameViewPlanSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:rename_view_plan_receipt.test.ts"
+      ]
+    },
+    {
+      "id": "schedule-planning-is-known-none-without-inventing-preview-execution",
+      "coverage": [
+        "dotnet:ScheduleSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "family-save-existing-target-rejection-preserves-known-none-without-clearing-unknown",
+      "coverage": [
+        "dotnet:OperatorFamilySaveReceiptTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "followup-retains-native-history-without-current-model-authority",
+      "coverage": [
+        "backend:prior_assignment_context.test.ts",
+        "backend:conversation_assignment_isolation.test.ts"
+      ]
+    },
+    {
+      "id": "complete-detailing-agent-projection-preserves-signature-multiplicity",
+      "coverage": [
+        "mcp:lib/viewOwnedDetailingAgentProjection.test.ts",
+        "backend:view_owned_detailing_v2.test.ts",
+        "backend:detailing_model_projection.test.ts"
+      ]
+    },
+    {
+      "id": "active-agent-profile-delivers-artifact-verification-instructions-with-bound-host-ack",
+      "coverage": [
+        "backend:artifact_delivery_profile.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
+      ]
+    },
+    {
+      "id": "desktop-provider-late-response-recovery-without-redispatch",
+      "coverage": [
+        "backend:desktop_response_store.test.ts",
+        "backend:desktop_computer_telemetry.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -3562,6 +3706,8 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
+    "package/operator-assistant-ui/session_start.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",

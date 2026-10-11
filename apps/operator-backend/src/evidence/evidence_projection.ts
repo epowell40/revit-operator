@@ -1,6 +1,7 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
+import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
   evidenceTargetIdentityValuesV1,
@@ -8,7 +9,7 @@ import {
 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 const COUNT_KEY = /(?:^|_)(?:count|total|length|matched|created|updated|deleted|failed|succeeded)$/i;
-const ACCEPTANCE_KEY = /(?:^|_)(?:id|name|number|value|status|state|result|effect_state|before_hash|after_hash|sha256|hash|level|host|side|system|orientation|circuit|category|type)$/i;
+const ACCEPTANCE_KEY = /(?:^|_)(?:id|name|number|value|status|state|result|effect_state|before_hash|after_hash|sha256|hash|level|host|side|system|orientation|circuit|category|type|exists|is_file|size_bytes|last_write_time_utc|path)$/i;
 const DIAGNOSTIC_KEY = /(?:error|warning|diagnostic|failure|reason|message)/i;
 const STRUCTURED_TEXT_KEY = /^(?:text|output|result_json|structuredContent)$/i;
 const IDENTITY_ARRAY_KEY = /^(?:items|elements|results)$/i;
@@ -152,6 +153,26 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
   let bestInventory: IdentityInventory | null = null;
   const queue: Array<{ value: unknown; path: string; depth: number }> = [{ value: raw, path: "$", depth: 0 }];
   const rootRecord = safeRecord(raw);
+  // Dynamic runtime receipts are embedded JSON strings, not ordinary nested
+  // objects. Preserve their reported settlement before bulky worker/snapshot
+  // data consumes the fact budget. This projection never authenticates them or
+  // promotes the evidence reference's trust level.
+  const dynamicEvidence = safeRecord(rootRecord?.evidence);
+  for (const [field, schema] of [["previewReceipt", "dynamic-revit-preview-receipt/v0"],
+    ["applyReceipt", "dynamic-revit-apply-receipt/v1"]] as const) {
+    const receipt = typeof dynamicEvidence?.[field] === "string"
+      ? safeRecord(parseBoundedStructuredJson(dynamicEvidence[field]))
+      : safeRecord(dynamicEvidence?.[field]);
+    if (receipt?.schema !== schema) continue;
+    for (const key of ["schema", "ok", "outcome", "rollback_status", "rollback_truth",
+      "preview_id", "graph_hash", "document_fingerprint", "document_session_id", "retry_permitted"]) {
+      const value = scalar(receipt[key]);
+      if (value !== undefined) facts[`evidence.${field}.${key}`] = value;
+    }
+    const idsKey = field === "applyReceipt" ? "changed_element_ids" : "projected_changed_element_ids";
+    if (Array.isArray(receipt[idsKey])) counts[`evidence.${field}.${idsKey}.length`] = receipt[idsKey].length;
+    if (Number.isSafeInteger(receipt.operation_count)) counts[`evidence.${field}.operation_count`] = receipt.operation_count as number;
+  }
   const rootLooksLikeMcpEnvelope = Boolean(rootRecord && (Array.isArray(rootRecord.content)
     || Object.prototype.hasOwnProperty.call(rootRecord, "structuredContent")));
   const structuredPayload = rootLooksLikeMcpEnvelope ? extractMcpStructuredPayload(raw) : null;
@@ -231,6 +252,22 @@ function projectionBytes(value: Omit<EvidenceProjectionV1, "projected_bytes">): 
   return Buffer.byteLength(JSON.stringify(value), "utf8") + 24;
 }
 
+function completeElementIdInventory(raw: unknown): Record<string, unknown> | null {
+  const row = safeRecord(raw);
+  if (!row || row.status !== "Ok" || !safeRecord(row.scope)
+      || !Array.isArray(row.elementIds) || row.elementIds.length > 5000
+      || row.count !== row.elementIds.length || row.truncated !== false
+      || row.scanCapReached !== false || row.identityExpansionScanCapReached !== false
+      || row.elementIds.some(id => !Number.isSafeInteger(id) || id <= 0)
+      || new Set(row.elementIds).size !== row.elementIds.length) return null;
+  // This is an exact ID-list presentation, not full element detail or proof of
+  // project-wide coverage. Retain every native scope/filter fact so a bounded
+  // view, text, or family query cannot be mistaken for a whole-model inventory.
+  const { items, elementIds, canonical_attempt_settlement, ...scopeAndFilters } = row;
+  return { ...scopeAndFilters, schema: "revit-operator.element-id-inventory-summary/v1",
+    elementIds, ids_complete: true, items_omitted: true };
+}
+
 export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_192): EvidenceProjectionV1 {
   const extracted = extractDeterministicEvidenceFacts(raw);
   const base = {
@@ -303,8 +340,32 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     const isEnvelope = row && (Array.isArray(row.content) || Object.prototype.hasOwnProperty.call(row, "structuredContent"));
     const payload = isEnvelope ? extractMcpStructuredPayload(raw)?.payload : row;
     if (payload !== undefined && payload !== null) {
-      const expanded = { ...candidate, inline_payload: payload };
+      // V2 sends retained native evidence, replacing MCP presentation text.
+      // Build the complete detailing summary here using the verifier's admission
+      // rules; never substitute partial counts for a complete comparison.
+      const detailing = viewOwnedDetailingSummaryV2(payload);
+      const expanded = detailing
+        ? { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,
+            inline_payload: detailing, truncated: false }
+        : { ...candidate, inline_payload: payload };
       if (projectionBytes(expanded) <= maxBytes) candidate = expanded;
+      else if (!detailing) {
+        // Extracted scalar facts repeat the payload and can crowd out its exact
+        // nested values. Prefer the complete screened native result when it
+        // fits without those duplicates. Keep identity and receipt
+        // metadata; this changes presentation, never evidence authority.
+        const complete = { ...base, key_counts: {}, key_facts: {},
+          inline_payload: payload, truncated: false };
+        if (projectionBytes(complete) <= maxBytes) candidate = complete;
+        else {
+          const inventory = completeElementIdInventory(payload);
+          if (inventory) {
+            const compact = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,
+              inline_payload: inventory, truncated: true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
+        }
+      }
     }
   }
   const projected_bytes = projectionBytes(candidate);

@@ -2517,3 +2517,201 @@ test("reroute planning and observed apply receipts preserve effect separately fr
     if (notStarted && preview) assert.equal(result.error_code, "native_preview_execution_unproven");
   }
 });
+
+test("rejected family save preserves failure while native pre-save proof permits known-none settlement", async () => {
+  const route = "/revit/save-family-doc", body = { docId: "a".repeat(32), filePath: "C:\\lab\\existing.rfa", overwrite: false };
+  for (const proven of [false, true]) {
+    const payload = { ok: false, saved: false, familyDocumentId: body.docId, filePath: body.filePath,
+      error: "Family file already exists and overwrite=false: " + body.filePath,
+      ...(proven ? { family_save_receipt: { schema: "revit-operator.family-save.v1", status: "rejected", session_id: body.docId,
+        path: body.filePath, reason: "existing_target_overwrite_disabled", existing_target: true, overwrite: false,
+        native_save_invoked: false, file_write_performed: false, model_write_performed: false } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        request_dispatched: true, effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_receipt" : "native_host",
+        effect_reason: proven ? "native_family_save_rejected_before_save" : "native_handler_failed_after_dispatch", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});
+
+test("retained air schedule plan is known none only with native not-started evidence, never a proven preview", async () => {
+  const route="/revit/create-schedule";
+  const original=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/air-schedule-plan-unsettled.json", import.meta.url),"utf8"));
+  const body={name:"Air Device Schedule",category:"OST_DuctTerminal",fields:["Type Mark","Manufacturer","Model","Type","Flow","Count"],dryRun:true};
+  for(const proven of [false,true]) {
+    const payload={...original,...(proven?{transaction:{status:"not_started",committed:false,affected_element_ids:[]},previewExecuted:false}:{}),
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"preview",request_dispatched:true,
+        effect_state:proven?"none":"unknown",effect_authority:proven?"native_transaction":"native_host",
+        effect_reason:proven?"native_transaction_not_started":"native_handler_returned_without_authoritative_settlement",affected_target_identities:[]}};
+    const decorated=await runWithAssignmentKernelV2(meta("preview","work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"preview"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,payload,request);
+      return decorateAssignmentKernelMcpResultV2({content:[{type:"text",text:JSON.stringify(payload)}]},"revit_call_tool") as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,"failed_after_dispatch");
+    assert.equal(result.error_code,"native_preview_execution_unproven");
+    assert.equal(result.persistent_effect,proven?"none":"unknown");
+    assert.equal(result.native_transaction_state,proven?"not_started":"unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_id==="task.preview_valid"&&f.value===true),false);
+  }
+});
+
+test("retained placed viewport requires native commit evidence and preserves unknown neighbors", async () => {
+  const route = "/revit/place-view";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/place-view-unsettled.json", import.meta.url), "utf8"));
+  const body = { sheetId: 1542982, viewId: 1542917, x: 1.55, y: 1.3, avoidOverlap: true, dryRun: false };
+  for (const committed of [false, true]) {
+    const payload = { ...original, ...(committed ? { transaction: { status: "committed", committed: true,
+      added_element_ids: [1543012], modified_element_ids: [1542982], affected_element_ids: [1543012,1542982], deleted_element_ids: [] } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply", request_dispatched: true,
+        effect_state: committed ? "applied" : "unknown", effect_authority: committed ? "native_transaction" : "native_host",
+        effect_reason: committed ? "native_transaction_committed" : "native_handler_returned_without_authoritative_settlement",
+        affected_target_identities: committed ? ["id:1543012", "id:1542982"] : [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, committed ? "applied" : "unknown");
+    assert.equal(result.native_transaction_state, committed ? "committed" : "unknown");
+    assert.equal(result.status, "succeeded");
+  }
+});
+
+test("retained visibility plan has no proven preview and needs native not-started evidence for known none", async () => {
+  const route = "/revit/visibility";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/visibility-plan-unsettled.json", import.meta.url), "utf8"));
+  const body = { action: "set_template", viewId: 1542917, templateName: "None", dryRun: true };
+  for (const proven of [false, true]) {
+    const payload = { ...original, ...(proven ? { transaction: { status: "not_started", committed: false, affected_element_ids: [] }, previewExecuted: false } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview", request_dispatched: true,
+        effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_transaction" : "native_host",
+        effect_reason: proven ? "native_transaction_not_started" : "native_handler_returned_without_authoritative_settlement", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.error_code, "native_preview_execution_unproven");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, proven ? "not_started" : "unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid" && f.value === true), false);
+  }
+});
+test("retained view rename plan has no proven preview and needs native not-started evidence for known none", async () => {
+  const route = "/revit/create-view";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/rename-view-plan-unsettled.json", import.meta.url), "utf8"));
+  const body = { action: "rename_batch", viewIds: [1543019], findText: "TEST-TEMPLATE-API-19 (2)", replaceText: "TEST-TEMPLATE-API-19", dryRun: true };
+  for (const proven of [false, true]) {
+    const payload = { ...original, ...(proven ? { transaction: { status: "not_started", committed: false, affected_element_ids: [] }, previewExecuted: false } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview", request_dispatched: true,
+        effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_transaction" : "native_host",
+        effect_reason: proven ? "native_transaction_not_started" : "native_handler_returned_without_authoritative_settlement", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.error_code, "native_preview_execution_unproven");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, proven ? "not_started" : "unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid" && f.value === true), false);
+  }
+});
+
+test("exact deletion plan requires authoritative rollback, never impact prose", async () => {
+  const route = "/revit/transaction-plan";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/transaction-plan-delete-unsettled.json", import.meta.url), "utf8"));
+  const body = { actions: [{kind: "delete", ids: [1379181,1379280,1379283,1365662]}] };
+  for (const status of ["missing", "rolled_back", "pending", "not_started"]) {
+    const rolledBack = status === "rolled_back";
+    const knownNone = rolledBack || status === "not_started";
+    const payload = { ...original, success: true, dryRun: true, status: "Dry Run", ...(status === "missing" ? {} : {
+      transaction: {status, committed: false, affected_element_ids: [], added_element_ids: [], modified_element_ids: [], deleted_element_ids: []}
+    }), canonical_attempt_settlement: {schema: "revit-operator.native-attempt-settlement.v1",
+      requested_effect: "preview", request_dispatched: true, effect_state: knownNone ? "none" : "unknown",
+      effect_authority: rolledBack ? "native_rollback" : knownNone ? "native_transaction" : "native_host",
+      effect_reason: rolledBack ? "verified_native_rollback" : status === "not_started" ? "native_transaction_not_started" : "native_handler_returned_without_authoritative_settlement",
+      affected_target_identities: []} };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", {method:"POST",path:route,body}), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, {classified_effect:"preview"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({content:[{type:"text",text:JSON.stringify(payload)}]}, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, knownNone ? "none" : "unknown");
+    assert.equal(result.status, rolledBack ? "succeeded" : "failed_after_dispatch", JSON.stringify(result));
+    if (!rolledBack) assert.equal(result.error_code, "native_preview_execution_unproven");
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});
+
+test("retained native delete rollback requires both settlement and exact impact at MCP boundary", async () => {
+  const route="/revit/delete";
+  const original=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/delete-preview-rollback.json",import.meta.url),"utf8"));
+  const body={ids:[1379181,1379280,1379283,1365662],dryRun:true,apply:false};
+  for(const scenario of ["valid","pending","missing","wrong-target","missing-dependent"]){
+    const payload=structuredClone(original);
+    if(scenario==="pending")payload.transaction.status="pending";
+    if(scenario==="missing")delete payload.transaction;
+    if(scenario==="wrong-target")payload.requestedIds[0]=999;
+    if(scenario==="missing-dependent")payload.dependentIds.pop();
+    const knownNone=scenario!=="pending"&&scenario!=="missing";
+    payload.canonical_attempt_settlement={schema:"revit-operator.native-attempt-settlement.v1",
+      requested_effect:"preview",request_dispatched:true,effect_state:knownNone?"none":"unknown",
+      effect_authority:knownNone?"native_rollback":"native_host",
+      effect_reason:knownNone?"verified_native_rollback":"native_handler_returned_without_authoritative_settlement",affected_target_identities:[]};
+    const decorated=await runWithAssignmentKernelV2(meta("preview","work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"preview"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,payload,request);
+      return decorateAssignmentKernelMcpResultV2({content:[{type:"text",text:JSON.stringify(payload)}]},"revit_call_tool") as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,scenario==="valid"?"succeeded":"failed_after_dispatch",JSON.stringify(result));
+    assert.equal(result.persistent_effect,knownNone?"none":"unknown");
+    assert.deepEqual(result.affected_target_identities,[]);
+  }
+});
+
+ test("exact view-range preview needs native rollback, not transient proposed values", async () => {
+  const route = "/revit/visibility";
+  const original = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/view-range-preview-unsettled.json", import.meta.url), "utf8"));
+  const body = { viewId: 1542918, action: "set_view_range", viewRangeBottomLevelId: 9946, viewRangeBottomOffsetFeet: 1, viewRangeDepthLevelId: 9946, viewRangeDepthOffsetFeet: 1, dryRun: true };
+  for (const proven of [false, true]) {
+    const payload = { ...original, ...(proven ? { success: true, previewExecuted: true, after: structuredClone(original.current), transaction: { status: "rolled_back", committed: false, affected_element_ids: [] } } : {}),
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "preview", request_dispatched: true,
+        effect_state: proven ? "none" : "unknown", effect_authority: proven ? "native_rollback" : "native_host",
+        effect_reason: proven ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement", affected_target_identities: [] } };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, proven ? "succeeded" : "failed_after_dispatch");
+    assert.equal(result.persistent_effect, proven ? "none" : "unknown");
+    assert.equal(result.native_transaction_state, proven ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities, []);
+  }
+});

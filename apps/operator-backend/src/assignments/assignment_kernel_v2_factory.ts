@@ -59,7 +59,17 @@ function requestedEffect(goal: GoalRecord): RequestedEffectV2 {
 
 function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly string[] = []): string[] | null {
   if (configuredFacts.some((fact) => fact.startsWith("inventory."))) return [...configuredFacts];
+  // Counts can be verification requirements for an edit or rollback preview.
+  // Only a read request may infer the inventory-only capability contract;
+  // otherwise the requested native mutation becomes supporting control.
+  // Explicitly configured fact contracts above remain authoritative.
+  if (requestedEffect(goal) !== "read") return null;
   const source = `${goal.objective}\n${goal.acceptance_criteria.join("\n")}\n${text(goal.work_budget?.source_user_request, 20_000)}`;
+  // Artifact pagination is not a Revit element inventory. Preserve separately
+  // requested model inventories; explicit configured facts remain authoritative.
+  const pageCount = /\bpage\s+count\b|\b(?:count|how\s+many)\s+(?:the\s+)?pages\b/i.test(source);
+  const modelInventory = /\b(?:count|quantify|inventory|how\s+many)\b[^.!?;\n]{0,80}\b(?:ducts?|air\s+(?:devices?|terminals?)|equipment|elements?|instances?|walls?|doors?|windows?|rooms?|spaces?|pipes?)\b/i.test(source);
+  if (pageCount && !modelInventory) return null;
   // Counting a table's rows or a review's findings is part of an assessment,
   // not a request for the model-wide quantify contract. Keep the full read
   // outcome deliverable instead of forcing every audit through inventory facts.

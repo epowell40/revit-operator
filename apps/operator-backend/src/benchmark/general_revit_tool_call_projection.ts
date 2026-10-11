@@ -37,3 +37,33 @@ export function extractGeneralRevitToolCalls(attempt: Row): Row[] {
   }
   return projected;
 }
+
+export function dynamicReceiptActions(state: Row): Row[] {
+  const receipts = Array.isArray(state.dynamicProgramReceipts) ? state.dynamicProgramReceipts.map(row) : [];
+  return receipts.map((receipt, index) => {
+    const mode = String(receipt.requested_mode || "preview").toLowerCase() === "apply" ? "apply" : "preview";
+    return {
+      action_id: String(receipt.run_id || `dynamic-${index + 1}`),
+      method: "POST",
+      path: `/revit/dynamic-runtime/${mode}`,
+      request_effect: mode,
+      request_dispatched: receipt.execution_ok === true,
+      status: receipt.execution_ok === true ? "success" : "failed",
+      receipt
+    };
+  });
+}
+
+export function sidecarFunctionReceiptActions(state: Row): Row[] {
+  const receipts = Array.isArray(state.functionToolReceipts) ? state.functionToolReceipts.map(row) : [];
+  return receipts.map((receipt, index) => ({
+    action_id: String(receipt.call_id || `function-${index + 1}`),
+    method: "POST",
+    path: String(receipt.path || ""),
+    request_effect: String(receipt.request_effect || "read"),
+    request_dispatched: receipt.request_dispatched === true,
+    status: String(receipt.status || "failed"),
+    receipt
+  }));
+}
+

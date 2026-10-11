@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -22,9 +23,8 @@ namespace RevitBridge.Logic.Handlers
             var p = JsonSerializer.Deserialize<Params>(jsonData);
             var doc = app.ActiveUIDocument.Document;
 
-            using (Transaction trans = new Transaction(doc, "Place View on Sheet"))
+            var result = NativeSingleTransaction.Execute(app, doc, "Place View on Sheet", created =>
             {
-                trans.Start();
 
                 ElementId sheetId = RevitBridge.Common.ElementIdCompat.Create(p.sheetId);
                 ElementId viewId = RevitBridge.Common.ElementIdCompat.Create(p.viewId);
@@ -32,15 +32,16 @@ namespace RevitBridge.Logic.Handlers
                 if (Viewport.CanAddViewToSheet(doc, sheetId, viewId))
                 {
                     Viewport vp = Viewport.Create(doc, sheetId, viewId, new XYZ(p.x, p.y, 0));
-                    trans.Commit();
-                    return Task.FromResult<object>(new { id = RevitBridge.Common.ElementIdCompat.GetValue(vp.Id), status = "Placed" });
+                    created.Add(ElementIdCompat.GetValue(vp.Id));
+                    return new Dictionary<string, object?> { ["id"] = ElementIdCompat.GetValue(vp.Id), ["status"] = "Placed" };
                 }
                 else
                 {
-                    trans.RollBack();
-                    return Task.FromResult<object>(new { status = "Failed", message = "Cannot place view on sheet (already placed?)" });
+                    throw new InvalidOperationException("Cannot place view on sheet (already placed?)");
                 }
-            }
+            });
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Placed");
+            return Task.FromResult<object>(result);
         }
     }
 }

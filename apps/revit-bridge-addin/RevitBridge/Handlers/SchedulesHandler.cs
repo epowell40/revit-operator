@@ -20,6 +20,9 @@ namespace RevitBridge.Handlers
             public bool? requireUniqueQuery { get; set; }
             public int? max { get; set; }
             public bool? includeFields { get; set; }
+            public bool? includeSchedulableFields { get; set; }
+            public int? schedulableFieldOffset { get; set; }
+            public int? maxSchedulableFields { get; set; }
             public bool? includeData { get; set; }
             public int? rowOffset { get; set; }
             public int? columnOffset { get; set; }
@@ -97,7 +100,7 @@ namespace RevitBridge.Handlers
                 };
             }
 
-            if (!p.scheduleId.HasValue && p.requireUniqueQuery == true && !string.IsNullOrWhiteSpace(q))
+            if (!p.scheduleId.HasValue && (p.requireUniqueQuery == true || p.includeSchedulableFields == true) && !string.IsNullOrWhiteSpace(q))
             {
                 var matches = CollectSchedules(doc)
                     .Where(schedule => exact
@@ -138,6 +141,7 @@ namespace RevitBridge.Handlers
             var includeData = p.includeData ?? false;
             var summary = BuildScheduleSummary(doc, schedule);
             var details = includeFields ? BuildFieldDetails(doc, schedule) : null;
+            var eligibleFields = p.includeSchedulableFields == true ? BuildSchedulableFields(doc, schedule, p) : null;
             var table = includeData ? BuildTableData(schedule, p) : null;
             var filterDefinitions = BuildFilterDefinitions(doc, schedule, out var filterDefinitionsComplete);
             var sortGroupDefinitions = BuildSortGroupDefinitions(doc, schedule, out var sortGroupDefinitionsComplete);
@@ -150,6 +154,7 @@ namespace RevitBridge.Handlers
                 action = "detail",
                 schedule = summary,
                 fields = details,
+                schedulableFields = eligibleFields,
                 filterDefinitions,
                 filterDefinitionsComplete,
                 sortGroupDefinitions,
@@ -158,6 +163,24 @@ namespace RevitBridge.Handlers
                 settings,
                 table
             };
+        }
+
+        private static object BuildSchedulableFields(Document doc, ViewSchedule schedule, Params p)
+        {
+            var offset = p.schedulableFieldOffset ?? 0;
+            var limit = p.maxSchedulableFields ?? 50;
+            if (offset < 0 || limit < 1 || limit > 200)
+                throw new ArgumentException("schedulableFieldOffset must be nonnegative and maxSchedulableFields must be between 1 and 200.");
+            // Enumerate the native eligible inventory, not current columns or guessed aliases.
+            // A native failure propagates instead of being presented as an empty complete list.
+            var fields = schedule.Definition.GetSchedulableFields()
+                .Select(field => new RevitBridge.Common.ScheduleEligibleField {
+                    parameterId = RevitBridge.Common.ElementIdCompat.GetValue(field.ParameterId),
+                    fieldType = field.FieldType.ToString(),
+                    name = field.GetName(doc)
+                });
+            return RevitBridge.Common.ScheduleEligibleFieldPage.Create(
+                RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), fields, offset, limit);
         }
 
         private static List<object> BuildSortGroupDefinitions(Document doc, ViewSchedule schedule, out bool complete)
@@ -275,6 +298,7 @@ namespace RevitBridge.Handlers
         {
             return new
             {
+                isItemized = schedule.Definition.IsItemized,
                 showGrandTotals = TryGetScheduleBoolProperty(schedule, new[] { "ShowGrandTotal", "ShowGrandTotals" }),
                 filterBySheet = TryGetScheduleBoolProperty(schedule, new[] { "IsFilteredBySheet", "FilterBySheet", "FilteredBySheet" })
             };
@@ -405,7 +429,7 @@ namespace RevitBridge.Handlers
             var fieldCount = SafeGetFieldCount(definition);
             var categoryId = TryGetCategoryId(definition);
             var categoryName = categoryId.HasValue
-                ? doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(categoryId.Value))?.Name
+                ? Category.GetCategory(doc, RevitBridge.Common.ElementIdCompat.Create(categoryId.Value))?.Name
                 : null;
 
             return new
@@ -540,7 +564,7 @@ namespace RevitBridge.Handlers
             {
                 var p = definition.GetType().GetProperty("CategoryId", BindingFlags.Instance | BindingFlags.Public);
                 var raw = p?.GetValue(definition, null);
-                if (raw is ElementId id && RevitBridge.Common.ElementIdCompat.GetValue(id) > 0) return RevitBridge.Common.ElementIdCompat.GetValue(id);
+                if (raw is ElementId id && id != ElementId.InvalidElementId) return RevitBridge.Common.ElementIdCompat.GetValue(id);
             }
             catch
             {

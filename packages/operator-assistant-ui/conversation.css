@@ -29,6 +29,16 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .paneIntro { display: none; }
 .messages { gap: 30px; }
 .messages:empty::before { content: "What would you like to do?"; display: block; padding-top: min(16vh, 130px); font-size: 24px; font-weight: 500; letter-spacing: -.5px; color: #333; }
+#sessionStart:not([hidden]) ~ .messages:empty::before { display: none; }
+.sessionStart { max-width: 620px; margin: 12px auto 0; }
+.sessionStart h2 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
+.sessionStart p { line-height: 1.5; margin: 8px 0; }
+.sessionStartStatus { color: #626262; font-size: 13px; }
+.sessionStart h3 { font-size: 14px; margin: 24px 0 10px; }
+.sessionStartTask { display: flex; flex-direction: column; text-align: left; width: 100%; gap: 5px; padding: 12px; margin-bottom: 9px; }
+.sessionStartTask strong { font-weight: 600; overflow-wrap: anywhere; }
+.sessionStartTask span { font-size: 12px; color: #626262; }
+.sessionStartTask span:last-child { color: #155ca2; }
 .msg { gap: 8px; }
 .role { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: #555; }
 .role::before { display: none; }

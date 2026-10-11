@@ -79,6 +79,7 @@ export function startAutoGoalIfEligible(input: {
     }],
     work_budget: {
       mode: "auto_goal",
+      ...(current ? { previous_assignment_id: current.id } : {}),
       source: input.source,
       source_user_request: intake?.operation_scope?input.user_text:decision.objective,
       ...(input.message_id ? { conversation_message_id: input.message_id } : {}),

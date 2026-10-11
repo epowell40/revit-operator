@@ -1,14 +1,33 @@
 /** Explicit file creation is separate from permission to alter the Revit model. */
-export function requestedWorkbookExport(userText: string): boolean {
+function requestedFileExport(userText: string, kind: "workbook" | "pdf"): boolean {
   const text = userText.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
-  if (/^\s*read[ -]?only\b/i.test(text)
-      || /\b(?:preview|preflight|dry[- ]?run|plan only|explain how|tell me how)\b/i.test(text)
+  if (/^\s*(?:read[ -]?only|(?:review|inspection|discovery) only)\b/i.test(text)
+      || /\b(?:dry[- ]?run|plan only|explain how|tell me how|preview only|preflight only)\b/i.test(text)
+      || /\b(?:after|until|once|when|if)\b[^.!?;\n]{0,80}\b(?:approv\w*|confirm\w*|review\w*)\b/i.test(text)
+      || /\b(?:later|not yet|only if|if needed|if possible|wait for)\b/i.test(text)
       || /\b(?:should|could|can|would)\s+(?:I|we)\b/i.test(text)
       || /\b(?:do not|don't|dont|never)\s+(?:export|produce|generate)\b/i.test(text)
-      || /\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}(?:export|write|save|create|produce|generate)\b[^.!?;\n]{0,60}\b(?:files?|workbooks?|spreadsheets?|excel|xlsx|anything|outputs?)\b/i.test(text)
-      || /\bwithout\s+(?:creating|writing|saving|exporting)\b[^.!?;\n]{0,60}\b(?:files?|workbooks?|spreadsheets?|outputs?)\b/i.test(text)
+      || /\b(?:do not|don't|dont|never)\s+(?:commit|write|save|create)\s*(?:[.!?;]|$)/i.test(text)
+      || /\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}(?:export|write|save|create|produce|generate)\b[^.!?;\n]{0,60}\b(?:files?|pdfs?|workbooks?|spreadsheets?|excel|xlsx|anything|outputs?)\b/i.test(text)
+      || /\bwithout\s+(?:creating|writing|saving|exporting)\b[^.!?;\n]{0,60}\b(?:files?|pdfs?|workbooks?|spreadsheets?|outputs?)\b/i.test(text)
       || /\b(?:do not|don't|dont|never)\b[^.!?;\n]{0,70}\b(?:anything|any files)\b/i.test(text)) return false;
-  return /(?:^|[.!?;\n]\s*|\bthen\s+)(?:(?:for|using|from|with|in)\s+[^.!?;\n,]{1,100},\s*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:prepare|create|make|produce|generate|write|save|export)\b[^.!?;\n]{0,180}\b(?:excel|xlsx|workbook|spreadsheet)\b/i.test(text);
+  // A preflight list is an input/check, not a request to stop before exporting.
+  // Imperative preview/preflight still needs an explicit subsequent export.
+  if ((/\bpreview\b/i.test(text) || /(?:^|[.!?;,]\s*)(?:please\s+)?preflight\b/i.test(text))
+      && !/\bthen\s+(?:export|create|produce|generate|write|save)\b/i.test(text)) return false;
+  const artifact = kind === "pdf" ? "pdfs?" : "excel|xlsx|workbook|spreadsheet";
+  return new RegExp("(?:^|[.!?;,]\\s*|\\bthen\\s+)(?:(?:for|using|from|with|in)\\s+[^.!?;\\n,]{1,100},\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:prepare|create|make|produce|generate|write|save|export)\\b[^.!?;\\n]{0,180}\\b(?:" + artifact + ")\\b", "i").test(text);
+}
+
+export function requestedWorkbookExport(userText: string): boolean {
+  return requestedFileExport(userText, "workbook");
+}
+
+export function requestedArtifactExportPaths(userText: string): string[] {
+  return [
+    ...(requestedWorkbookExport(userText) ? ["/revit/export-elements-xlsx"] : []),
+    ...(requestedFileExport(userText, "pdf") ? ["/revit/export-pdf"] : [])
+  ];
 }
 
 /** File creation alone cannot satisfy an explicitly requested review or input list. */
@@ -18,5 +37,5 @@ export function requestedWorkbookAssessment(userText: string): boolean {
 }
 
 export function authorizedArtifactExportPath(userText: string, path: string | undefined): boolean {
-  return path === "/revit/export-elements-xlsx" && requestedWorkbookExport(userText);
+  return typeof path === "string" && requestedArtifactExportPaths(userText).includes(path);
 }

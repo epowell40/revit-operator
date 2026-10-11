@@ -264,3 +264,15 @@ test("saved pause direction and current Resume receipt reach actual bound provid
     assert.equal(fs.readFileSync(tracePath,"utf8").trim().split(/\r?\n/).filter(line=>JSON.parse(line).method==="turn/start").length,1,"cancellation, foreign generation and a later Pause must not dispatch stale prepared input");
   });}finally{client.stop();keys.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });
+
+test("normal and local execution profiles retain prerequisite and readback guidance", async () => {
+  const { getOperatorAgentBaseInstructions } = await import("../src/brains/codex_brain_instructions.js");
+  const profiles = [getOperatorAgentBaseInstructions(), ...[false, true].map(advisory => getThinReferenceCodexProfile("prerequisite-regression", advisory).baseInstructions)];
+  for (const instructions of profiles) {
+    assert.match(instructions, /schedulableFound:false/);
+    assert.match(instructions, /before changing the model/);
+    assert.match(instructions, /Do not substitute a model-only edit/);
+    assert.match(instructions, /includeTemplates:true/);
+    assert.match(instructions, /disjoint batches/);
+  }
+});

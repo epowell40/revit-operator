@@ -1,3 +1,5 @@
+import { needsPrinterCapableLane } from "./print_execution_policy.mjs";
+
 /** Capture the exact click before recovery/freshness I/O can yield to another edit. */
 export function beginComposerSend(state, prompt) {
   if (state.resetting || state.composerSubmissionPending || (state.streaming && state.activeRunKind === "backend")) return null;
@@ -9,7 +11,7 @@ export function beginComposerSend(state, prompt) {
 }
 
 /** Transport selection only: the backend still owns admission and authority. */
-export function selectChatSubmissionMode(state) {
+export function selectChatSubmissionMode(state, prompt = "") {
   // A configuration refresh must not move an interjection to another owner.
   if (state.streaming && state.activeRunKind === "computer") return "computer-interject";
   const local = state.localExecutor;
@@ -21,7 +23,15 @@ export function selectChatSubmissionMode(state) {
     if (state.backendAvailable !== true || state.backendConfigStatus !== "ready") {
       throw new Error("Reconnect to Operator before sending; its execution configuration is unavailable.");
     }
+    // Existing conversations retain their assignment owner and settlement fences.
+    if (!state.sessionId && !state.taskNavigationAssignmentId && !state.streaming
+      && state.computerUseAvailable === true && needsPrinterCapableLane(prompt)) return "computer-run";
     return "backend";
   }
   return state.computerUseAvailable ? (state.streaming ? "computer-interject" : "computer-run") : "backend";
+}
+
+/** Freeze New Chat intent at submission; later polling must not select an old session. */
+export function startsFreshComputerConversation(state) {
+  return !state.sessionId && !state.taskNavigationAssignmentId && !state.streaming;
 }

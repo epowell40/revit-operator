@@ -17,6 +17,8 @@ namespace RevitBridge.Common
         [JsonPropertyName("path")] public string Path { get; }
         [JsonPropertyName("print_settings_restored"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? PrintSettingsRestored { get; }
+        [JsonPropertyName("print_settings_restoration_readback"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<OperatorPrintSettingsGuard.SettingReadback>? PrintSettingsRestorationReadback { get; internal set; }
         [JsonPropertyName("print_settings_untouched"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? PrintSettingsUntouched { get; private set; }
         [JsonPropertyName("not_started_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -55,6 +57,26 @@ namespace RevitBridge.Common
 
         private static bool IsPrintPreflightReason(string? reason) => reason == "interactive_printer_destination"
             || reason == "printer_capability_unavailable" || reason == "printer_unavailable" || reason == "no_printer_configured";
+
+        private static bool PrintReadbackMatches(JsonElement rows)
+        {
+            if (rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() < 7 || rows.GetArrayLength() > 9) return false;
+            var required = OperatorPrintSettingsGuard.FieldsForPrint(false, false);
+            var allowed = new HashSet<string>(OperatorPrintSettingsGuard.FieldsForPrint(true, true), StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var row in rows.EnumerateArray())
+            {
+                var field = row.GetProperty("field").GetString() ?? "";
+                if (!allowed.Contains(field) || !seen.Add(field) || row.GetProperty("read_succeeded").ValueKind != JsonValueKind.True
+                    || row.GetProperty("matches").ValueKind != JsonValueKind.True || row.GetProperty("error").ValueKind != JsonValueKind.Null) return false;
+                var before = row.GetProperty("before"); var after = row.GetProperty("after");
+                if (before.ValueKind != after.ValueKind) return false;
+                if (before.ValueKind == JsonValueKind.String) { if (before.GetString() != after.GetString()) return false; }
+                else if (before.ValueKind == JsonValueKind.Number) { if (before.GetDouble() != after.GetDouble()) return false; }
+                else if (before.ValueKind != JsonValueKind.True && before.ValueKind != JsonValueKind.False) return false;
+            }
+            return required.All(seen.Contains);
+        }
 
         public static OperatorNativeArtifactReceipt BlockedSaveAs(bool preview)
             => new OperatorNativeArtifactReceipt(preview ? "preview" : "apply", "not_started", Array.Empty<string>(), 0,
@@ -123,6 +145,8 @@ namespace RevitBridge.Common
                     || calls.Any(x => !x) || outputs.Length != expected.Length) return true;
                 if (path == "/revit/print" && (!value.TryGetProperty("print_settings_restored", out var restored)
                     || restored.ValueKind != JsonValueKind.True)) return true;
+                if (path == "/revit/print" && value.TryGetProperty("print_settings_restoration_readback", out var readback)
+                    && !PrintReadbackMatches(readback)) return true;
                 if (path == "/revit/save-as" && (expected.Length != 1 || expectedCalls != 1
                     || !value.TryGetProperty("save_document", out var savedDocument)
                     || !OperatorNativeSavedDocument.IsComplete(savedDocument, expected[0]))) return true;
@@ -183,7 +207,8 @@ namespace RevitBridge.Common
 
         public void RecordNativeExport(bool succeeded) => calls.Add(succeeded);
 
-        public OperatorNativeArtifactReceipt Complete(bool? printSettingsRestored = null)
+        public OperatorNativeArtifactReceipt Complete(bool? printSettingsRestored = null,
+            IReadOnlyList<OperatorPrintSettingsGuard.SettingReadback>? printSettingsReadback = null)
         {
             var outputs = paths.Select((path, i) =>
             {
@@ -195,7 +220,8 @@ namespace RevitBridge.Common
             }).ToArray();
             var complete = calls.Count == expectedCalls && calls.All(x => x) && outputs.All(x => x.FreshOutput)
                 && (routePath != "/revit/print" || printSettingsRestored == true);
-            return new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", paths, expectedCalls, calls.ToArray(), outputs, routePath, printSettingsRestored);
+            return new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", paths, expectedCalls, calls.ToArray(), outputs, routePath, printSettingsRestored)
+                { PrintSettingsRestorationReadback = routePath == "/revit/print" ? printSettingsReadback : null };
         }
 
         public static IReadOnlyList<OperatorNativeArtifactFile> Inspect(IEnumerable<string> paths)

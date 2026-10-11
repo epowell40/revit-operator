@@ -83,7 +83,10 @@ namespace RevitBridge.Handlers
                         dryRun = true,
                         action,
                         plan = renamePlan,
-                        result = preview
+                        result = preview,
+                        // Rename planning computes names only; no native transaction ran.
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                        previewExecuted = false
                     });
                 }
 

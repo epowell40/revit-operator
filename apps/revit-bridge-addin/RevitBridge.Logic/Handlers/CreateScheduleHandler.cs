@@ -103,6 +103,8 @@ namespace RevitBridge.Logic.Handlers
                 {
                     status = "Dry Run",
                     dryRun = true,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                    previewExecuted = false,
                     requested = new
                     {
                         name = scheduleName,
@@ -145,84 +147,53 @@ namespace RevitBridge.Logic.Handlers
                 });
             }
 
-            var result = new ScheduleResult();
-            try
+            long scheduleId = 0;
+            var failureGuard = new OperatorNativeFailureGuard();
+            var response = NativeSingleTransaction.Execute(app, doc, "Create and Place Schedule", createdIds =>
             {
-                ViewSchedule schedule;
-                var created = false;
-                var includeLinkedApplied = (bool?)null;
-                var filterBySheetApplied = (bool?)null;
-                var placed = (object?)null;
-
-                if (existing != null && reuseIfExists)
+                var created = existing == null || !reuseIfExists;
+                var schedule = created ? CreateSchedule(doc, scheduleName, p, kind, source, activeView?.Id) : existing!;
+                scheduleId = ElementIdCompat.GetValue(schedule.Id);
+                if (created) createdIds.Add(scheduleId);
+                // Preserve reuse semantics: an existing schedule is not silently reconfigured.
+                bool? includeLinkedApplied = null;
+                if (created)
                 {
-                    schedule = existing;
+                    AddFields(doc, schedule, requestedFields);
+                    if (p.includeLinkedFiles.HasValue)
+                        includeLinkedApplied = TrySetIncludeLinkedFiles(schedule, p.includeLinkedFiles.Value);
                 }
-                else
-                {
-                    using (var t = new Transaction(doc, "Create Schedule"))
-                    {
-                        t.Start();
-                        schedule = CreateSchedule(doc, scheduleName, p, kind, source, activeView?.Id);
-                        AddFields(doc, schedule, requestedFields);
-                        if (p.includeLinkedFiles.HasValue)
-                        {
-                            includeLinkedApplied = TrySetIncludeLinkedFiles(schedule, p.includeLinkedFiles.Value);
-                        }
-                        t.Commit();
-                    }
-                    created = true;
-                }
-
+                bool? filterBySheetApplied = null;
                 if (requestedFilterBySheet.HasValue)
+                    filterBySheetApplied = TrySetFilterBySheet(schedule, requestedFilterBySheet.Value);
+                doc.Regenerate();
+                var placed = effectivePlacement == null ? null : PlaceScheduleOnSheet(doc, schedule, effectivePlacement);
+                // The placement and schedule share one transaction. Any exception rolls both back.
+                doc.Regenerate();
+                return new Dictionary<string, object?>
                 {
-                    using (var t = new Transaction(doc, "Configure Schedule Filter By Sheet"))
-                    {
-                        t.Start();
-                        filterBySheetApplied = TrySetFilterBySheet(schedule, requestedFilterBySheet.Value);
-                        t.Commit();
-                    }
-                }
-
-                if (effectivePlacement != null)
-                {
-                    using (var t = new Transaction(doc, "Place Schedule On Sheet"))
-                    {
-                        t.Start();
-                        placed = PlaceScheduleOnSheet(doc, schedule, effectivePlacement);
-                        t.Commit();
-                    }
-                }
-
-                result.viewId = ElementIdCompat.GetValue(schedule.Id);
-                result.created = created;
-
-                return Task.FromResult<object>(new
-                {
-                    status = "Success",
-                    viewId = result.viewId,
-                    created = result.created,
-                    schedule = new
-                    {
-                        id = ElementIdCompat.GetValue(schedule.Id),
-                        name = schedule.Name,
-                        kind = kind.ToString(),
-                        fieldCount = SafeGetFieldCount(schedule.Definition)
-                    },
-                    includeLinkedFiles = p.includeLinkedFiles.HasValue
-                        ? new { requested = p.includeLinkedFiles.Value, applied = includeLinkedApplied, current = TryGetIncludeLinkedFiles(schedule) }
-                        : null,
-                    filterBySheet = requestedFilterBySheet.HasValue
-                        ? new { requested = requestedFilterBySheet.Value, applied = filterBySheetApplied, current = TryGetFilterBySheet(schedule) }
-                        : null,
-                    placedOnSheet = placed
-                });
-            }
-            catch (Exception ex)
+                    ["viewId"] = scheduleId, ["created"] = created,
+                    ["schedule"] = new { id = scheduleId, name = schedule.Name, kind = kind.ToString(), fieldCount = SafeGetFieldCount(schedule.Definition) },
+                    ["includeLinkedFiles"] = p.includeLinkedFiles.HasValue
+                        ? new { requested = p.includeLinkedFiles.Value, applied = includeLinkedApplied, current = TryGetIncludeLinkedFiles(schedule) } : null,
+                    ["filterBySheet"] = requestedFilterBySheet.HasValue
+                        ? new { requested = requestedFilterBySheet.Value, applied = filterBySheetApplied, current = TryGetFilterBySheet(schedule) } : null,
+                    ["placedOnSheet"] = placed
+                };
+            }, configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
+            response["capturedFailures"] = failureGuard.Failures;
+            OperatorNativeTransactionExecution.ReadCommitted(response, () =>
             {
-                result.error = ex.Message;
-                return Task.FromResult<object>(result);
-            }
+                var schedule = doc.GetElement(ElementIdCompat.Create(scheduleId)) as ViewSchedule;
+                if (schedule == null || !schedule.IsValidObject)
+                    throw new InvalidOperationException("Created schedule unavailable after commit.");
+                return new Dictionary<string, object?>
+                {
+                    ["schedule"] = new { id = scheduleId, name = schedule.Name, kind = kind.ToString(), fieldCount = SafeGetFieldCount(schedule.Definition) }
+                };
+            });
+            response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Success");
+            return Task.FromResult<object>(response);
         }
 
         private static string ResolveScheduleName(ScheduleRequest p)

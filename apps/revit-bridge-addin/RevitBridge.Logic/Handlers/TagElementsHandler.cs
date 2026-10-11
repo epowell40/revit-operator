@@ -333,6 +333,9 @@ namespace RevitBridge.Logic.Handlers
                 });
             }
 
+            var batchClock = System.Diagnostics.Stopwatch.StartNew();
+            var attemptedCount = 0;
+            var deferredElementIds = new List<long>();
             var tagIds = new List<long>();
             var tagReadback = new List<object>();
             var errors = new List<object>();
@@ -360,6 +363,13 @@ namespace RevitBridge.Logic.Handlers
                     {
                         continue;
                     }
+
+                    if (TagWorkPolicy.DeferGeometryTarget(geometryAware, attemptedCount, batchClock.ElapsedMilliseconds))
+                    {
+                        deferredElementIds.Add(elementId);
+                        continue;
+                    }
+                    attemptedCount++;
 
                     var geometryPlan = geometryAware
                         ? BuildGeometryPlan(view, element, actualObstacles, tagSizeCalibration.Width, tagSizeCalibration.Height, clearance, placementProfile, maxRepairAttempts, addLeader)
@@ -487,10 +497,15 @@ namespace RevitBridge.Logic.Handlers
                 var payload = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(new
             {
                 status = "Success",
-                success = errors.Count == 0,
+                success = errors.Count == 0 && deferredElementIds.Count == 0,
                 viewId = ElementIdCompat.GetValue(view.Id),
                 targetCount = planned.Count,
                 taggedCount = tagIds.Count,
+                attemptedCount,
+                deferredCount = deferredElementIds.Count,
+                deferredElementIds,
+                continuationRequired = deferredElementIds.Count > 0,
+                continuationReason = deferredElementIds.Count > 0 ? "geometry_batch_budget_reached" : null,
                 skippedAlreadyTagged = skippedAlready,
                 skippedNoLocation,
                 errorCount = errors.Count,
@@ -518,7 +533,7 @@ namespace RevitBridge.Logic.Handlers
                 tagReadback,
                 errors = errors.Take(200).ToList()
             }))!;
-                payload["success"] = errors.Count == 0;
+                payload["success"] = errors.Count == 0 && deferredElementIds.Count == 0;
                 return payload;
             }, () => modified, NativeTransactionDisposition.Commit);
             OperatorNativeTransactionExecution.ReadCommitted(result, () =>
@@ -527,7 +542,7 @@ namespace RevitBridge.Logic.Handlers
                     if (doc.GetElement(ElementIdCompat.Create(id)) == null)
                         throw new InvalidOperationException($"Tag {id} was unavailable after native commit.");
                 return new Dictionary<string, object?>();
-            }, errors.Count == 0);
+            }, errors.Count == 0 && deferredElementIds.Count == 0);
             // Persistence is not a certification of every requested tag placement.
             result.Remove("verified"); result.Remove("ok");
             return Task.FromResult<object>(result);

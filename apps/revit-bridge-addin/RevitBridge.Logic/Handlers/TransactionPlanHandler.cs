@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -25,29 +26,20 @@ namespace RevitBridge.Logic.Handlers
             var impact = new TransactionActionRunner.Impact();
             IReadOnlyList<TransactionActionRunner.ActionOutcome> actionOutcomes = Array.Empty<TransactionActionRunner.ActionOutcome>();
 
-            using (var trans = new Transaction(doc, "Transaction Plan (Dry Run)"))
+            var result = NativeSingleTransaction.Execute(app, doc, "Transaction Plan (Dry Run)", _ =>
             {
-                trans.Start();
-                try
+                actionOutcomes = TransactionActionRunner.ExecuteActions(doc, p?.actions, impact, warnings);
+                return new Dictionary<string, object?>
                 {
-                    actionOutcomes = TransactionActionRunner.ExecuteActions(doc, p?.actions, impact, warnings);
-                }
-                catch (Exception ex)
-                {
-                    warnings.Add(ex.Message);
-                }
-                finally
-                {
-                    trans.RollBack();
-                }
-            }
-
-            return Task.FromResult<object>(new
-            {
-                impact = impact.ToWireObject(),
-                actions = new List<TransactionActionRunner.ActionOutcome>(actionOutcomes).ConvertAll(outcome => outcome.ToWireObject()),
-                warnings = warnings
-            });
+                    ["success"] = actionOutcomes.Count > 0 && actionOutcomes.All(outcome => outcome.Success),
+                    ["impact"] = impact.ToWireObject(),
+                    ["actions"] = actionOutcomes.Select(outcome => outcome.ToWireObject()).ToArray(),
+                    ["warnings"] = warnings
+                };
+            }, disposition: NativeTransactionDisposition.Rollback);
+            result["dryRun"] = true;
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Unexpected Commit");
+            return Task.FromResult<object>(result);
         }
     }
 }

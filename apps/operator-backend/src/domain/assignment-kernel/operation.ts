@@ -75,11 +75,15 @@ export interface OperationV2 {
   verification_operation_ids: readonly OperationIdV2[];
   verification_of_operation_id?: OperationIdV2;
   retry_of_operation_id?: OperationIdV2;
-  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered" | "committed_target_change";
+  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered" | "committed_target_change" | "family_session_capacity_released";
   retry_after_operation_id?: OperationIdV2;
   /** A new same-document save after a later committed edit; not a write retry. */
   checkpoint_of_operation_id?: OperationIdV2;
   checkpoint_after_operation_id?: OperationIdV2;
+  /** Reducer-derived native state and single-use intentional reassignment. */
+  native_template_state?: import("./template_reassignment.js").NativeTemplateStateV1;
+  reassignment_of_operation_id?: OperationIdV2;
+  reassignment_after_operation_id?: OperationIdV2;
   /** Reducer-derived ordering; never accepted from an admission proposal. */
   admitted_assignment_version?: number;
   settled_assignment_version?: number;

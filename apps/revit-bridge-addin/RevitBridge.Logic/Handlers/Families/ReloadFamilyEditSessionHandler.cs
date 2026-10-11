@@ -45,13 +45,19 @@ namespace RevitBridge.Logic.Handlers
 
             var proj = session.ProjectDoc;
             var famDoc = session.FamilyDoc;
+            if (!proj.Equals(uidoc.Document) || !proj.IsValidObject || !famDoc.IsValidObject)
+                throw new InvalidOperationException("The family session does not belong to the active project.");
 
             Family? loaded = null;
             var ok = false;
+            object? reloadReceipt = null;
             try
             {
                 loaded = famDoc.LoadFamily(proj, new AlwaysOverwriteLoadOptions(p.overwriteParameterValues));
-                ok = loaded != null;
+                ok = loaded != null && loaded.IsValidObject && proj.Equals(loaded.Document)
+                    && proj.GetElement(loaded.UniqueId) is Family observed && observed.Id == loaded.Id;
+                if (ok) reloadReceipt = OperatorFamilyReloadReceipt.Loaded(session.SessionId,
+                    ElementIdCompat.GetValue(loaded!.Id), loaded.UniqueId, true);
             }
             catch (Exception ex)
             {
@@ -61,7 +67,7 @@ namespace RevitBridge.Logic.Handlers
             try { proj.Regenerate(); } catch { }
             try { uidoc.RefreshActiveView(); } catch { }
 
-            if (p.closeSession)
+            if (p.closeSession && ok)
             {
                 try { FamilyEditSessionStore.TryClose(session.SessionId, out var _); } catch { }
             }
@@ -84,6 +90,7 @@ namespace RevitBridge.Logic.Handlers
             return Task.FromResult<object>(new
             {
                 ok = ok,
+                family_reload_receipt = reloadReceipt,
                 status = ok ? "Reloaded" : "Failed",
                 familyDocumentId = session.SessionId,
                 familyName = loaded?.Name ?? session.FamilyName,

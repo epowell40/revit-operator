@@ -67,16 +67,18 @@ export function modelCallReceiptsFromAssignmentKernelPublicationsV2(value: unkno
       const call = record(calls[callId]);
       if (call.call_id !== callId || !isTerminalProviderCallStateV2(call.state)) return [];
       const usage = record(call.usage);
+      const upstream = record(call.upstream_receipt);
       return [{
         schema: "revit-operator.model-call-receipt.v1",
-        call_id: callId,
+        call_id: upstream.call_id ?? callId,
+        canonical_call_id: callId,
         provider: String(call.provider ?? "unknown"),
-        route: "codex_agent",
-        requested_model: String(call.model ?? "unknown"),
-        model: String(call.model ?? "unknown"),
+        route: upstream.route ?? "codex_agent",
+        requested_model: String(upstream.requested_model ?? call.model ?? "unknown"),
+        model: String(upstream.model ?? call.model ?? "unknown"),
         reasoning_effort: call.reasoning_effort ?? null,
-        started_at_utc: String(call.admitted_at ?? ""),
-        duration_ms: nonNegativeIntegerOrNull(call.provider_duration_ms),
+        started_at_utc: String(upstream.started_at_utc ?? call.admitted_at ?? ""),
+        duration_ms: nonNegativeIntegerOrNull(upstream.duration_ms ?? call.provider_duration_ms),
         success: call.success === true,
         response_status: call.success === true ? "completed" : "failed",
         error_code: call.error_class ?? null,

@@ -1,9 +1,19 @@
 export const NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA: "revit-operator.native-artifact-receipt.v1";
+export function nativePrintSettingsRestorationVerifiedV1(value: unknown): boolean;
 export interface NativeArtifactReceiptV1 {
   readonly schema: typeof NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA;
   readonly method: "POST";
   readonly path: "/revit/export-pdf" | "/revit/print" | "/revit/export-elements-xlsx" | "/revit/save-as";
   readonly print_settings_restored?: boolean;
+  /** Native global readback, not proof of printed page content or a completed external UI job. */
+  readonly print_settings_restoration_readback?: readonly {
+    readonly field: string;
+    readonly before: unknown;
+    readonly after: unknown;
+    readonly read_succeeded: boolean;
+    readonly matches: boolean;
+    readonly error: string | null;
+  }[];
   readonly print_settings_untouched?: boolean;
   readonly not_started_reason?: "interactive_printer_destination" | "printer_capability_unavailable" | "printer_unavailable" | "no_printer_configured" | "save_preflight_failed";
   readonly save_io_not_started?: boolean;

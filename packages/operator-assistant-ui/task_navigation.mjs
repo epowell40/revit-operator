@@ -89,3 +89,43 @@ export function renderTaskList(container, tasks, selectedSessionId, onOpen) {
     container.append(section);
   }
 }
+
+/** Discovery only: reviewing saved work must never dispatch or resume it. */
+export function sessionStartPresentation(tasks, { loading = false, unavailable = false } = {}) {
+  const running = task => ['working','pausing','stopping_after_usage_limit'].includes(task.state);
+  const recent = [...tasks].sort((a,b) => Number(running(b)) - Number(running(a)) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+  return {
+    title: 'Start a new task',
+    description: 'This is a new chat. Your previous conversations are saved in Tasks.',
+    status: unavailable ? 'Saved task status is unavailable. Retry before relying on the status below.'
+      : loading ? 'Checking saved work…' : 'Reopening Operator does not resume saved tasks. Work already running can continue.',
+    rows: recent.slice(0, 3).map(task => ({ task,
+      status: unavailable || loading ? 'Status not confirmed' : taskStateLabel(task.state),
+      action: running(task) && !unavailable && !loading ? 'View running task' : 'Review saved task' }))
+  };
+}
+
+export function renderSessionStart(container, tasks, options, onOpen, onBrowse) {
+  const document = container.ownerDocument, model = sessionStartPresentation(tasks, options);
+  // Polling the same state must not replace a keyboard-focused button.
+  const signature = JSON.stringify(model);
+  if (container.dataset.presentation === signature) return;
+  container.dataset.presentation = signature;
+  container.replaceChildren();
+  const heading = document.createElement('h2'), description = document.createElement('p'), status = document.createElement('p');
+  heading.textContent = model.title; description.textContent = model.description;
+  status.textContent = model.status; status.className = 'sessionStartStatus'; status.setAttribute('role','status');
+  container.append(heading, description, status);
+  if (model.rows.length) {
+    const label = document.createElement('h3'); label.textContent = 'Saved work'; container.append(label);
+    for (const row of model.rows) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'sessionStartTask';
+      const title = document.createElement('strong'), detail = document.createElement('span'), action = document.createElement('span');
+      title.textContent = row.task.title; detail.textContent = row.status; action.textContent = row.action;
+      button.append(title, detail, action); button.addEventListener('click', () => onOpen(row.task)); container.append(button);
+    }
+  }
+  const browse = document.createElement('button'); browse.type = 'button';
+  browse.textContent = options.unavailable ? 'Retry saved tasks' : 'All tasks';
+  browse.addEventListener('click', onBrowse); container.append(browse);
+}

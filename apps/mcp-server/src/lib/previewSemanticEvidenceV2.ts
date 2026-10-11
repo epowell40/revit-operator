@@ -186,6 +186,109 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
+  if (path === "/revit/visibility" && object(input.requestBody).action === "set_view_range") {
+    const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
+    const current = object(object(result.current).view), proposed = object(object(result.proposed).view), after = object(object(result.after).view);
+    const beforeRange = object(current.viewRange), proposedRange = object(proposed.viewRange);
+    const stable = (value: unknown): string => JSON.stringify(value, (_, v) => v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
+    let requestedPlanes = 0;
+    const planesMatch = [["Top", "top"], ["Cut", "cut"], ["Bottom", "bottom"], ["Depth", "viewDepth"]].every(([prefix, plane]) => {
+      const before = object(beforeRange[plane!]), next = object(proposedRange[plane!]);
+      if (!Number.isSafeInteger(before.levelId) || !Number.isSafeInteger(next.levelId)
+        || typeof before.offsetFeet !== "number" || !Number.isFinite(before.offsetFeet)
+        || typeof next.offsetFeet !== "number" || !Number.isFinite(next.offsetFeet)) return false;
+      const id = request[`viewRange${prefix}LevelId`], name = request[`viewRange${prefix}LevelName`], offset = request[`viewRange${prefix}OffsetFeet`];
+      const hasId = id !== undefined && id !== null, hasName = typeof name === "string" && name.trim().length > 0, hasOffset = offset !== undefined && offset !== null;
+      if (hasId || hasName || hasOffset) requestedPlanes++;
+      if (hasId ? !Number.isSafeInteger(id) || id !== next.levelId
+        : hasName ? typeof next.levelName !== "string" || next.levelName.toLowerCase() !== name.trim().toLowerCase()
+        : next.levelId !== before.levelId) return false;
+      return hasOffset ? typeof offset === "number" && Number.isFinite(offset) && Math.abs(next.offsetFeet - offset) <= 1e-8 : next.offsetFeet === before.offsetFeet;
+    });
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview" && request.dryRun === true
+      && result.success === true && result.status === "Dry Run" && result.action === "set_view_range" && result.dryRun === true && result.previewExecuted === true
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["affected_element_ids", "created_element_ids", "modified_element_ids", "deleted_element_ids"].every(k => tx[k] === undefined || Array.isArray(tx[k]) && (tx[k] as unknown[]).length === 0)
+      && Number.isSafeInteger(current.id) && (current.id as number) > 0 && proposed.id === current.id
+      && (request.viewId === undefined || request.viewId === current.id)
+      && stable(current) === stable(after)
+      && stable({ ...current, viewRange: null }) === stable({ ...proposed, viewRange: null }) && planesMatch && requestedPlanes > 0;
+    return { recognized: true, admitted, facts: admitted ? [{ fact_id: "task.preview_valid", fact_class: "domain", value: true }] : [] };
+  }
+  if (path === "/revit/delete") {
+    const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
+    const ids = (value: unknown): value is number[] => Array.isArray(value)
+      && value.every(id => Number.isSafeInteger(id) && id > 0) && new Set(value).size === value.length;
+    const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every(id => b.includes(id));
+    const requested = request.ids, reported = result.requestedIds, impacted = result.impactedIds, dependent = result.dependentIds;
+    const details = Array.isArray(result.requestedDetails) ? result.requestedDetails.map(object) : [];
+    const detailIds = details.map(row => row.elementId);
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && (request.dryRun === undefined || request.dryRun === null || typeof request.dryRun === "boolean")
+      && (request.apply === undefined || request.apply === null || typeof request.apply === "boolean")
+      && (request.dryRun === true || request.apply === false)
+      && result.success === true && result.dryRun === true && result.status === "Dry Run"
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["added_element_ids", "modified_element_ids", "deleted_element_ids", "affected_element_ids"]
+        .every(key => Array.isArray(tx[key]) && (tx[key] as unknown[]).length === 0)
+      && ids(requested) && requested.length > 0 && ids(reported) && sameSet(requested, reported)
+      && result.requestedCount === requested.length
+      && ids(impacted) && result.impactedCount === impacted.length && requested.every(id => impacted.includes(id))
+      && ids(dependent) && sameSet(dependent, impacted.filter(id => !requested.includes(id)))
+      && ids(detailIds) && sameSet(detailIds, requested)
+      && details.every(row => row.exists === true && typeof row.uniqueId === "string" && row.uniqueId.trim().length > 0)
+      && new Set(details.map(row => row.uniqueId)).size === details.length
+      && (result.warnings === undefined || (Array.isArray(result.warnings) && result.warnings.length === 0))
+      && (result.error === undefined || result.error === null);
+    // Impact evidence describes a rolled-back proposal, never permission to delete.
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "task.preview_delete_requested_count", fact_class: "domain", value: (requested as number[]).length },
+      { fact_id: "task.preview_delete_impact_count", fact_class: "domain", value: (impacted as number[]).length }
+    ] : [] };
+  }
+  if (path === "/revit/transaction-plan") {
+    const request = object(input.requestBody), result = object(input.payload);
+    const tx = object(result.transaction), impact = object(result.impact);
+    const actions = Array.isArray(request.actions) ? request.actions.map(object) : [];
+    const outcomes = Array.isArray(result.actions) ? result.actions.map(object) : [];
+    const ids = (value: unknown): value is number[] => Array.isArray(value)
+      && value.every(id => Number.isSafeInteger(id) && id > 0) && new Set(value).size === value.length;
+    const requested: number[] = [];
+    const actionsValid = actions.length > 0 && actions.length <= 100 && actions.length === outcomes.length
+      && actions.every((action, index) => {
+        const row = outcomes[index]!;
+        if (action.kind !== "delete" || !ids(action.ids) || action.ids.length === 0) return false;
+        requested.push(...action.ids);
+        return row.index === index && row.kind === "delete" && row.success === true
+          && row.attemptedOperations === action.ids.length && row.succeededOperations === action.ids.length
+          && row.failedOperations === 0 && Array.isArray(row.errors) && row.errors.length === 0
+          && Array.isArray(row.producedElementIds) && row.producedElementIds.length === 0;
+      });
+    const identities = Array.isArray(impact.deleteRequested) ? impact.deleteRequested.map(object) : [];
+    const identityIds = identities.map(row => row.elementId);
+    const deleted = impact.deleted;
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && result.success === true && result.dryRun === true && result.status === "Dry Run"
+      && tx.status === "rolled_back" && tx.committed === false
+      && ["added_element_ids", "modified_element_ids", "deleted_element_ids", "affected_element_ids"]
+        .every(key => Array.isArray(tx[key]) && (tx[key] as unknown[]).length === 0)
+      && actionsValid && new Set(requested).size === requested.length
+      && ids(identityIds) && identityIds.length === requested.length
+      && requested.every(id => identityIds.includes(id))
+      && identities.every(row => typeof row.uniqueId === "string" && row.uniqueId.length > 0)
+      && ids(deleted) && requested.every(id => deleted.includes(id))
+      && ["added", "modified", "parameterDiffs", "addedInstances"].every(key => Array.isArray(impact[key]) && (impact[key] as unknown[]).length === 0)
+      && Array.isArray(result.warnings) && result.warnings.length === 0;
+    // Other action kinds require their own typed impact checks. A valid preview
+    // reports dependency deletions; it does not authorize applying that impact.
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "task.preview_delete_requested_count", fact_class: "domain", value: requested.length },
+      { fact_id: "task.preview_delete_impact_count", fact_class: "domain", value: (deleted as number[]).length }
+    ] : [] };
+  }
   if (path === "/revit/existing-conditions-mep-draft-workflow") {
     const request = object(input.requestBody), result = object(input.payload);
     const requested = Array.isArray(request.operations) ? request.operations.map(object) : [];

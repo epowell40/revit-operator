@@ -45,6 +45,22 @@ namespace RevitBridge.Common
         private readonly Action<string, object> write;
         private readonly Action apply;
         private readonly Dictionary<string, object> before;
+        public IReadOnlyList<SettingReadback> RestorationReadback { get; private set; } = Array.Empty<SettingReadback>();
+
+        public sealed class SettingReadback
+        {
+            public string field { get; }
+            public object before { get; }
+            public object? after { get; }
+            public bool read_succeeded { get; }
+            public bool matches { get; }
+            public string? error { get; }
+            internal SettingReadback(string field, object before, object? after, bool succeeded, string? error)
+            {
+                this.field = field; this.before = before; this.after = after;
+                read_succeeded = succeeded; matches = succeeded && Equals(before, after); this.error = error;
+            }
+        }
 
         public OperatorPrintSettingsGuard(IReadOnlyList<string> names, Func<string, object> read,
             Action<string, object> write, Action apply)
@@ -58,6 +74,7 @@ namespace RevitBridge.Common
 
         public bool Restore(out IReadOnlyList<string> errors)
         {
+            RestorationReadback = Array.Empty<SettingReadback>();
             var failures = new List<string>();
             var changed = false;
             foreach (var name in names)
@@ -74,11 +91,23 @@ namespace RevitBridge.Common
                 try { apply(); }
                 catch (Exception ex) { failures.Add("Apply: " + ex.GetType().Name + ": " + ex.Message); }
             }
+            var readback = new List<SettingReadback>();
             foreach (var name in names)
             {
-                try { if (!Equals(read(name), before[name])) failures.Add(name + ": global readback differs"); }
-                catch (Exception ex) { failures.Add(name + ": readback failed: " + ex.Message); }
+                try
+                {
+                    var actual = read(name);
+                    readback.Add(new SettingReadback(name, before[name], actual, true, null));
+                    if (!Equals(actual, before[name])) failures.Add(name + ": global readback differs");
+                }
+                catch (Exception ex)
+                {
+                    var error = ex.GetType().Name + ": " + ex.Message;
+                    readback.Add(new SettingReadback(name, before[name], null, false, error));
+                    failures.Add(name + ": readback failed: " + error);
+                }
             }
+            RestorationReadback = readback.AsReadOnly();
             errors = failures;
             return failures.Count == 0;
         }

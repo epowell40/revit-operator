@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 type Row = Record<string, unknown>;
 const row = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 export const createdViewIdsFromIdentitiesV2 = (identities: readonly string[]): readonly number[] =>
@@ -49,6 +50,43 @@ function completeInventory(value: unknown): Inventory | null {
   }
   if (annotationCount !== inventory.annotationCount) return null;
   return { id, name, viewType, signatures: signatures.sort(), annotationCount };
+}
+
+/** Bounded presentation of complete native inventories, never a task verdict. */
+export function viewOwnedDetailingSummaryV2(value: unknown): unknown | null {
+  const root = row(value);
+  if (root.schema !== "revit-operator.view-owned-detailing/v1" || root.scope !== "exact_owner_view"
+      || root.viewsComplete !== true || !Array.isArray(root.views) || !root.views.length
+      || root.views.length > 16 || !Array.isArray(root.requestedViewIds)
+      || root.requestedViewIds.length !== root.views.length) return null;
+  const rawViews = root.views;
+  const inventories = rawViews.map(completeInventory);
+  if (inventories.some(item => item === null)) return null;
+  const valid = inventories as Inventory[];
+  const ids = valid.map(item => item.id);
+  if (new Set(ids).size !== ids.length || new Set(root.requestedViewIds).size !== ids.length
+      || !ids.every(id => (root.requestedViewIds as unknown[]).includes(id))) return null;
+  const hash = (input: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(input)).digest("hex")}`;
+  return {
+    schema: "revit-operator.view-owned-detailing-agent-summary/v1",
+    sourceSchema: root.schema, scope: root.scope, requestedViewIds: root.requestedViewIds,
+    sourceViewsComplete: true,
+    views: valid.map((item, index) => ({
+      view: { id: item.id, name: item.name, viewType: item.viewType },
+      annotationCount: item.annotationCount, comparedItemCount: item.signatures.length,
+      semanticSignatureMultisetSha256: hash(item.signatures),
+      ownedInventorySha256: hash([...(row(rawViews[index]).items as Row[])].sort((a, b) => Number(a.elementId) - Number(b.elementId))),
+      sourceItemsComplete: true
+    })),
+    comparisons: valid.flatMap((left, index) => valid.slice(index + 1).map(right => ({
+      viewIds: [left.id, right.id],
+      semanticSignaturesEqual: left.signatures.length > 0 && left.viewType === right.viewType
+        && left.annotationCount === right.annotationCount && left.signatures.length === right.signatures.length
+        && left.signatures.every((signature, i) => signature === right.signatures[i]),
+      comparedItemCounts: [left.signatures.length, right.signatures.length]
+    }))),
+    interpretation: "Complete native semantic-signature multiset comparison, preserving multiplicity and excluding only validated infrastructure. Compare ownedInventorySha256 only across reads of the same view. This does not certify creation provenance, collateral, engineering suitability, or whole-task completion. Full native evidence remains retained under the enclosing evidence identity."
+  };
 }
 
 /**

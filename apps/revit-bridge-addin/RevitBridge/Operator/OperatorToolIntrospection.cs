@@ -1560,6 +1560,7 @@ namespace RevitBridge.Operator
                     notes.Add("set_crop_box accepts annotationCropActive and annotationCropMarginFeet; use them for sheet views so the viewport box does not include distant stray annotations.");
                     notes.Add("set_view_range changes only supplied top/cut/bottom/view-depth level or offset fields; dryRun:true executes the native setter inside a rolled-back transaction and returns current plus proposed plane readback.");
                     notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
+                    notes.Add("Use get with includeCategoryState:true and categoryName before and after hide/show category work. categorySnapshot reads all document categories/subcategories (maximum4096), reports exact target hidden/graphic attributes, and hashes all other direct category flags/graphic overrides in stable identity order. Require complete:true, equal categoryIdsSha256/count and otherCategoriesSha256, then compare target attributes; unsupported/failed reads remain unverified. This proves direct category state only, not effective element visibility or view-filter results.");
                 }
 
                 if (p == "/revit/mep-workflows")

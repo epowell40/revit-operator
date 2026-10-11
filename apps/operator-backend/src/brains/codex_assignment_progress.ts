@@ -1,4 +1,5 @@
 import { advisoryFollowupsContextV2, advisoryFollowupsHandoffV2, projectAdvisoryFollowupsV2 } from "../assignments/advisory_followups_projection.js";
+import { loadPriorAssignmentContext } from "../assignments/prior_assignment_context.js";
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
 import type { ModelCallReceipt } from "../contracts.js";
@@ -100,7 +101,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion.",
+        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer.",
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"
@@ -113,7 +114,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
       : progressPrompt(progression.snapshot, progression.decision);
   return {
     snapshot: progression.snapshot,
-    prompt: prompt ? [prompt, executionControlContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
+    prompt: prompt ? [prompt, executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
       : finalCodexAssignmentMessageV2(progression.snapshot, progressMessage(progression.decision))

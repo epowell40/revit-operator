@@ -92,6 +92,17 @@ test("caller evidence route cannot forge trust and stores admitted bytes as untr
     const body = await admitted.json() as any;
     assert.equal(body.ref.trust_level, "untrusted_caller");
     assert.equal(body.projection.trust_level, "untrusted_caller");
+    // A client may lose the successful store response and resend the same
+    // immutable bytes. It must get the original reference, not new evidence.
+    const replay = await fetch(endpoint, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { session_id: "session-http" }, source: "caller", raw_json: { count: 1 } })
+    });
+    assert.equal(replay.status, 201);
+    const repeated = await replay.json() as any;
+    assert.deepEqual(repeated.ref, body.ref);
+    assert.equal(repeated.stored_unique_bytes, 0);
+    assert.equal(repeated.duplicate_bytes_avoided, body.ref.byte_count);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;

@@ -41,6 +41,7 @@ namespace RevitBridge.Logic.Handlers
                     "Set allowNonTitleblock=true to explicitly open another loaded family.");
 
             Document? famDoc = null;
+            if (FamilyEditSessionStore.TryGetCapacityRefusal(out var refusal)) return Task.FromResult(refusal);
             try
             {
                 famDoc = doc.EditFamily(fam);
@@ -55,6 +56,7 @@ namespace RevitBridge.Logic.Handlers
             return Task.FromResult<object>(new
             {
                 ok = true,
+                family_session_receipt = FamilyEditSessionStore.OpenReceipt(session, "instance", p.elementId.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 familyDocumentId = session.SessionId,
                 familyName = session.FamilyName,
                 familyId = session.FamilyId,

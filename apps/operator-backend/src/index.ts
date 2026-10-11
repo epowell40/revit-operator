@@ -1,3 +1,5 @@
+import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
+import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from "./desktop_response_store.js";
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
 import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
@@ -76,8 +78,8 @@ import { requiresMemoryAuthentication } from "./memory/requirements_route_policy
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import {
   getDesktopComputerConfig,
-  getDesktopComputerProviderErrorReceipt,
-  relayDesktopComputerResponse
+  desktopComputerErrorResponse,
+  relayBoundDesktopComputerResponse
 } from "./desktop_computer.js";
 import {
   authenticateRequest,
@@ -173,6 +175,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
+import { handleSidecarExecutionFailureHttp } from "./assignments/sidecar_execution_failure_http.js";
 import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
@@ -713,6 +716,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/voice/speak" ||
     pathname === "/desktop/computer/config" ||
     pathname === "/desktop/computer/respond" ||
+    pathname === "/desktop/computer/result" ||
     pathname.startsWith("/evidence/") ||
     pathname === "/attachments/upload" ||
     pathname === "/api/agent-goal" ||
@@ -1286,6 +1290,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
+      if (req.method === "POST" && url.pathname === "/api/agent-goal/sidecar-execution-failure") {
+        return handleSidecarExecutionFailureHttp(req, res, {
+          normalizeSessionId: value => trimText(value, 160),
+          sessionAllowed: sessionId => sessionAccessAllowed(res, sessionId, auth.principal)
+        });
+      }
       const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete|sidecar-settle)$/);
       if (req.method === "POST" && goalAction) {
         const body = await readJson(req, 1_000_000).catch(() => ({}));
@@ -1867,23 +1877,43 @@ const server = http.createServer(async (req, res) => {
 
     if (await handleEvidenceHttpRoute(req, res, url)) return;
 
+    if (req.method === "POST" && url.pathname === "/desktop/computer/result") {
+      try {
+        const body = await readJson(req, 16_384);
+        const bound = requireProviderAssignmentBinding(body, "desktop_computer_result");
+        if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
+        const record = readDesktopResponse({ session_id: bound.sessionId, assignment_id: bound.assignmentId,
+          run_id: bound.runId, generation: bound.generation, kernelVersion: bound.kernelVersion }, (body as any).message_id);
+        res.setHeader("cache-control", "no-store");
+        // Exact authenticated binding is still required. This projection never
+        // returns output/tool calls, even when a paused run cannot continue.
+        if ((body as any).telemetry_only === true) return writeJson(res, 200, desktopResponseTelemetry(record));
+        if (record?.status === "complete" && bound.kernelVersion === 2) {
+          const state = assignmentKernelV2ForBinding(record.binding)?.snapshot;
+          if (!desktopResponseContinuationAllowed(state))
+            throw new Error("desktop_response_continuation_not_admitted");
+        }
+        res.setHeader("cache-control", "no-store");
+        return writeJson(res, 200, record || { status: "missing" });
+      } catch (err) { return writeJson(res, 409, desktopComputerErrorResponse(err)); }
+    }
+
     if (req.method === "POST" && url.pathname === "/desktop/computer/respond") {
       try {
         const body = await readJson(req, 30_000_000);
         const bound = requireProviderAssignmentBinding(body, "desktop_computer");
         if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
-        const response = await relayDesktopComputerResponse(body);
+        const binding = {
+          session_id: bound.sessionId, assignment_id: bound.assignmentId, run_id: bound.runId,
+          generation: bound.generation, kernelVersion: bound.kernelVersion
+        };
+        const response = (body as any).message_id === undefined
+          ? await relayBoundDesktopComputerResponse(body, binding)
+          : await retainDesktopResponse(binding, (body as any).message_id, body,
+              () => relayBoundDesktopComputerResponse(body, binding), desktopComputerErrorResponse);
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
-        const modelCallReceipt = getDesktopComputerProviderErrorReceipt(err);
-        if (modelCallReceipt) {
-          return writeJson(res, 500, {
-            error: "Desktop computer provider request failed.",
-            model_call_receipts: [modelCallReceipt]
-          });
-        }
-        const message = err instanceof Error ? err.message : "Unknown OpenAI error";
-        return writeJson(res, 500, { error: message });
+        return writeJson(res, 500, desktopComputerErrorResponse(err));
       }
     }
 

@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
+using RevitBridge.Common;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -32,6 +34,10 @@ namespace RevitBridge.Handlers
             public bool? dryRun { get; set; }
         }
 
+        private static Dictionary<string, object?> Payload(object value)
+            => JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(value))
+               ?? throw new InvalidOperationException("Missing placement result.");
+
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData)
@@ -52,6 +58,7 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(new
                 {
                     status = "Failed",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     message = "Sheet not found. Provide sheetId, sheetNumber, or sheetQuery."
                 });
             }
@@ -62,6 +69,7 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(new
                 {
                     status = "Failed",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
                     message = "View not found. Provide viewId, viewName, or viewQuery."
                 });
             }
@@ -93,6 +101,8 @@ namespace RevitBridge.Handlers
                     return Task.FromResult<object>(new
                     {
                         status = "Dry Run",
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                        previewExecuted = false,
                         dryRun = true,
                         placementType = "ScheduleSheetInstance",
                         canPlace,
@@ -119,6 +129,8 @@ namespace RevitBridge.Handlers
                     return Task.FromResult<object>(new
                     {
                         status = "Dry Run",
+                        transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                        previewExecuted = false,
                         dryRun = true,
                         placementType = "PanelScheduleSheetInstance",
                         canPlace = canCreate || canMove,
@@ -144,6 +156,8 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(new
                 {
                     status = "Dry Run",
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(),
+                    previewExecuted = false,
                     dryRun = true,
                     placementType = "Viewport",
                     canPlace = canPlaceViewport,
@@ -167,11 +181,14 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            // Preserve the existing AlreadyPlaced rollback outcome. The native owner
+            // supplies observed commit/rollback state and the full change inventory.
+            var alreadyPlaced = !moveIfAlreadyPlaced && (existingViewport != null || existingSchedule != null
+                || existingPanelSchedule != null || (isPanelSchedule && SheetPlacementHelper.FindPanelScheduleInstances(doc, viewId).Any()));
             try
             {
-                using (Transaction trans = new Transaction(doc, "Place View on Sheet"))
+                var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Place View on Sheet", created =>
                 {
-                    trans.Start();
 
                     if (isRegularSchedule)
                     {
@@ -185,8 +202,7 @@ namespace RevitBridge.Handlers
                         {
                             if (!moveIfAlreadyPlaced)
                             {
-                                trans.RollBack();
-                                return Task.FromResult<object>(new
+                                return Payload(new
                                 {
                                     status = "AlreadyPlaced",
                                     placementType = "ScheduleSheetInstance",
@@ -196,8 +212,7 @@ namespace RevitBridge.Handlers
                             }
 
                             existingSchedule.Point = placement.Point;
-                            trans.Commit();
-                            return Task.FromResult<object>(new
+                            return Payload(new
                             {
                                 status = "Moved",
                                 action = "MoveExisting",
@@ -221,13 +236,12 @@ namespace RevitBridge.Handlers
 
                         if (!SheetPlacementHelper.CanPlaceScheduleOnSheet(doc, sheetId, viewId))
                         {
-                            trans.RollBack();
-                            return Task.FromResult<object>(new { status = "Failed", placementType = "ScheduleSheetInstance", message = "Cannot place schedule on sheet." });
+                            throw new InvalidOperationException("Cannot place schedule on sheet.");
                         }
 
                         var ssi = ScheduleSheetInstance.Create(doc, sheetId, viewId, placement.Point);
-                        trans.Commit();
-                        return Task.FromResult<object>(new
+                        created.Add(ElementIdCompat.GetValue(ssi.Id));
+                        return Payload(new
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(ssi.Id),
                             status = "Placed",
@@ -253,8 +267,7 @@ namespace RevitBridge.Handlers
                         {
                             if (!moveIfAlreadyPlaced)
                             {
-                                trans.RollBack();
-                                return Task.FromResult<object>(new
+                                return Payload(new
                                 {
                                     status = "AlreadyPlaced",
                                     placementType = "PanelScheduleSheetInstance",
@@ -264,8 +277,7 @@ namespace RevitBridge.Handlers
                             }
 
                             existingPanelSchedule.Origin = placement.Point;
-                            trans.Commit();
-                            return Task.FromResult<object>(new
+                            return Payload(new
                             {
                                 status = "Moved",
                                 action = "MoveExisting",
@@ -283,8 +295,7 @@ namespace RevitBridge.Handlers
                         {
                             if (!moveIfAlreadyPlaced)
                             {
-                                trans.RollBack();
-                                return Task.FromResult<object>(new
+                                return Payload(new
                                 {
                                     status = "AlreadyPlaced",
                                     placementType = "PanelScheduleSheetInstance",
@@ -300,9 +311,9 @@ namespace RevitBridge.Handlers
                         }
 
                         var psi = PanelScheduleSheetInstance.Create(doc, viewId, sheet);
+                        created.Add(ElementIdCompat.GetValue(psi.Id));
                         psi.Origin = placement.Point;
-                        trans.Commit();
-                        return Task.FromResult<object>(new
+                        return Payload(new
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(psi.Id),
                             status = "Placed",
@@ -322,8 +333,7 @@ namespace RevitBridge.Handlers
                     {
                         if (!moveIfAlreadyPlaced)
                         {
-                            trans.RollBack();
-                            return Task.FromResult<object>(new
+                            return Payload(new
                             {
                                 status = "AlreadyPlaced",
                                 placementType = "Viewport",
@@ -335,8 +345,7 @@ namespace RevitBridge.Handlers
                         viewport = existingViewport;
                         if (!SheetPlacementHelper.TrySetViewportCenter(viewport, x, y, out var moveReason))
                         {
-                            trans.RollBack();
-                            return Task.FromResult<object>(new { status = "Failed", placementType = "Viewport", message = moveReason ?? "Unable to move viewport." });
+                            throw new InvalidOperationException(moveReason ?? "Unable to move viewport.");
                         }
                         action = "MoveExisting";
                     }
@@ -344,11 +353,11 @@ namespace RevitBridge.Handlers
                     {
                         if (!Viewport.CanAddViewToSheet(doc, sheetId, viewId))
                         {
-                            trans.RollBack();
-                            return Task.FromResult<object>(new { status = "Failed", placementType = "Viewport", message = "Cannot place view on sheet (already placed or invalid)." });
+                            throw new InvalidOperationException("Cannot place view on sheet (already placed or invalid).");
                         }
 
                         viewport = Viewport.Create(doc, sheetId, viewId, new XYZ(x, y, 0));
+                        created.Add(ElementIdCompat.GetValue(viewport.Id));
                         action = "Create";
                     }
 
@@ -377,8 +386,7 @@ namespace RevitBridge.Handlers
                         lockApplied = SheetPlacementHelper.TrySetViewportLock(viewport, p.lockViewport.Value, out lockMessage);
                     }
 
-                    trans.Commit();
-                    return Task.FromResult<object>(new
+                    return Payload(new
                     {
                         id = RevitBridge.Common.ElementIdCompat.GetValue(viewport.Id),
                         status = action == "Create" ? "Placed" : "Moved",
@@ -402,7 +410,10 @@ namespace RevitBridge.Handlers
                             ? new { requested = p.lockViewport.Value, applied = lockApplied, message = lockMessage, current = viewport.Pinned }
                             : null
                     });
-                }
+                }, disposition: alreadyPlaced ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit);
+                var presentation = result.TryGetValue("status", out var value) ? value?.ToString() ?? "Placed" : "Placed";
+                result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, presentation, "AlreadyPlaced");
+                return Task.FromResult<object>(result);
             }
             catch (Exception ex)
             {

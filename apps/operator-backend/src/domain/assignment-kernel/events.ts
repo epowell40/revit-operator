@@ -51,6 +51,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
       criterion_ids?: readonly CriterionIdV2[];
       expected_information?: readonly string[];
       usage?: ProviderUsageV2;
+  upstream_receipt?: ProviderCallV2["upstream_receipt"];
       success?: boolean;
       error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
     }

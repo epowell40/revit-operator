@@ -336,11 +336,13 @@ namespace RevitBridge.Operator
         {
             private readonly UpdaterId _updaterId;
 
-            public NativeMutationScopeUpdater(AddInId addInId)
+            public NativeMutationScopeUpdater(AddInId addInId, HashSet<long> preexistingIds)
             {
                 _updaterId = new UpdaterId(addInId, Guid.NewGuid());
+                PreexistingIds = preexistingIds;
             }
 
+            public HashSet<long> PreexistingIds { get; }
             public HashSet<long> AddedIds { get; } = new HashSet<long>();
             public HashSet<long> ModifiedIds { get; } = new HashSet<long>();
             public HashSet<long> DeletedIds { get; } = new HashSet<long>();
@@ -422,7 +424,8 @@ namespace RevitBridge.Operator
                         _allowedExistingElementIds,
                         _allowCreate,
                         _maxAffectedElements,
-                        allowUnexpectedExistingForRollback: _transactionMode == "rollback");
+                        allowUnexpectedExistingForRollback: _transactionMode == "rollback",
+                        preexistingElementIds: _updater.PreexistingIds);
                 }
 
                 if (_transactionMode == "rollback" || !ScopeDecision.Allowed)
@@ -907,9 +910,9 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException($"native-api-mutation-ops transaction checkpoint did not execute. Transaction.Commit returned {transactionStatus}; mutation safety could not be verified.");
 
                 var scopeDecision = mutationScopePreprocessor.ScopeDecision;
-                addedIds.UnionWith(mutationScopeUpdater!.AddedIds);
-                modifiedIds.UnionWith(mutationScopeUpdater.ModifiedIds);
-                deletedIds.UnionWith(mutationScopeUpdater.DeletedIds);
+                addedIds.UnionWith(scopeDecision.AddedElementIds);
+                modifiedIds.UnionWith(scopeDecision.ModifiedElementIds);
+                deletedIds.UnionWith(scopeDecision.DeletedElementIds);
                 if (!scopeDecision.Allowed)
                 {
                     if (transactionStatus != TransactionStatus.RolledBack)
@@ -942,6 +945,8 @@ namespace RevitBridge.Operator
                         scope_observation = "dynamic_model_updater_then_failure_preprocessor_at_transaction_boundary",
                         scope_enforcement = transactionMode == "rollback" ? "failure_processing_forced_rollback" : "failure_processing_allowed_commit",
                         scope_observer_executions = mutationScopeUpdater.ExecutionCount,
+                        scope_baseline = "complete_native_document_ids_before_transaction",
+                        scope_baseline_element_count = mutationScopeUpdater.PreexistingIds.Count,
                         max_affected_elements = maxAffectedElements,
                         allow_create = allowCreate,
                         allowed_existing_element_ids = allowedExistingElementIds.OrderBy(x => x).ToArray(),
@@ -1007,7 +1012,20 @@ namespace RevitBridge.Operator
 
         private static NativeMutationScopeUpdater RegisterMutationScopeUpdater(UIApplication app, Document document)
         {
-            var updater = new NativeMutationScopeUpdater(app.ActiveAddInId);
+            // Complete, host-owned baseline, including element types. Never infer
+            // absence from a bounded query or accept a caller-supplied baseline.
+            HashSet<long> preexistingIds;
+            using (var collector = new FilteredElementCollector(document))
+            {
+                var all = new LogicalOrFilter(new ElementIsElementTypeFilter(false), new ElementIsElementTypeFilter(true));
+                var ids = collector.WherePasses(all).ToElementIds();
+                if (ids.Count > 250000)
+                    throw new InvalidOperationException("Native mutation scope baseline exceeds 250000 elements; no transaction was started.");
+                preexistingIds = new HashSet<long>(ids.Select(ElementIdCompat.GetValue).Where(id => id > 0));
+                if (preexistingIds.Count != ids.Count)
+                    throw new InvalidOperationException("Native mutation scope baseline is incomplete; no transaction was started.");
+            }
+            var updater = new NativeMutationScopeUpdater(app.ActiveAddInId, preexistingIds);
             UpdaterRegistry.RegisterUpdater(updater, document);
             try
             {
@@ -1421,15 +1439,7 @@ namespace RevitBridge.Operator
             if (value is View view) return new { id = ElementIdCompat.GetValue(view.Id), name = Safe(() => view.Name), view_type = view.ViewType.ToString() };
             if (value is IEnumerable seq)
             {
-                var outItems = new List<object?>();
-                var i = 0;
-                foreach (var item in seq)
-                {
-                    outItems.Add(ReturnShape(item, depth + 1));
-                    i++;
-                    if (i >= 50) break;
-                }
-                return new { count = i, items = outItems };
+                return RevitBridge.Common.BoundedNativeSequence.Project(seq, item => ReturnShape(item, depth + 1));
             }
             return new { type = value.GetType().FullName ?? value.GetType().Name, text = Trim(value.ToString(), 600) };
         }

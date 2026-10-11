@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { requestedWorkbookExport, requestedWorkbookAssessment } from "../src/artifact_export_intent.js";
+import { requestedWorkbookExport, requestedWorkbookAssessment, requestedArtifactExportPaths } from "../src/artifact_export_intent.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall, buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
@@ -100,4 +100,61 @@ test("requested workbook analysis is distinct from a plain export, preview, or p
   for (const request of ["Export an Excel workbook of rooms.", "Preview the Excel workbook and flag missing values.",
     "Review the room values without writing any files.", "Prepare an Excel workbook. Do not save any files."])
     assert.equal(requestedWorkbookAssessment(request), false, request);
+});
+
+test("artifact preflight checks do not turn an affirmative file request into preview-only work", () => {
+  const requests = [
+    "Resolve one bounded mechanical sub-discipline sheet set, export it as one combined color PDF named TEST-MECHANICAL-ISSUE.pdf in the benchmark output folder, then verify the file exists, is nonempty, has the same page count and ordering as the preflight sheet list, and record a content hash.",
+    "Export the selected sheets to a combined PDF. Compare its pages with the preflight sheet list. Do not change the Revit model.",
+    "For the current sheets, create a PDF and check the page order against the preflight list. Do not change Revit.",
+    "Preflight the sheet list, then export a PDF. Do not change the model."
+  ];
+  for (const text of requests) {
+    assert.deepEqual(requestedArtifactExportPaths(text), ["/revit/export-pdf"], text);
+    assert.equal(classifyAutoGoalRequest(text).requestedEffect, "apply", text);
+    const owner = {}, lease = beginTeammateLoopOwner(owner, { user_text: text, context } as any);
+    try {
+      assert.equal(guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+        method: "POST", path: "/revit/export-pdf", body: { viewIds: [42], fileName: "sheets.pdf" }
+      } }).allowed, true, text);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+  assert.equal(requestedWorkbookExport("Export a workbook and compare its rows against the preflight list."), true);
+  for (const text of [
+    "Preview the PDF export.", "Export a PDF as a preview only.", "Preflight the PDF export and report the plan.",
+    "Export a PDF after I approve the list.", "If I confirm, export a PDF.", "Export a PDF later.",
+    "Create a PDF without writing any files.", "Create a PDF. Do not save the PDF.",
+    "Can you explain how to export a PDF?", "Should we export a PDF?", "Do not export a PDF.",
+    "Read-only: export a PDF plan.", "Preview the sheet set, then export a PDF only if I approve.",
+    "Review only: export a PDF.", "Export a PDF. Do not commit.", "Export a PDF. Don't write."
+  ]) assert.deepEqual(requestedArtifactExportPaths(text), [], text);
+});
+
+test("PDF-only authority reaches canonical admission without allowing a workbook or model mutation", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pdf-admission-"));
+  const previous = [process.env.OPERATOR_WORKSPACE_ROOT, process.env.OPERATOR_ASSIGNMENT_KERNEL_V2];
+  process.env.OPERATOR_WORKSPACE_ROOT = root; process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1"; __testOnlyResetGoalListCache();
+  const text = "Export the sheets as a combined PDF. Verify against the preflight sheet list. Do not change the model.";
+  try {
+    const prepared = prepareAssignmentTurn({ sessionId: "pdf-session", messageId: "message", userText: text,
+      toolResults: [], source: "chat", createdBy: "principal", requestContext: context })!;
+    const snapshot = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal(snapshot.spec.requested_effect, "apply");
+    assert.deepEqual(buildTeammateTurnContract({ user_text: text, context } as any).file_export_paths, ["/revit/export-pdf"]);
+    for (const deniedPath of ["/revit/set-parameters", "/revit/delete", "/revit/export-elements-xlsx"]) {
+      assert.throws(() => openAssignmentKernelOperationV2({ snapshot, controller_request_id: deniedPath, provider_turn_id: "turn",
+        capability_id: "revit_call_tool", classified_effect: "apply", arguments: { ...exportArgs, path: deniedPath } }),
+      /user_no_model_write_limit|explicit_workbook_export_authority_required/);
+    }
+    assert(openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf", provider_turn_id: "turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", arguments: {
+        method: "POST", path: "/revit/export-pdf", body: { viewIds: [42], fileName: "sheets.pdf" }
+      } }));
+  } finally {
+    __closeForTests(); __testOnlyResetGoalListCache();
+    for (const [i, key] of ["OPERATOR_WORKSPACE_ROOT", "OPERATOR_ASSIGNMENT_KERNEL_V2"].entries()) {
+      if (previous[i] === undefined) delete process.env[key]; else process.env[key] = previous[i];
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

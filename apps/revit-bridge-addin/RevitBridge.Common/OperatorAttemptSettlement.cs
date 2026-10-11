@@ -182,6 +182,14 @@ namespace RevitBridge.Common
 
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(result));
             var root = document.RootElement;
+            if (OperatorFamilyCloseReceipt.TrySettlement(root, effect, method, path, out var familyCloseSettlement))
+                return familyCloseSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "family_close_receipt_unverified", "native_receipt");
+            if (OperatorFamilySaveReceipt.TrySettlement(root, effect, method, path, out var familySaveSettlement))
+                return familySaveSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_save_unverified", "native_host");
+            if (OperatorFamilyReloadReceipt.TrySettlement(root, effect, method, path, out var familyReloadSettlement))
+                return familyReloadSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_reload_unverified", "native_host");
+            if (OperatorFamilySessionReceipt.TrySettlement(root, effect, method, path, out var familySessionSettlement))
+                return familySessionSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_session_unverified", "native_host");
             if (OperatorNativeArtifactReceipt.TrySettlement(root, effect, method, path, out var artifactSettlement))
                 return artifactSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_artifact_export_unverified", "native_host");
             if (TryCertifiedReceipt(root, out var phase, out var receiptRef))

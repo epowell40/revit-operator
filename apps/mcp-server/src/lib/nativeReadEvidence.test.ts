@@ -79,6 +79,24 @@ test("view-owned detailing requires exact independent source and copy inventorie
     totalOwnedCount:2,truncated:true,itemsComplete:false}],viewsComplete:true}),[]);
 });
 
+test("complete detailing inventories exclude only native non-drafting infrastructure from signature requirements",()=>{
+  const route="/revit/view-owned-detailing",request={viewIds:[11]};
+  const item={elementId:21,ownerViewId:11,uniqueId:"uid-21",className:"SketchPlane",isAnnotation:false,
+    comparisonExcluded:true,semanticSignatureComplete:false,semanticSignature:null};
+  const payload={schema:"revit-operator.view-owned-detailing/v1",scope:"exact_owner_view",requestedViewIds:[11],viewsComplete:true,
+    views:[{view:{id:11,uniqueId:"view-11",name:"Copy",viewType:"FloorPlan"},limit:1000,
+      totalOwnedCount:1,annotationCount:0,returnedCount:1,truncated:false,unreadableCount:0,
+      unclassifiedCount:0,incompleteTextCount:0,incompleteSignatureCount:0,itemsComplete:true,items:[item]}]};
+  const withItem=(replacement:object)=>({...payload,views:[{...payload.views[0],items:[replacement]}]});
+  for(const infrastructure of [item,{...item,className:"SunAndShadowSettings"},
+    {...item,className:"Element",name:"ExtentElem"},{...item,className:"Element",builtInCategory:"OST_SunStudy"}])
+    assert.equal(complete(route,request,withItem(infrastructure)),1);
+  for(const invalid of [{...item,className:"DetailCurve"},{...item,isAnnotation:true},
+    {...item,comparisonExcluded:false},{...item,semanticSignatureComplete:true},
+    {...item,semanticSignature:`sha256:${"a".repeat(64)}`}])
+    assert.deepEqual(nativeReadEvidence(route,request,withItem(invalid)),[]);
+});
+
 test("view, room and schedule collections retain their actual native truncation limits",()=>{
   assert.equal(complete("/revit/views",{},[]),0);
   assert.equal(complete("/revit/rooms",{action:"list"},[{id:7}]),1);

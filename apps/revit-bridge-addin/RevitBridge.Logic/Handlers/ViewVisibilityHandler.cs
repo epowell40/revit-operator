@@ -67,6 +67,7 @@ namespace RevitBridge.Logic.Handlers
             public double? annotationCropMarginFeet { get; set; }
             public bool? annotationCropActive { get; set; }
             public bool? includeLinkedModels { get; set; }
+            public bool? includeCategoryState { get; set; }
             public long? linkedModelInstanceId { get; set; }
             public long? linkedModelId { get; set; }
             public long? revitLinkInstanceId { get; set; }
@@ -103,15 +104,24 @@ namespace RevitBridge.Logic.Handlers
             if (dryRun && action == "set_view_range")
             {
                 var current = BuildViewState(doc, view, "Ok", "get", dryRun: false, p);
-                object proposed;
-                using (var tx = new Transaction(doc, "Preview View Range"))
-                {
-                    tx.Start();
-                    ApplyAction(doc, view, action, p);
-                    proposed = BuildViewState(doc, view, "Preview", action, dryRun: true, p);
-                    tx.RollBack();
-                }
-                return Task.FromResult<object>(new { status = "Dry Run", action, dryRun = true, current, proposed });
+                var preview = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(
+                    app, doc, "Preview View Range", _ =>
+                    {
+                        ApplyAction(doc, view, action, p);
+                        doc.Regenerate();
+                        return new Dictionary<string, object?>
+                        {
+                            ["current"] = current,
+                            ["proposed"] = BuildViewState(doc, view, "Preview", action, dryRun: true, p)
+                        };
+                    }, disposition: NativeTransactionDisposition.Rollback);
+                preview["status"] = preview["success"] is true ? "Dry Run" : "Failed";
+                preview["action"] = action;
+                preview["dryRun"] = true;
+                preview["previewExecuted"] = preview["success"] is true;
+                if (preview["success"] is true)
+                    preview["after"] = BuildViewState(doc, view, "Ok", "get", dryRun: false, p);
+                return Task.FromResult<object>(preview);
             }
             if (dryRun)
             {
@@ -120,6 +130,8 @@ namespace RevitBridge.Logic.Handlers
                     status = "Dry Run",
                     action,
                     dryRun = true,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
+                    previewExecuted = false,
                     input = new
                     {
                         viewId = p.viewId ?? RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
@@ -1344,6 +1356,7 @@ namespace RevitBridge.Logic.Handlers
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(id),
                             name = f?.Name,
+                            definition = RevitBridge.Common.ViewFilterReadback.Read(f),
                             visible,
                             @override = BuildFilterOverrideState(doc, view, id)
                         };
@@ -1355,6 +1368,7 @@ namespace RevitBridge.Logic.Handlers
                 // Some view types do not support filters.
             }
             var categoryOverride = BuildCategoryOverrideState(doc, view, p?.categoryName);
+            var associatedLevel = view.GenLevel;
 
             return new Dictionary<string, object?>
             {
@@ -1365,6 +1379,11 @@ namespace RevitBridge.Logic.Handlers
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                     name = view.Name,
+                    isTemplate = view.IsTemplate,
+                    viewType = view.ViewType.ToString(),
+                    levelId = associatedLevel == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(associatedLevel.Id),
+                    levelName = associatedLevel?.Name,
+                    levelElevationFeet = associatedLevel == null ? (double?)null : associatedLevel.Elevation,
                     scale = view.Scale,
                     detailLevel,
                     discipline,
@@ -1378,6 +1397,7 @@ namespace RevitBridge.Logic.Handlers
                     temporaryModes,
                     viewFilters,
                     categoryOverride,
+                    categorySnapshot = p?.includeCategoryState == true ? RevitBridge.Common.ViewCategoryReadback.Read(doc, view, ResolveCategory(doc, p.categoryName), !string.IsNullOrWhiteSpace(p.categoryName)) : null,
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }

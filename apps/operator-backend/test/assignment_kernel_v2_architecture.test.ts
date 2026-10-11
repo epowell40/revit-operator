@@ -171,7 +171,15 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "family_capacity_retry.ts") {
+        assert.match(source, /import \{ nativeFamilySessionRequestV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+        assert.doesNotMatch(source, /\/revit\//i);
+      }
+      if (path.basename(file) === "template_reassignment.ts") {
+        assert.match(source, /import \{ nativeTemplateRequestV1, nativeTemplateResultStateV1, nativeTemplateParameterChangeV1 as parameterChange \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+        assert.doesNotMatch(source, /\/revit\//i);
+      }
       if (path.basename(file) === "reducer.ts") {
         assert.match(source, /import \{ nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
       }
@@ -281,7 +289,7 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
 test("every V2 provider exit records canonical failure or returns already-earned terminal truth", () => {
   const sourceRoot = path.join(process.cwd(), "src");
   const router = readFileSync(path.join(sourceRoot, "brain.ts"), "utf8");
-  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8");
+  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8").replace(/\r\n/g, "\n");
   const boundary = readFileSync(path.join(sourceRoot, "assignments", "chat_execution_failure_boundary.ts"), "utf8");
   const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
   const failure = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution_failure.ts"), "utf8");

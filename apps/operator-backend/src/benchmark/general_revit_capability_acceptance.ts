@@ -4,6 +4,7 @@ export { generalRevitCapabilityManifestPath } from "./files.js";
 import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
 import { canonicalAssignmentLifecycleTruth } from "./canonical_assignment_truth.js";
 import { assignmentKernelAcceptanceTruthV2 } from "./assignment_kernel_v2_acceptance.js";
+import { boundNativePreviewPathsV2 } from "./assignment_kernel_v2_native_evidence.js";
 import { validateGeneralRevitAcceptanceReviewCase, type GeneralRevitAcceptanceCriteria } from "./general_revit_acceptance_review.js";
 import { validateGeneralRevitFixturePrecondition } from "./general_revit_fixture_preconditions.js";
 import { requestedViewArtifactEvidence } from "./view_artifact_evidence.js";
@@ -973,6 +974,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const durablePaths = new Set([...successfulEvidencePaths(durableEvidence), ...durableSpecificRevitPaths(attempt), ...canonicalV2.successful_task_paths]);
   const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt).map(canonicalBenchmarkRevitPath);
   const expectedPaths = new Set(testCase.dispatch_any_of.map(canonicalBenchmarkRevitPath));
+  const nativePreviewPaths = boundNativePreviewPathsV2(attempt.assignment_kernel_v2).map(canonicalBenchmarkRevitPath);
+  const nativePreviewDispatched = testCase.expected_effect === "preview"
+    && nativePreviewPaths.some(path => expectedPaths.has(path));
   const rowMatchesExpectedPathAndEffect = (row: ActionLike, effect: GeneralRevitExpectedEffect) =>
     expectedPaths.has(canonicalBenchmarkRevitPath(String(row.path || "")))
     && row.request_effect === effect && row.request_dispatched === true && row.status !== "failed";
@@ -980,7 +984,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && teammatePreviewPaths.includes("/revit/transaction-plan");
   const observedPaths = [...new Set([
     ...rows.map((row) => canonicalBenchmarkRevitPath(String(row.path || ""))).filter(Boolean),
-    ...durablePaths, ...teammatePreviewPaths
+    ...durablePaths, ...teammatePreviewPaths, ...nativePreviewPaths
   ])];
   const expectedPathObserved = composablePreviewLaneObserved || observedPaths.some((candidate) => expectedPaths.has(candidate)) || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect))
     || (canonicalV2.completed && canonicalV2.requested_effects.includes(testCase.expected_effect));
@@ -998,7 +1002,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       return failedEffect === "read" && String(later.request_effect || "").trim() === "read";
     });
   });
-  const successfulExpectedPathObserved = [...durablePaths].some((candidate) => expectedPaths.has(candidate)) || composablePreviewLaneObserved
+  const successfulExpectedPathObserved = nativePreviewDispatched || [...durablePaths].some((candidate) => expectedPaths.has(candidate)) || composablePreviewLaneObserved
     || teammatePreviewPaths.some((candidate) => expectedPaths.has(candidate)) || rows.some((row) => rowMatchesExpectedPathAndEffect(row, testCase.expected_effect))
     || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect))
     || (canonicalV2.completed && canonicalV2.requested_effects.includes(testCase.expected_effect));
@@ -1007,7 +1011,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const applyDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "apply")) || rows.some((row) => successfulDynamicRuntimeAlternative(row, "apply")) || verifiedSessionMutation
     || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)))
     || (canonicalV2.apply_dispatched && canonicalV2.requested_effects.includes("apply"));
-  const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true) || durablePaths.size > 0 || canonicalV2.dispatched;
+  const dispatched = nativePreviewDispatched || applyDispatched || rows.some((row) => row.request_dispatched === true) || durablePaths.size > 0 || canonicalV2.dispatched;
   const answerAssertionsApplicable = !!testCase.answer_assertions && (testCase.expected_effect !== "apply" || !applyDispatched);
   const durable = durableLifecycle(attempt);
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true || durable.outcomeUnknown
@@ -1070,7 +1074,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       durable, durableReceipts, expectedPaths, "apply",
       { requireVerified: true, completionMode: "verified_noop", requireReceiptEffect: false }
     );
-  const directPreviewDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "preview"))
+  const directPreviewDispatched = nativePreviewDispatched || rows.some((row) => rowMatchesExpectedPathAndEffect(row, "preview"))
     || rows.some((row) => successfulDynamicRuntimeAlternative(row, "preview"));
   // A certified preview is a stronger non-mutating observation than a plain
   // read and may satisfy either safe effect. It must never satisfy apply.
@@ -1169,7 +1173,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
         ? "Rollback preview lacks target-bound post-rollback model-state verification."
         : requiredEffectMissing
         ? testCase.expected_effect === "apply"
-          ? "Mutation case did not dispatch a verified apply operation."
+          ? canonicalV2.native_committed_task_paths.some(path => expectedPaths.has(canonicalBenchmarkRevitPath(path)))
+            ? "A native apply committed on an expected route, but independent whole-task verification is missing."
+            : "Mutation case did not dispatch a verified apply operation."
           : `Case did not produce the requested ${testCase.expected_effect} effect.`
         : "Attempt failed or has an uncertain outcome."
         : fixtureBlockerAccepted ? "Fixture-grounded inspection proved that this sample lacks a semantically compatible target; the agent correctly stopped without previewing or applying an invalid substitution."

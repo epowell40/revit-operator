@@ -7,6 +7,47 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorPrintSettingsGuardTests
     {
+        [Fact]
+        public void RestorationEvidenceContainsExactBeforeAndFreshGlobalValuesIncludingUnchangedFields()
+        {
+            var global = new Dictionary<string, object> { ["file"] = "before.pdf", ["copies"] = 2 };
+            var guard = new OperatorPrintSettingsGuard(new[] { "file", "copies" }, name => global[name],
+                (name, value) => global[name] = value, () => { });
+            Assert.Empty(guard.RestorationReadback);
+            global["file"] = "submitted.pdf";
+            Assert.True(guard.Restore(out var errors)); Assert.Empty(errors);
+            Assert.Collection(guard.RestorationReadback,
+                item => { Assert.Equal("file", item.field); Assert.Equal("before.pdf", item.before); Assert.Equal("before.pdf", item.after); Assert.True(item.matches); },
+                item => { Assert.Equal("copies", item.field); Assert.Equal(2, item.before); Assert.Equal(2, item.after); Assert.True(item.read_succeeded); Assert.True(item.matches); Assert.Null(item.error); });
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void FailedOrMismatchingReadbackRemainsExplicitEvidenceNotRestorationProof(bool throws)
+        {
+            var duringRestore = false;
+            var guard = new OperatorPrintSettingsGuard(new[] { "file" }, _ => !duringRestore ? "original.pdf"
+                : throws ? throw new InvalidOperationException("getter unavailable") : "wrong.pdf", (_, __) => { }, () => { });
+            duringRestore = true;
+            Assert.False(guard.Restore(out var errors)); Assert.NotEmpty(errors);
+            var item = Assert.Single(guard.RestorationReadback);
+            Assert.Equal("original.pdf", item.before); Assert.False(item.matches);
+            Assert.Equal(!throws, item.read_succeeded);
+            if (throws) { Assert.Null(item.after); Assert.Contains("getter unavailable", item.error); }
+            else { Assert.Equal("wrong.pdf", item.after); Assert.Null(item.error); }
+        }
+
+        [Fact]
+        public void MatchingReadbackCannotHideAnApplyFailure()
+        {
+            object value = "original";
+            var guard = new OperatorPrintSettingsGuard(new[] { "file" }, _ => value,
+                (_, original) => value = original, () => throw new InvalidOperationException("apply failed"));
+            value = "changed";
+            Assert.False(guard.Restore(out var errors)); Assert.NotEmpty(errors);
+            Assert.True(Assert.Single(guard.RestorationReadback).matches);
+        }
         [Theory]
         [InlineData(true, true, true)]
         [InlineData(false, true, false)]

@@ -16,6 +16,52 @@ namespace RevitBridge.Common.Tests
         public OperatorNativeArtifactReceiptTests() => Directory.CreateDirectory(root);
 
         [Theory]
+        [InlineData("mismatch")]
+        [InlineData("duplicate")]
+        [InlineData("missing")]
+        [InlineData("unreadable")]
+        public void ContradictoryPrintReadbackCannotSettleAsApplied(string failure)
+        {
+            var capture = new OperatorNativeArtifactCapture(new[] { Output() }, 1, "/revit/print");
+            File.WriteAllText(Output(), "native print bytes"); capture.RecordNativeExport(true);
+            var receipt = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(JsonSerializer.Serialize(capture.Complete(true)))!;
+            var rows = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>();
+            foreach (var field in OperatorPrintSettingsGuard.FieldsForPrint(false, false))
+                rows.Add(new System.Collections.Generic.Dictionary<string, object> { ["field"] = field, ["before"] = "old", ["after"] = "old", ["matches"] = true, ["read_succeeded"] = true, ["error"] = null! });
+            if (failure == "mismatch") rows[0]["after"] = "different";
+            if (failure == "duplicate") rows[1]["field"] = rows[0]["field"];
+            if (failure == "missing") rows.RemoveAt(0);
+            if (failure == "unreadable") rows[0]["read_succeeded"] = false;
+            receipt["print_settings_restoration_readback"] = rows;
+            Assert.Equal("unknown", Settle(receipt, "apply", "/revit/print").EffectState);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void PrintReceiptCarriesFreshSettingComparisonsWithoutHidingFailedRestoration(bool failApply)
+        {
+            object value = "original.pdf";
+            var guard = new OperatorPrintSettingsGuard(OperatorPrintSettingsGuard.FieldsForPrint(false, false),
+                name => name == "PrintToFileName" ? value : "unchanged",
+                (_, original) => value = original, () => { if (failApply) throw new InvalidOperationException("apply failed"); });
+            var capture = new OperatorNativeArtifactCapture(new[] { Output() }, 1, "/revit/print");
+            File.WriteAllText(Output(), "print output"); capture.RecordNativeExport(true);
+            value = "requested.pdf";
+            var restored = guard.Restore(out var errors);
+            var receipt = capture.Complete(restored, guard.RestorationReadback);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(receipt));
+            var item = json.RootElement.GetProperty("print_settings_restoration_readback")[3];
+            Assert.Equal("PrintToFileName", item.GetProperty("field").GetString());
+            Assert.Equal("original.pdf", item.GetProperty("before").GetString());
+            Assert.Equal("original.pdf", item.GetProperty("after").GetString());
+            Assert.True(item.GetProperty("matches").GetBoolean());
+            Assert.Equal(!failApply, receipt.PrintSettingsRestored);
+            Assert.Equal(failApply ? "unverified" : "complete", receipt.Status);
+            Assert.Equal(failApply ? "unknown" : "applied", Settle(receipt, "apply", "/revit/print").EffectState);
+        }
+
+        [Theory]
         [InlineData(false, "interactive_printer_destination")]
         [InlineData(true, "interactive_printer_destination")]
         [InlineData(false, "printer_capability_unavailable")]

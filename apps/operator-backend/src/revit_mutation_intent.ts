@@ -9,6 +9,12 @@ const MUTATION_VERB_SOURCE = [
 
 const MUTATION_VERB = new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b");
 
+/** A prohibition extends across a coordinated list, but not a new command.
+ * Keep the original request elsewhere; this is only affirmative-intent input. */
+export function withoutProhibitedActionLists(userText: string): string {
+  return userText.replace(/\b(?:do\s+not|don't|dont|never)\s+(?:(?:actually|ever)\s+)?(?:print|launch|modify|change|edit|delete|remove|create|add|place|move|save|close|open|reopen|export)\b(?:(?!\b(?:but|however|then)\b)[^.!?;\n])*/gi, " ");
+}
+
 export function hasExplicitMutationVerb(userText: string | null | undefined): boolean {
   const text = `${userText || ""}`.toLowerCase()
     // These bounded noun phrases describe an observed property. Preserve
@@ -17,4 +23,8 @@ export function hasExplicitMutationVerb(userText: string | null | undefined): bo
     .replace(/\b(?:name|number|type)\s+and\s+scale\b(?!\s+(?:it|them|this|that|these|those|the|to|by)\b)/g, " ");
   return MUTATION_VERB.test(text)
     || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
+}
+
+export function hasAffirmativeMutationVerb(userText: string): boolean {
+  return hasExplicitMutationVerb(withoutProhibitedActionLists(userText));
 }

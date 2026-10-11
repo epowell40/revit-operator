@@ -26,6 +26,8 @@ namespace RevitBridge.Logic.Handlers
                 throw new InvalidOperationException(err ?? "Family edit session not found.");
 
             var famDoc = session.FamilyDoc;
+            if (!session.ProjectDoc.IsValidObject || !session.FamilyDoc.IsValidObject || !session.ProjectDoc.Equals(app.ActiveUIDocument?.Document))
+                throw new InvalidOperationException("The family session does not belong to the active project.");
             var requestedPath = (p.filePath ?? "").Trim();
             if (!string.IsNullOrWhiteSpace(requestedPath))
             {
@@ -33,10 +35,10 @@ namespace RevitBridge.Logic.Handlers
                 if (!string.Equals(Path.GetExtension(saveAsPath), ".rfa", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("save-family-doc.filePath must end in .rfa.");
 
+                if (OperatorFamilySaveReceipt.TryRejectExistingTarget(session.SessionId, saveAsPath, p.overwrite, out var rejected))
+                    return Task.FromResult<object>(rejected!);
                 var directory = Path.GetDirectoryName(saveAsPath);
                 if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-                if (File.Exists(saveAsPath) && !p.overwrite)
-                    throw new InvalidOperationException($"Family file already exists and overwrite=false: {saveAsPath}");
 
                 try
                 {
@@ -49,6 +51,8 @@ namespace RevitBridge.Logic.Handlers
                     {
                         ok = true,
                         saved = true,
+                        family_save_receipt = OperatorFamilySaveReceipt.Saved(session.SessionId, saveAsPath,
+                            string.Equals(famDoc.PathName, saveAsPath, StringComparison.OrdinalIgnoreCase)),
                         saveMode = "save_as",
                         filePath = saveAsPath,
                         docId = session.SessionId,
@@ -95,6 +99,8 @@ namespace RevitBridge.Logic.Handlers
                 {
                     ok = true,
                     saved = true,
+                    family_save_receipt = OperatorFamilySaveReceipt.Saved(session.SessionId, path,
+                        string.Equals(famDoc.PathName, path, StringComparison.OrdinalIgnoreCase)),
                     saveMode = "save",
                     filePath = path,
                     docId = session.SessionId,

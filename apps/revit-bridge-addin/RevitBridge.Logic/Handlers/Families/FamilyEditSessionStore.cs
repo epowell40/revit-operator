@@ -23,6 +23,33 @@ namespace RevitBridge.Logic.Handlers
         private static readonly Dictionary<string, Session> _sessions = new Dictionary<string, Session>(StringComparer.OrdinalIgnoreCase);
         private const int MaxSessions = 3;
 
+        // Called only before EditFamily/OpenDocumentFile. Registration failures
+        // after opening retain their existing uncertain failure semantics.
+        public static bool TryGetCapacityRefusal(out object refusal)
+        {
+            lock (_lock)
+            {
+                CleanupLocked();
+                if (_sessions.Count >= MaxSessions)
+                {
+                    refusal = RevitBridge.Common.OperatorFamilySessionReceipt.CapacityRefusal(_sessions.Count, MaxSessions);
+                    return true;
+                }
+                refusal = null!;
+                return false;
+            }
+        }
+
+        public static object OpenReceipt(Session session, string sourceKind, string sourceId)
+        {
+            lock (_lock)
+            {
+                var registered = _sessions.TryGetValue(session.SessionId, out var retained) && ReferenceEquals(retained, session);
+                return RevitBridge.Common.OperatorFamilySessionReceipt.Opened(session.SessionId, sourceKind, sourceId,
+                    session.ProjectDoc.IsValidObject && session.FamilyDoc.IsValidObject && session.FamilyDoc.IsFamilyDocument, registered);
+            }
+        }
+
         public static Session Create(Document projectDoc, Document familyDoc, Family family, long titleblockTypeId)
         {
             lock (_lock)
@@ -30,21 +57,7 @@ namespace RevitBridge.Logic.Handlers
                 CleanupLocked();
                 if (_sessions.Count >= MaxSessions)
                 {
-                    // Close the oldest session to make space.
-                    string? oldestId = null;
-                    DateTime oldest = DateTime.MaxValue;
-                    foreach (var kv in _sessions)
-                    {
-                        if (kv.Value.LastAccessUtc < oldest)
-                        {
-                            oldest = kv.Value.LastAccessUtc;
-                            oldestId = kv.Key;
-                        }
-                    }
-                    if (!string.IsNullOrWhiteSpace(oldestId))
-                    {
-                        TryCloseLocked(oldestId!);
-                    }
+                    throw new InvalidOperationException("Close an existing family edit session before opening another; retained edits were not discarded.");
                 }
 
                 var id = Guid.NewGuid().ToString("N");
@@ -152,13 +165,17 @@ namespace RevitBridge.Logic.Handlers
 
             try
             {
-                try { s.FamilyDoc?.Close(false); } catch { }
+                if (!s.FamilyDoc.Close(false) || s.FamilyDoc.IsValidObject)
+                {
+                    error = "Revit did not confirm family document closure; session retained.";
+                    return false;
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // ignore
+                error = ex.Message;
+                return false;
             }
-
             _sessions.Remove(sessionId);
             return true;
         }
@@ -170,18 +187,18 @@ namespace RevitBridge.Logic.Handlers
 
         private static void CleanupLocked()
         {
-            // TTL: 30 minutes idle.
-            var now = DateTime.UtcNow;
+            // Session lookup/open must never discard another session's edits.
+            // Remove only documents which Revit has already closed.
             var expired = new List<string>();
             foreach (var kv in _sessions)
             {
                 var s = kv.Value;
                 if (s == null) { expired.Add(kv.Key); continue; }
-                if ((now - s.LastAccessUtc).TotalMinutes > 30) expired.Add(kv.Key);
+                if (s.FamilyDoc == null || !s.FamilyDoc.IsValidObject) expired.Add(kv.Key);
             }
             foreach (var id in expired)
             {
-                TryCloseLocked(id);
+                _sessions.Remove(id);
             }
         }
 

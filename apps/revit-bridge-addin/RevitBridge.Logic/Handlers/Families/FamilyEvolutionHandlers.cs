@@ -393,7 +393,8 @@ namespace RevitBridge.Logic.Handlers
 
                 using (var transaction = new Transaction(familyDoc, "Create selected equipment type and clearance"))
                 {
-                    transaction.Start();
+                    if (transaction.Start() != TransactionStatus.Started)
+                        throw new InvalidOperationException("Family edit transaction did not start.");
                     WarningSuppressionUtil.SuppressWarnings(transaction);
                     manager.CurrentType = sourceType;
                     var newType = manager.NewType(plan.NewTypeName)
@@ -419,7 +420,8 @@ namespace RevitBridge.Logic.Handlers
                         familyDoc.Regenerate();
                         VerifyClearanceCurves(familyDoc, createdCurveIds, subcategory, plan);
                     }
-                    transaction.Commit();
+                    if (transaction.Commit() != TransactionStatus.Committed)
+                        throw new InvalidOperationException("Family edit transaction did not commit; no artifact save was attempted.");
                 }
 
                 familyDoc.SaveAs(plan.SavePath, new SaveAsOptions { Compact = true, OverwriteExistingFile = false });
@@ -446,73 +448,98 @@ namespace RevitBridge.Logic.Handlers
 
             Family? loadedFamily = null;
             FamilySymbol? loadedSymbol = null;
+            var existingFamilyIds = new HashSet<long>(new FilteredElementCollector(plan.ProjectDoc)
+                .OfClass(typeof(Family)).ToElementIds().Select(ElementIdCompat.GetValue));
             long beforeTypeId = ElementIdCompat.GetValue(plan.Instance.GetTypeId());
-            try
+            var result = NativeSingleTransaction.Execute(app, plan.ProjectDoc,
+                "Load selected equipment family and swap instance", created =>
             {
-                using (var transaction = new Transaction(plan.ProjectDoc, "Load selected equipment family and swap instance"))
+                var loaded = plan.ProjectDoc.LoadFamily(plan.SavePath, new FamilyLoadOptions(), out loadedFamily);
+                if (!loaded || loadedFamily == null)
+                    throw new InvalidOperationException("The cloned family was not loaded as a new family.");
+                if (existingFamilyIds.Contains(ElementIdCompat.GetValue(loadedFamily.Id)))
+                    throw new InvalidOperationException("The artifact resolved to an existing project family; the load was rolled back.");
+                // Revit derives the loaded family name from the RFA basename. A unique
+                // artifact filename must not change the requested project family name.
+                if (!string.Equals(loadedFamily.Name, plan.NewFamilyName, StringComparison.Ordinal))
+                    loadedFamily.Name = plan.NewFamilyName;
+                if (!string.Equals(loadedFamily.Name, plan.NewFamilyName, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Loaded family name '{loadedFamily.Name}' did not match planned name '{plan.NewFamilyName}'.");
+                loadedSymbol = loadedFamily.GetFamilySymbolIds()
+                    .Select(id => plan.ProjectDoc.GetElement(id) as FamilySymbol)
+                    .FirstOrDefault(symbol => symbol != null && string.Equals(symbol.Name, plan.NewTypeName, StringComparison.OrdinalIgnoreCase));
+                if (loadedSymbol == null) throw new InvalidOperationException("New family type was not found after loading.");
+                if (!loadedSymbol.IsActive) loadedSymbol.Activate();
+                plan.Instance.ChangeTypeId(loadedSymbol.Id);
+                plan.ProjectDoc.Regenerate();
+                if (ElementIdCompat.GetValue(plan.Instance.GetTypeId()) != ElementIdCompat.GetValue(loadedSymbol.Id))
+                    throw new InvalidOperationException("Selected instance did not retain the new family type.");
+                VerifyProjectLength(loadedSymbol, plan.WidthParameterName, plan.TargetWidthFt);
+                VerifyProjectLength(loadedSymbol, plan.DepthParameterName, plan.TargetDepthFt);
+                created.Add(ElementIdCompat.GetValue(loadedFamily.Id));
+                foreach (var id in loadedFamily.GetFamilySymbolIds()) created.Add(ElementIdCompat.GetValue(id));
+                return new Dictionary<string, object?>
                 {
-                    transaction.Start();
-                    WarningSuppressionUtil.SuppressWarnings(transaction);
-                    var loaded = plan.ProjectDoc.LoadFamily(plan.SavePath, new FamilyLoadOptions(), out loadedFamily);
-                    if (!loaded || loadedFamily == null)
-                        throw new InvalidOperationException("The cloned family was not loaded as a new family.");
-                    if (!string.Equals(loadedFamily.Name, plan.NewFamilyName, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException($"Loaded family name '{loadedFamily.Name}' did not match planned name '{plan.NewFamilyName}'.");
-                    loadedSymbol = loadedFamily.GetFamilySymbolIds()
-                        .Select(id => plan.ProjectDoc.GetElement(id) as FamilySymbol)
-                        .FirstOrDefault(symbol => symbol != null && string.Equals(symbol.Name, plan.NewTypeName, StringComparison.OrdinalIgnoreCase));
-                    if (loadedSymbol == null) throw new InvalidOperationException("New family type was not found after loading.");
-                    if (!loadedSymbol.IsActive) loadedSymbol.Activate();
-                    plan.Instance.ChangeTypeId(loadedSymbol.Id);
-                    plan.ProjectDoc.Regenerate();
-                    if (ElementIdCompat.GetValue(plan.Instance.GetTypeId()) != ElementIdCompat.GetValue(loadedSymbol.Id))
-                        throw new InvalidOperationException("Selected instance did not retain the new family type.");
-                    VerifyProjectLength(loadedSymbol, plan.WidthParameterName, plan.TargetWidthFt);
-                    VerifyProjectLength(loadedSymbol, plan.DepthParameterName, plan.TargetDepthFt);
-                    transaction.Commit();
-                }
-                try { app.ActiveUIDocument.RefreshActiveView(); } catch { }
-            }
-            catch (Exception ex)
+                    ["familyId"] = ElementIdCompat.GetValue(loadedFamily.Id),
+                    ["typeId"] = ElementIdCompat.GetValue(loadedSymbol.Id)
+                };
+            }, nativeModifiedElements: () => new[] { plan.InstanceId },
+                configureTransaction: WarningSuppressionUtil.SuppressWarnings);
+
+            var projectTransaction = (OperatorNativeTransactionReceipt)result["transaction"]!;
+            // A project rollback cannot erase the already saved RFA. Keep this
+            // compound operation unresolved on failure rather than claiming no effect.
+            if (projectTransaction.CommittedValue != true)
             {
-                var afterTypeId = ElementIdCompat.GetValue(plan.Instance.GetTypeId());
-                var loadedFamilyStillPresent = new FilteredElementCollector(plan.ProjectDoc)
-                    .OfClass(typeof(Family))
-                    .Cast<Family>()
-                    .Any(candidate => string.Equals(candidate.Name, plan.NewFamilyName, StringComparison.OrdinalIgnoreCase));
-                var rollbackVerified = afterTypeId == beforeTypeId && !loadedFamilyStillPresent;
+                // The project rolled back, but the saved family artifact persists.
+                // Keep the compound outcome unresolved until both effects reconcile.
                 return new
                 {
                     status = "Failed",
                     phase = "project_load_or_swap",
-                    error = ex.Message,
+                    error = result.TryGetValue("error", out var error) ? error : null,
                     planHash = plan.PlanHash,
-                    projectChanged = rollbackVerified ? (bool?)false : null,
-                    rollback = new { verified = rollbackVerified, beforeTypeId, afterTypeId, clonedFamilyAbsent = !loadedFamilyStillPresent },
+                    projectTransaction,
+                    projectChanged = projectTransaction.Status == "rolled_back" || projectTransaction.Status == "not_started" ? (bool?)false : null,
                     recoveryArtifact = plan.SavePath,
-                    recoveryAction = "Inspect or load the retained RFA manually; the project transaction was rolled back."
+                    recoveryAction = "Inspect the retained RFA and project transaction before continuing; do not repeat the mutation."
                 };
             }
 
-            return new
+            result["planHash"] = plan.PlanHash;
+            result["requiredConfirm"] = requiredConfirm;
+            result["instanceId"] = plan.InstanceId;
+            result["beforeTypeId"] = beforeTypeId;
+            result["clearance"] = plan.HasClearance ? ClearanceReceipt(plan) : null;
+            result["createdFamilyCurveIds"] = createdCurveIds;
+            result["familyArtifact"] = plan.SavePath;
+            result["projectChanged"] = true;
+            result["recovery"] = new { sourceFamilyId = plan.SourceFamilyId, sourceTypeId = plan.SourceTypeId, retainedArtifact = plan.SavePath };
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
             {
-                status = "Applied",
-                planHash = plan.PlanHash,
-                requiredConfirm,
-                instanceId = plan.InstanceId,
-                beforeTypeId,
-                familyId = ElementIdCompat.GetValue(loadedFamily?.Id),
-                familyName = loadedFamily?.Name,
-                typeId = ElementIdCompat.GetValue(loadedSymbol?.Id),
-                typeName = loadedSymbol?.Name,
-                width = ParameterReceipt(plan.WidthParameterName, plan.SourceWidthFt, plan.TargetWidthFt, plan.WidthFormula, plan.WidthIsInstance),
-                depth = ParameterReceipt(plan.DepthParameterName, plan.SourceDepthFt, plan.TargetDepthFt, plan.DepthFormula, plan.DepthIsInstance),
-                clearance = plan.HasClearance ? ClearanceReceipt(plan) : null,
-                createdFamilyCurveIds = createdCurveIds,
-                familyArtifact = plan.SavePath,
-                projectChanged = true,
-                recovery = new { sourceFamilyId = plan.SourceFamilyId, sourceTypeId = plan.SourceTypeId, retainedArtifact = plan.SavePath }
-            };
+                var persistedInstance = plan.ProjectDoc.GetElement(ElementIdCompat.Create(plan.InstanceId)) as FamilyInstance
+                    ?? throw new InvalidOperationException("Committed instance was not found during readback.");
+                var persistedSymbol = plan.ProjectDoc.GetElement(persistedInstance.GetTypeId()) as FamilySymbol
+                    ?? throw new InvalidOperationException("Committed instance type was not found during readback.");
+                if (persistedInstance.UniqueId != plan.InstanceUniqueId || persistedSymbol.Id != loadedSymbol!.Id
+                    || persistedSymbol.Name != plan.NewTypeName || persistedSymbol.Family.Name != plan.NewFamilyName)
+                    throw new InvalidOperationException("Persisted family/type identity did not match the requested change.");
+                VerifyProjectLength(persistedSymbol, plan.WidthParameterName, plan.TargetWidthFt);
+                VerifyProjectLength(persistedSymbol, plan.DepthParameterName, plan.TargetDepthFt);
+                if (plan.HasClearance) VerifyPersistedClearance(plan, persistedSymbol.Family);
+                return new Dictionary<string, object?>
+                {
+                    ["verificationScope"] = "persisted_family_identity_dimensions_and_clearance_geometry",
+                    ["visualAppearanceVerified"] = false,
+                    ["familyName"] = persistedSymbol.Family.Name,
+                    ["typeName"] = persistedSymbol.Name,
+                    ["width"] = ParameterReceipt(plan.WidthParameterName, plan.SourceWidthFt, ReadProjectLength(persistedSymbol, plan.WidthParameterName), plan.WidthFormula, plan.WidthIsInstance),
+                    ["depth"] = ParameterReceipt(plan.DepthParameterName, plan.SourceDepthFt, ReadProjectLength(persistedSymbol, plan.DepthParameterName), plan.DepthFormula, plan.DepthIsInstance)
+                };
+            });
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Applied");
+            try { app.ActiveUIDocument.RefreshActiveView(); } catch { }
+            return result;
         }
 
         internal static object Read(UIApplication app, ReadFamilyEvolutionHandler.Params request)
@@ -530,6 +557,7 @@ namespace RevitBridge.Logic.Handlers
             var curves = new List<object>();
             long? linePatternId = null;
             string? linePatternName = null;
+            object? linePatternSegments = null;
             int? lineWeight = null;
             int[]? lineColor = null;
             Document? familyDoc = null;
@@ -548,7 +576,10 @@ namespace RevitBridge.Logic.Handlers
                         {
                             var patternId = subcategory.GetLinePatternId(GraphicsStyleType.Projection);
                             linePatternId = ElementIdCompat.GetValue(patternId);
-                            linePatternName = (familyDoc.GetElement(patternId) as LinePatternElement)?.Name;
+                            var pattern = familyDoc.GetElement(patternId) as LinePatternElement;
+                            linePatternName = pattern?.Name;
+                            linePatternSegments = pattern?.GetLinePattern().GetSegments()
+                                .Select(segment => new { type = segment.Type.ToString(), lengthInternalFeet = segment.Length }).ToArray();
                         }
                         catch { }
                         try { lineWeight = subcategory.GetLineWeight(GraphicsStyleType.Projection); } catch { }
@@ -596,6 +627,7 @@ namespace RevitBridge.Logic.Handlers
                     lineStyleName = request.lineStyleName,
                     linePatternId,
                     linePatternName,
+                    linePatternSegments,
                     lineWeight,
                     color = lineColor,
                     symbolicCurveCount = curves.Count,
@@ -731,6 +763,23 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
+        private static void VerifyPersistedClearance(PreparedPlan plan, Family family)
+        {
+            Document? persisted = null;
+            try
+            {
+                persisted = plan.ProjectDoc.EditFamily(family);
+                var curves = new FilteredElementCollector(persisted).OfClass(typeof(CurveElement))
+                    .Cast<CurveElement>().Where(curve => curve.CurveElementType == CurveElementType.SymbolicCurve
+                        && string.Equals((curve.LineStyle as GraphicsStyle)?.GraphicsStyleCategory?.Name,
+                            plan.LineStyleName, StringComparison.OrdinalIgnoreCase)).ToList();
+                var category = (curves.FirstOrDefault()?.LineStyle as GraphicsStyle)?.GraphicsStyleCategory
+                    ?? throw new InvalidOperationException("Persisted clearance subcategory was not found.");
+                VerifyClearanceCurves(persisted, curves.Select(curve => ElementIdCompat.GetValue(curve.Id)).ToArray(), category, plan);
+            }
+            finally { if (persisted != null) persisted.Close(false); }
+        }
+
         private static void VerifyClearanceCurves(
             Document familyDoc,
             IReadOnlyCollection<long> createdCurveIds,
@@ -772,9 +821,14 @@ namespace RevitBridge.Logic.Handlers
             if (plan.LinePatternName.Length > 0)
             {
                 var patternId = subcategory.GetLinePatternId(GraphicsStyleType.Projection);
-                var patternName = (familyDoc.GetElement(patternId) as LinePatternElement)?.Name ?? "";
+                var pattern = familyDoc.GetElement(patternId) as LinePatternElement;
+                var patternName = pattern?.Name ?? "";
                 if (!string.Equals(patternName, plan.LinePatternName, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Clearance line pattern readback did not match the plan.");
+                var segments = pattern?.GetLinePattern().GetSegments();
+                if (segments == null || !segments.Any(segment => segment.Type == LinePatternSegmentType.Dash && segment.Length > 0)
+                    || !segments.Any(segment => segment.Type == LinePatternSegmentType.Space && segment.Length > 0))
+                    throw new InvalidOperationException("Clearance pattern must contain positive dash and space segments.");
             }
         }
 
@@ -821,8 +875,9 @@ namespace RevitBridge.Logic.Handlers
                     var definition = new LinePattern(plan.LinePatternName);
                     definition.SetSegments(new List<LinePatternSegment>
                     {
-                        new LinePatternSegment(LinePatternSegmentType.Dash, 0.5),
-                        new LinePatternSegment(LinePatternSegmentType.Space, 0.25)
+                        // Pattern lengths are paper-space feet: 1/8-inch dash, 1/16-inch gap.
+                        new LinePatternSegment(LinePatternSegmentType.Dash, 1.0 / 96.0),
+                        new LinePatternSegment(LinePatternSegmentType.Space, 1.0 / 192.0)
                     });
                     pattern = LinePatternElement.Create(familyDoc, definition);
                 }

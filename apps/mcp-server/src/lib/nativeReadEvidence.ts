@@ -6,6 +6,15 @@ const text = (value:unknown) => typeof value === "string" ? value.trim() : "";
 const count = (value:unknown):value is number => Number.isSafeInteger(value) && Number(value)>=0;
 const fact = (id:string,value:Fact["value"],route:string):Fact => ({fact_id:id,fact_class:"domain",value,dimensions:{route}});
 
+// Match the native ViewOwnedDetailingInventoryContract, not a caller-provided
+// exclusion flag: infrastructure remains inventoried but has no copy signature.
+function detailingInfrastructure(item:Record<string,any>):boolean {
+  return item.isAnnotation===false && (item.className==="SketchPlane"
+    || item.className==="SunAndShadowSettings"
+    || item.className==="Element" && item.name==="ExtentElem"
+    || item.builtInCategory==="OST_SunStudy");
+}
+
 /** Counts compare only within an effective query. Never use result values or
  * operation IDs: either would hide genuinely conflicting repeated reads.
  * Project FindElementsHandler.Params filters, excluding ignored JSON fields
@@ -115,6 +124,8 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
           || row.elementId<=0 || row.ownerViewId!==view.id || !text(row.uniqueId)
           || !text(row.className) || typeof row.isAnnotation!=="boolean"
           || typeof row.semanticSignatureComplete!=="boolean"
+          || (row.comparisonExcluded===true)!==detailingInfrastructure(row)
+          || detailingInfrastructure(row) && (row.semanticSignatureComplete!==false || row.semanticSignature!==null)
           || row.semanticSignatureComplete && !/^sha256:[a-f0-9]{64}$/.test(text(row.semanticSignature));})
         || new Set(items.map((item:unknown)=>object(item).elementId)).size!==items.length)return [];
       total+=inventory.totalOwnedCount;
@@ -123,7 +134,7 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
         && inventory.unreadableCount===0 && inventory.unclassifiedCount===0
         && inventory.incompleteTextCount===0 && inventory.incompleteSignatureCount===0
         && inventory.returnedCount===inventory.totalOwnedCount
-        && items.every((item:unknown)=>object(item).semanticSignatureComplete===true)
+        && items.every((item:unknown)=>detailingInfrastructure(object(item)) || object(item).semanticSignatureComplete===true)
         && inventory.annotationCount===items.filter((item:unknown)=>object(item).isAnnotation===true).length;
     }
     if(root.viewsComplete!==allComplete)return [];

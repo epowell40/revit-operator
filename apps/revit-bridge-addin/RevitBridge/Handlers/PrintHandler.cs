@@ -164,7 +164,7 @@ namespace RevitBridge.Handlers
                 try { restored = settings.Restore(out restorationErrors); }
                 catch (Exception ex) { restored = false; restorationErrors = new[] { ex.GetType().Name + ": " + ex.Message }; }
             }
-            var receipt = capture?.Complete(restored);
+            var receipt = capture?.Complete(restored, settings.RestorationReadback);
             var failed = results.Count(r => !r.ok);
             var complete = failed == 0 && restored && (receipt == null || receipt.Status == "complete");
             return Task.FromResult<object>(new
@@ -180,6 +180,7 @@ namespace RevitBridge.Handlers
                 artifact_receipt = receipt,
                 print_settings_restored = restored,
                 print_settings_restoration_errors = restorationErrors,
+                print_settings_restoration_readback = settings.RestorationReadback,
                 path = outputPath,
                 warnings,
                 results

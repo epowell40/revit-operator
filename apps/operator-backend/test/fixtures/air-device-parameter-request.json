@@ -1,0 +1,106 @@
+{
+  "method": "POST",
+  "path": "/revit/set-parameter",
+  "body": {
+    "changes": [
+      {
+        "elementId": 1376349,
+        "parameterName": "Type Mark",
+        "value": "EC-1",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1379030,
+        "parameterName": "Type Mark",
+        "value": "SD-2",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1380250,
+        "parameterName": "Type Mark",
+        "value": "SD-1",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1392196,
+        "parameterName": "Type Mark",
+        "value": "RG-2",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1393958,
+        "parameterName": "Type Mark",
+        "value": "SG-1",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1500495,
+        "parameterName": "Type Mark",
+        "value": "SC-1",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1503751,
+        "parameterName": "Type Mark",
+        "value": "RG-1",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1393958,
+        "parameterName": "Manufacturer",
+        "value": "Titus",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1393958,
+        "parameterName": "Model",
+        "value": "300 RL",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1393958,
+        "parameterName": "Description",
+        "value": "Titus 300 RL supply grille",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1392196,
+        "parameterName": "Manufacturer",
+        "value": "Titus",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1392196,
+        "parameterName": "Model",
+        "value": "350 RL",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1392196,
+        "parameterName": "Description",
+        "value": "Titus 350 RL return grille",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1503751,
+        "parameterName": "Manufacturer",
+        "value": "Titus",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1503751,
+        "parameterName": "Model",
+        "value": "350 RL",
+        "expectedOldValue": ""
+      },
+      {
+        "elementId": 1503751,
+        "parameterName": "Description",
+        "value": "Titus 350 RL return grille",
+        "expectedOldValue": ""
+      }
+    ],
+    "apply": true,
+    "dryRun": false
+  }
+}

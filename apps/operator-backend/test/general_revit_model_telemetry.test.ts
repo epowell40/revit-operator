@@ -149,6 +149,22 @@ test("model comparison coverage fails closed when any delegated case lacks recei
   assert.equal(modelTelemetryCaseCoverage([{ ...covered, provider_usage_turns: undefined }]).complete, false);
 });
 
+test("direct desktop and Codex routes both establish configuration, without masking model or effort drift", () => {
+  const requested = { agent_model: "gpt-6.1-sol", agent_reasoning_effort: "medium" };
+  const direct = receipt({ route: "desktop_computer", model: requested.agent_model, reasoning_effort: "medium" });
+  const compare = (calls: unknown[]) => requestedVsObservedComputerAgent(requested, aggregateModelCallReceipts(calls));
+  assert.equal(compare([direct]).comparable_configuration, true);
+  assert.equal(compare([direct]).codex_agent_observed, false);
+  assert.equal(compare([direct]).desktop_computer_observed, true);
+  assert.equal(compare([{ ...direct, route: "codex_agent" }]).comparable_configuration, true);
+  assert.equal(compare([]).comparable_configuration, false);
+  assert.equal(compare([{ ...direct, route: "unknown" }]).comparable_configuration, false);
+  for (const drift of [{ model: "gpt-6-astra" }, { reasoning_effort: "high" }]) {
+    assert.equal(compare([{ ...direct, ...drift }]).comparable_configuration, false);
+    assert.equal(compare([direct, { ...direct, call_id: "second", route: "codex_agent", ...drift }]).comparable_configuration, false);
+  }
+});
+
 test("raw Codex completion becomes an exact content-free provider receipt", () => {
   const value = createCodexRawModelCallReceipt({
     params: { responseId: "resp_codex", usage: { inputTokens: 1000, cachedInputTokens: 600,
@@ -249,6 +265,35 @@ test("GPT-6 Sol pricing uses exact token buckets and the long context threshold"
   }
 });
 
+test("Sol 6.1 retained five-call usage has a complete standard-rate estimate", () => {
+  // Exact token buckets from the stopped API campaign; no provider identifiers or model data.
+  const buckets = [[14096, 0, 14093, 26], [15104, 14093, 1008, 37],
+    [16250, 15101, 1146, 49], [18035, 16247, 1785, 43], [19670, 18032, 1635, 149]];
+  const rows = buckets.map(([input, cached, write, output], index) => receipt({
+    call_id: `sol61-${index}`, model: "gpt-6.1-sol", requested_model: "gpt-6.1-sol", reasoning_effort: "medium",
+    tokens: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: write,
+      output_tokens: output, total_tokens: input + output }
+  }));
+  const summary = aggregateModelCallReceipts(rows);
+  assert.equal(summary.call_count, 5);
+  assert.equal(summary.total_tokens, 83459);
+  assert.equal(summary.cost_status, "estimated_from_exact_provider_tokens");
+  // 15 uncached + 63473 cached + 19667 cache-write input tokens, 304 output.
+  assert.ok(Math.abs(Number(summary.cost_usd) - 0.0585848) < 1e-10);
+  const unknown = aggregateModelCallReceipts(rows.map(row => ({ ...row, model: "unknown-model" })));
+  assert.equal(unknown.cost_usd, null);
+  assert.equal(unknown.cost_status, "incomplete");
+});
+
+test("Sol 6.1 long context pricing applies only above 272000 input tokens", () => {
+  for (const [input, expected] of [[272000, 0.53325], [272001, 1.062504]]) {
+    const summary = aggregateModelCallReceipts([receipt({ model: "gpt-6.1-sol",
+      tokens: { input_tokens: input, cached_input_tokens: 10000, cache_write_input_tokens: 500,
+        output_tokens: 800, total_tokens: input + 800 } })]);
+    assert.ok(Math.abs(Number(summary.cost_usd) - expected) < 1e-10);
+  }
+});
+
 test("benchmark telemetry recovers every provider call from the exact V2 publication ledger", () => {
   const calls = Object.fromEntries([1, 2, 3].map((index) => [`resp_${index}`, providerCall(`resp_${index}`, {
     admitted_at: `2026-09-02T00:00:0${index}.000Z`,
@@ -317,4 +362,29 @@ test("malformed V2 telemetry publication fails explicitly instead of impersonati
     ...bundle,
     assignments: [{ ...publication, provider_ledger: { ...ledger, run_id: "run-foreign" } }]
   }), /assignment_kernel_v2_telemetry_invalid:publication:0:assignment_kernel_v2_publication_invalid:provider_ledger_binding/);
+});
+
+
+test("direct receipt recovered from the canonical ledger is counted once and cache conflicts fail", () => {
+  const direct = receipt({ route: "desktop_computer", model: "gpt-5.6-sol", requested_model: "gpt-5.6-sol",
+    reasoning_effort: "medium", started_at_utc: "2026-09-02T00:00:00.123Z", duration_ms: 77 });
+  const tokens = direct.tokens as Record<string, number>;
+  const call = providerCall("external:one", { controller_turn_id: undefined,
+    upstream_receipt: { call_id: direct.call_id, route: direct.route, model: direct.model,
+      requested_model: direct.requested_model, started_at_utc: direct.started_at_utc, duration_ms: direct.duration_ms },
+    usage: { input_tokens: tokens.input_tokens, cached_input_tokens: tokens.cached_input_tokens,
+      cache_write_input_tokens: tokens.cache_write_input_tokens, output_tokens: tokens.output_tokens,
+      reasoning_tokens: tokens.reasoning_output_tokens, total_tokens: tokens.total_tokens, estimated_cost_usd: null }
+  });
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(telemetryPublicationBundle({ "external:one": call }, "assignment-direct", 7));
+  assert.equal(recovered[0]!.call_id, direct.call_id);
+  assert.equal(recovered[0]!.canonical_call_id, "external:one");
+  assert.equal(recovered[0]!.route, "desktop_computer");
+  const merged = modelCallReceiptsFromSources({ model_call_receipts: recovered }, { model_call_receipts: [direct] });
+  assert.equal(merged.length, 1);
+  for (const field of ["cached_input_tokens", "cache_write_input_tokens"]) {
+    assert.throws(() => modelCallReceiptsFromSources({ model_call_receipts: recovered }, {
+      model_call_receipts: [{ ...direct, tokens: { ...tokens, [field]: tokens[field]! + 1 } }]
+    }), /model_call_receipt_conflict/);
+  }
 });

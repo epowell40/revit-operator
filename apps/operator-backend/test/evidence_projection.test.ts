@@ -29,6 +29,81 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("embedded dynamic receipts retain settlement in provider projection without promoting caller trust", () => withWorkspace(() => {
+  for (const outcome of ["committed_verified", "rolled_back", "outcome_uncertain"]) {
+    const raw = { execution_ok: true, evidence: {
+      snapshotReceipt: { elements: Array.from({length:900}, (_,id) => ({id, name:"large detail ".repeat(100)})) },
+      previewReceipt: JSON.stringify({schema:"dynamic-revit-preview-receipt/v0", ok:true,
+        rollback_truth:true, rollback_status:"RolledBack", operation_count:37, projected_changed_element_ids:[1,2]}),
+      applyReceipt: JSON.stringify({schema:"dynamic-revit-apply-receipt/v1", outcome,
+        changed_element_ids:[1,2], document_session_id:"native-session", graph_hash:"native-graph", retry_permitted:false})
+    }};
+    const saved=storeEvidence({scope, source:"operator_desktop.function.run_dynamic_revit_program", trust_level:"untrusted_caller", raw},8192);
+    assert.equal(saved.projection.key_facts["evidence.applyReceipt.outcome"],outcome);
+    assert.equal(saved.projection.key_facts["evidence.previewReceipt.rollback_truth"],true);
+    assert.equal(saved.projection.key_counts["evidence.previewReceipt.operation_count"],37);
+    assert.equal(saved.projection.key_counts["evidence.applyReceipt.changed_element_ids.length"],2);
+    assert.equal(saved.ref.trust_level,"untrusted_caller");
+    assert.equal(saved.projection.effect_state,null);
+    assert(saved.projection.projected_bytes<=8192);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref,scope).toString()),raw);
+  }
+  for(const value of ['{broken', JSON.stringify({schema:"unrecognized",outcome:"committed_verified"})]) {
+    const saved=storeEvidence({scope,source:"operator_desktop.function.run_dynamic_revit_program",trust_level:"untrusted_caller",raw:{evidence:{applyReceipt:value}}},8192);
+    assert.equal(saved.projection.key_facts["evidence.applyReceipt.outcome"],undefined);
+  }
+}));
+
+test("complete native IDs survive bulky details without claiming the entire payload is complete", () => withWorkspace(() => {
+  const ids=Array.from({length:509},(_,i)=>1370000+i);
+  const raw={status:"Ok",scope:{kind:"Document",viewIds:[],sheetId:null},count:509,elementIds:ids,
+    categoryFilterApplied:true,resolvedCategories:[{name:"Air Terminals",builtInToken:"OST_DuctTerminal",categoryId:-2008013}],
+    textFilterApplied:false,identityFilterApplied:false,truncated:false,scanCapReached:false,identityExpansionScanCapReached:false,
+    items:ids.map(elementId=>({elementId,description:"large native detail ".repeat(40)}))};
+  const result=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw},8192);
+  const summary=result.projection.inline_payload as any;
+  assert.equal(summary?.schema,"revit-operator.element-id-inventory-summary/v1");
+  assert.deepEqual(summary.elementIds,ids);assert.equal(summary.ids_complete,true);
+  assert.deepEqual(summary.scope,raw.scope);assert.equal(summary.items_omitted,true);
+  assert.equal(result.projection.truncated,true);assert(result.projection.projected_bytes<=8192);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(result.ref,scope).toString()),raw);
+  for(const change of [{count:510},{elementIds:[...ids.slice(0,-1),ids[0]]},{truncated:true},{scanCapReached:true}]){
+    const invalid=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw:{...raw,...change}},8192);
+    assert.notEqual((invalid.projection.inline_payload as any)?.ids_complete,true);
+  }
+  const untrusted=storeEvidence({scope,source:"attachment",trust_level:"untrusted_caller",raw},8192);
+  assert.equal(untrusted.projection.inline_payload,undefined);
+  const small=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw},4096);
+  assert.equal(small.projection.inline_payload,undefined);
+  const bounded={...raw,scope:{kind:"View",viewIds:[42],sheetId:null},textFilterApplied:true,textSearch:"supply"};
+  const filtered=storeEvidence({scope,source:"native:POST:/revit/find-elements",trust_level:"authoritative_native",raw:bounded},8192).projection.inline_payload as any;
+  assert.deepEqual(filtered.scope,bounded.scope);assert.equal(filtered.textFilterApplied,true);
+  assert.equal(filtered.textSearch,"supply");assert.equal(filtered.ids_complete,true);
+}));
+
+test("complete bounded native preview takes priority over duplicated extracted facts", () => withWorkspace(() => {
+  const state = (offset: number) => ({ status: "Ok", view: {
+    id: 101, name: "Preview test", scale: 96, discipline: "Mechanical",
+    viewRange: Object.fromEntries(["top", "cut", "bottom", "viewDepth"].map(plane => [plane, {
+      levelId: 10, levelName: "Level A", offsetFeet: plane === "bottom" || plane === "viewDepth" ? offset : 4
+    }])),
+    viewFilters: Array.from({ length: 9 }, (_, i) => ({ id: 200+i, name: `Synthetic filter ${i}`, visible: false,
+      override: { lineWeight: -1, linePatternId: -1, linePatternName: null, color: null } }))
+  }});
+  const raw = { current: state(0), proposed: state(1), after: state(0), success: true,
+    transaction: { status: "rolled_back", committed: false, affected_element_ids: [] },
+    status: "Dry Run", action: "set_view_range", dryRun: true, previewExecuted: true };
+  const input = { scope, source: "native:synthetic-range-preview", trust_level: "authoritative_native" as const, raw };
+  const projected = storeEvidence(input, 8192).projection;
+  assert.deepEqual(projected.inline_payload, raw);
+  assert.equal(projected.truncated, false);
+  assert.ok(projected.projected_bytes <= 8192);
+  assert.equal(projected.assignment_id, scope.assignment_id);
+  assert.equal(projected.attempt_id, scope.attempt_id);
+  assert.equal(storeEvidence({ ...input, trust_level: "untrusted_caller" }, 8192).projection.inline_payload, undefined);
+  assert.equal(storeEvidence(input, 4096).projection.inline_payload, undefined);
+}));
+
 // Synthetic native producer shape: no project/model evidence belongs here.
 function connectorFixture() {
   const ref = (ownerId: number, connectorId: number): any => ({ ownerId, connectorId, connectorIdBasis: "revit_native_connector_id", connectorType: "End", domain: "DomainHvac", isMepSystem: false, isPhysicalElement: true, isConnectedTo: true });
@@ -69,6 +144,49 @@ test("known logical system and disconnected refs remain excluded ahead of unknow
     assert.deepEqual(references, [[10, 0, 30, 0, expected], [30, 0, 10, 0, expected]]);
     assert.equal(graph.totals.reciprocal_edges, 1);
     assert.equal(graph.lists.unresolved_references.some(r => r[4] === "native_connection_check_unknown"), kind === "absent");
+  }
+}));
+
+test("incomplete or failed native scans cannot simultaneously report an open endpoint", () => withWorkspace(() => {
+  for (const kind of ["failed_check", "missing_check", "scan_incomplete", "scan_error", "logical", "disconnected", "system", "complete"] as const) {
+    const { raw, ref } = connectorFixture();
+    const c = raw.results[2].connectors[0];
+    const peer = ref(90, 0);
+    if (kind === "failed_check") peer.isConnectedTo = null;
+    if (kind === "missing_check") delete peer.isConnectedTo;
+    if (kind === "logical") { peer.connectorType = "Logical"; peer.isConnectedTo = null; }
+    if (kind === "system") { peer.isMepSystem = true; peer.isConnectedTo = null; }
+    if (kind === "disconnected") peer.isConnectedTo = false;
+    if (kind === "scan_incomplete") c.referenceScanComplete = false;
+    if (kind === "scan_error") c.referenceReadErrorCount = 1;
+    if (kind === "complete") c.referenceScanComplete = true;
+    if (["failed_check", "missing_check", "logical", "disconnected", "system"].includes(kind)) c.connectedTo = [peer];
+    const uncertain = ["failed_check", "missing_check", "scan_incomplete", "scan_error"].includes(kind);
+    const graph = storeEvidence({ scope, source: `native_scan_${kind}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    assert.equal(graph.lists.open_hvac_endpoints.some(row => row[0] === 30), !uncertain, kind);
+    assert.equal(graph.lists.unresolved_references.some(row => row[0] === 30), uncertain, kind);
+    assert.equal(graph.totals.reciprocal_edges, 1, kind);
+    assert.equal(graph.coverage.native_reference_scan_complete, kind === "scan_incomplete" || kind === "scan_error" ? false : null);
+  }
+}));
+
+test("explicit native scan coverage preserves unknown ports and only certifies complete returned scans", () => withWorkspace(() => {
+  for (const variant of ["complete", "partial", "unknown_port", "legacy", "failed_owner"] as const) {
+    const { raw } = connectorFixture();
+    for (const row of raw.results) for (const c of row.connectors) { c.referenceScanComplete = true; c.referenceReadErrorCount = 0; }
+    const c = raw.results[2].connectors[0];
+    if (variant === "partial") { c.referenceScanComplete = false; c.referenceReadErrorCount = 1; }
+    if (variant === "unknown_port") { c.physicalConnectionState = "unknown"; c.isPhysicallyConnected = null; c.isConnected = null; }
+    if (variant === "legacy") delete c.referenceScanComplete;
+    if (variant === "failed_owner") { raw.results[2] = { id: 30, ok: false, error: "manager unavailable" }; raw.failedElementCount = 1; }
+    const graph = storeEvidence({ scope, source: `native_coverage_${variant}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    assert.equal(graph.coverage.native_reference_scan_complete, variant === "complete" ? true : variant === "partial" ? false : null, variant);
+    if (variant === "unknown_port") {
+      assert.equal(graph.lists.open_hvac_endpoints.some(row => row[0] === 30), false);
+      assert(graph.lists.unresolved_references.some(row => row[0] === 30));
+      assert.equal(graph.lists.row_issues.some(row => row[2] === "physical_reference_count_mismatch"), false);
+    }
+    assert.equal(graph.totals.reciprocal_edges, 1);
   }
 }));
 
@@ -822,4 +940,16 @@ test("C48 missing required_fields metadata retains all valid catalogue identitie
     const changed={content:[{type:"text",text:JSON.stringify(payload)}]};
     assert.equal(storeEvidence({scope,source:"assignment_kernel_v2:revit_search_tools",trust_level:"host_observed",raw:changed},8192).projection.tool_documentation,undefined);
   }
+}));
+
+test("Sidecar file-stat receipt exposes attributes without certifying content or native effect", () => withWorkspace(() => {
+  const raw={ok:true,exists:true,path:"C:\\fixture\\M000.pdf",is_file:true,size_bytes:3677921,last_write_time_utc:"2026-10-09T22:20:48.354Z"};
+  const result=storeEvidence({scope,source:"operator_desktop.function.verify_local_file",trust_level:"untrusted_caller",raw},8192);
+  for(const key of ["exists","path","is_file","size_bytes","last_write_time_utc"])
+    assert.equal(result.projection.key_facts[key],raw[key as keyof typeof raw]);
+  assert.equal(result.ref.trust_level,"untrusted_caller");assert.equal(result.projection.effect_state,null);
+  assert.equal(result.projection.inline_payload,undefined);assert(result.projection.projected_bytes<=8192);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(result.ref,scope).toString()),raw);
+  const missing=storeEvidence({scope,source:"operator_desktop.function.verify_local_file",trust_level:"untrusted_caller",raw:{...raw,exists:false,is_file:false,size_bytes:0,last_write_time_utc:""}},8192);
+  assert.equal(missing.projection.key_facts["exists"],false);assert.equal(missing.projection.key_facts["size_bytes"],0);
 }));

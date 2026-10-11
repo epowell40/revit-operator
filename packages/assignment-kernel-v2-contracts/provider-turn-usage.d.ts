@@ -9,15 +9,19 @@ export type ProviderTurnUsageV1 = {
   disposition: "not_started" | "completed" | "interrupted" | "failed";
   raw_response_ids: string[];
 };
+export declare const PROVIDER_RESPONSE_USAGE_V1_SCHEMA: "revit-operator.provider-response-usage/v1";
+export type ProviderResponseUsageV1 = { schema: typeof PROVIDER_RESPONSE_USAGE_V1_SCHEMA;
+  session_id: string; message_id: string; disposition: "completed" | "interrupted" | "failed"; raw_response_ids: string[] };
+export declare function parseProviderResponseUsageV1(value: unknown): ProviderResponseUsageV1;
 export type ProviderUsageAttemptV1 = { session_id: string | null; message_id: string | null;
-  provider_turn_usage: ProviderTurnUsageV1 | null; conflicted: boolean; complete: boolean; missing_raw_response_ids: string[] };
+  provider_turn_usage: ProviderTurnUsageV1 | null; route?: "desktop_computer"; provider_response_usage?: ProviderResponseUsageV1 | null; conflicted: boolean; complete: boolean; missing_raw_response_ids: string[] };
 export type ProviderUsageCoverageV1 = { schema: typeof PROVIDER_USAGE_COVERAGE_V1_SCHEMA;
   request_count: number; attempts: ProviderUsageAttemptV1[]; unassigned_raw_response_ids: string[];
   complete: boolean; no_provider_invocation: boolean };
 export declare function parseProviderTurnUsageV1(value: unknown): ProviderTurnUsageV1;
 export declare function buildProviderUsageCoverageV1(attempts: unknown, receipts: unknown): ProviderUsageCoverageV1;
 export declare function createProviderUsageLedgerV1(): {
-  begin(sessionId: string, messageId: string): void;
+  begin(sessionId: string, messageId: string, route?: "codex_agent" | "desktop_computer"): void;
   observe(sessionId: string, messageId: string, response: unknown): void;
   snapshot(receipts: unknown): ProviderUsageCoverageV1 & { overflow: boolean };
 };

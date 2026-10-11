@@ -767,9 +767,11 @@ namespace RevitBridge.Common.Tests
             var root = FindRevitBridgeAddinRoot();
             var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "ConfigureScheduleHandler.cs")).Replace("\r\n", "\n");
             Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
-            Assert.Contains("var applySummary = ApplyOperations(doc, schedule, p, out var transactionReceipt);", handler, StringComparison.Ordinal);
-            Assert.Contains("transaction = transactionReceipt,", handler, StringComparison.Ordinal);
-            Assert.Contains("if (tx.Commit() != TransactionStatus.Committed)", handler, StringComparison.Ordinal);
+            Assert.Contains("NativeSingleTransaction.Execute(app, doc, \"Configure Schedule\"", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorNativeTransactionExecution.OutcomeStatus(result, \"Success\")", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("TryClearFilters(", handler, StringComparison.Ordinal);
+            Assert.Contains("definition.SetFilters(combined);", handler, StringComparison.Ordinal);
         }
 
         [Fact]

@@ -4564,6 +4564,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "scopeBoxId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "scopeBoxName", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeLinkedModels", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeCategoryState", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "linkedModelInstanceId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "linkedModelId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "revitLinkInstanceId", out error)) return false;
@@ -8253,6 +8254,9 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "requireUniqueQuery", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeSchedulableFields", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "schedulableFieldOffset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxSchedulableFields", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeData", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "rowOffset", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "columnOffset", out error)) return false;
@@ -8284,7 +8288,7 @@ namespace RevitBridge.Operator
                     }
                 }
 
-                foreach (var field in new[] { "rowOffset", "columnOffset" })
+                foreach (var field in new[] { "rowOffset", "columnOffset", "schedulableFieldOffset" })
                 {
                     if (obj.Value.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null &&
                         (!value.TryGetInt32(out var parsed) || parsed < 0 || parsed > 1000000))
@@ -8297,6 +8301,12 @@ namespace RevitBridge.Operator
                     (!maxRows.TryGetInt32(out var rows) || rows < 1 || rows > 500))
                 {
                     error = "schedules.maxRows must be an integer from 1 through 500.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxSchedulableFields", out var maxEligible) && maxEligible.ValueKind != JsonValueKind.Null &&
+                    (!maxEligible.TryGetInt32(out var eligibleLimit) || eligibleLimit < 1 || eligibleLimit > 200))
+                {
+                    error = "schedules.maxSchedulableFields must be an integer from 1 through 200.";
                     return false;
                 }
                 if (obj.Value.TryGetProperty("maxColumns", out var maxColumns) && maxColumns.ValueKind != JsonValueKind.Null &&
@@ -8454,6 +8464,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "replaceFilters", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "replaceSortGroup", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "showGrandTotals", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "isItemized", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "filterBySheet", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "addFields", maxCount: 200, maxLen: 128, out error)) return false;
@@ -8494,6 +8505,13 @@ namespace RevitBridge.Operator
                             return false;
                         }
                         if (!ValidateOptionalString(f, "field", maxLen: 128, out error)) return false;
+                        if (!ValidateOptionalInt(f, "fieldId", out error)) return false;
+                        if (f.TryGetProperty("fieldId", out var filterFieldId) && filterFieldId.ValueKind != JsonValueKind.Null
+                            && filterFieldId.GetInt32() < 0) { error = "Schedule fieldId must be nonnegative."; return false; }
+                        if (!ValidateOptionalString(f, "valueType", maxLen: 32, out error)) return false;
+                        if (f.TryGetProperty("valueType", out var filterValueType) && filterValueType.ValueKind == JsonValueKind.String
+                            && !new[] { "string", "element_id", "integer", "double", "display" }.Contains((filterValueType.GetString() ?? "").Trim().ToLowerInvariant()))
+                        { error = "Unsupported schedule filter valueType."; return false; }
                         if (!ValidateOptionalString(f, "op", maxLen: 32, out error)) return false;
                         if (!ValidateOptionalString(f, "value", maxLen: 256, out error)) return false;
                     }
@@ -8793,9 +8811,10 @@ namespace RevitBridge.Operator
                     if (!ValidateOptionalBool(ap, "freezeHeaders", out error)) return false;
                 }
 
+                var hasItemization = obj.Value.TryGetProperty("isItemized", out var itemized) && itemized.ValueKind != JsonValueKind.Null;
                 var hasGrandTotals = obj.Value.TryGetProperty("showGrandTotals", out var gt) && gt.ValueKind != JsonValueKind.Null;
                 var hasFilterBySheet = obj.Value.TryGetProperty("filterBySheet", out var fbs) && fbs.ValueKind != JsonValueKind.Null;
-                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
                 {
                     error = "configure-schedule requires at least one operation.";
                     return false;

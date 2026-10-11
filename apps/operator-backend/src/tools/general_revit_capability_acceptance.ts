@@ -1,4 +1,5 @@
 import { createGeneralRevitRequest } from "../benchmark/general_revit_request.js";
+import { waitForGeneralRevitAssignmentSettlement } from "../benchmark/general_revit_assignment_settlement.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -9,7 +10,7 @@ import {
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
-import { extractGeneralRevitToolCalls } from "../benchmark/general_revit_tool_call_projection.js";
+import { dynamicReceiptActions, sidecarFunctionReceiptActions, extractGeneralRevitToolCalls } from "../benchmark/general_revit_tool_call_projection.js";
 import { verifySnowdonArchitecturalFixtureBeforeAgent } from "../benchmark/snowdon_architectural_fixture_preflight.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -188,35 +189,6 @@ function assistantTextFromComputerState(state: JsonRecord): string {
     .map((message) => String(message.text || "").trim())
     .filter(Boolean)
     .at(-1) || "";
-}
-
-function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
-  const receipts = Array.isArray(state.dynamicProgramReceipts) ? state.dynamicProgramReceipts.map(asRecord) : [];
-  return receipts.map((receipt, index) => {
-    const mode = String(receipt.requested_mode || "preview").toLowerCase() === "apply" ? "apply" : "preview";
-    return {
-      action_id: String(receipt.run_id || `dynamic-${index + 1}`),
-      method: "POST",
-      path: `/revit/dynamic-runtime/${mode}`,
-      request_effect: mode,
-      request_dispatched: receipt.execution_ok === true,
-      status: receipt.execution_ok === true ? "success" : "failed",
-      receipt
-    };
-  });
-}
-
-function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
-  const receipts = Array.isArray(state.functionToolReceipts) ? state.functionToolReceipts.map(asRecord) : [];
-  return receipts.map((receipt, index) => ({
-    action_id: String(receipt.call_id || `function-${index + 1}`),
-    method: "POST",
-    path: String(receipt.path || ""),
-    request_effect: String(receipt.request_effect || "read"),
-    request_dispatched: receipt.request_dispatched === true,
-    status: String(receipt.status || "failed"),
-    receipt
-  }));
 }
 
 function teammateLoopReceiptFromFunctionState(state: JsonRecord): JsonRecord | null {
@@ -649,7 +621,7 @@ async function runCase(
   const finalHealthPromise = requestJson(baseUrl, finalHealthPath, {}, healthTimeoutMs())
     .catch((error) => ({ ok: false, error: String(error) }))
     .finally(() => { finalHealthDurationMs = Date.now() - finalHealthStartedAt; });
-  const [finalState, assignmentProjection, assignmentKernelV2] = await Promise.all([
+  const [finalState, assignmentProjection, initialAssignmentKernelV2] = await Promise.all([
     finalHealthPromise,
     (sessionId
       ? requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
@@ -657,6 +629,16 @@ async function runCase(
       .catch((error) => ({ ok: false, error: String(error) })),
     loadAssignmentKernelPublicationsV2(baseUrl, sessionId, requestJson)
   ]);
+  const assignmentSettlement = await waitForGeneralRevitAssignmentSettlement({
+    initial: initialAssignmentKernelV2, sessionId,
+    read: async remainingMs => {
+      const deadline = Date.now() + remainingMs;
+      return loadAssignmentKernelPublicationsV2(baseUrl, sessionId, (base, route, options, timeout) =>
+        requestJson(base, route, options, Math.max(1, Math.min(timeout ?? 30_000, deadline - Date.now()))),
+      { attempts: 1, retryDelayMs: 0 });
+    }
+  });
+  const assignmentKernelV2 = assignmentSettlement.bundle;
   const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, assignmentKernelV2, requestJson);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
@@ -725,6 +707,7 @@ async function runCase(
       reconciliation_required: attempt.reconciliation_required === true,
       durable_assignment_projection: assignmentProjection,
       durable_assignment_kernel_v2: assignmentKernelV2,
+      harness_assignment_settlement: assignmentSettlement.receipt,
       durable_tool_evidence: durableToolEvidence,
       durable_work_packets: durableWorkPackets,
       raw_sidecar_response_sha256: sha256(evaluatedAttempt),

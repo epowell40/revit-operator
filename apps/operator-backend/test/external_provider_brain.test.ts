@@ -369,7 +369,15 @@ test("external provider prompt rehydrates compacted persisted tool receipts", { 
     assert.match(prompt, /Fixture Type A/);
     assert.match(prompt, /"optional_fields"/);
     assert.match(prompt, /\/revit\/create-family-instance/);
-    assert.ok(prompt.length < 46_000, `compacted provider prompt was ${prompt.length} characters`);
+    // Measure the persisted evidence capsule, not unrelated base-instruction growth.
+    // The native IDs and contracts must survive while the 20K description is clipped.
+    const capsule = prompt.split("Persisted accepted observations and repair failures from earlier turns:\n")[1]
+      ?.split("\nReuse these receipts only as evidence")[0];
+    assert.ok(capsule && capsule.length < 4_000, `persisted capsule was ${capsule?.length} characters`);
+    const receipts = JSON.parse(capsule);
+    assert.equal(receipts.length, 3);
+    assert.ok(!capsule.includes("x".repeat(501)));
+    assert.ok(prompt.length < 80_000, `provider prompt exceeded its default 80K budget: ${prompt.length}`);
     assert.match(prompt, /Do not repeat a successful type lookup/);
     assert.ok(prompt.startsWith("AUTHORITATIVE CURRENT USER REQUEST"));
     assert.ok(

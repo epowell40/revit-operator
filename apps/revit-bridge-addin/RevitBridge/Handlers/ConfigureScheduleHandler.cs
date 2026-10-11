@@ -16,6 +16,8 @@ namespace RevitBridge.Handlers
             public string? field { get; set; }
             public string? op { get; set; } // equals|not_equals|contains|not_contains|begins_with|ends_with
             public string? value { get; set; }
+            public string? valueType { get; set; } // string|element_id|integer|double (internal)|display
+            public int? fieldId { get; set; }
         }
 
         public sealed class SortGroupSpec
@@ -91,6 +93,7 @@ namespace RevitBridge.Handlers
             public List<SortGroupSpec>? sortGroup { get; set; }
             public bool? replaceSortGroup { get; set; }
             public bool? showGrandTotals { get; set; }
+            public bool? isItemized { get; set; }
 
             public List<ColumnWidthSpec>? columnWidths { get; set; }
             public List<RowHeightSpec>? rowHeights { get; set; }
@@ -130,9 +133,9 @@ namespace RevitBridge.Handlers
             var hasAppearance = p.appearance != null;
             var hasFilterBySheet = p.filterBySheet.HasValue;
 
-            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
             {
-                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet).");
+                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet, isItemized).");
             }
 
             var dryRun = p.dryRun ?? false;
@@ -153,20 +156,35 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            var applySummary = ApplyOperations(doc, schedule, p, out var transactionReceipt);
-            return Task.FromResult<object>(new
+            var result = ApplyOperations(app, doc, schedule, p);
+            result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
+            result["dryRun"] = false;
+            result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name };
+            if (result.TryGetValue("transaction", out var rawReceipt)
+                && rawReceipt is RevitBridge.Common.OperatorNativeTransactionReceipt receipt && receipt.CommittedValue == true)
             {
-                status = "Success",
-                dryRun = false,
-                transaction = transactionReceipt,
-                schedule = new
+                try
                 {
-                    id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
-                    name = schedule.Name,
-                    fieldCount = ScheduleSelectionHelper.SafeGetFieldCount(schedule.Definition)
-                },
-                applied = applySummary
-            });
+                    result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
+                    {
+                        fieldId = filter.FieldId.IntegerValue,
+                        op = filter.FilterType.ToString(),
+                        valueType = filter.IsElementIdValue ? "element_id" : filter.IsIntegerValue ? "integer"
+                            : filter.IsDoubleValue ? "double" : filter.IsStringValue ? "string" : "none",
+                        value = filter.IsElementIdValue ? (object)RevitBridge.Common.ElementIdCompat.GetValue(filter.GetElementIdValue())
+                            : filter.IsIntegerValue ? (object)filter.GetIntegerValue() : filter.IsDoubleValue ? (object)filter.GetDoubleValue()
+                            : filter.IsStringValue ? (object)filter.GetStringValue() : null
+                    }).ToArray();
+                    result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name,
+                        fieldCount = schedule.Definition.GetFieldCount(), isItemized = schedule.Definition.IsItemized };
+                }
+                catch (Exception ex)
+                {
+                    // A failed observation must not erase an already confirmed commit or invite replay.
+                    result["filterReadbackError"] = ex.Message;
+                }
+            }
+            return Task.FromResult<object>(result);
         }
 
         private static object BuildPlan(Document doc, ViewSchedule schedule, Params p)
@@ -204,7 +222,11 @@ namespace RevitBridge.Handlers
                 field = (f.field ?? "").Trim(),
                 op = NormalizeFilterOp(f.op),
                 value = f.value,
-                fieldFound = ScheduleSelectionHelper.FindFieldByName(schedule, doc, (f.field ?? "").Trim()) != null
+                valueType = f.valueType ?? "string",
+                fieldId = f.fieldId,
+                fieldFound = ScheduleSelectionHelper.GetFields(schedule).Count(field => f.fieldId.HasValue
+                    ? field.FieldId.IntegerValue == f.fieldId.Value
+                    : string.Equals(ScheduleSelectionHelper.ReadFieldName(field, doc)?.Trim(), (f.field ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) == 1
             }).ToList();
 
             var sortPlan = (p.sortGroup ?? new List<SortGroupSpec>()).Select(s => new
@@ -311,12 +333,12 @@ namespace RevitBridge.Handlers
                     stripedRows = p.appearance?.stripedRows,
                     freezeHeaders = p.appearance?.freezeHeaders
                 },
+                isItemized = new { before = definition.IsItemized, requested = p.isItemized },
                 filterBySheet = p.filterBySheet
             };
         }
 
-        private static object ApplyOperations(Document doc, ViewSchedule schedule, Params p,
-            out RevitBridge.Common.OperatorNativeTransactionReceipt transactionReceipt)
+        private static Dictionary<string, object?> ApplyOperations(UIApplication app, Document doc, ViewSchedule schedule, Params p)
         {
             var addResults = new List<object>();
             var filterResults = new List<object>();
@@ -329,9 +351,10 @@ namespace RevitBridge.Handlers
             var appearanceResults = new List<object>();
             var filterBySheetResults = new List<object>();
 
-            using (var tx = new Transaction(doc, "Configure Schedule"))
+            return RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Configure Schedule", created =>
             {
-                tx.Start();
+                if (p.isItemized.HasValue)
+                    schedule.Definition.IsItemized = p.isItemized.Value;
 
                 if (p.addFields != null)
                 {
@@ -383,14 +406,7 @@ namespace RevitBridge.Handlers
                     ApplyFilterBySheet(schedule, p.filterBySheet.Value, filterBySheetResults);
                 }
 
-                if (tx.Commit() != TransactionStatus.Committed)
-                    throw new InvalidOperationException("Revit did not confirm the schedule configuration commit.");
-            }
-
-            transactionReceipt = RevitBridge.Common.OperatorNativeTransactionReceipt.Committed(
-                new[] { RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id) });
-
-            return new
+                return new Dictionary<string, object?> { ["applied"] = new
             {
                 addFields = addResults,
                 filters = filterResults,
@@ -402,7 +418,8 @@ namespace RevitBridge.Handlers
                 conditionalFormats = conditionalResults,
                 appearance = appearanceResults,
                 filterBySheet = filterBySheetResults
-            };
+            } };
+            });
         }
 
         private static void ApplyAddFields(Document doc, ViewSchedule schedule, List<string> addFields, List<object> addResults)
@@ -442,48 +459,45 @@ namespace RevitBridge.Handlers
         private static void ApplyFilters(Document doc, ViewSchedule schedule, List<FilterSpec> filters, bool replaceFilters, List<object> filterResults)
         {
             var definition = schedule.Definition;
-            if (replaceFilters)
-            {
-                TryClearFilters(definition);
-            }
-
+            var prepared = new List<ScheduleFilter>();
             foreach (var f in filters)
             {
                 var fieldName = (f.field ?? "").Trim();
-                if (fieldName.Length == 0)
+                var matches = ScheduleSelectionHelper.GetFields(schedule).Where(field => f.fieldId.HasValue
+                    ? field.FieldId.IntegerValue == f.fieldId.Value
+                    : fieldName.Length > 0 && string.Equals(ScheduleSelectionHelper.ReadFieldName(field, doc)?.Trim(), fieldName, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (matches.Count != 1) throw new ArgumentException("Schedule filter field must resolve uniquely; provide an exact fieldId when names are ambiguous.");
+                var field = matches[0];
+                if (!TryParseFilterType(f.op, out var filterType, out var normalizedOp, out var valueRequired, out var reason))
+                    throw new ArgumentException(reason);
+                ScheduleFilter filter;
+                if (!valueRequired) filter = new ScheduleFilter(field.FieldId, filterType);
+                else if (string.Equals(f.valueType, "display", StringComparison.OrdinalIgnoreCase))
                 {
-                    filterResults.Add(new { field = fieldName, status = "Skipped", reason = "field is required" });
-                    continue;
+                    if (f.value == null || !UnitFormatUtils.TryParse(doc.GetUnits(), field.GetSpecTypeId(), f.value, out var number))
+                        throw new ArgumentException("Filter display value could not be parsed for the native field's units.");
+                    filter = new ScheduleFilter(field.FieldId, filterType, number);
                 }
-
-                var field = ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
-                if (field == null)
+                else
                 {
-                    filterResults.Add(new { field = fieldName, status = "NotFound" });
-                    continue;
+                    var value = RevitBridge.Common.ScheduleFilterValue.Parse(f.value, f.valueType);
+                    if (value is long id)
+                    {
+                        var elementId = RevitBridge.Common.ElementIdCompat.Create(id);
+                        if (doc.GetElement(elementId) == null) throw new ArgumentException("Filter element_id does not identify an element in the current document.");
+                        filter = new ScheduleFilter(field.FieldId, filterType, elementId);
+                    }
+                    else if (value is int integer) filter = new ScheduleFilter(field.FieldId, filterType, integer);
+                    else if (value is double number) filter = new ScheduleFilter(field.FieldId, filterType, number);
+                    else filter = new ScheduleFilter(field.FieldId, filterType, (string)value);
                 }
-
-                if (!TryParseFilterType(f.op, out var filterType, out var normalizedOp, out var valueRequired, out var parseReason))
-                {
-                    filterResults.Add(new { field = fieldName, status = "Skipped", op = NormalizeFilterOp(f.op), reason = parseReason });
-                    continue;
-                }
-
-                var value = (f.value ?? "").Trim();
-                if (valueRequired && value.Length == 0)
-                {
-                    filterResults.Add(new { field = fieldName, status = "Skipped", op = normalizedOp, reason = "value is required" });
-                    continue;
-                }
-
-                if (!TryAddFilter(definition, field.FieldId, filterType, value, valueRequired, out var addReason))
-                {
-                    filterResults.Add(new { field = fieldName, status = "Failed", op = normalizedOp, reason = addReason });
-                    continue;
-                }
-
-                filterResults.Add(new { field = fieldName, status = "Applied", op = normalizedOp, value = valueRequired ? value : null });
+                prepared.Add(filter);
+                filterResults.Add(new { field = fieldName, fieldId = field.FieldId.IntegerValue, status = "Applied", op = normalizedOp, value = f.value, valueType = f.valueType ?? "string" });
             }
+            // Native SetFilters validates the complete replacement. Any exception
+            // propagates out of the enclosing transaction; never commit a skipped subset.
+            var combined = replaceFilters ? prepared : definition.GetFilters().Concat(prepared).ToList();
+            definition.SetFilters(combined);
         }
 
         private static void ApplySortGroup(Document doc, ViewSchedule schedule, List<SortGroupSpec> sortGroup, bool replaceSortGroup, bool? showGrandTotals, List<object> sortResults)
@@ -1017,74 +1031,6 @@ namespace RevitBridge.Handlers
 
             valueRequired = !(normalizedOp == "has_value" || normalizedOp == "has_no_value");
             return true;
-        }
-
-        private static bool TryAddFilter(ScheduleDefinition definition, ScheduleFieldId fieldId, ScheduleFilterType filterType, string value, bool valueRequired, out string? reason)
-        {
-            reason = null;
-            try
-            {
-                ScheduleFilter filter;
-                if (!valueRequired)
-                {
-                    var noValueCtor = typeof(ScheduleFilter).GetConstructor(new[] { typeof(ScheduleFieldId), typeof(ScheduleFilterType) });
-                    if (noValueCtor == null)
-                    {
-                        reason = "Revit API does not expose no-value schedule filters in this version.";
-                        return false;
-                    }
-
-                    filter = (ScheduleFilter)noValueCtor.Invoke(new object[] { fieldId, filterType });
-                }
-                else
-                {
-                    var withStringCtor = typeof(ScheduleFilter).GetConstructor(new[] { typeof(ScheduleFieldId), typeof(ScheduleFilterType), typeof(string) });
-                    if (withStringCtor != null)
-                    {
-                        filter = (ScheduleFilter)withStringCtor.Invoke(new object[] { fieldId, filterType, value });
-                    }
-                    else
-                    {
-                        filter = new ScheduleFilter(fieldId, filterType, value);
-                    }
-                }
-
-                definition.AddFilter(filter);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                reason = ex.Message;
-                return false;
-            }
-        }
-
-        private static void TryClearFilters(ScheduleDefinition definition)
-        {
-            try
-            {
-                var clear = definition.GetType().GetMethod("ClearFilters", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
-                if (clear != null)
-                {
-                    clear.Invoke(definition, null);
-                    return;
-                }
-
-                var getCount = definition.GetType().GetMethod("GetFilterCount", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
-                var remove = definition.GetType().GetMethod("RemoveFilter", BindingFlags.Instance | BindingFlags.Public, null, new[] { typeof(int) }, null);
-                if (getCount != null && remove != null)
-                {
-                    var count = (int)(getCount.Invoke(definition, null) ?? 0);
-                    for (var i = count - 1; i >= 0; i--)
-                    {
-                        remove.Invoke(definition, new object[] { i });
-                    }
-                }
-            }
-            catch
-            {
-                // ignore best-effort clear
-            }
         }
 
         private static void TryClearSortGroup(ScheduleDefinition definition)

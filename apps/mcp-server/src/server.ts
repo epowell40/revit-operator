@@ -55,6 +55,7 @@ import {
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
+import { projectViewOwnedDetailingForAgent } from "./lib/viewOwnedDetailingAgentProjection.js";
 import { registeredStageNativeBody } from "./lib/registeredStageNativeBody.js";
 import { resolveRegisteredStageBody } from "./lib/resolveRegisteredStageBody.js";
 import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
@@ -1540,7 +1541,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         : null;
       const projected = pathInput === "/revit/find-elements"
         ? projectFindElementsResultForAgent(data)
-        : data;
+        : pathInput === "/revit/view-owned-detailing"
+          ? projectViewOwnedDetailingForAgent(data, dispatchBody)
+          : data;
       const output =
         projected && typeof projected === "object" && !Array.isArray(projected)
           ? addWorkspaceLinks(projected as Record<string, any>)
@@ -1608,7 +1611,7 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells.",
+server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells. For eligible columns not yet added, request detail with includeSchedulableFields; follow nextOffset until hasMore=false before claiming a field is absent. Names are exact native names, not aliases.",
   {
     action: z.enum(["list", "detail"]).optional().default("list"),
     scheduleId: z.number().int().optional(),
@@ -1616,6 +1619,9 @@ server.tool("revit_list_schedules", "List schedules or read one schedule's bound
     exact: z.boolean().optional().default(false),
     max: z.number().int().min(1).max(500).optional(),
     includeFields: z.boolean().optional(),
+    includeSchedulableFields: z.boolean().optional(),
+    schedulableFieldOffset: z.number().int().min(0).optional(),
+    maxSchedulableFields: z.number().int().min(1).max(200).optional(),
     includeData: z.boolean().optional(),
     rowOffset: z.number().int().min(0).optional(),
     columnOffset: z.number().int().min(0).optional(),
@@ -3277,7 +3283,7 @@ server.registerTool(
   async req => runMepConnectorRepair(req, true, true)
 );
 
-server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
+server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For open-connector discovery, set onlyOpenPhysicalConnectors=true; incomplete/unknown rows remain visible and are not confirmed open ports. Check physicalConnectionState, referenceScanComplete, referenceReadErrorCount and failed owner rows before claiming completeness. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
   {
     elementIds: z.array(z.number()).min(1).max(5000),
     includeVerificationParameters: z.boolean().optional(),

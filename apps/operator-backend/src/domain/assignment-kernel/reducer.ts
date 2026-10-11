@@ -1,9 +1,11 @@
+import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
 import { deriveNativeFailureContextV1 } from "./native_failure_context.js";
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "./document_checkpoint.js";
+import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "./template_reassignment.js";
 import { validBoundOperationScope, prerequisiteValueSatisfied } from "./operation_scope.js";
 import { advisoryVerificationV2 } from "./execution_policy.js";
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
@@ -123,6 +125,19 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
   if (event.state === "usage_received") kernelAssertV2(Boolean(event.usage), "provider_call_usage_missing", "Usage state requires provider usage data.");
   if (event.state === "completed") kernelAssertV2(typeof event.success === "boolean", "provider_call_completion_missing", "Provider completion requires success truth.");
   if (event.state === "response_transport_completed") kernelAssertV2(Boolean(previous.completed_at), "provider_transport_before_completion", "Downstream response transport cannot complete before provider completion.");
+  if (event.upstream_receipt) {
+    const receipt = event.upstream_receipt;
+    const bounded = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value);
+    kernelAssertV2(event.state === "usage_received" && receipt.route === "desktop_computer"
+      && bounded(receipt.call_id) && bounded(receipt.model) && bounded(receipt.requested_model)
+      && bounded(receipt.started_at_utc) && Number.isFinite(Date.parse(receipt.started_at_utc))
+      && (receipt.duration_ms === null || Number.isSafeInteger(receipt.duration_ms) && receipt.duration_ms >= 0),
+      "provider_upstream_receipt_invalid", "Upstream receipt requires bounded host-observed identity and timing.");
+    kernelAssertV2(!previous.upstream_receipt || canonicalJsonV2(previous.upstream_receipt) === canonicalJsonV2(receipt),
+      "provider_upstream_receipt_conflict", "Upstream receipt identity is immutable.");
+    kernelAssertV2(!Object.values(snapshot.provider_calls).some(call => call.call_id !== event.call_id
+      && call.upstream_receipt?.call_id === receipt.call_id), "provider_upstream_receipt_reused", "One upstream receipt cannot settle two provider calls.");
+  }
   const timestamp = providerTimestampField(event.state);
   if (event.state === "usage_received" && previous.usage) {
     kernelAssertV2(canonicalJsonV2(previous.usage) === canonicalJsonV2(event.usage), "provider_call_usage_conflict", "Replayed provider usage must agree with retained usage.");
@@ -138,6 +153,7 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
     state: nextState,
     [timestamp]: previous[timestamp] ?? event.occurred_at,
     ...(event.usage ? { usage: structuredClone(event.usage) } : {}),
+    ...(event.upstream_receipt ? { upstream_receipt: structuredClone(event.upstream_receipt) } : {}),
     ...(event.success !== undefined ? { success: event.success } : {}),
     ...(event.error_class ? { error_class: event.error_class } : {})
   } as ProviderCallV2;
@@ -209,6 +225,7 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
   assertProviderUsageOperationAdmissionV1(snapshot, operation);
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
   const advisory = advisoryVerificationV2(snapshot);
   kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < snapshot.spec.execution_policy!.max_operations, "operation_budget_exhausted", "The immutable local operation budget is exhausted.");
   kernelAssertV2(!snapshot.completion_proposal || Boolean(operation.parent_operation_id), "assignment_completion_proposal_pending", "A proposed checkpoint admits no new root work.");
@@ -282,8 +299,15 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && checkpoint!.checkpoint_after_operation_id === operation.checkpoint_after_operation_id,
     "operation_document_checkpoint_invalid", "A checkpoint requires an unused complete native save and a later committed change to the same document.");
   }
+  const reassignment = operation.reassignment_of_operation_id || operation.reassignment_after_operation_id
+    ? templateReassignmentV1(snapshot, operation) : null;
+  if (operation.reassignment_of_operation_id !== undefined || operation.reassignment_after_operation_id !== undefined) {
+    kernelAssertV2(!!reassignment && reassignment.reassignment_of_operation_id === operation.reassignment_of_operation_id
+      && reassignment.reassignment_after_operation_id === operation.reassignment_after_operation_id,
+    "operation_template_reassignment_invalid", "Reassignment requires an unused native committed counter-state on the exact view.");
+  }
   const equivalent = Object.values(snapshot.operations).find((candidate) => operationProgressIdentityV2(candidate) === operationProgressIdentityV2(operation));
-  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || operation.purpose === "reconciliation",
+  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || operation.purpose === "reconciliation",
     "operation_progress_equivalent_repeat", "Equivalent operation requires a typed retry or reconciliation basis.");
   if (advisory && operation.requested_effect === "apply" && operation.request_identity) {
     const duplicateWrite = Object.values(snapshot.operations).some(prior => prior.requested_effect === "apply"
@@ -292,7 +316,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && prior.request_identity?.path === operation.request_identity!.path
       && prior.request_identity?.request_signature === operation.request_identity!.request_signature
       && (prior.persistent_effect !== "none" || prior.settlement_state !== "settled"));
-    kernelAssertV2(!duplicateWrite || Boolean(checkpoint), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
+    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
   }
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
@@ -343,6 +367,12 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
     kernelAssertV2(Boolean(operation.retry_basis), "operation_retry_basis_missing", "A retry must state the material correction that permits it.");
+    if (operation.retry_basis === "family_session_capacity_released") {
+      const correction = familyCapacityRetryV2(snapshot, operation);
+      kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
+        && correction?.retry_after_operation_id === operation.retry_after_operation_id,
+        "operation_family_capacity_retry_invalid", "Retry requires a retained native capacity refusal and an unused later confirmed no-save close.");
+    }
     if (operation.retry_basis === "committed_target_change") {
       const correction = committedTargetChangeRetryV2(snapshot, operation);
       kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
@@ -361,7 +391,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   } else {
     kernelAssertV2(!operation.retry_basis, "operation_retry_basis_unbound", "Retry basis requires a predecessor operation.");
   }
-  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change",
+  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change" || operation.retry_basis === "family_session_capacity_released",
     "operation_retry_change_unbound", "A committed-change reference requires its typed retry basis.");
   if (operation.purpose === "verification") {
     const subject = operation.verification_of_operation_id
@@ -881,6 +911,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         }
         const nativeFailureContext = deriveNativeFailureContextV1(operation, nativeFailureDependencyLinksV1(
           operation.observation_commit?.raw_payload, [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]));
+        const nativeTemplateState = deriveNativeTemplateStateV1(operation);
         const settledOperation = {
           ...operation,
           settlement_state: "settled" as const,
@@ -888,6 +919,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           settled_assignment_version: event.assignment_version,
           observation_retention_error: undefined,
           ...(nativeFailureContext ? { native_failure_context: nativeFailureContext } : {}),
+          ...(nativeTemplateState ? { native_template_state: nativeTemplateState } : {}),
           // The exact payload remains in the immutable result event and the
           // authoritative evidence store. Only pending retention needs another
           // in-memory copy; settled duplicate delivery rehydrates the evidence.

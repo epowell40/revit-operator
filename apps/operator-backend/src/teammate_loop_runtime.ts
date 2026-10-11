@@ -7,8 +7,8 @@ import { canonicalNativeNoChangeForTeammate } from "./teammate_canonical_settlem
 import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
-import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
-import { authorizedArtifactExportPath, requestedWorkbookExport } from "./artifact_export_intent.js";
+import { hasExplicitMutationVerb, hasAffirmativeMutationVerb } from "./revit_mutation_intent.js";
+import { authorizedArtifactExportPath, requestedArtifactExportPaths } from "./artifact_export_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
@@ -20,6 +20,7 @@ import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } fr
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
 import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
+import { familySessionOpenedV1, familySessionReloadedV1, familySessionSavedV1, familySessionClosedV1 } from "./verification/family_session_open_v1.js";
 import {
   explicitTargetAbsenceV2,
   explicitVerificationV2,
@@ -229,7 +230,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
   const previewOnly = hasEffectiveNoWriteFraming(text) || hasNoncommittingChangePreviewRequest(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
-  const explicitMutation = containsMutationVerb(text);
+  const explicitMutation = hasAffirmativeMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
   if (authoritativeLeadingNoWrite) return "inspection";
@@ -334,8 +335,8 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
   const scope=canonicalTeammateOperationScope(req);
   const savedInputs = canonicalTeammateInputs(req);
   const pendingPrerequisites=scope?.prerequisites.filter(p=>!Object.hasOwn(savedInputs,p.variable_id)||(p.kind==="approval"&&savedInputs[p.variable_id]!==true))??[];
-  const workbookExport = requestedWorkbookExport(text);
-  const turnKind:AgentTurnKind = scope?(scope.requested_effect==="read"?"inspection":"mutation"):workbookExport ? "mutation" : classifyAgentTurn(text, req.context);
+  const fileExportPaths = requestedArtifactExportPaths(text);
+  const turnKind:AgentTurnKind = scope?(scope.requested_effect==="read"?"inspection":"mutation"):fileExportPaths.length > 0 ? "mutation" : classifyAgentTurn(text, req.context);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = scope?(pendingPrerequisites.length?"material":"none"):ambiguityFor(text, turnKind);
   const noWrite = scope?scope.model_effect!=="apply":hasNoWriteAuthority(text);
@@ -359,7 +360,7 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
     no_write: noWrite,
     ...(scope?{model_effect_limit:scope.model_effect}:{}),
     write_authorized: authorized,
-    ...(workbookExport ? { file_export_paths: ["/revit/export-elements-xlsx"] } : {}),
+    ...(fileExportPaths.length > 0 ? { file_export_paths: fileExportPaths } : {}),
     preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
@@ -893,7 +894,11 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       const detailedDuplicate = pending.path === "/revit/duplicate-view"
         && objectValue(pending.raw_body).withDetailing === true;
       if ((!detailedDuplicate && verificationMatches(state, evidence, true))
-          || explicitDocumentOpenCompletion(pending, evidence)) {
+          || explicitDocumentOpenCompletion(pending, evidence)
+          || familySessionOpenedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionReloadedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionSavedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))
+          || familySessionClosedV1(pending.path, pending.raw_body, verificationObservationPayloadV2(evidence))) {
         markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }

@@ -27,3 +27,22 @@ test('unselected installation retains existing transport choices', () => {
   assert.equal(selectChatSubmissionMode({ computerUseAvailable: false }), 'backend');
   assert.equal(selectChatSubmissionMode({ computerUseAvailable: true }), 'computer-run');
 });
+
+
+test('fresh printer request selects available computer lane while preserving existing owners and freshness', () => {
+  const prompt = 'Print sheet M000 to the selected printer using the current project print settings.';
+  assert.equal(selectChatSubmissionMode(state, prompt), 'computer-run');
+  for (const change of [{ sessionId: 'saved' }, { taskNavigationAssignmentId: 'old' },
+    { streaming: true, activeRunKind: 'backend' }, { computerUseAvailable: false }]) {
+    assert.equal(selectChatSubmissionMode({ ...state, ...change }, prompt), 'backend');
+  }
+  assert.equal(selectChatSubmissionMode(state, 'Export M000 to PDF'), 'backend');
+  assert.throws(() => selectChatSubmissionMode({ ...state, backendConfigStatus: 'timeout' }, prompt), /Reconnect/);
+  assert.equal(selectChatSubmissionMode({ ...state, streaming: true, activeRunKind: 'computer' }, prompt), 'computer-interject');
+});
+
+import { startsFreshComputerConversation } from './composer_intake.mjs';
+test('fresh computer conversation requires empty session, empty saved assignment and idle composer',()=>{
+ assert.equal(startsFreshComputerConversation({}),true);
+ for(const state of [{sessionId:'old'},{taskNavigationAssignmentId:'old'},{streaming:true}])assert.equal(startsFreshComputerConversation(state),false);
+});

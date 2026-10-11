@@ -128,3 +128,5 @@ export function selectExactEvidenceTargetsV1(payload: unknown, targetSubset: unk
 /** Parses bounded co-named native failures; does not authorize a retry. */
 export function nativeFailureDependencyLinksV1(value: unknown, declaredTargetIdentities: readonly unknown[]):
   readonly Readonly<{ element_id: string; target_element_ids: readonly string[] }>[] | undefined;
+
+export * from "./native-continuation.js";

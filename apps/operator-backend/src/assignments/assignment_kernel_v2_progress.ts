@@ -78,6 +78,7 @@ export function recordAssignmentProviderCallStateV2(input: Readonly<{
   criterion_ids?: readonly string[];
   expected_information?: readonly string[];
   usage?: ProviderUsageV2;
+  upstream_receipt?: ProviderCallV2["upstream_receipt"];
   success?: boolean;
   error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
 }>): AssignmentSnapshotV2 {
@@ -99,6 +100,7 @@ export function recordAssignmentProviderCallStateV2(input: Readonly<{
       ...(input.criterion_ids ? { criterion_ids: input.criterion_ids } : {}),
       ...(input.expected_information ? { expected_information: input.expected_information } : {}),
       ...(input.usage ? { usage: input.usage } : {}),
+      ...(input.upstream_receipt ? { upstream_receipt: input.upstream_receipt } : {}),
       ...(input.success !== undefined ? { success: input.success } : {}),
       ...(input.error_class ? { error_class: input.error_class } : {})
     }

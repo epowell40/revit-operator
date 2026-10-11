@@ -150,6 +150,14 @@ function validOptionalNonNegativeNumber(value) {
   return value === undefined || value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
 }
 
+function validUpstreamProviderReceipt(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const bounded = v => typeof v === "string" && v.length > 0 && v.length <= 256 && !/[\u0000-\u001f]/.test(v);
+  return value.route === "desktop_computer" && bounded(value.call_id) && bounded(value.model)
+    && bounded(value.requested_model) && bounded(value.started_at_utc) && Number.isFinite(Date.parse(value.started_at_utc))
+    && (value.duration_ms === null || Number.isSafeInteger(value.duration_ms) && value.duration_ms >= 0);
+}
+
 function validProviderUsage(value) {
   if (value === undefined) return true;
   const usage = record(value);
@@ -281,6 +289,7 @@ export function parseAssignmentKernelPublicationV2(value) {
         || !validOptionalTimestamp(call.response_transport_completed_at)
         || !validOptionalNonNegativeInteger(call.provider_duration_ms)
         || !validProviderUsage(call.usage)
+        || (call.upstream_receipt !== undefined && !validUpstreamProviderReceipt(call.upstream_receipt))
         || (call.controller_turn_id !== undefined && !requiredString(call.controller_turn_id))
         || (call.success !== undefined && typeof call.success !== "boolean")
         || (call.error_class !== undefined && !PROVIDER_ERROR_CLASSES_V2.has(call.error_class))) {
@@ -803,3 +812,5 @@ export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) 
   return [...dependencies.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([element_id, linked]) => ({ element_id, target_element_ids: [...linked].sort() }));
 }
+
+export * from "./native-continuation.js";

@@ -137,6 +137,54 @@ test("control evidence cannot become benchmark task completion through a termina
   assert.equal(truth.verified, false);
 });
 
+function advisoryCommittedBundle(): any {
+  const bundle: any = publicationBundle({ terminal: false, outcome: "awaiting_user_review" });
+  const snapshot = bundle.assignments[0].snapshot;
+  snapshot.spec.requested_effect = "apply";
+  snapshot.criteria = {};
+  const operation = snapshot.operations["operation-task"];
+  operation.requested_effect = "apply";
+  operation.persistent_effect = "applied";
+  operation.request_identity = { method: "POST", path: "/revit/set-parameter" };
+  Object.assign(operation.result, { persistent_effect: "applied", native_transaction_state: "committed",
+    authority: "native-host", request_identity: operation.request_identity,
+    result_schema_id: "operator-native/POST:/revit/set-parameter/v2" });
+  snapshot.observations["observation-task"].result_schema_id = operation.result.result_schema_id;
+  return bundle;
+}
+
+test("native commit diagnostics do not promote advisory execution to task acceptance", () => {
+  const bundle = advisoryCommittedBundle();
+  const truth = assignmentKernelAcceptanceTruthV2(bundle);
+  assert.deepEqual(truth.native_committed_task_paths, ["/revit/set-parameter"]);
+  assert.equal(truth.apply_dispatched, false);
+  assert.equal(truth.completed, false);
+  assert.equal(truth.verified, false);
+  const testCase: GeneralRevitCapabilityCase = { case_id: "parameter-change", source: "user_basic",
+    operation_family: "parameter_edit", prompt: "Set Mark and verify.", probe_prompt: "Set Mark and verify.",
+    capability_paths: ["/revit/set-parameter"], dispatch_any_of: ["/revit/set-parameter"],
+    expected_effect: "apply", epic0441_task_refs: [] };
+  const result = evaluateGeneralRevitCapabilityAttempt(testCase, { ok: true, assignment_kernel_v2: bundle,
+    actions: [{ path: "/chat", request_effect: "read", request_dispatched: true, status: "success" }] });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.verified, false);
+  assert.equal(result.summary, "A native apply committed on an expected route, but independent whole-task verification is missing.");
+});
+
+test("commit diagnostics reject rollback, wrong document, stale generation and control evidence", () => {
+  const mutations = [
+    (s: any) => { s.operations["operation-task"].result.native_transaction_state = "rolled_back"; },
+    (s: any) => { s.operations["operation-task"].result.binding = { ...binding, document_fingerprint: "other" }; },
+    (s: any) => { s.operations["operation-task"].binding = { ...binding, generation: 2 }; },
+    (s: any) => { s.observations["observation-task"].evidence_class = "control"; },
+    (s: any) => { s.operations["operation-task"].result.request_identity = { path: "/revit/other" }; }
+  ];
+  for (const mutate of mutations) {
+    const bundle = advisoryCommittedBundle(); mutate(bundle.assignments[0].snapshot);
+    assert.deepEqual(assignmentKernelAcceptanceTruthV2(bundle).native_committed_task_paths, []);
+  }
+});
+
 test("general evaluator consumes exact V2 terminal truth instead of the empty legacy projection", () => {
   const testCase: GeneralRevitCapabilityCase = {
     case_id: "generic_inventory",
