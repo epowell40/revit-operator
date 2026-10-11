@@ -540,7 +540,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:8496a2c384119452550e500664768a6bd0feb1ae2a024898a166dee05073654a"
+      "sha256": "sha256:6841e522cf25059e73d4ea57a0c06b2455b4a4db5f91884c6f90baf364e544ff"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -856,7 +856,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/external_provider_lifecycle.ts",
-      "sha256": "sha256:705888c3d79a7812f39770dc7b4bbd8488e433c1435a7df7fce428907653517d"
+      "sha256": "sha256:059c0b556807ab2917af0c30cb926fcdab52a04db2d07bf8a559d4046c6ba492"
     },
     {
       "path": "apps/operator-backend/src/assignments/fresh_request.ts",
@@ -929,6 +929,14 @@
     {
       "path": "apps/operator-backend/src/assignments/settlement_signal.ts",
       "sha256": "sha256:62c2dc6d7c3e026811402f2ed683a53564bc36e0c2eb762f8b7c8887886f4d2e"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/sidecar_execution_failure.ts",
+      "sha256": "sha256:f917ca899bbd109fd02f6615c36b63be4de3473da7e4609501a4ef255713b186"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/sidecar_execution_failure_http.ts",
+      "sha256": "sha256:3a6b51ac9f6ef24a6a50e4794d8d569a01c1b9b8cd5645227cb5279008f8952b"
     },
     {
       "path": "apps/operator-backend/src/assignments/supporting_discovery_progress.ts",
@@ -1416,7 +1424,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
-      "sha256": "sha256:6ba45f2b5bd42dbb9fd338a3182a772d7d0eafc1a873f00a3500b7bf2ff98efa"
+      "sha256": "sha256:b33faad2a7b6e4b05b99aeec1e524f624468ce0859fd2dbc5d7140f95dc0a734"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1460,7 +1468,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_profile.ts",
-      "sha256": "sha256:c7c7ef155d5ffdc1493226e81c4137530a3e09a204de68d76a948e2bfd71e6dd"
+      "sha256": "sha256:73b6dac60b5430b3441e65472dd664c49bd914dc3157ae56ab3445891d9a27ec"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_visual_input.ts",
@@ -1501,6 +1509,10 @@
     {
       "path": "apps/operator-backend/src/brains/redline_target_grounding_runtime.ts",
       "sha256": "sha256:ff48cb5f7da3ceab6e33478ea12fbfeb5c29105aead12c6c9bcbdbc0c0b9c83b"
+    },
+    {
+      "path": "apps/operator-backend/src/brains/revit_artifact_delivery_guidance.ts",
+      "sha256": "sha256:1648ca4c1c563805372a12159bbb3eb5870402559803575bed1497fba57a5ae5"
     },
     {
       "path": "apps/operator-backend/src/brains/revit_readback_guidance.ts",
@@ -2917,7 +2929,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/connector_graph_projection.ts",
-      "sha256": "sha256:ec54a356f39cd8e80be26ef78ece7cd170f1447186af595412088b285f35d0ff"
+      "sha256": "sha256:da7a60e9434c24ec63d385719b98ec0216b0e85ff8cd809ca9727e8450fc794b"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_http_routes.ts",
@@ -2929,7 +2941,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_projection.ts",
-      "sha256": "sha256:66a5542b7373838791653846d14adc879fbfab9bf8fe9d642ad4e1c5cd9a5eee"
+      "sha256": "sha256:2215b98fa63fddbf276304235c1100e1cc80594fecaa54e340020130380c2e18"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
@@ -3405,7 +3417,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:bec8d8bbc5925175964f813f5c57aedb78b929ed069c836dd8d4f3e7b3653e3b"
+      "sha256": "sha256:63a883c2782c73b9a1096947218f69999a84e297ad46d9a9085f0b3368c13f0e"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -4140,6 +4152,10 @@
       "sha256": "sha256:a949594112dd173c8898b68f941f00fe170cef9f3bd702e2f8857e78aa8649af"
     },
     {
+      "path": "apps/operator-backend/test/artifact_delivery_profile.test.ts",
+      "sha256": "sha256:01a377d2fe24d42e2a905d84e096ca50b3f61b69a690294dced3ecf82f2f8549"
+    },
+    {
       "path": "apps/operator-backend/test/assignment_async_settlement_barrier.test.ts",
       "sha256": "sha256:0066a4113a27f7459be123b94fb240bcf40eb7dbce0a287cc8b4ad03891f3f87"
     },
@@ -4649,7 +4665,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_projection.test.ts",
-      "sha256": "sha256:a5dd11dab74c3fe71a003e209e6c884c3e861fb33645d864e3e018135e75f43a"
+      "sha256": "sha256:edc9ee8e0c6dbf200f53c441ef24239bc376193900d9581edcc2c0f9a0694c17"
     },
     {
       "path": "apps/operator-backend/test/evidence_retrieval_selector_contract.test.ts",
@@ -4961,7 +4977,7 @@
     },
     {
       "path": "apps/operator-backend/test/external_provider_lifecycle.test.ts",
-      "sha256": "sha256:0925706a61eab31b5e3a6ca72e8e0928a8483143e32bec6c241297fc33d12e09"
+      "sha256": "sha256:399e161999b604d5653e973703c90a3d05f11b24fa15996ffc28700da137f2b8"
     },
     {
       "path": "apps/operator-backend/test/family_placement_postcondition_v2.test.ts",
@@ -5829,7 +5845,11 @@
     },
     {
       "path": "apps/operator-backend/test/sidecar_agent_profile_endpoint.test.ts",
-      "sha256": "sha256:f7d84816bb1fdab5f046450c0ef6e40730ccbcfbffaba1ef921a1ee82e173a0a"
+      "sha256": "sha256:a03a9c3dbebf987b8903cfe65eee2fb8af97da432657c5878ecbe352ec97d35c"
+    },
+    {
+      "path": "apps/operator-backend/test/sidecar_execution_failure.test.ts",
+      "sha256": "sha256:3e93943bb31af3de2acb675eb7a2a674d388786c17890a212b205d70636f611b"
     },
     {
       "path": "apps/operator-backend/test/simple_assistant_presentation.test.ts",
@@ -6094,6 +6114,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ConnectMepElementsTransactionTests.cs",
       "sha256": "sha256:900f3d01d4cacb456a3c1c05b65edf4b454ed57c464c9bb25247ab74d9e89b31"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ConnectorReadStateTests.cs",
+      "sha256": "sha256:4692c2a3e723e7f9c526f3c70c27f1230a1d1bb7509c561713e21dd61bc07de1"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/DataOutletsRuleEngineTests.cs",
@@ -6798,6 +6822,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CategoryVisibilitySnapshot.cs",
       "sha256": "sha256:04f82fcbf108331af6f7c923c8ff9a6f8d872e368620d7542b1a865e322862d9"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/ConnectorReadState.cs",
+      "sha256": "sha256:23f4e8d8c324170c2bbfc1329628fdf3e58e4c09a3a40333140e5bc64451c90a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json",
@@ -7770,7 +7798,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/GetConnectorsHandler.cs",
-      "sha256": "sha256:a43929dcdb8841b437690b1578970904fe1a6de057da03c4402ee6f4642dd9d2"
+      "sha256": "sha256:5c118ce252efe53e88bb3f55f16d3b009c200c1fb2ccec8fc7b5989c78f0241f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MEP/MepBranchNetworkWorkflowHandler.cs",
@@ -8865,7 +8893,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:eb576e24242e7f2becc13c60286f5f2f0f4351404cbea982c413917cd50743c7",
+  "inputs_hash": "sha256:9f20f08bb000e5d7229508025dd6b4ed1da05554a85d3ed009a355e359a97edc",
   "result": {
     "passed": true,
     "checks": [

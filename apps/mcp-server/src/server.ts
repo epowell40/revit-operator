@@ -3283,7 +3283,7 @@ server.registerTool(
   async req => runMepConnectorRepair(req, true, true)
 );
 
-server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
+server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For open-connector discovery, set onlyOpenPhysicalConnectors=true; incomplete/unknown rows remain visible and are not confirmed open ports. Check physicalConnectionState, referenceScanComplete, referenceReadErrorCount and failed owner rows before claiming completeness. For complete duct post-apply readback, set includeVerificationParameters=true with 1-500 unique positive elementIds, full references and coordinate systems, and no open-only filter; returns fixed built-in parameter values plus the connector graph in the same native callback.",
   {
     elementIds: z.array(z.number()).min(1).max(5000),
     includeVerificationParameters: z.boolean().optional(),

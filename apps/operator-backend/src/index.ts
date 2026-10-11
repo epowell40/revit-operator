@@ -173,6 +173,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
+import { handleSidecarExecutionFailureHttp } from "./assignments/sidecar_execution_failure_http.js";
 import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
@@ -1286,6 +1287,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
+      if (req.method === "POST" && url.pathname === "/api/agent-goal/sidecar-execution-failure") {
+        return handleSidecarExecutionFailureHttp(req, res, {
+          normalizeSessionId: value => trimText(value, 160),
+          sessionAllowed: sessionId => sessionAccessAllowed(res, sessionId, auth.principal)
+        });
+      }
       const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete|sidecar-settle)$/);
       if (req.method === "POST" && goalAction) {
         const body = await readJson(req, 1_000_000).catch(() => ({}));

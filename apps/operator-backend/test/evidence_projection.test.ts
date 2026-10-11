@@ -29,6 +29,31 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("embedded dynamic receipts retain settlement in provider projection without promoting caller trust", () => withWorkspace(() => {
+  for (const outcome of ["committed_verified", "rolled_back", "outcome_uncertain"]) {
+    const raw = { execution_ok: true, evidence: {
+      snapshotReceipt: { elements: Array.from({length:900}, (_,id) => ({id, name:"large detail ".repeat(100)})) },
+      previewReceipt: JSON.stringify({schema:"dynamic-revit-preview-receipt/v0", ok:true,
+        rollback_truth:true, rollback_status:"RolledBack", operation_count:37, projected_changed_element_ids:[1,2]}),
+      applyReceipt: JSON.stringify({schema:"dynamic-revit-apply-receipt/v1", outcome,
+        changed_element_ids:[1,2], document_session_id:"native-session", graph_hash:"native-graph", retry_permitted:false})
+    }};
+    const saved=storeEvidence({scope, source:"operator_desktop.function.run_dynamic_revit_program", trust_level:"untrusted_caller", raw},8192);
+    assert.equal(saved.projection.key_facts["evidence.applyReceipt.outcome"],outcome);
+    assert.equal(saved.projection.key_facts["evidence.previewReceipt.rollback_truth"],true);
+    assert.equal(saved.projection.key_counts["evidence.previewReceipt.operation_count"],37);
+    assert.equal(saved.projection.key_counts["evidence.applyReceipt.changed_element_ids.length"],2);
+    assert.equal(saved.ref.trust_level,"untrusted_caller");
+    assert.equal(saved.projection.effect_state,null);
+    assert(saved.projection.projected_bytes<=8192);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref,scope).toString()),raw);
+  }
+  for(const value of ['{broken', JSON.stringify({schema:"unrecognized",outcome:"committed_verified"})]) {
+    const saved=storeEvidence({scope,source:"operator_desktop.function.run_dynamic_revit_program",trust_level:"untrusted_caller",raw:{evidence:{applyReceipt:value}}},8192);
+    assert.equal(saved.projection.key_facts["evidence.applyReceipt.outcome"],undefined);
+  }
+}));
+
 test("complete native IDs survive bulky details without claiming the entire payload is complete", () => withWorkspace(() => {
   const ids=Array.from({length:509},(_,i)=>1370000+i);
   const raw={status:"Ok",scope:{kind:"Document",viewIds:[],sheetId:null},count:509,elementIds:ids,
@@ -119,6 +144,49 @@ test("known logical system and disconnected refs remain excluded ahead of unknow
     assert.deepEqual(references, [[10, 0, 30, 0, expected], [30, 0, 10, 0, expected]]);
     assert.equal(graph.totals.reciprocal_edges, 1);
     assert.equal(graph.lists.unresolved_references.some(r => r[4] === "native_connection_check_unknown"), kind === "absent");
+  }
+}));
+
+test("incomplete or failed native scans cannot simultaneously report an open endpoint", () => withWorkspace(() => {
+  for (const kind of ["failed_check", "missing_check", "scan_incomplete", "scan_error", "logical", "disconnected", "system", "complete"] as const) {
+    const { raw, ref } = connectorFixture();
+    const c = raw.results[2].connectors[0];
+    const peer = ref(90, 0);
+    if (kind === "failed_check") peer.isConnectedTo = null;
+    if (kind === "missing_check") delete peer.isConnectedTo;
+    if (kind === "logical") { peer.connectorType = "Logical"; peer.isConnectedTo = null; }
+    if (kind === "system") { peer.isMepSystem = true; peer.isConnectedTo = null; }
+    if (kind === "disconnected") peer.isConnectedTo = false;
+    if (kind === "scan_incomplete") c.referenceScanComplete = false;
+    if (kind === "scan_error") c.referenceReadErrorCount = 1;
+    if (kind === "complete") c.referenceScanComplete = true;
+    if (["failed_check", "missing_check", "logical", "disconnected", "system"].includes(kind)) c.connectedTo = [peer];
+    const uncertain = ["failed_check", "missing_check", "scan_incomplete", "scan_error"].includes(kind);
+    const graph = storeEvidence({ scope, source: `native_scan_${kind}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    assert.equal(graph.lists.open_hvac_endpoints.some(row => row[0] === 30), !uncertain, kind);
+    assert.equal(graph.lists.unresolved_references.some(row => row[0] === 30), uncertain, kind);
+    assert.equal(graph.totals.reciprocal_edges, 1, kind);
+    assert.equal(graph.coverage.native_reference_scan_complete, kind === "scan_incomplete" || kind === "scan_error" ? false : null);
+  }
+}));
+
+test("explicit native scan coverage preserves unknown ports and only certifies complete returned scans", () => withWorkspace(() => {
+  for (const variant of ["complete", "partial", "unknown_port", "legacy", "failed_owner"] as const) {
+    const { raw } = connectorFixture();
+    for (const row of raw.results) for (const c of row.connectors) { c.referenceScanComplete = true; c.referenceReadErrorCount = 0; }
+    const c = raw.results[2].connectors[0];
+    if (variant === "partial") { c.referenceScanComplete = false; c.referenceReadErrorCount = 1; }
+    if (variant === "unknown_port") { c.physicalConnectionState = "unknown"; c.isPhysicallyConnected = null; c.isConnected = null; }
+    if (variant === "legacy") delete c.referenceScanComplete;
+    if (variant === "failed_owner") { raw.results[2] = { id: 30, ok: false, error: "manager unavailable" }; raw.failedElementCount = 1; }
+    const graph = storeEvidence({ scope, source: `native_coverage_${variant}`, trust_level: "authoritative_native", raw }).projection.connector_graph!;
+    assert.equal(graph.coverage.native_reference_scan_complete, variant === "complete" ? true : variant === "partial" ? false : null, variant);
+    if (variant === "unknown_port") {
+      assert.equal(graph.lists.open_hvac_endpoints.some(row => row[0] === 30), false);
+      assert(graph.lists.unresolved_references.some(row => row[0] === 30));
+      assert.equal(graph.lists.row_issues.some(row => row[2] === "physical_reference_count_mismatch"), false);
+    }
+    assert.equal(graph.totals.reciprocal_edges, 1);
   }
 }));
 

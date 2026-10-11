@@ -153,6 +153,26 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
   let bestInventory: IdentityInventory | null = null;
   const queue: Array<{ value: unknown; path: string; depth: number }> = [{ value: raw, path: "$", depth: 0 }];
   const rootRecord = safeRecord(raw);
+  // Dynamic runtime receipts are embedded JSON strings, not ordinary nested
+  // objects. Preserve their reported settlement before bulky worker/snapshot
+  // data consumes the fact budget. This projection never authenticates them or
+  // promotes the evidence reference's trust level.
+  const dynamicEvidence = safeRecord(rootRecord?.evidence);
+  for (const [field, schema] of [["previewReceipt", "dynamic-revit-preview-receipt/v0"],
+    ["applyReceipt", "dynamic-revit-apply-receipt/v1"]] as const) {
+    const receipt = typeof dynamicEvidence?.[field] === "string"
+      ? safeRecord(parseBoundedStructuredJson(dynamicEvidence[field]))
+      : safeRecord(dynamicEvidence?.[field]);
+    if (receipt?.schema !== schema) continue;
+    for (const key of ["schema", "ok", "outcome", "rollback_status", "rollback_truth",
+      "preview_id", "graph_hash", "document_fingerprint", "document_session_id", "retry_permitted"]) {
+      const value = scalar(receipt[key]);
+      if (value !== undefined) facts[`evidence.${field}.${key}`] = value;
+    }
+    const idsKey = field === "applyReceipt" ? "changed_element_ids" : "projected_changed_element_ids";
+    if (Array.isArray(receipt[idsKey])) counts[`evidence.${field}.${idsKey}.length`] = receipt[idsKey].length;
+    if (Number.isSafeInteger(receipt.operation_count)) counts[`evidence.${field}.operation_count`] = receipt.operation_count as number;
+  }
   const rootLooksLikeMcpEnvelope = Boolean(rootRecord && (Array.isArray(rootRecord.content)
     || Object.prototype.hasOwnProperty.call(rootRecord, "structuredContent")));
   const structuredPayload = rootLooksLikeMcpEnvelope ? extractMcpStructuredPayload(raw) : null;

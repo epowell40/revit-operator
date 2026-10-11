@@ -6,6 +6,7 @@ import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js"
 import type { AssignmentKernelBindingInputV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2 } from "./assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2, absoluteAssignmentWorkCallLimitV2 } from "./assignment_work_allowance_v2.js";
+import { settleAssignmentKernelExecutionFailureV2 } from "./assignment_kernel_v2_execution_failure.js";
 
 /** Host-owned provider boundary. Neither caller prose nor tool results settle work. */
 export async function executeExternalProviderCallV2<T>(input: {
@@ -51,7 +52,17 @@ export async function executeExternalProviderCallV2<T>(input: {
       ...(receipt.tokens.cache_write_input_tokens == null ? {} : { cache_write_input_tokens: receipt.tokens.cache_write_input_tokens }),
       estimated_cost_usd: null
     } });
-    record("completed", { success, ...(success ? {} : { error_class: "provider" }) });
+    const drained = record("completed", { success, ...(success ? {} : { error_class: "provider" }) });
+    // The caller may have lost its HTTP connection and journaled a failure
+    // while this upstream call was still running. Retain late usage first,
+    // then re-evaluate that exact failure; never treat provider success as
+    // task success or bypass native effects that still require reconciliation.
+    const failureId = drained.execution_failure_ids.at(-1);
+    const failure = failureId ? drained.execution_failures[failureId] : undefined;
+    if (!drained.terminal && failure) {
+      settleAssignmentKernelExecutionFailureV2({ binding: drained.current_binding,
+        failure_id: failure.failure_id, error_class: failure.error_class, phase: failure.phase });
+    }
   };
   let result: T;
   try { result = await input.invoke(); }

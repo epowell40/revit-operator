@@ -1,6 +1,9 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "artifact_delivery_profile.test.ts",
+    "external_provider_lifecycle.test.ts",
+    "sidecar_execution_failure.test.ts",
     "rename_view_plan_receipt.test.ts",
     "sidecar_agent_profile_endpoint.test.ts",
     "registered_duct_branch.test.ts",
@@ -287,6 +290,7 @@
     "OperatorAttemptSettlementTests",
     "MepRouteEndpointContractTests",
     "MepConnectorServicePolicyTests",
+    "ConnectorReadStateTests",
     "MepSystemTypeNamePolicyTests",
     "OperatorNativeTransactionExecutionTests",
     "OperatorRevitQueueDiagnosticTests",
@@ -362,6 +366,29 @@
   ],
   "failure_families": [
     {
+      "id": "sidecar-v2-stopped-execution-preserves-native-unknown",
+      "coverage": [
+        "backend:sidecar_execution_failure.test.ts",
+        "backend:sidecar_agent_profile_endpoint.test.ts",
+        "backend:assignment_kernel_v2_provider_failure.test.ts",
+        "backend:external_provider_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "connector-read-failure-is-not-open-port",
+      "coverage": [
+        "dotnet:ConnectorReadStateTests",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "dynamic-embedded-settlement-facts-survive-projection",
+      "coverage": [
+        "backend:evidence_projection.test.ts",
+        "desktop:test/server_smoke.test.js"
+      ]
+    },
+    {
       "id": "native-continuation-wire-decoding-cannot-authorize-kernel-replay",
       "coverage": [
         "javascript:package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
@@ -370,7 +397,14 @@
         "backend:candidate53_v2_native_evidence_authority.test.ts"
       ]
     },
-    {"id":"advisory-independent-review-native-evidence-binding","coverage":["backend:bound_native_review_evidence.test.ts","backend:assignment_kernel_v2_benchmark_consumers.test.ts","backend:general_revit_acceptance_review.test.ts"]},
+    {
+      "id": "advisory-independent-review-native-evidence-binding",
+      "coverage": [
+        "backend:bound_native_review_evidence.test.ts",
+        "backend:assignment_kernel_v2_benchmark_consumers.test.ts",
+        "backend:general_revit_acceptance_review.test.ts"
+      ]
+    },
     {
       "id": "saved-pause-direction-must-receive-later-canonical-resume-receipt",
       "coverage": [
@@ -3645,6 +3679,13 @@
         "mcp:lib/viewOwnedDetailingAgentProjection.test.ts",
         "backend:view_owned_detailing_v2.test.ts",
         "backend:detailing_model_projection.test.ts"
+      ]
+    },
+    {
+      "id": "active-agent-profile-delivers-artifact-verification-instructions-with-bound-host-ack",
+      "coverage": [
+        "backend:artifact_delivery_profile.test.ts",
+        "backend:codex_app_server_compatibility.test.ts"
       ]
     }
   ],

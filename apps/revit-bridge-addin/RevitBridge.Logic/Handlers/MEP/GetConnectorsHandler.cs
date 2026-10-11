@@ -44,6 +44,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var totalScannedConnectorCount = 0;
             var physicallyConnectedConnectorCount = 0;
             var openPhysicalConnectorCount = 0;
+            var unknownPhysicalConnectorCount = 0;
             var connectorScanTruncatedElementCount = 0;
 
             var maxConn = p.maxConnectorsPerElement <= 0 ? 64 : Math.Min(p.maxConnectorsPerElement, 512);
@@ -75,7 +76,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 try
                 {
                     var idx = 0;
-                    foreach (var c in MepSystemUtil.GetConnectors(e))
+                    foreach (var c in ReadConnectorsStrict(e))
                     {
                         if (idx >= maxConn)
                         {
@@ -88,7 +89,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var hasNativeConnectorId = MepSystemUtil.TryGetNativeConnectorId(c, out var nativeConnectorId);
 
                         var origin = TryGetConnectorOrigin(c);
-                        var shape = c.Shape.ToString();
+                        var shape = TryGetConnectorPropertyValue(c, "Shape");
                         var domain = "";
                         try { domain = c.Domain.ToString(); } catch { domain = ""; }
 
@@ -135,13 +136,16 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                         var refsOut = new List<object>();
                         var physicalRefsOut = new List<object>();
+                        var referenceScanComplete = false;
+                        var referenceReadErrorCount = 0;
                         if (p.includeAllRefs || p.onlyOpenPhysicalConnectors)
                         {
                             var seen = new HashSet<string>();
                             try
                             {
-                                ConnectorSet? refs = null;
-                                try { refs = c.AllRefs; } catch { refs = null; }
+                                var refs = c.AllRefs;
+                                referenceScanComplete = refs != null;
+                                if (refs == null) referenceReadErrorCount++;
                                 if (refs != null)
                                 {
                                     foreach (Connector r in refs)
@@ -149,8 +153,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                         try
                                         {
                                             var o = r?.Owner;
-                                            if (o == null) continue;
-                                            if (o.Id == null) continue;
+                                            if (o == null || o.Id == null) { referenceScanComplete = false; referenceReadErrorCount++; continue; }
                                             if (RevitBridge.Common.ElementIdCompat.GetValue(o.Id) == RevitBridge.Common.ElementIdCompat.GetValue(e.Id)) continue;
                                             var hasReferenceConnectorId = MepSystemUtil.TryGetNativeConnectorId(r, out var referenceConnectorId);
                                             var referenceKey = ElementIdCompat.GetValue(o.Id) + ":" + (hasReferenceConnectorId ? referenceConnectorId.ToString() : "unknown");
@@ -158,7 +161,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
                                             var isMepSystem = o is MEPSystem;
                                             bool? nativeConnected = null;
-                                            try { nativeConnected = c.IsConnectedTo(r); } catch { }
+                                            try { nativeConnected = c.IsConnectedTo(r); } catch { referenceScanComplete = false; referenceReadErrorCount++; }
                                             var referenceType = TryGetConnectorPropertyValue(r, "ConnectorType");
                                             var isPhysical = !isMepSystem && nativeConnected == true
                                                 && c.ConnectorType != ConnectorType.Logical && r.ConnectorType != ConnectorType.Logical;
@@ -183,28 +186,37 @@ namespace RevitBridge.Logic.Handlers.MEP
                                         }
                                         catch
                                         {
-                                            // ignore per-ref failures
+                                            referenceScanComplete = false;
+                                            referenceReadErrorCount++;
                                         }
                                     }
                                 }
                             }
                             catch
                             {
-                                // ignore allrefs failures
+                                referenceScanComplete = false;
+                                referenceReadErrorCount++;
                             }
                         }
 
-                        var isPhysicallyConnected = physicalRefsOut.Count > 0;
+                        var connectorType = TryGetConnectorPropertyValue(c, "ConnectorType");
+                        var nativeIsConnected = TryGetConnectorPropertyValue(c, "IsConnected") as bool?;
+                        var physicalPort = connectorType is string kind && kind != "Logical" && kind.Length > 0
+                            && new[] { "DomainHvac", "DomainPiping", "DomainElectrical", "DomainCableTrayConduit" }.Contains(domain);
+                        var physicalConnectionState = ConnectorReadState.Classify(physicalPort, Equals(connectorType, "Logical"), referenceScanComplete, nativeIsConnected, physicalRefsOut.Count);
+                        bool? isPhysicallyConnected = physicalConnectionState == "connected" ? true : physicalConnectionState == "open" ? false : (bool?)null;
                         elementConnectorCount++;
                         totalScannedConnectorCount++;
-                        if (isPhysicallyConnected) physicallyConnectedConnectorCount++;
-                        else
+                        if (isPhysicallyConnected == true) physicallyConnectedConnectorCount++;
+                        else if (physicalConnectionState == "open")
                         {
                             elementOpenPhysicalConnectorCount++;
                             openPhysicalConnectorCount++;
                         }
+                        else if (physicalConnectionState == "unknown") unknownPhysicalConnectorCount++;
 
-                        if (!p.onlyOpenPhysicalConnectors || !isPhysicallyConnected)
+                        // Retain unknown rows in discovery: filtering is not proof of absence.
+                        if (!p.onlyOpenPhysicalConnectors || physicalConnectionState == "open" || physicalConnectionState == "unknown" || !referenceScanComplete)
                         {
                             connectorsOut.Add(new
                             {
@@ -214,9 +226,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 origin,
                                 domain,
                                 shape,
-                                connectorType = TryGetConnectorPropertyValue(c, "ConnectorType"),
+                                connectorType,
                                 direction = TryGetConnectorPropertyValue(c, "Direction"),
-                                isConnected = TryGetConnectorPropertyValue(c, "IsConnected"),
+                                isConnected = nativeIsConnected,
                                 systemClassification = TryGetConnectorSystemClassification(c),
                                 electrical = new
                                 {
@@ -233,6 +245,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 connectedTo = refsOut,
                                 physicalConnectedTo = physicalRefsOut,
                                 physicalConnectionCount = physicalRefsOut.Count,
+                                physicalConnectionState,
+                                referenceScanComplete,
+                                referenceReadErrorCount,
                                 isPhysicallyConnected
                             });
                         }
@@ -277,6 +292,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ["totalScannedConnectorCount"] = totalScannedConnectorCount,
                 ["physicallyConnectedConnectorCount"] = physicallyConnectedConnectorCount,
                 ["openPhysicalConnectorCount"] = openPhysicalConnectorCount,
+                ["unknownPhysicalConnectorCount"] = unknownPhysicalConnectorCount,
                 ["connectorScanTruncatedElementCount"] = connectorScanTruncatedElementCount,
                 ["results"] = results,
                 ["warnings"] = warnings,
@@ -284,6 +300,22 @@ namespace RevitBridge.Logic.Handlers.MEP
             };
             if (verificationParameters != null) result["verificationParameters"] = verificationParameters;
             return Task.FromResult<object>(result);
+        }
+
+        // Diagnostic reads must propagate manager/enumeration errors to the failed owner row.
+        // Mutation helpers retain their existing behavior; this is a read-only path.
+        private static IEnumerable<Connector> ReadConnectorsStrict(Element element)
+        {
+            ConnectorManager? manager;
+            if (element is MEPCurve curve) manager = curve.ConnectorManager;
+            else if (element is FamilyInstance instance) manager = instance.MEPModel?.ConnectorManager;
+            else throw new InvalidOperationException("Connector manager inspection is unsupported for this element type.");
+            if (manager == null) throw new InvalidOperationException("Connector manager is unavailable; connectivity is unknown.");
+            foreach (Connector connector in manager.Connectors)
+            {
+                if (connector == null) throw new InvalidOperationException("Connector enumeration returned an unavailable connector.");
+                yield return connector;
+            }
         }
 
         private static long? TryGetPositiveElementId(ElementId? id)

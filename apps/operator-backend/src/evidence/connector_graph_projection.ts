@@ -25,7 +25,7 @@ export type ConnectorGraphProjection = {
     requested: number; scanned: number; failed: number; truncated_elements: number;
     returned_rows: number; unique_owners: number; missing_owner_rows: number; duplicate_owner_rows: number;
     filter: string; rows_complete: boolean; missing_requested_ids: "not_reported_by_native";
-    native_reference_scan_complete: null; whole_model_complete: null;
+    native_reference_scan_complete: boolean | null; whole_model_complete: null;
   };
   interpretation: string;
   domains: string[];
@@ -116,7 +116,8 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
       }
     }
     if (!nonlogical(c) || !physicalDomain(c)) continue;
-    if (c.physicalConnectionCount !== c.physicalConnectedTo.length || c.isPhysicallyConnected !== (c.physicalConnectedTo.length > 0)) lists.row_issues.push([index, owner, "physical_reference_count_mismatch"]);
+    const explicitUnknown = c.physicalConnectionState === "unknown" && c.isPhysicallyConnected === null && c.physicalConnectedTo.length === 0;
+    if (c.physicalConnectionCount !== c.physicalConnectedTo.length || (!explicitUnknown && c.isPhysicallyConnected !== (c.physicalConnectedTo.length > 0))) lists.row_issues.push([index, owner, "physical_reference_count_mismatch"]);
     const referenceKeys = new Set<string>();
     for (const r of c.physicalConnectedTo as Row[]) {
       if (!nonlogical(r) || !physicalDomain(r) || r.isMepSystem !== false || r.isPhysicalElement !== true || r.isConnectedTo !== true || !nativeId(r) || !ownerId(r.ownerId) || r.ownerId === owner || r.domain !== c.domain) {
@@ -141,13 +142,20 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
       }
       directed.set(`${key}>${peerKey}`, edge);
     }
-    if (c.isConnected === false && c.physicalConnectedTo.length === 0 && c.physicalConnectionCount === 0 && c.isPhysicallyConnected === false) {
+    // A nullable native IsConnectedTo result is a failed check, not an
+    // excluded physical reference. Preserve positive peers above, but never
+    // classify this connector as open from contradictory/incomplete evidence.
+    const referenceScanUnknown = c.referenceScanComplete === false || Number(c.referenceReadErrorCount) > 0
+      || c.connectedTo.some((r: Row) => r.connectorType !== "Logical" && r.isMepSystem !== true && r.isConnectedTo !== true && r.isConnectedTo !== false);
+    if (c.referenceScanComplete === false || Number(c.referenceReadErrorCount) > 0)
+      lists.unresolved_references.push([owner, c.connectorId, null, null, "native_reference_scan_incomplete"]);
+    if (!referenceScanUnknown && !explicitUnknown && c.isConnected === false && c.physicalConnectedTo.length === 0 && c.physicalConnectionCount === 0 && c.isPhysicallyConnected === false) {
       const origin = Array.isArray(c.origin) && c.origin.length === 3 && c.origin.every(Number.isFinite) ? c.origin : null;
       const size = record(c.size);
       const safeSize = size ? Object.fromEntries(Object.entries(size).filter(([k, v]) => ["kind", "radiusFt", "diameterFt", "widthFt", "heightFt"].includes(k) && (typeof v === "string" || typeof v === "number" && Number.isFinite(v)))) : null;
       const endpoint: Endpoint = [owner, c.connectorId, index, c.domain, origin, safeSize, typeof c.systemClassification === "string" ? c.systemClassification : null];
       (c.domain === "DomainHvac" ? lists.open_hvac_endpoints : c.domain === "DomainElectrical" ? lists.open_electrical_endpoints : lists.open_other_endpoints).push(endpoint);
-    } else if (c.physicalConnectedTo.length === 0 && c.isConnected !== false) lists.unresolved_references.push([owner, c.connectorId, null, null, "connection_state_without_physical_peer"]);
+    } else if (c.physicalConnectedTo.length === 0 && (c.isConnected !== false || explicitUnknown)) lists.unresolved_references.push([owner, c.connectorId, null, null, "connection_state_without_physical_peer"]);
   }
   const neighbors = new Map<number, Set<number>>([...owners.keys()].filter(id => !duplicates.has(id) && owners.get(id)!.row.ok === true).map(id => [id, new Set<number>()]));
   for (const edge of directed.values()) {
@@ -172,8 +180,11 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
     schema: "revit-operator.connector-graph-projection.v1", source_path: extracted ? "payload.results" : "results",
     coverage: { requested: payload.requestedCount, scanned: payload.scannedElementCount, failed: payload.failedElementCount, truncated_elements: payload.connectorScanTruncatedElementCount,
       returned_rows: payload.results.length, unique_owners: owners.size, missing_owner_rows: Math.max(0, payload.requestedCount - owners.size), duplicate_owner_rows: duplicateRows,
-      filter: payload.filter, rows_complete: rowsComplete && lists.row_issues.length === 0, missing_requested_ids: "not_reported_by_native", native_reference_scan_complete: null, whole_model_complete: null },
-    interpretation: "Observed reciprocal physical native pairs only. Boundary reciprocity=not_scanned. Requested owner membership is inferred from complete allConnectors rows; missing IDs are unknown. Native reference/manager failures are not reported; reference completeness remains unknown. Owner connectivity, including equipment ports, does not prove airflow/service continuity. Open endpoints are not necessarily defects. No geometry, source fidelity or completion proof. Raw rows remain retrievable.",
+      filter: payload.filter, rows_complete: rowsComplete && lists.row_issues.length === 0, missing_requested_ids: "not_reported_by_native",
+      native_reference_scan_complete: [...connectors.values()].some(({ c }) => c.referenceScanComplete === false || Number(c.referenceReadErrorCount) > 0) ? false
+        : rowsComplete && lists.row_issues.length === 0 && lists.unresolved_references.length === 0 && connectors.size > 0 && [...connectors.values()].every(({ c }) => c.referenceScanComplete === true && c.referenceReadErrorCount === 0) ? true : null,
+      whole_model_complete: null },
+    interpretation: "Observed reciprocal physical native pairs only. Boundary reciprocity=not_scanned. Requested owner membership is inferred from complete allConnectors rows; missing IDs are unknown. Reference completeness requires explicit native scan results; legacy or unreported coverage remains unknown. Owner connectivity, including equipment ports, does not prove airflow/service continuity. Open endpoints are not necessarily defects. No geometry, source fidelity or completion proof. Raw rows remain retrievable.",
     domains: [...DOMAINS],
     columns: { edges: ["owner", "native_connector", "peer_owner", "peer_native_connector", "domain_index"], endpoints: ["owner", "native_connector", "source_row", "domain", "origin", "size", "service"], references: ["owner", "native_connector", "peer_owner", "peer_native_connector", "reason"], row_issues: ["source_row", "owner", "reason"] },
     totals: { ...Object.fromEntries(keys.map(key => [key, lists[key].length])) as Record<keyof Lists, number>, logical_connectors: logical, omitted_component_members: 0 },

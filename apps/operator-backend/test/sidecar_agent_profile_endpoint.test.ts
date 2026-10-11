@@ -102,4 +102,11 @@ test(`health exposes the backend-authored Sidecar agent profile handshake (local
   const forged = await fetchJson(`http://127.0.0.1:${port}/desktop/computer/config?OPERATOR_LOCAL_EXECUTOR_PROFILE=codex_v2_advisory_v1&local_executor=codex`, token);
   assert.deepEqual(forged.local_executor, expectedExecutor, "request fields cannot choose the installation profile");
   assert.equal((await fetch(`http://127.0.0.1:${port}/desktop/computer/config`)).status, 401);
+  const failureUrl = `http://127.0.0.1:${port}/api/agent-goal/sidecar-execution-failure`;
+  const failureBody = JSON.stringify({session_id:"no-assignment-session",assignment_id:"missing",
+    assignment_run_id:"sidecar:missing",assignment_generation:1,failure_id:"stop",failure_kind:"canceled"});
+  assert.equal((await fetch(failureUrl,{method:"POST",headers:{"content-type":"application/json"},body:failureBody})).status,401);
+  const missingBinding = await fetch(failureUrl,{method:"POST",headers:{"content-type":"application/json","x-operator-token":token},body:failureBody});
+  assert.equal(missingBinding.status,400);
+  assert.match((await missingBinding.json() as {error:string}).error,/sidecar_execution_failure_binding_mismatch/);
 });
