@@ -12,6 +12,7 @@ import { visibilityTargetTokensV2 } from "./visibility_view_contract_v2.js";
 import { artifactTargetTokensV2 } from "./native_artifact_contract_v2.js";
 import { decodeNativeTagPropertyReadV2, nativeTagPropertyReadTargetsV2, existingTagRepairRequestV2 } from "./tag_property_readback_v2.js";
 import { createdTagRequestV2, decodeNativeCreatedTagReadV2, nativeCreatedTagReadTargetsV2 } from "./created_tag_postcondition_v2.js";
+import { nativeElementBooleanReadTargetsV1, nativeElementBooleanReadbackV1 } from './native_element_property_readback_v1.js';
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -283,12 +284,16 @@ export function operationTargetSelectorV2(input: Readonly<{
   }
   if (pathOf(input.operation) === "/revit/native-api-ops") {
     const value = objectValue(input.value);
-    const targets = Array.isArray(value.operations) && value.version === "operator.native_api_ops.v2"
+    const request={...objectValue(input.operation.arguments??{body:value}),path:'/revit/native-api-ops'};
+    const returnedNative=Array.isArray(value.operations)&&value.version==='operator.native_api_ops.v2';
+    const booleanTargets=nativeElementBooleanReadTargetsV1(request).filter(token=>!returnedNative
+      || nativeElementBooleanReadbackV1(request,value,Number(token.slice(3)),'HasStripedRows','Autodesk.Revit.DB.ViewSchedule')!==undefined);
+    const tagTargets = returnedNative
       ? decodeNativeTagPropertyReadV2(input.operation.arguments, value)?.map(item => `id:${item.element_id}`)
         ?? decodeNativeCreatedTagReadV2(input.operation.arguments, value)?.map(item => `id:${item.id}`) ?? []
       : [...nativeTagPropertyReadTargetsV2(value), ...nativeCreatedTagReadTargetsV2(input.operation.arguments ?? {method:'POST',path:'/revit/native-api-ops',body:value})];
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
-      principal_target_tokens: targets, contextual_scope_tokens: [] };
+      principal_target_tokens: [...new Set([...tagTargets,...booleanTargets])].sort(), contextual_scope_tokens: [] };
   }
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,

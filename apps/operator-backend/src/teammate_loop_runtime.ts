@@ -929,7 +929,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of observedPostconditionValuesV2(verificationPayload, { path: state.apply_call?.path })) state.verification_observed_values.add(value);
+    for (const value of observedPostconditionValuesV2(verificationPayload, {
+      path: state.apply_call?.path, apply_input: {body:state.apply_call?.raw_body},
+      verification_input: {path:pending.path,body:pending.raw_body}
+    })) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
     if (accumulatedReadbackMatches(state, verificationPayload)) {
       markVerified(state, "target_bound_readback", actionId, verificationPayload);

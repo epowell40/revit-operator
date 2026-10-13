@@ -92,7 +92,7 @@ function parameterReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | 
     && sameAssignmentBindingV2(commit.binding,result.binding) && Number.isFinite(commitAt) && Number.isFinite(opened) && Number.isFinite(completed)
     && opened >= commitAt && completed >= opened);
 }
-function tagPropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
+function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
   const commit = applied.result;
   const commitAt = Date.parse(commit?.completed_at ?? "");
   const readOpened = Date.parse(read?.opened_at ?? "");
@@ -852,8 +852,10 @@ function commitInput(
       && (verificationSubject.request_identity?.path !== "/revit/set-parameter" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/change-element-type" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/assign-electrical-circuit" || circuitReadIsFreshNativeV2(verificationSubject, operation, result))
+      && (verificationSubject.request_identity?.path !== "/revit/configure-schedule" || result.request_identity?.path !== "/revit/native-api-ops"
+        || nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/tag-elements" || !existingTagRepairRequestV2(verificationSubject.input)
-        || tagPropertyReadIsFreshNativeV2(verificationSubject, operation, result))
+        || nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
         ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/duplicate-type-and-swap-instance"
@@ -875,7 +877,8 @@ function commitInput(
         envelope.observation.raw_payload,
         { capability_id: verificationSubject.capability_id, path: verificationSubject.request_identity?.path,
           native_artifact_receipt: verificationSubject.result?.native_artifact_receipt,
-          verification_input: operation?.input,
+          verification_input: operation?.request_identity?.path === "/revit/native-api-ops"
+            ? {...operation.input,path:operation.request_identity.path} : operation?.input,
           affected_target_identities: verificationSubject.result?.affected_target_identities }
       ))
   );
