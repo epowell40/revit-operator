@@ -16276,7 +16276,7 @@ function maybeBuildHostedPlacementVerificationBridge(args: {
     if (
       mismatchedCircuitIds.length > 0 &&
       !hasDoneToolPathAfter(args.toolResults, latestApplied.index, "/revit/assign-electrical-circuit") &&
-      (requestedCircuit || sourceId !== null)
+      sourceId !== null && (!requestedCircuit || Boolean(sourceCircuitLabel && expectedCircuitLabel && circuitLabelsMatch(sourceCircuitLabel, expectedCircuitLabel)))
     ) {
       return {
         version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -16290,9 +16290,7 @@ function maybeBuildHostedPlacementVerificationBridge(args: {
             path: "/revit/assign-electrical-circuit",
             body: {
               elementIds: mismatchedCircuitIds,
-              ...(requestedCircuit
-                ? { panelName: requestedCircuit.panel, circuitNumber: requestedCircuit.circuit, parameterOnlyFallback: false }
-                : { sourceElementId: sourceId }),
+              sourceElementId: sourceId,
               dryRun: false,
               confirm: true
             }
@@ -18214,7 +18212,7 @@ function defaultSystemPrompt(): string {
     "- If you refresh /revit/get-placement-context during a room-wall placement workflow, preserve roomNumber and roomSide from the original spatial intent; omitting them can drop the link-host placement basis.",
     "- For host-aware family placement on walls, prefer /revit/place-family-instance-on-host or /revit/create-similar-from-instance over generic XYZ-only placement.",
     "- For redline-hosted placement, do not treat raw screenshot/cropped-image pixels as active Revit view pixels. Only use view-frame pixels for model XYZ when the hint came from explicit view/sheet alignment; otherwise use room/side context plus host-local targetChainageFt/targetNormalizedChainage and verify the along-wall chainage.",
-    "- Do not use generic parameter setting for electrical-device `Panel` or `Circuit Number`; those are commonly read-only. If the user wants the same circuit as an exemplar, use matchElectricalCircuitFromSource + requireElectricalCircuitMatch on the host-aware placement or hosted-adjustment call. If the user names a panel/circuit explicitly, use /revit/assign-electrical-circuit and report whether it performed real ElectricalSystem reassignment or only writable-parameter fallback.",
+    "- Do not use generic parameter setting for electrical-device `Panel` or `Circuit Number`; those are commonly read-only. If the user wants the same circuit as an exemplar, use matchElectricalCircuitFromSource + requireElectricalCircuitMatch on the host-aware placement or hosted-adjustment call. If the user names a panel/circuit explicitly, use /revit/assign-electrical-circuit and resolve the actual native source circuit or exact system/panel/slot before assignment. Label-only values do not establish membership.",
     "- Preserve raw coordinates from /revit/spatial-context, /revit/rank-similar-devices-on-wall, /revit/get-placement-context, and /revit/audit-hosted-instance-placement in your reasoning. Do not replace XYZ/chainage/host ids with vague summaries while planning spatial corrections.",
     "- For link-hosted or otherwise non-wall placement hosts, prefer targetChainageFt/targetNormalizedChainage when the target is a room-side redline placement; use explicit pointXyz only when it was projected from a frame-aligned view/sheet hint or /revit/project-point-to-host-frame. Do not send alongHostOffsetFt by itself unless the host is a real wall.",
     "- For spatial room/wall placements, do not emit interim status like \"not verified yet\" as if the task were complete; continue the workflow until final placement is actually validated.",
@@ -18283,11 +18281,11 @@ function defaultSystemPrompt(): string {
     "  or when an existing device must be moved and reassigned onto the exemplar's circuit:",
     "  {\"elementId\":201,\"roomNumber\":\"303\",\"roomSide\":\"bottom\",\"targetChainageFt\":8.0,\"orientationSourceElementId\":12345,\"electricalCircuitSourceElementId\":12345,\"matchOrientationFromSource\":true,\"matchElectricalCircuitFromSource\":true,\"requireElectricalCircuitMatch\":true,\"dryRun\":false,\"includePreviewImage\":false}",
     "- POST /revit/assign-electrical-circuit:",
-    "  {\"elementIds\":[22222],\"sourceElementId\":12345,\"dryRun\":true,\"parameterOnlyFallback\":true}",
+    "  {\"elementIds\":[22222],\"sourceElementId\":12345,\"dryRun\":true}",
     "  or create a native circuit in an exact source-supported panel schedule slot (dry-run performs and rolls back the real operation):",
     "  {\"elementIds\":[22222],\"createSystemType\":\"PowerCircuit\",\"panelElementId\":33333,\"targetPanelSlotNumber\":5,\"expectedCircuitNumber\":\"5\",\"dryRun\":true}",
-    "  or when explicitly asked for a panel/circuit and source-system matching is unavailable:",
-    "  {\"elementIds\":[22222],\"panelName\":\"P401\",\"circuitNumber\":\"1\",\"dryRun\":false,\"confirm\":true,\"parameterOnlyFallback\":true}",
+    "  or move an existing exact-member native circuit to a resolved panel slot:",
+    "  {\"elementIds\":[22222],\"electricalSystemId\":44444,\"panelElementId\":33333,\"targetPanelSlotNumber\":1,\"expectedCircuitNumber\":\"1\",\"dryRun\":false,\"confirm\":true}",
     "- POST /revit/move-elements:",
     "  {\"ids\":[111],\"mode\":\"vector\",\"vectorX\":-3.0,\"vectorY\":0.0,\"vectorZ\":0.0,\"dryRun\":true,\"behavior\":\"allOrNothing\",\"options\":{\"failOnPinned\":true,\"unpinIfAllowed\":false}}",
     "- POST /revit/rotate-elements:",

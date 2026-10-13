@@ -17,8 +17,9 @@ namespace RevitBridge.Logic.Handlers
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var sid = (p.docId ?? p.familyDocumentId ?? "").Trim();
+            if (!Guid.TryParseExact(sid, "N", out _)) throw new ArgumentException("A valid family document session id is required.");
             if (!FamilyEditSessionStore.TryGet(sid, out var session, out var err))
-                throw new InvalidOperationException(err ?? "Family edit session not found.");
+                return Task.FromResult(OperatorFamilyCloseReceipt.SessionUnavailable(sid, p.saveChanges));
             if (!session.ProjectDoc.IsValidObject || !session.ProjectDoc.Equals(app.ActiveUIDocument?.Document))
                 throw new InvalidOperationException("The family session does not belong to the active project.");
             var famDoc = session.FamilyDoc;

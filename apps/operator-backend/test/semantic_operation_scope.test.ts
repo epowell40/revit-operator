@@ -213,6 +213,21 @@ test("export authority preserves a separate global ban on changing the Revit mod
     operation_role:"child",capability_id:"native:POST:/revit/delete-elements",classified_effect:"apply",method:"POST",path:"/revit/delete-elements",arguments:{elementIds:[42]}}),/user_no_model_write_limit/);
 }));
 
+test("requested saved-copy checkpoint reaches parent and native child while other changes stay forbidden",async()=>{
+  for(const effect of ["preview","apply"] as const) await workspace(async()=>{
+  const source="Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.";
+  const snapshot=await prepare(source,decision({...scope("apply",[]),model_effect:"read",protected_clauses:["No other model edits or linked-model changes."]}));
+    const args={method:"POST",path:"/revit/save-as",body:{filePath:"C:\\fixture\\Delivery Verified.rvt",overwrite:false,dryRun:effect==="preview"}};
+    const lease=openAssignmentKernelOperationV2({snapshot,controller_request_id:effect,provider_turn_id:"save-turn",capability_id:"revit_call_tool",classified_effect:effect,arguments:args});
+    assert.equal(lease.requested_effect,effect);
+    const child=openAssignmentKernelChildOperationV2({binding:lease.binding,parent_operation_id:lease.operation_id,child_ordinal:0,
+      operation_role:"child",capability_id:"native:POST:/revit/save-as",classified_effect:effect,method:"POST",path:args.path,arguments:args.body});
+    assert.equal(child.requested_effect,effect);
+    assert.throws(()=>openAssignmentKernelChildOperationV2({binding:lease.binding,parent_operation_id:lease.operation_id,child_ordinal:1,
+      operation_role:"child",capability_id:"native:POST:/revit/delete-elements",classified_effect:"apply",method:"POST",path:"/revit/delete-elements",arguments:{elementIds:[42]}}),/user_no_model_write_limit/);
+  });
+});
+
 
 test("scope request hashes preserve exact legacy UTF-8 identity and bound-effect rejection",()=>{
   const texts=["", "plain text", "line\nend", "line\r\nend", "é", "e\u0301", "模型 🏗️", "\ufefftext", "\ud800", "text\udfff", " \ttrailing ", "x".repeat(10000)];

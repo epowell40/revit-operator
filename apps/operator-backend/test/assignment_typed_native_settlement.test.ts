@@ -356,6 +356,75 @@ test("tag-elements exact plain Dry Run remains blocked while proven not-started 
   }
 });
 
+test("change-type captured hosting failure needs native rollback authority before continuation", { concurrency: false }, async () => {
+  const mcpModule = new URL(import.meta.url.endsWith(".ts")
+    ? "../../mcp-server/src/lib/assignmentKernelV2.ts"
+    : "../../../mcp-server/dist/lib/assignmentKernelV2.js", import.meta.url);
+  const mcp = await import(mcpModule.href);
+  const { createAssignmentKernelForGoalV2 } = await import("../src/assignments/assignment_kernel_v2_factory.js");
+  const { getAssignmentKernelSnapshotV2 } = await import("../src/assignments/assignment_kernel_v2_store.js");
+  const { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2, settleAssignmentKernelOperationV2 } = await import("../src/assignments/assignment_kernel_v2_execution.js");
+  const { runWithRequestContext } = await import("../src/request_context.js");
+  const { createOperatorBackendAuth } = await import("../src/operator_backend_auth.js");
+  const fixture = JSON.parse(fs.readFileSync(path.resolve('test/fixtures/change-type-host-modal-42.json'), 'utf8'));
+  const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only", { OPERATOR_API_BASE_URL: "http://127.0.0.1:7007" }) };
+  // The original run42 remains unknown. These are new native-boundary replays,
+  // including neighbors that must not acquire rollback truth from an error flag.
+  for (const variant of ["rolled_back", "pending", "capture_only"] as const) {
+    await workspace(async () => {
+      const sessionId = `change-type-host-v2-${variant}`;
+      const oldMode = process.env.REVIT_OPERATOR_MODE, oldSessions = process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS;
+      process.env.REVIT_OPERATOR_MODE = "local";
+      process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS = sessionId;
+      try {
+        await runWithRequestContext(local, async () => {
+          const goal = createGoal({ title: "Pick up electrical redlines", objective: "Complete source-supported symbol changes.",
+            acceptance_criteria: ["Symbols match the marked drawing."], status: "active", related_session_id: sessionId,
+            work_budget: { requested_effect: "apply", document_fingerprint: "disposable-host-fixture" } });
+          const { kernel_version: _version, ...binding } = createAssignmentKernelForGoalV2({ goal, run_id: `run:${sessionId}` });
+          const state = () => getAssignmentKernelSnapshotV2(goal.id)!;
+          const open = (id: string, newTypeId: number = fixture.request.newTypeId) => openAssignmentKernelOperationV2({ snapshot: state(), provider_turn_id: "turn",
+            controller_request_id: id, capability_id: "revit_call_tool", classified_effect: "apply",
+            target_tokens: fixture.request.elementIds.map((id: number) => `id:${id}`), arguments: { method: "POST", path: fixture.path, body: { ...fixture.request, newTypeId } } });
+          const lease = open("change-hosted-symbols");
+          markAssignmentKernelOperationDispatchStartedV2(lease);
+          const rolledBack = variant === "rolled_back";
+          const payload = { success: false, ok: false, status: "Blocked", dryRun: false, count: 0, changedElementIds: [],
+            failureRollbackRequested: true,
+            capturedFailures: [{ severity: "Error", message: fixture.native_failure, elementIds: fixture.request.elementIds }],
+            ...(variant === "capture_only" ? {} : {
+              transaction: { status: rolledBack ? "rolled_back" : "pending", committed: rolledBack ? false : null, affected_element_ids: [] }
+            }),
+            canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+              effect_state: rolledBack ? "none" : "unknown", effect_authority: rolledBack ? "native_rollback" : "native_host",
+              effect_reason: rolledBack ? "verified_native_rollback" : variant === "pending" ? "native_transaction_pending"
+                : "native_handler_returned_without_authoritative_settlement", request_dispatched: true } };
+          const envelope = await mcp.runWithAssignmentKernelV2({ [mcp.ASSIGNMENT_KERNEL_V2_META_KEY]: lease }, async () => {
+            const request = await mcp.beginAssignmentKernelNativeRequestV2("POST", fixture.path, fixture.request, { classified_effect: "apply" });
+            await mcp.markAssignmentKernelNativeRequestDispatchingV2(request);
+            await mcp.recordAssignmentKernelNativeResultV2("POST", fixture.path, payload, request);
+            return mcp.decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool");
+          });
+          const settled = settleAssignmentKernelOperationV2(lease, envelope);
+          assert.equal(settled.result.persistent_effect, rolledBack ? "none" : "unknown", variant);
+          assert.equal(state().unresolved_unknown_operation_ids.length, rolledBack ? 0 : 1, variant);
+          assert.deepEqual(state().current_binding, binding);
+          if (rolledBack) {
+            assert.equal(open("different-safe-symbol-change", 1429111).requested_effect, "apply");
+          } else {
+            const before = state();
+            assert.throws(() => open("different-safe-symbol-change", 1429111), /unknown_effect_requires_reconciliation/);
+            assert.deepEqual(state(), before);
+          }
+        });
+      } finally {
+        if (oldMode === undefined) delete process.env.REVIT_OPERATOR_MODE; else process.env.REVIT_OPERATOR_MODE = oldMode;
+        if (oldSessions === undefined) delete process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS; else process.env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS = oldSessions;
+      }
+    });
+  }
+});
+
 test("tag-elements actual MCP V2 envelope preserves advisory operation admission after preview settlement", { concurrency: false }, async () => {
   // Source-mode checks execute source on both sides; compiled frontiers use the matching built MCP module.
   const mcpModule = new URL(import.meta.url.endsWith(".ts")

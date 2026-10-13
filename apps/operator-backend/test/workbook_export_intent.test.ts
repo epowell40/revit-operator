@@ -16,6 +16,25 @@ const prompt = "Prepare a room-by-room Excel workbook of the information we can 
 const context = { revit: { source: { live: true }, process_id: 42, document: { title: "Rooms", path: "C:/fixture/Rooms.rvt", projectIdentity: { fingerprint: "model" } } } };
 const exportArgs = { method: "POST", path: "/revit/export-elements-xlsx", body: { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx", dryRun: false } };
 
+test("explicit native Save As remains separate from permission for other model edits", () => {
+  const source="Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.";
+  assert.deepEqual(requestedArtifactExportPaths(source),["/revit/save-as"]);
+  for (const text of ["Save as C:\\fixture\\Copy.rvt. Do not change model elements.",source]) {
+    const owner={}, lease=beginTeammateLoopOwner(owner,{user_text:text,context} as any);
+    try {
+      for(const dryRun of [true,false]) assert.equal(guardTeammateMcpCall(owner,{tool:"revit_call_tool",arguments:{method:"POST",path:"/revit/save-as",body:{filePath:"C:\\fixture\\Delivery Verified.rvt",overwrite:false,dryRun}}}).allowed,true);
+      assert.equal(guardTeammateMcpCall(owner,{tool:"revit_call_tool",arguments:{method:"POST",path:"/revit/delete",body:{elementIds:[42]}}}).allowed,false);
+    } finally { endTeammateLoopOwner(lease); }
+  }
+  for(const text of ["Read-only: save a separate copy to C:\\fixture\\Copy.rvt.",
+    "Save a separate copy to C:\\fixture\\Copy.rvt after I approve.","Save a separate copy to C:\\fixture\\Copy.rvt later.",
+    "Explain how to save as C:\\fixture\\Copy.rvt.","Should we save a separate copy to C:\\fixture\\Copy.rvt?",
+    "Save a separate copy to C:\\fixture\\Copy.rvt. Do not save the model.","Do not save as C:\\fixture\\Copy.rvt.",
+    "Save a separate copy to C:\\fixture\\Copy.rvt. Don't write any files.","Save a separate copy to C:\\fixture\\Copy.rvt without saving.",
+    "Inspect the model and list its save options.","Save a PDF to C:\\fixture\\sheet.pdf; the source was Model.rvt."])
+    assert(!requestedArtifactExportPaths(text).includes("/revit/save-as"),text);
+});
+
 test("scoped workbook briefs retain file authority through normal admission and no-model-write guards", () => {
   for (const text of [
     "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.",

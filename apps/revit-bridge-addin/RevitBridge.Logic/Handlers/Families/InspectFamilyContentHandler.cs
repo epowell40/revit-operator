@@ -12,8 +12,8 @@ namespace RevitBridge.Logic.Handlers
 {
     /// <summary>
     /// Opens one loaded family from a grounded project instance, inventories the
-    /// content needed to classify visible family text/labels, and always closes
-    /// the family document without saving. This is intentionally observational;
+    /// content needed to classify visible family text/labels, and closes only a
+    /// newly opened temporary document without saving. Existing editors are preserved.
     /// editing remains available through the separate family edit primitives.
     /// </summary>
     public sealed class InspectFamilyContentHandler : IRequestHandler
@@ -59,13 +59,10 @@ namespace RevitBridge.Logic.Handlers
 
             var max = Math.Max(1, Math.Min(2000, p.maxElements));
             var needle = Normalize(p.contains ?? "");
-            Document? familyDoc = null;
-            var closedWithoutSaving = false;
-
-            try
+            var alreadyOpen = app.Application.Documents.Cast<Document>().ToArray();
+            var result = TemporaryDocumentInspection.Run<Document, object>(alreadyOpen,
+                () => projectDoc.EditFamily(family), familyDoc =>
             {
-                familyDoc = projectDoc.EditFamily(family)
-                    ?? throw new InvalidOperationException("Failed to open the loaded family document for inspection.");
 
                 var familyParameters = new List<object>();
                 var familyParameterNamesById = new Dictionary<long, string>();
@@ -183,7 +180,7 @@ namespace RevitBridge.Logic.Handlers
                     return prop != null && prop.GetValue(item) is bool value && value;
                 });
 
-                return Task.FromResult<object>(new
+                return new
                 {
                     ok = true,
                     observational = true,
@@ -230,24 +227,9 @@ namespace RevitBridge.Logic.Handlers
                         categoryCounts
                     },
                     closedWithoutSaving = true
-                });
-            }
-            finally
-            {
-                if (familyDoc != null)
-                {
-                    try
-                    {
-                        familyDoc.Close(false);
-                        closedWithoutSaving = true;
-                    }
-                    catch
-                    {
-                        if (!closedWithoutSaving)
-                            throw new InvalidOperationException("Family inspection completed, but the temporary family document could not be closed without saving.");
-                    }
-                }
-            }
+                };
+            }, familyDoc => familyDoc.Close(false), familyDoc => familyDoc.IsValidObject);
+            return Task.FromResult(result);
         }
 
         private static string[] ResolveDriverParameterNames(Element element, Dictionary<long, string> namesById)

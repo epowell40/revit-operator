@@ -1,3 +1,4 @@
+import { PROVIDER_TOKEN_PRICING_SNAPSHOT as PRICING_SNAPSHOT, standardProviderTextTokenCostUsd } from "../provider_token_cost.js";
 import { buildProviderUsageCoverageV1, PROVIDER_USAGE_COVERAGE_V1_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 
 type JsonRecord = Record<string, unknown>;
@@ -162,45 +163,8 @@ function completeSum(values: Array<number | null>): number | null {
     : null;
 }
 
-const PRICING_SNAPSHOT = {
-  schema: "revit-operator.openai-pricing-snapshot.v1",
-  effective_date: "2026-10-09",
-  // Existing model rates retain their September 24 snapshot; Sol 6.1 was checked October 9.
-  model_rate_dates: { "gpt-6.1-sol": "2026-10-09", default: "2026-09-24" },
-  currency: "USD",
-  unit_tokens: 1_000_000,
-  long_context_input_threshold_tokens: 272_000,
-  rates: {
-    "gpt-5.6-sol": { input: 4, cached_input: 0.4, cache_write_input: 5, output: 20 },
-    "gpt-5.6-luna": { input: 0.2, cached_input: 0.02, cache_write_input: 0.25, output: 1.2 },
-    "gpt-6-astra": { input: 10, cached_input: 1, cache_write_input: 12.5, output: 50 },
-    "gpt-6-sol": { input: 2, cached_input: 0.2, cache_write_input: 2.5, output: 10 },
-    "gpt-6.1-sol": { input: 2, cached_input: 0.1, cache_write_input: 2.5, output: 10 }
-  },
-  sources: {
-    "gpt-5.6-sol": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-    "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
-    "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-    "gpt-6-sol": "https://developers.openai.com/api/docs/models/gpt-6-sol",
-    "gpt-6.1-sol": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
-  }
-} as const;
-
 function receiptCostUsd(receipt: JsonRecord): number | null {
-  const model = String(receipt.model || receipt.requested_model || "");
-  const rates = PRICING_SNAPSHOT.rates[model as keyof typeof PRICING_SNAPSHOT.rates];
-  const tokens = asRecord(receipt.tokens);
-  const input = nonNegativeInteger(tokens.input_tokens);
-  const cached = nonNegativeInteger(tokens.cached_input_tokens);
-  const cacheWrite = nonNegativeInteger(tokens.cache_write_input_tokens);
-  const output = nonNegativeInteger(tokens.output_tokens);
-  if (!rates || input === null || output === null || cached === null || cacheWrite === null || cached + cacheWrite > input) return null;
-  const longContext = input > PRICING_SNAPSHOT.long_context_input_threshold_tokens;
-  const inputMultiplier = longContext ? 2 : 1;
-  const outputMultiplier = longContext ? 1.5 : 1;
-  const uncached = input - cached - cacheWrite;
-  return ((uncached * rates.input + cached * rates.cached_input + cacheWrite * rates.cache_write_input) * inputMultiplier
-    + output * rates.output * outputMultiplier) / PRICING_SNAPSHOT.unit_tokens;
+  return standardProviderTextTokenCostUsd(String(receipt.model || receipt.requested_model || ""), asRecord(receipt.tokens));
 }
 
 function cacheAccounting(tokens: JsonRecord[]): JsonRecord {

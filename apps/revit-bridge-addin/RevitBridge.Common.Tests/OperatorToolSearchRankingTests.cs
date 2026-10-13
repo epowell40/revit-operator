@@ -42,6 +42,23 @@ namespace RevitBridge.Common.Tests
             Assert.Contains(requiredPath, ranked);
         }
 
+        [Theory]
+        [InlineData("room")]
+        [InlineData("space")]
+        public void SpatialDiscoveryExposesLocalInventoryAndAssociativeTags(string query)
+        {
+            foreach (var route in new[] { "/revit/find-elements", "/revit/tag-elements" })
+            {
+                var tool = Assert.Single(OperatorToolManifest.Tools, item => item.Path == route);
+                Assert.True(OperatorToolSearchRanking.Score(query, tool.Path, tool.Title, tool.Group, tool.Description, tool.Example, tool.Method) > 0);
+            }
+            var inventory = Assert.Single(OperatorToolManifest.Tools, item => item.Path == "/revit/find-elements");
+            Assert.Contains("document-wide discovery", inventory.Description);
+            Assert.Contains("hidden in a view", inventory.Description);
+            var tagging = Assert.Single(OperatorToolManifest.Tools, item => item.Path == "/revit/tag-elements");
+            Assert.Contains("Linked room IDs are not host element IDs", tagging.Description);
+        }
+
         [Fact]
         public void InventoryIntentRanksQuantifyAboveUnrelatedTypeAndRepairTools()
         {

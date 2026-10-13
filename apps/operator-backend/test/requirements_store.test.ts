@@ -592,6 +592,22 @@ test("planning lease records an explicit bounded expiry", () => {
   }
 });
 
+test("long marked-binder planning lease fences requirements through its bounded run and releases afterward", () => {
+  mkWorkspace();
+  const ref = scope("engineer", "local");
+  const receipt = resolveRequirements({ scope_refs: [ref] });
+  const lease = beginRequirementsPlanningLease(receipt.receipt_sha256, 121 * 60_000);
+  const realDateNow = Date.now;
+  try {
+    const record = JSON.parse(fs.readFileSync(lease.lease_path, "utf8"));
+    assert.equal(Date.parse(record.expires_at) - Date.parse(record.created_at), 121 * 60_000);
+    Date.now = () => realDateNow() + 65 * 60_000;
+    assert.throws(() => createRequirement({scope:ref,key:"long.binder",text:"Keep the requirements stable."}), /active planning lease/);
+    Date.now = () => realDateNow() + 121 * 60_000 + 1;
+    assert.equal(createRequirement({scope:ref,key:"long.binder",text:"The expired lease is released."}).requirement.revision, 1);
+  } finally { Date.now = realDateNow; endRequirementsPlanningLease(lease); }
+});
+
 test("an expired same-process planning lease cannot permanently fence work", () => {
   mkWorkspace();
   const ref = scope("engineer", "local");

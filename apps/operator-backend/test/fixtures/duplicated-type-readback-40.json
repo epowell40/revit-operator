@@ -1,0 +1,212 @@
+{
+  "input": {
+    "method": "POST",
+    "path": "/revit/duplicate-type-and-swap-instance",
+    "body": {
+      "instanceId": 1521972,
+      "newTypeName": "GFCI - Weatherproof",
+      "typeParamChanges": [
+        {
+          "parameterName": "Label",
+          "value": "WP GFCI"
+        },
+        {
+          "parameterName": "Description",
+          "value": "Weatherproof GFCI receptacle"
+        }
+      ],
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "success": true,
+    "typeParameterChangesComplete": true,
+    "dryRun": false,
+    "instanceId": 1521972,
+    "resultingInstanceId": 1521972,
+    "sourceTypeId": 1379884,
+    "sourceTypeName": "Standard",
+    "newTypeName": "GFCI - Weatherproof",
+    "newTypeId": 1735584,
+    "swappedToTypeId": 1735584,
+    "requestedTypeParamChanges": 2,
+    "typeParamDiffs": [
+      {
+        "typeId": 1735584,
+        "parameterName": "Label",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "String",
+          "value": "WP",
+          "valueString": "WP"
+        },
+        "after": {
+          "storageType": "String",
+          "value": "WP GFCI",
+          "valueString": "WP GFCI"
+        }
+      },
+      {
+        "typeId": 1735584,
+        "parameterName": "Description",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "String",
+          "value": null,
+          "valueString": null
+        },
+        "after": {
+          "storageType": "String",
+          "value": "Weatherproof GFCI receptacle",
+          "valueString": "Weatherproof GFCI receptacle"
+        }
+      }
+    ],
+    "missingAfterElementIds": [],
+    "requiredConfirm": null,
+    "confirmReceived": "",
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        101014,
+        669230,
+        731023,
+        1492512,
+        1521972,
+        1668940,
+        1668955,
+        1670604
+      ],
+      "affected_element_ids": [
+        101014,
+        669230,
+        731023,
+        1492512,
+        1521972,
+        1668940,
+        1668955,
+        1670604,
+        1735584,
+        1735585
+      ],
+      "added_element_ids": [
+        1735584,
+        1735585
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "verified": true,
+    "ok": true,
+    "actualTypeId": 1735584,
+    "typeSwapVerified": true,
+    "successfulParameterReadbacksVerified": true,
+    "status": "Applied"
+  },
+  "read": {
+    "items": [
+      {
+        "id": 1521972,
+        "uniqueId": "10d34372-8427-404a-a5ce-5dbcd3e53d4d-00173934",
+        "name": "GFCI - Weatherproof",
+        "category": "Electrical Fixtures",
+        "categoryId": -2001060,
+        "parameters": {
+          "Type": "1735584",
+          "Panel": "P102",
+          "Circuit Number": "11"
+        },
+        "parameterDetails": [
+          {
+            "name": "Type",
+            "value": "1735584",
+            "valueString": "GFCI - Weatherproof",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002050
+          },
+          {
+            "name": "Panel",
+            "value": "P102",
+            "valueString": "P102",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140104
+          },
+          {
+            "name": "Circuit Number",
+            "value": "11",
+            "valueString": "11",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1140103
+          }
+        ]
+      },
+      {
+        "id": 1735584,
+        "uniqueId": "2f1a7a15-f7d5-49c0-8264-02706397850a-001a7ba0",
+        "name": "GFCI - Weatherproof",
+        "category": "Electrical Fixtures",
+        "categoryId": -2001060,
+        "parameters": {
+          "Family Name": "Weather Proof Receptacle",
+          "Type Name": "GFCI - Weatherproof",
+          "Label": "WP GFCI",
+          "Description": "Weatherproof GFCI receptacle"
+        },
+        "parameterDetails": [
+          {
+            "name": "Family Name",
+            "value": "Weather Proof Receptacle",
+            "valueString": "Weather Proof Receptacle",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002002
+          },
+          {
+            "name": "Type Name",
+            "value": "GFCI - Weatherproof",
+            "valueString": "GFCI - Weatherproof",
+            "storageType": "String",
+            "isReadOnly": true,
+            "parameterId": -1002001
+          },
+          {
+            "name": "Label",
+            "value": "WP GFCI",
+            "valueString": "WP GFCI",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": 1379843
+          },
+          {
+            "name": "Description",
+            "value": "Weatherproof GFCI receptacle",
+            "valueString": "Weatherproof GFCI receptacle",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010103
+          }
+        ]
+      }
+    ]
+  },
+  "provenance": {
+    "assignment_id": "48620605-eb9e-499d-b219-3ab9c24e3e68",
+    "apply_payload_sha256": "63cb47e70327524ad2f8c2d6f9b8881b517d2f23e806df75dd9c8a1654042c0b",
+    "read_source": "independent-native-parameters-1791874594200.json",
+    "notice": "Exact retained native values combined offline for regression only; not an integral historical pass."
+  }
+}

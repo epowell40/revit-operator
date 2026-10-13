@@ -1,6 +1,6 @@
 import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
-import { commitAssignmentKernelObservationV2, leaseFromOperation, settleAssignmentKernelOperationV2 } from "./assignment_kernel_v2_execution.js";
+import { commitAssignmentKernelObservationV2, failAssignmentKernelOperationV2, leaseFromOperation, settleAssignmentKernelOperationV2 } from "./assignment_kernel_v2_execution.js";
 import type { AssignmentKernelBindingInputV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { getWorkspaceRoot } from "../workspace.js";
 import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
@@ -42,9 +42,22 @@ export function recoverRetainedAssignmentCompletionsV2(binding: AssignmentKernel
 
 /** Authenticated command path; old retained-result recovery remains synchronous
  * for existing callers. No dispatch, provider start or permission grant occurs. */
-export async function recoverAssignmentCompletionsV2(binding: AssignmentKernelBindingInputV2, lookup?: NativeCompletionLookupV1) {
+export async function recoverAssignmentCompletionsV2(binding: AssignmentKernelBindingInputV2, lookup?: NativeCompletionLookupV1, now: Date = new Date()) {
   const recovered = recoverRetainedAssignmentCompletionsV2(binding);
   let snapshot = recovered.snapshot;
+  // An expired read cannot leave a persistent model effect. Retain its failure
+  // before composer admission; writes and previews still require their authority.
+  // Retained completions above take precedence over timeout inference.
+  if (!snapshot.terminal) for (const id of completionRecoveryOrderV2(snapshot)) {
+    const operation = snapshot.operations[id];
+    if (!operation || operation.requested_effect !== "read" || operation.result
+      || operation.settlement_state === "settled" || !(Date.parse(operation.deadline_at) <= now.getTime())
+      || Object.values(snapshot.operations).some(child => child.parent_operation_id === id
+        && child.blocks_parent_settlement !== false && child.settlement_state !== "settled")) continue;
+    snapshot = failAssignmentKernelOperationV2(leaseFromOperation(operation),
+      new Error("assignment_kernel_v2_read_deadline_elapsed_during_recovery"), operation.dispatch_state);
+    recovered.recovered_operation_ids.push(id);
+  }
   if (!snapshot.terminal && snapshot.unresolved_unknown_operation_ids.length > 0) {
     const workspace = getWorkspaceRoot(), key = completionOutboxKeyV2(workspace);
     for (const id of snapshot.unresolved_unknown_operation_ids) {

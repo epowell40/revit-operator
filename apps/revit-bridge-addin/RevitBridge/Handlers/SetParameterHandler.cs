@@ -79,6 +79,7 @@ namespace RevitBridge.Handlers
             var titleblockHits = new Dictionary<long, HashSet<string>>();
             var appliedTargets = new List<AppliedTarget>();
             var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted(targetElementIds);
+            var failureGuard = new OperatorNativeFailureGuard();
             var changeInventory = new OperatorNativeChangeInventory(doc);
             void Changed(object sender, DocumentChangedEventArgs args)
             {
@@ -93,6 +94,11 @@ namespace RevitBridge.Handlers
                 using (Transaction trans = new Transaction(doc, "Set Parameters"))
                 {
                     trans.Start();
+                    // A preview can also enter Revit failure processing during
+                    // regeneration or rollback. Keep that ordinary error path
+                    // noninteractive and retain its actual transaction outcome.
+                    RevitBridge.Logic.Handlers.NativeNonInteractiveFailureHandling.Configure(trans, failureGuard,
+                        captureBeforeSilentRollback: true);
                     var preconditionFailures = new List<object>();
                     foreach (var entry in effectiveChanges.Where(x => x.expectedOldValue != null))
                     {
@@ -244,7 +250,9 @@ namespace RevitBridge.Handlers
                         var commitStatus = trans.Commit();
                         transactionReceipt = commitStatus == TransactionStatus.Committed
                             ? changeInventory.CommittedReceipt()
-                            : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), targetElementIds);
+                            : commitStatus == TransactionStatus.RolledBack
+                                ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
+                                : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), targetElementIds);
                     }
                     else
                     {
@@ -257,7 +265,12 @@ namespace RevitBridge.Handlers
             }
             finally { app.Application.DocumentChanged -= Changed; }
 
-            if (apply && changedCount > 0)
+            var committed = transactionReceipt.CommittedValue == true;
+            // A no-op deliberately rolls back the empty transaction. Its
+            // requested values can still be inspected without claiming a write.
+            var unchanged = apply && changedCount == 0 && transactionReceipt.Status == "rolled_back"
+                && !failureGuard.RollbackRequested;
+            if (apply && committed && changedCount > 0)
             {
                 try { doc.Regenerate(); } catch { }
                 try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
@@ -267,7 +280,7 @@ namespace RevitBridge.Handlers
             var unresolvedElementIds = new HashSet<long>();
             var verifiedCount = 0;
             var verificationFailedCount = 0;
-            if (apply)
+            if (apply && (committed || unchanged))
             {
                 foreach (var target in appliedTargets)
                 {
@@ -340,7 +353,7 @@ namespace RevitBridge.Handlers
             List<object>? titleblockImpacts = null;
             try
             {
-                if (titleblockHits.Count > 0)
+                if (committed && titleblockHits.Count > 0)
                 {
                     titleblockImpacts = new List<object>();
                     foreach (var kv in titleblockHits)
@@ -365,16 +378,21 @@ namespace RevitBridge.Handlers
 
             return Task.FromResult<object>(new
             {
-                status = !apply ? "Dry Run" : writeFailedCount > 0 || verificationFailedCount > 0 ? "Applied With Failures" : "Applied and Verified",
+                status = failureGuard.RollbackRequested ? "Native Failure"
+                    : !apply ? "Dry Run"
+                    : !committed && !unchanged ? "Transaction Not Committed"
+                    : writeFailedCount > 0 || verificationFailedCount > 0 ? "Applied With Failures" : "Applied and Verified",
                 dryRun = !apply,
                 requestedCount,
                 effectiveCount,
                 excludedCount,
-                changedCount,
+                changedCount = committed || (!apply && !failureGuard.RollbackRequested) ? changedCount : 0,
+                previewChangedCount = !apply ? changedCount : 0,
                 writeFailedCount,
-                changedElementIds = changedElementIds.OrderBy(x => x).ToList(),
+                changedElementIds = committed || (!apply && !failureGuard.RollbackRequested)
+                    ? changedElementIds.OrderBy(x => x).ToList() : new List<long>(),
                 missingAfterElementIds = unresolvedIds,
-                verificationPerformed = apply,
+                verificationPerformed = apply && (committed || unchanged),
                 verifiedCount,
                 verificationFailedCount,
                 unresolvedElementIds = unresolvedIds,
@@ -382,6 +400,8 @@ namespace RevitBridge.Handlers
                 diffs,
                 transaction = transactionReceipt,
                 changeTracking = changeInventory.Diagnostics(),
+                capturedFailures = failureGuard.Failures,
+                failureRollbackRequested = failureGuard.RollbackRequested,
                 requiredConfirm,
                 confirmReceived,
                 titleblockImpacts

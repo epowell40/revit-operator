@@ -79,6 +79,68 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("element_id:41", settlement.AffectedTargetIdentities);
         }
 
+        [Fact]
+        public void SheetMovesReadNativePlacementAnchorsBeforeGenericModelLocation()
+        {
+            string? source = null;
+            for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null && source == null; directory = directory.Parent)
+                foreach (var prefix in new[] { "apps/revit-bridge-addin", "revit-bridge-addin" })
+                {
+                    var file = Path.Combine(directory.FullName, prefix, "RevitBridge.Logic/Handlers/MoveElementsHandler.cs");
+                    if (File.Exists(file)) { source = File.ReadAllText(file); break; }
+                }
+            Assert.NotNull(source);
+            var snapshot = source!.Substring(source.IndexOf("private static object SnapshotLocation", StringComparison.Ordinal));
+            var branch = snapshot.Substring(0, snapshot.IndexOf("e.Location is LocationPoint", StringComparison.Ordinal));
+            Assert.Contains("schedule.Point, \"ScheduleInsertion\"", branch);
+            Assert.Contains("panelSchedule.Origin, \"PanelScheduleOrigin\"", branch);
+            Assert.Contains("viewport.GetBoxCenter(), \"ViewportBoxCenter\"", branch);
+            Assert.Contains("SnapshotLocation(element, requireKnown: true)", source);
+        }
+
+        [Theory]
+        [InlineData("ScheduleInsertion")]
+        [InlineData("PanelScheduleOrigin")]
+        [InlineData("ViewportBoxCenter")]
+        public void CommittedSheetMoveRetainsTypedReadbackAndFullChangeInventory(string anchorKind)
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed",
+                () => throw new Exception("committed sheet move must not roll back"), () => "Committed",
+                () => new Dictionary<string, object?> { ["movedIds"] = new[] { 41L } },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), new[] { 40L, 41L }, Array.Empty<long>()));
+            OperatorNativeTransactionExecution.ReadCommitted(response, () => new Dictionary<string, object?> {
+                ["snapshots"] = new[] { new { id=41L, before=new {kind=anchorKind,pointXyz=new[]{2d,3d,0d}},
+                    after=new {kind=anchorKind,pointXyz=new[]{2d,2d,0d}} } }
+            });
+            Assert.Equal(true, response["verified"]);
+            var settlement=OperatorAttemptSuccessfulSettlement.Classify(response,"apply","POST","/revit/move-elements");
+            Assert.Equal("applied",settlement.EffectState);
+            Assert.Contains("element_id:40",settlement.AffectedTargetIdentities);
+            using var wire=JsonDocument.Parse(JsonSerializer.Serialize(response));
+            Assert.Equal(anchorKind,wire.RootElement.GetProperty("snapshots")[0].GetProperty("after").GetProperty("kind").GetString());
+        }
+
+        [Fact]
+        public void RetainedBinderSheetMoveReadbackFailuresPreserveExactCommitAndInventory()
+        {
+            using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+                "Fixtures", "binder-sheet-move-readback-failures.json")));
+            Assert.Equal(2, fixture.RootElement.GetArrayLength());
+            foreach (var raw in fixture.RootElement.EnumerateArray())
+            {
+                var response = JsonSerializer.Deserialize<Dictionary<string, object?>>(raw.GetRawText())!;
+                var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/move-elements");
+                Assert.Equal("applied", settlement.EffectState);
+                Assert.Equal("native_transaction", settlement.EffectAuthority);
+                Assert.False(raw.GetProperty("success").GetBoolean());
+                Assert.False(raw.GetProperty("verified").GetBoolean());
+                Assert.Empty(raw.GetProperty("snapshots").EnumerateArray());
+                Assert.Equal("Native location readback is unavailable.", raw.GetProperty("error").GetString());
+                foreach (var id in raw.GetProperty("transaction").GetProperty("modified_element_ids").EnumerateArray())
+                    Assert.Contains("element_id:" + id.GetInt64(), settlement.AffectedTargetIdentities);
+            }
+        }
+
         private static Dictionary<string, object?> HistoricalTagPreview()
         {
             using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,

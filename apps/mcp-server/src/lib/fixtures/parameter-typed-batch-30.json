@@ -1,0 +1,2467 @@
+{
+  "provenance": "Exact native request/result/read payloads from experiment30; no retroactive task credit. Typed wrapper identity tests construct new independent assignments.",
+  "batches": [
+    {
+      "parent_input": {
+        "changes": [
+          {
+            "elementId": 1655069,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655072,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655075,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655078,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655081,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655084,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655087,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655090,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655103,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655106,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          }
+        ],
+        "apply": true,
+        "dryRun": false
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/set-parameter",
+        "body": {
+          "changes": [
+            {
+              "elementId": 1655069,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655072,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655075,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655078,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655081,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655084,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655087,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655090,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655103,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655106,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            }
+          ],
+          "apply": true,
+          "dryRun": false
+        }
+      },
+      "payload": {
+        "status": "Applied and Verified",
+        "dryRun": false,
+        "requestedCount": 10,
+        "effectiveCount": 10,
+        "excludedCount": 0,
+        "changedCount": 10,
+        "previewChangedCount": 0,
+        "writeFailedCount": 0,
+        "changedElementIds": [
+          1655069,
+          1655072,
+          1655075,
+          1655078,
+          1655081,
+          1655084,
+          1655087,
+          1655090,
+          1655103,
+          1655106
+        ],
+        "missingAfterElementIds": [],
+        "verificationPerformed": true,
+        "verifiedCount": 10,
+        "verificationFailedCount": 0,
+        "unresolvedElementIds": [],
+        "verification": [
+          {
+            "elementId": 1655069,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655072,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655075,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655078,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655081,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655084,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655087,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655090,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655103,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655106,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          }
+        ],
+        "diffs": [
+          {
+            "elementId": 1655069,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655072,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655075,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655078,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655081,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655084,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655087,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655090,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655103,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655106,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          }
+        ],
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            1655069,
+            1655072,
+            1655075,
+            1655078,
+            1655081,
+            1655084,
+            1655087,
+            1655090,
+            1655103,
+            1655106
+          ],
+          "affected_element_ids": [
+            1655069,
+            1655072,
+            1655075,
+            1655078,
+            1655081,
+            1655084,
+            1655087,
+            1655090,
+            1655103,
+            1655106
+          ],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "requiredConfirm": null,
+        "confirmReceived": "",
+        "titleblockImpacts": null
+      },
+      "read": {
+        "items": [
+          {
+            "id": 1655069,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019411d",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655072,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194120",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655075,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194123",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655078,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194126",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655081,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194129",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655084,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019412c",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655087,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019412f",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655090,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194132",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655103,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019413f",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655106,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194142",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "parent_input": {
+        "changes": [
+          {
+            "elementId": 1654928,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1654931,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1654936,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1654941,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1654944,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1654997,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655000,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655003,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655006,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655011,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655014,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655017,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655020,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655151,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655154,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655157,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655162,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1655167,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657896,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657905,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657907,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657908,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1657909,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          },
+          {
+            "elementId": 1659176,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "1",
+            "value": "0"
+          }
+        ],
+        "apply": true,
+        "dryRun": false
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/set-parameter",
+        "body": {
+          "changes": [
+            {
+              "elementId": 1654928,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1654931,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1654936,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1654941,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1654944,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1654997,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655000,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655003,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655006,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655011,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655014,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655017,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655020,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655151,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655154,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655157,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655162,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1655167,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657890,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657896,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657905,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657907,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657908,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1657909,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            },
+            {
+              "elementId": 1659176,
+              "parameterName": "Leader Line",
+              "value": "0",
+              "expectedOldValue": "1"
+            }
+          ],
+          "apply": true,
+          "dryRun": false
+        }
+      },
+      "payload": {
+        "status": "Applied and Verified",
+        "dryRun": false,
+        "requestedCount": 25,
+        "effectiveCount": 25,
+        "excludedCount": 0,
+        "changedCount": 25,
+        "previewChangedCount": 0,
+        "writeFailedCount": 0,
+        "changedElementIds": [
+          1654928,
+          1654931,
+          1654936,
+          1654941,
+          1654944,
+          1654997,
+          1655000,
+          1655003,
+          1655006,
+          1655011,
+          1655014,
+          1655017,
+          1655020,
+          1655151,
+          1655154,
+          1655157,
+          1655162,
+          1655167,
+          1657890,
+          1657896,
+          1657905,
+          1657907,
+          1657908,
+          1657909,
+          1659176
+        ],
+        "missingAfterElementIds": [],
+        "verificationPerformed": true,
+        "verifiedCount": 25,
+        "verificationFailedCount": 0,
+        "unresolvedElementIds": [],
+        "verification": [
+          {
+            "elementId": 1654928,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1654931,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1654936,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1654941,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1654944,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1654997,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655000,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655003,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655006,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655011,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655014,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655017,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655020,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655151,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655154,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655157,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655162,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1655167,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657896,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657905,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657907,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657908,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1657909,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1659176,
+            "parameterName": "Leader Line",
+            "expectedValue": "0",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "error": null
+          }
+        ],
+        "diffs": [
+          {
+            "elementId": 1654928,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1654931,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1654936,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1654941,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1654944,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1654997,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655000,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655003,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655006,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655011,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655014,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655017,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655020,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655151,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655154,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655157,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655162,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1655167,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657896,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657905,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657907,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657908,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1657909,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          },
+          {
+            "elementId": 1659176,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            }
+          }
+        ],
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            1654928,
+            1654931,
+            1654936,
+            1654941,
+            1654944,
+            1654997,
+            1655000,
+            1655003,
+            1655006,
+            1655011,
+            1655014,
+            1655017,
+            1655020,
+            1655151,
+            1655154,
+            1655157,
+            1655162,
+            1655167,
+            1657890,
+            1657896,
+            1657905,
+            1657907,
+            1657908,
+            1657909,
+            1659176
+          ],
+          "affected_element_ids": [
+            1654928,
+            1654931,
+            1654936,
+            1654941,
+            1654944,
+            1654997,
+            1655000,
+            1655003,
+            1655006,
+            1655011,
+            1655014,
+            1655017,
+            1655020,
+            1655151,
+            1655154,
+            1655157,
+            1655162,
+            1655167,
+            1657890,
+            1657896,
+            1657905,
+            1657907,
+            1657908,
+            1657909,
+            1659176
+          ],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "requiredConfirm": null,
+        "confirmReceived": "",
+        "titleblockImpacts": null
+      },
+      "read": {
+        "items": [
+          {
+            "id": 1654928,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194090",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1654931,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194093",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1654936,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194098",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1654941,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019409d",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1654944,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940a0",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1654997,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940d5",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655000,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940d8",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655003,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940db",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655006,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940de",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655011,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940e3",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655014,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940e6",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655017,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940e9",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655020,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-001940ec",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655151,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019416f",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655154,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194172",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655157,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-00194175",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655162,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019417a",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1655167,
+            "uniqueId": "b9203b89-aadf-4756-99e4-51ef8c974852-0019417f",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657890,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c22",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657896,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c28",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657905,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c31",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657907,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c33",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657908,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c34",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1657909,
+            "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c35",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          },
+          {
+            "id": 1659176,
+            "uniqueId": "67a20872-66b4-4bce-8f27-916a4ee7acd5-00195128",
+            "name": "Electrical Equipment Panel Tag",
+            "category": "Electrical Equipment Tags",
+            "categoryId": -2005003,
+            "parameters": {
+              "Leader Line": "0"
+            },
+            "parameterDetails": [
+              {
+                "name": "Leader Line",
+                "value": "0",
+                "valueString": "No",
+                "storageType": "Integer",
+                "isReadOnly": false,
+                "parameterId": -1006502
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "parent_input": {
+        "changes": [
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "expectedOldValue": "0",
+            "value": "1"
+          }
+        ],
+        "apply": true,
+        "dryRun": false
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/set-parameter",
+        "body": {
+          "changes": [
+            {
+              "elementId": 1657890,
+              "parameterName": "Leader Line",
+              "value": "1",
+              "expectedOldValue": "0"
+            }
+          ],
+          "apply": true,
+          "dryRun": false
+        }
+      },
+      "payload": {
+        "status": "Applied and Verified",
+        "dryRun": false,
+        "requestedCount": 1,
+        "effectiveCount": 1,
+        "excludedCount": 0,
+        "changedCount": 1,
+        "previewChangedCount": 0,
+        "writeFailedCount": 0,
+        "changedElementIds": [
+          1657890
+        ],
+        "missingAfterElementIds": [],
+        "verificationPerformed": true,
+        "verifiedCount": 1,
+        "verificationFailedCount": 0,
+        "unresolvedElementIds": [],
+        "verification": [
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "expectedValue": "1",
+            "status": "verified",
+            "actual": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            },
+            "error": null
+          }
+        ],
+        "diffs": [
+          {
+            "elementId": 1657890,
+            "parameterName": "Leader Line",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "Integer",
+              "value": 0,
+              "valueString": "No"
+            },
+            "after": {
+              "storageType": "Integer",
+              "value": 1,
+              "valueString": "Yes"
+            }
+          }
+        ],
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            1657890
+          ],
+          "affected_element_ids": [
+            1657890
+          ],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "requiredConfirm": null,
+        "confirmReceived": "",
+        "titleblockImpacts": null
+      },
+      "read": {
+        "id": 1657890,
+        "uniqueId": "22dc77b7-87ed-4f43-b796-0ad82dc7dacf-00194c22",
+        "name": "Electrical Equipment Panel Tag",
+        "category": "Electrical Equipment Tags",
+        "categoryId": -2005003,
+        "parameters": {
+          "Leader Line": "1"
+        },
+        "parameterDetails": [
+          {
+            "name": "Leader Line",
+            "value": "1",
+            "valueString": "Yes",
+            "storageType": "Integer",
+            "isReadOnly": false,
+            "parameterId": -1006502
+          }
+        ]
+      }
+    }
+  ]
+}

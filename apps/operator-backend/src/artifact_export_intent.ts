@@ -1,5 +1,5 @@
 /** Explicit file creation is separate from permission to alter the Revit model. */
-function requestedFileExport(userText: string, kind: "workbook" | "pdf"): boolean {
+function requestedFileExport(userText: string, kind: "workbook" | "pdf" | "document_copy"): boolean {
   const text = userText.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
   if (/^\s*(?:read[ -]?only|(?:review|inspection|discovery) only)\b/i.test(text)
       || /\b(?:dry[- ]?run|plan only|explain how|tell me how|preview only|preflight only)\b/i.test(text)
@@ -15,6 +15,13 @@ function requestedFileExport(userText: string, kind: "workbook" | "pdf"): boolea
   // Imperative preview/preflight still needs an explicit subsequent export.
   if ((/\bpreview\b/i.test(text) || /(?:^|[.!?;,]\s*)(?:please\s+)?preflight\b/i.test(text))
       && !/\bthen\s+(?:export|create|produce|generate|write|save)\b/i.test(text)) return false;
+  if (kind === "document_copy") {
+    // A requested document checkpoint is not permission to edit elements,
+    // overwrite a source, or save through an arbitrary native operation.
+    if (/\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}save\b[^.!?;\n]{0,60}\b(?:copy|as|model|project|document|rvt)\b/i.test(text)
+        || /\bwithout\s+saving\b/i.test(text)) return false;
+    return /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?save\s+(?:a\s+(?:separate\s+|new\s+)?copy|as)\b[^!?;\n]*\.rvt\b/i.test(text);
+  }
   const artifact = kind === "pdf" ? "pdfs?" : "excel|xlsx|workbook|spreadsheet";
   return new RegExp("(?:^|[.!?;,]\\s*|\\bthen\\s+)(?:(?:for|using|from|with|in)\\s+[^.!?;\\n,]{1,100},\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:prepare|create|make|produce|generate|write|save|export)\\b[^.!?;\\n]{0,180}\\b(?:" + artifact + ")\\b", "i").test(text);
 }
@@ -26,7 +33,8 @@ export function requestedWorkbookExport(userText: string): boolean {
 export function requestedArtifactExportPaths(userText: string): string[] {
   return [
     ...(requestedWorkbookExport(userText) ? ["/revit/export-elements-xlsx"] : []),
-    ...(requestedFileExport(userText, "pdf") ? ["/revit/export-pdf"] : [])
+    ...(requestedFileExport(userText, "pdf") ? ["/revit/export-pdf"] : []),
+    ...(requestedFileExport(userText, "document_copy") ? ["/revit/save-as"] : [])
   ];
 }
 

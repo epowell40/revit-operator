@@ -1,0 +1,16 @@
+{
+  "case": "retained incompatible-host type preview, natural binder request 08",
+  "path": "/revit/set-parameter",
+  "requested_effect": "preview",
+  "request": {
+    "changes": [
+      {"elementId":1582196,"parameterName":"Family and Type","value":"1429110","expectedOldValue":"1564014"},
+      {"elementId":1582261,"parameterName":"Family and Type","value":"1429110","expectedOldValue":"1564014"}
+    ],
+    "dryRun": true,
+    "apply": false
+  },
+  "native_failure": "Can't use this type in this host.",
+  "prior_result": {"request_dispatched":true,"outcome_unknown":true,"deadline_ms":85000},
+  "limits": "Actual first failure remains unknown; this fixture does not rewrite its settlement. Root cancellation and later type readback are separate evidence."
+}

@@ -1,0 +1,38 @@
+{
+  "input": {
+    "method": "POST",
+    "path": "/revit/change-element-type",
+    "body": {
+      "elementId": 1498153,
+      "newTypeId": 1735582,
+      "expectedOldTypes": [
+        {
+          "elementId": 1498153,
+          "typeId": 1379884
+        }
+      ],
+      "dryRun": false
+    }
+  },
+  "read": {
+    "items": [
+      {
+        "id": 1498153,
+        "uniqueId": "89c1d104-ac80-4728-9835-e6768dc7c94e-0016dc29",
+        "parameters": {
+          "Type": "1735582"
+        },
+        "parameterDetails": [
+          {
+            "name": "Type",
+            "value": "1735582",
+            "valueString": "GFCI - Weatherproof",
+            "storageType": "ElementId",
+            "isReadOnly": false,
+            "parameterId": -1002050
+          }
+        ]
+      }
+    ]
+  }
+}

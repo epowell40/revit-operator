@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -38,27 +39,27 @@ namespace RevitBridge.Logic.Handlers
                 });
             }
 
-            Document? famDoc = null;
             try
             {
-                famDoc = doc.EditFamily(fam);
-                var path = famDoc?.PathName ?? "";
-                var title = famDoc?.Title ?? "";
-                try { famDoc?.Close(false); } catch { }
+                var result = TemporaryDocumentInspection.Run<Document, object>(app.Application.Documents.Cast<Document>().ToArray(),
+                    () => doc.EditFamily(fam), famDoc =>
+                {
+                var path = famDoc.PathName ?? "";
+                var title = famDoc.Title ?? "";
 
                 if (!string.IsNullOrWhiteSpace(path))
                 {
-                    return Task.FromResult<object>(new
+                    return new
                     {
                         ok = true,
                         familyId = p.familyId,
                         pathKnown = true,
                         filePath = path,
                         title
-                    });
+                    };
                 }
 
-                return Task.FromResult<object>(new
+                return new
                 {
                     ok = true,
                     familyId = p.familyId,
@@ -66,11 +67,12 @@ namespace RevitBridge.Logic.Handlers
                     filePath = (string?)null,
                     reason = "unknown_path",
                     title
-                });
+                };
+                }, famDoc => famDoc.Close(false), famDoc => famDoc.IsValidObject);
+                return Task.FromResult(result);
             }
             catch (Exception ex)
             {
-                try { famDoc?.Close(false); } catch { }
                 return Task.FromResult<object>(new
                 {
                     ok = false,

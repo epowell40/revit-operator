@@ -18,18 +18,23 @@ const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 217);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 107);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 109);
+  assert.equal(isSupportedToolRoute("POST", "/revit/locate-elements"), true);
+  assert.equal(isSupportedToolRoute("GET", "/revit/locate-elements"), false);
+  assert.equal(isAllowlisted("POST", "/revit/locate-elements"), true);
+  assert.equal(isSupportedToolRoute("POST", "/revit/assign-electrical-circuit"), true);
+  assert.equal(SUPPORTED_MCP_ALIASES.includes("revit_assign_electrical_circuit"), true);
   assert.equal(isSupportedToolRoute("POST", "/revit/connect-existing-mep-branch"), true);
   assert.equal(isSupportedToolRoute("POST", "/revit/model-health"), true);
   assert.equal(isSupportedToolRoute("POST", "/revit/existing-conditions-mep-draft-workflow"), true,
     "The source-registered stage executor must be transport-admitted.");
   assert.equal(isSupportedNativeTransport("POST", "/revit/linked-room-boundaries"), true);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 97);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 98);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
-  assert.equal(excluded.length, 109);
+  assert.equal(excluded.length, 107);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

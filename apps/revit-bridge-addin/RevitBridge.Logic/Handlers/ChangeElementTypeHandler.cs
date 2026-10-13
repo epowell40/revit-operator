@@ -229,6 +229,7 @@ namespace RevitBridge.Logic.Handlers
             var resultingIds = new Dictionary<long, long>();
             var modifiedIds = new HashSet<long>();
             var deletedIds = new HashSet<long>();
+            var failureGuard = new OperatorNativeFailureGuard();
             enterNativeScope();
             var result = NativeSingleTransaction.Execute(app, doc, "Change Element Type", nativeCreated =>
             {
@@ -262,7 +263,13 @@ namespace RevitBridge.Logic.Handlers
                     ["count"] = targets.Count, ["newTypeId"] = newTypeIdValue, ["newTypeName"] = requestedTypeName,
                     ["changedElementIds"] = resultingIds.Values.Distinct().OrderBy(id => id).ToList(), ["changes"] = changes
                 };
-            }, nativeModifiedElements: () => modifiedIds, nativeDeletedElements: () => deletedIds);
+            }, nativeModifiedElements: () => modifiedIds, nativeDeletedElements: () => deletedIds,
+                configureTransaction: tx => NativeNonInteractiveFailureHandling.Configure(tx, failureGuard));
+            // A type may pass the in-transaction readback but fail Revit's host
+            // validation at commit. Capture the posted failure and settle the
+            // whole batch by its observed rollback instead of a modal dialog.
+            result["capturedFailures"] = failureGuard.Failures;
+            result["failureRollbackRequested"] = failureGuard.RollbackRequested;
             OperatorNativeTransactionExecution.ReadCommitted(result, () =>
             {
                 var readback = resultingIds.Select(pair =>

@@ -234,8 +234,8 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 97, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 74, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
+  assert.equal(laboratoryNames.length, 98, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 75, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
@@ -443,13 +443,13 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 97, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, 98, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
   const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
   assert.equal((connectorSchema.properties?.includeVerificationParameters as any)?.type, "boolean");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
   for (const field of ["ductSize", "width", "height", "diameter", "ductTypeId", "ductShape"])
     assert.ok(ductSchema.properties?.[field], `The executable duct alias must expose ${field}.`);
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 74, "Laboratory mode must preserve retained revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 75, "Laboratory mode must preserve retained revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   // Retirement must remove discovery and executable aliases before either transport.
   const retiredPrototypeAliases = [
@@ -1050,7 +1050,9 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
     { name: "revit_call_tool", arguments: { method: "POST", path: "/revit/update-schedule-cell", body: { apply: true }, requireKnownPath: false } },
     { name: "revit_search_tools", arguments: { query: "schedules", method: "POST" } },
     { name: "revit_tool_doc", arguments: { method: "POST", path: "/revit/schedules" } },
-    { name: "revit_tool_examples", arguments: { method: "POST", path: "/revit/schedules" } }
+    { name: "revit_tool_examples", arguments: { method: "POST", path: "/revit/schedules" } },
+    { name: "revit_tool_doc", arguments: { method: "POST", path: "/revit/set-parameters" } },
+    { name: "revit_tool_examples", arguments: { method: "POST", path: "/revit/set-parameters" } }
   ];
   for (const input of blockedCalls) {
     const result = await withTimeout(client.callTool(input as any), `blocking ${input.name}`);
@@ -1157,9 +1159,59 @@ test("capability metadata is session-cached while explicit refresh remains avail
   assert.match(serverSource, /OPERATOR_TOOL_REGISTRY_CACHE_MS \?\? "1800000"/);
   assert.match(serverSource, /function freshCachedToolRegistry/);
   assert.match(serverSource, /const cachedToolMetadata = new Map/);
-  assert.match(serverSource, /callRevit\("\/revit\/tool-doc", "POST", args\)/);
-  assert.match(serverSource, /callRevit\("\/revit\/tool-examples", "POST", args\)/);
+  assert.match(serverSource, /callRevit\("\/revit\/tool-doc", "POST", documentedArgs\)/);
+  assert.match(serverSource, /callRevit\("\/revit\/tool-examples", "POST", documentedArgs\)/);
   assert.match(serverSource, /!freshCachedToolRegistry\(\) && !args\.forceRefresh/);
+});
+
+test("stdio documentation resolves known route aliases, shares canonical cache and leaves mutation routing exact", async (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-doc-alias-"));
+  const requests: { route: string; body: any }[] = [];
+  const bridge = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    requests.push({ route: req.url!, body });
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ method: body.method, path: body.path, request: { changes: [] } }));
+  });
+  const port = await listen(bridge);
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({ command: process.execPath, args: mcpServerArgs, cwd: process.cwd(),
+    env: { ...env, REVIT_BRIDGE_URL: `http://127.0.0.1:${port}`, OPERATOR_TOKEN: "test-only",
+      OPERATOR_WORKSPACE_ROOT: workspace, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+      OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: "1" }, stderr: "pipe" });
+  transport.stderr?.on("data", () => {});
+  const client = new Client({ name: "doc-alias-stdio", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => { try { await client.close(); } finally { await transport.close(); await closeServer(bridge); fs.rmSync(workspace, { recursive: true, force: true }); } });
+  await withTimeout(client.connect(transport), "connecting doc alias MCP");
+  for (const name of ["revit_tool_doc", "revit_tool_examples"]) {
+    const countBefore = requests.length;
+    for (const inputPath of ["/revit/set-parameters", "/revit/set-parameter"]) {
+      const result = await withTimeout(client.callTool({ name, arguments: { method: "POST", path: inputPath } }), `reading ${name} ${inputPath}`);
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+      assert.equal(JSON.parse((result as any).content[0].text).path, "/revit/set-parameter");
+    }
+    assert.deepEqual(requests.slice(countBefore), [{ route: name === "revit_tool_doc" ? "/revit/tool-doc" : "/revit/tool-examples",
+      body: { method: "POST", path: "/revit/set-parameter" } }], "alias and canonical metadata share one native lookup");
+    for (const args of [
+      { method: "GET", path: "/revit/set-parameters" },
+      { method: "POST", path: "/revit/set-parameters-extra" },
+      { method: "POST", path: "/revit/%73et-parameters" },
+      { method: "POST", path: "https://elsewhere.invalid/revit/set-parameters" }
+    ]) {
+      const before = requests.length;
+      const rejected = await client.callTool({ name, arguments: args });
+      assert.equal(rejected.isError, true, JSON.stringify(args));
+      assert.equal(requests.length, before, "wrong method and unknown/lookalike aliases must not dispatch");
+    }
+  }
+  const before = requests.length;
+  const rejectedMutation = await client.callTool({ name: "revit_call_tool", arguments: {
+    method: "POST", path: "/revit/set-parameters", body: { apply: true, changes: [{ elementId: 42, parameterName: "Comments", value: "x" }] }
+  } });
+  assert.equal(rejectedMutation.isError, true);
+  assert.equal(requests.length, before, "documentation convenience must not enable an alias write route");
 });
 
 test("reviewed typed verification reads propagate the exact kernel fulfillment grant", () => {
@@ -1209,13 +1261,15 @@ test("compiled typed task handlers preserve native fulfillment while previews an
     const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
     nativeRequests.push(req.url!);
     nativeBodies.push(input);
-    const write = req.url === "/revit/set-parameter" || req.url === "/revit/replace-text-note";
-    const preview = write && input.apply !== true;
+    const write = req.url === "/revit/set-parameter" || req.url === "/revit/replace-text-note" || req.url === "/revit/assign-electrical-circuit";
+    const preview = write && (req.url === "/revit/assign-electrical-circuit" ? input.dryRun !== false : input.apply !== true);
     const payload = req.url === "/revit/set-parameter"
       ? { status: preview ? "Dry Run" : "Applied and Verified", dryRun: preview, changedCount: 1, verifiedCount: preview ? 0 : 1,
           verificationPerformed: !preview, verificationFailedCount: 0, writeFailedCount: 0, changedElementIds: [1380354],
           diffs: [{ elementId: 1380354, parameterName: "Comments", ok: true, changed: true,
             before: { value: null }, after: { value: "UI CHECK" } }] }
+      : req.url === "/revit/assign-electrical-circuit" ? { schema: "operator.assign_electrical_circuit.v5", mode:"strict_exact_source_power_system",
+          applied:!preview, previewExecuted:preview, rollbackVerified:preview, transaction:{status:preview?"rolled_back":"committed",committed:!preview} }
       : req.url === "/revit/replace-text-note" ? { elementId: 42, updated: true, newText: input.newText }
       : req.url === "/revit/sheets" ? { items: [{ id: 42, number: "M001" }], total: 1 }
       : { path: "/revit/set-parameter", request: { changes: [] } };
@@ -1244,6 +1298,8 @@ test("compiled typed task handlers preserve native fulfillment while previews an
   const longNote = "Draft limitations — field verification required.\n".repeat(8);
   const oldLongNote = "Previous coordination note.\r\n".repeat(12);
   const scenarios = [
+    { tool: "revit_assign_electrical_circuit", effect: "apply", role: "delegated_task_execution", args: { elementIds:[21,22],sourceElementId:20,dryRun:false,confirm:true } },
+    { tool: "revit_assign_electrical_circuit", effect: "preview", role: "supporting_control", args: { elementIds:[21,22],sourceElementId:20,dryRun:true } },
     { tool: "revit_set_parameters", effect: "apply", role: "delegated_task_execution", args: { apply: true, changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK", expectedOldValue: "" }] } },
     { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: "Coordination issue", apply: true } },
     { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: longNote, expectedOldText: oldLongNote, apply: true } },
@@ -1269,6 +1325,12 @@ test("compiled typed task handlers preserve native fulfillment while previews an
     const result = await client.callTool({ name: scenario.tool, arguments: scenario.args, _meta: { "revit-operator/assignment-kernel-v2": parent } });
     assert.notEqual(result.isError, true, JSON.stringify(result));
     assert.equal(nativeRequests.length, countBefore+1, "one typed call must dispatch its native action exactly once");
+    if (scenario.tool === "revit_assign_electrical_circuit") {
+      assert.equal(nativeRequests.at(-1), "/revit/assign-electrical-circuit");
+      assert.deepEqual(nativeBodies.at(-1).elementIds, [21,22]);
+      assert.equal(nativeBodies.at(-1).sourceElementId, 20);
+      assert.equal(nativeBodies.at(-1).dryRun, scenario.effect === "preview");
+    }
     if (scenario.tool === "revit_replace_text_note") {
       assert.equal(nativeBodies.at(-1).newText, scenario.args.newText, "note text must reach native dispatch without truncation");
       assert.equal(nativeBodies.at(-1).expectedOldText, scenario.args.expectedOldText, "the full old-text precondition must survive dispatch");

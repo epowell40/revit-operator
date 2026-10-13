@@ -2,6 +2,7 @@ import { compactParameterReadResultForPrompt } from "../tool_result_compaction.j
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
 import { getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
+import { assignmentBudgetForPrompt } from "./assignment_budget_prompt.js";
 
 /** Code mode joins text blocks with newlines. Keep a retrieved JSON selection
  * and its host observation metadata in one parseable object. Never change the
@@ -42,6 +43,16 @@ function parseToolArguments(value: unknown): any {
 }
 
 function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
+  if (tool === "operator_manage_work_plan") {
+    try {
+      const payload = JSON.parse(text);
+      const budget = payload?.budget_status;
+      if (payload?.ok !== false && budget?.resources && budget?.allocation && budget?.cost_estimate && budget?.token_breakdown) {
+        return JSON.stringify({ ...payload, budget_status: assignmentBudgetForPrompt(budget) });
+      }
+    } catch { /* Preserve failure or unfamiliar contracts unchanged. */ }
+    return text;
+  }
   if (tool === "operator_evaluate_assignment_criteria" || tool === "operator_request_assignment_input") {
     try {
       const projected = projectAssignmentStatusForModel(JSON.parse(text));

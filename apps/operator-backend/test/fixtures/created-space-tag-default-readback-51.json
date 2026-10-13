@@ -1,0 +1,379 @@
+{
+  "provenance": {
+    "read_sha256": "e1943704c7f0fe6ef41486c7a48e2b85283b038e05ce35e3af3b8440f45c21e1",
+    "apply_sha256": "901cf1928398e9c79c500f0d7d03ed11a8ba2fa58ff5042d12b14cd9403a0da7",
+    "notice": "Actual candidate51 default-selection creation and subsequent independent root native read; not an integral checker pass in that run",
+    "operation_id": "opv2_dd6b6e41061bb552c947684e5c7430fb117bd5ade32292ddd6904cd803e4e52e"
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1626564,
+      "elementIds": [
+        1391089
+      ],
+      "onlyUntagged": false,
+      "addLeader": false,
+      "autoLoadTagFamily": true,
+      "inspectTagFamilyElements": true,
+      "dryRun": false,
+      "max": 1
+    }
+  },
+  "applied": {
+    "status": "Success",
+    "success": true,
+    "viewId": 1626564,
+    "targetCount": 1,
+    "taggedCount": 1,
+    "attemptedCount": 1,
+    "deferredCount": 0,
+    "deferredElementIds": [],
+    "continuationRequired": false,
+    "continuationReason": null,
+    "skippedAlreadyTagged": 0,
+    "skippedNoLocation": 0,
+    "errorCount": 0,
+    "unresolvedCategories": [],
+    "mappingWarnings": [],
+    "tagFamily": null,
+    "tagVisibility": {
+      "Status": "not_requested",
+      "Requested": false,
+      "CategoryId": null,
+      "CategoryName": null,
+      "OwnerViewId": null,
+      "OwnerViewName": null,
+      "OwnerKind": null,
+      "WasHidden": false,
+      "IsHidden": false,
+      "Changed": false,
+      "Error": null
+    },
+    "placementMode": "offset",
+    "placementProfile": null,
+    "geometry": null,
+    "tagIds": [
+      1736674
+    ],
+    "tags": [
+      {
+        "tagId": 1736674,
+        "targetElementId": 1391089,
+        "viewId": 1626564,
+        "targetCategory": "Spaces",
+        "tagCategory": "Space Tags",
+        "tagTypeId": 437134,
+        "tagTypeName": "Space Tag",
+        "tagFamilyName": "Space Tag",
+        "value": "UtilityP05",
+        "tagHeadPosition": null,
+        "geometryPlacement": null
+      }
+    ],
+    "tagReadback": [
+      {
+        "tagId": 1736674,
+        "targetElementId": 1391089,
+        "viewId": 1626564,
+        "targetCategory": "Spaces",
+        "tagCategory": "Space Tags",
+        "tagTypeId": 437134,
+        "tagTypeName": "Space Tag",
+        "tagFamilyName": "Space Tag",
+        "value": "UtilityP05",
+        "tagHeadPosition": null,
+        "geometryPlacement": null
+      }
+    ],
+    "errors": [],
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [],
+      "affected_element_ids": [
+        1736674
+      ],
+      "added_element_ids": [
+        1736674
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "transactionStages": [
+      {
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [],
+          "affected_element_ids": [
+            1736674
+          ],
+          "added_element_ids": [
+            1736674
+          ],
+          "deleted_element_ids": []
+        },
+        "success": true,
+        "error": null,
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        }
+      }
+    ]
+  },
+  "read_input": {
+    "body": {
+      "operations": [
+        {
+          "id": "tag",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1736674
+          ]
+        },
+        {
+          "id": "owner",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "type",
+          "op": "call",
+          "target": "$tag",
+          "memberId": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+          "args": []
+        },
+        {
+          "id": "leader",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "HasLeader"
+        },
+        {
+          "id": "orientation",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "TagOrientation"
+        },
+        {
+          "id": "space",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "Space"
+        },
+        {
+          "id": "orphan",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "IsOrphaned"
+        },
+        {
+          "id": "subject",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1391089
+          ]
+        }
+      ],
+      "returns": [
+        "$tag",
+        "$owner",
+        "$type",
+        "$leader",
+        "$orientation",
+        "$space",
+        "$orphan",
+        "$subject"
+      ]
+    },
+    "path": "/revit/native-api-ops",
+    "method": "POST"
+  },
+  "native_read": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 8,
+    "duration_ms": 2,
+    "operations": [
+      {
+        "id": "tag",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1736674,
+          "unique_id": "9cd7a125-40c9-4bad-8ac5-44b6ce886858-001a7fe2",
+          "name": "Space Tag",
+          "category": "Space Tags"
+        }
+      },
+      {
+        "id": "owner",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1626564
+        }
+      },
+      {
+        "id": "type",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+        "property": null,
+        "signature": "ElementId Element.GetTypeId()",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 437134
+        }
+      },
+      {
+        "id": "leader",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool SpatialElementTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 0,
+        "result_preview": false
+      },
+      {
+        "id": "orientation",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagOrientation",
+        "signature": "SpatialElementTagOrientation SpatialElementTag.TagOrientation { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 1,
+        "result_preview": "Horizontal"
+      },
+      {
+        "id": "space",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Space",
+        "signature": "Space SpaceTag.Space { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1391089,
+          "unique_id": "d566bb2b-0a9b-48f3-8a14-0f74bc425aef-001539f1",
+          "name": "Utility P05",
+          "category": "Spaces"
+        }
+      },
+      {
+        "id": "orphan",
+        "op": "get_property",
+        "member_id": null,
+        "property": "IsOrphaned",
+        "signature": "bool SpatialElementTag.IsOrphaned { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.SpaceTag",
+        "duration_ms": 0,
+        "result_preview": false
+      },
+      {
+        "id": "subject",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1391089,
+          "unique_id": "d566bb2b-0a9b-48f3-8a14-0f74bc425aef-001539f1",
+          "name": "Utility P05",
+          "category": "Spaces"
+        }
+      }
+    ],
+    "results": {
+      "tag": {
+        "id": 1736674,
+        "unique_id": "9cd7a125-40c9-4bad-8ac5-44b6ce886858-001a7fe2",
+        "name": "Space Tag",
+        "category": "Space Tags"
+      },
+      "owner": {
+        "id": 1626564
+      },
+      "type": {
+        "id": 437134
+      },
+      "leader": false,
+      "orientation": "Horizontal",
+      "space": {
+        "id": 1391089,
+        "unique_id": "d566bb2b-0a9b-48f3-8a14-0f74bc425aef-001539f1",
+        "name": "Utility P05",
+        "category": "Spaces"
+      },
+      "orphan": false,
+      "subject": {
+        "id": 1391089,
+        "unique_id": "d566bb2b-0a9b-48f3-8a14-0f74bc425aef-001539f1",
+        "name": "Utility P05",
+        "category": "Spaces"
+      }
+    },
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "75bad8c26751aea3af722f6bf1f70705",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/native-api-ops",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-13T12:58:51.5424463-04:00"
+    }
+  }
+}

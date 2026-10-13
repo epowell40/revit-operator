@@ -5,6 +5,7 @@ import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInp
 import { readLocalWorkspaceFile, toolAttachmentToDataUrl } from "../attachments/inline_images.js";
 import { getWorkspaceRoot } from "../workspace.js";
 import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
+import { pdfDocumentNavigation } from "../attachments/pdf_document_navigation.js";
 
 const MAX_IMAGES = 6;
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -19,6 +20,7 @@ export type VisualInputReceipt = {
   pages?: number[];
   page_count?: number;
   reason?: string;
+  preview_mode?: "overview" | "detail";
 };
 
 /** Images are bound to the uploaded bytes, never inferred from a filename or OCR. */
@@ -82,6 +84,16 @@ export async function buildCodexVisualInput(req: Pick<ChatRequest, "user_attachm
       const { createCanvas } = await import("@napi-rs/canvas");
       receipt.page_count = document.numPages;
       receipt.pages = [];
+      const longDocument = document.numPages > MAX_IMAGES;
+      receipt.preview_mode = longDocument ? "overview" : "detail";
+      const navigation = pdfDocumentNavigation(document.numPages, await document.getPageLabels());
+      input.push({ type: "text", text: JSON.stringify({
+        source: source, attachment_id: attachment.id, sha256: receipt.sha256,
+        navigation, initial_preview_mode: receipt.preview_mode,
+        notice: longDocument
+          ? "Initial small full-page previews are for navigation only. Request detail of actual comments, arrows and nearby symbols before edits; no small-text or complete source review is established."
+          : "Initial images include the short document when budgets permit. Explicit receipts below define included pages; resolve source/model correspondence before edits.",
+      }), text_elements: [] });
       // Supply complete short documents when they fit the existing image budget.
       // Longer drawing sets keep bounded previews and explicit deferred coverage.
       const pageLimit = document.numPages <= MAX_IMAGES ? document.numPages : MAX_PDF_PAGES;
@@ -89,12 +101,12 @@ export async function buildCodexVisualInput(req: Pick<ChatRequest, "user_attachm
         const page = await document.getPage(pageNumber);
         try {
           const base = page.getViewport({ scale: 1 });
-          const scale = Math.min(2, 3072 / Math.max(base.width, base.height));
+          const scale = Math.min(2, (longDocument ? 1280 : 3072) / Math.max(base.width, base.height));
           const viewport = page.getViewport({ scale });
           const canvas = createCanvas(Math.max(1, Math.ceil(viewport.width)), Math.max(1, Math.ceil(viewport.height)));
           await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
           const url = `data:image/png;base64,${canvas.toBuffer("image/png").toString("base64")}`;
-          if (!appendImage(url, `USER PDF: ${source}, page ${pageNumber} of ${document.numPages} (source sha256 ${receipt.sha256}). This preview includes visible annotations. Inspect other pages with document tools when relevant.`)) break;
+          if (!appendImage(url, `USER PDF: ${source}, page ${pageNumber} of ${document.numPages} (source sha256 ${receipt.sha256}; attachment ${attachment.id}). ${longDocument ? "Navigation overview only; inspect actual marks in detail before edits." : "This preview includes visible annotations."} Declared page label: ${JSON.stringify(navigation.pages[pageNumber - 1]?.declared_pdf_page_label ?? null)}. Labels may be sheet references; resolve actual source/native view correspondence. Inspect other pages with document tools when relevant.`)) break;
           receipt.pages.push(pageNumber);
         } finally { page.cleanup(); }
       }

@@ -4,12 +4,13 @@ using RevitBridge.Common;
 
 namespace RevitBridge.Logic.Handlers
 {
-    internal sealed class NativeNonInteractiveFailureHandling : IFailuresPreprocessor
+    public sealed class NativeNonInteractiveFailureHandling : IFailuresPreprocessor
     {
         private readonly OperatorNativeFailureGuard _guard;
         private NativeNonInteractiveFailureHandling(OperatorNativeFailureGuard guard) => _guard = guard;
 
-        internal static void Configure(Transaction transaction, OperatorNativeFailureGuard guard)
+        public static void Configure(Transaction transaction, OperatorNativeFailureGuard guard,
+            bool captureBeforeSilentRollback = false)
         {
             var options = transaction.GetFailureHandlingOptions();
             guard.ConfigureAfterStart(() => transaction.GetStatus().ToString(),
@@ -18,7 +19,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     options.SetFailuresPreprocessor(new NativeNonInteractiveFailureHandling(guard));
                     transaction.SetFailureHandlingOptions(options);
-                });
+                }, captureBeforeSilentRollback);
         }
 
         public FailureProcessingResult PreprocessFailures(FailuresAccessor accessor)
@@ -28,7 +29,17 @@ namespace RevitBridge.Logic.Handlers
                 message => message.GetDescriptionText() ?? "",
                 message => message.GetFailingElementIds().Select(ElementIdCompat.GetValue),
                 message => message.GetFailureDefinitionId()?.Guid.ToString());
-            return rollback ? FailureProcessingResult.ProceedWithRollBack : FailureProcessingResult.Continue;
+            if (rollback)
+            {
+                // Preserve the real failure before asking Revit to clear it.
+                // This also covers intentional preview rollback, where clearing
+                // at transaction entry would bypass this callback entirely.
+                var options = accessor.GetFailureHandlingOptions();
+                options.SetClearAfterRollback(true);
+                accessor.SetFailureHandlingOptions(options);
+                return FailureProcessingResult.ProceedWithRollBack;
+            }
+            return FailureProcessingResult.Continue;
         }
     }
 }

@@ -1,0 +1,392 @@
+{
+  "provenance": {
+    "assignment": {
+      "assignment_id": "0f9cfd2d-e9a5-43e7-b09e-d15aea2c2301",
+      "run_id": "sidecar:1b9fc07e-6d09-47b8-a430-4cc390a88b99",
+      "generation": 1,
+      "session_id": "405439b2-fe4d-58cd-9385-a86d9ce780f1",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "operation_id": "opv2_9c2f86a325f68653467284e23a548679faa09cee5b6c80b84f7a8a4d5095268a",
+    "root_audit_separate": true
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1602409,
+        1602410,
+        1685471,
+        1391409
+      ],
+      "mode": "vector",
+      "vectorX": 0,
+      "vectorY": -0.08333333333333333,
+      "vectorZ": 0,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "moveTogether": true,
+      "options": {
+        "failOnPinned": true,
+        "unpinIfAllowed": false
+      }
+    }
+  },
+  "native_apply": {
+    "movedIds": [
+      1602409,
+      1602410,
+      1685471,
+      1391409
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1391394,
+        1391409,
+        1602409,
+        1602410,
+        1685471
+      ],
+      "affected_element_ids": [
+        1391394,
+        1391409,
+        1602409,
+        1602410,
+        1685471
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1602409,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.6080809926118764,
+            0.9160345267389254,
+            0
+          ]
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.6080809926118764,
+            0.832701193405592,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1602410,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.6080809926118764,
+            1.3434270854801857,
+            0
+          ]
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.6080809926118764,
+            1.2600937521468525,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1685471,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.252169668671196,
+            0.40995560448503604,
+            0
+          ]
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            2.252169668671196,
+            0.3266222711517027,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1391409,
+        "before": {
+          "kind": "ScheduleInsertion",
+          "pointXyz": [
+            2.5299192578087415,
+            2.1600083333215965,
+            0
+          ]
+        },
+        "after": {
+          "kind": "ScheduleInsertion",
+          "pointXyz": [
+            2.5299192578087415,
+            2.076674999988263,
+            0
+          ]
+        }
+      }
+    ],
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": true
+  },
+  "actual_sheet": {
+    "status": "Ok",
+    "action": "detail",
+    "sheetElementId": 1391394,
+    "sheetId": 1391394,
+    "viewId": 1391394,
+    "sheetNumber": "E001",
+    "sheetName": "NOTES, SYMBOLS & SHEET LIST",
+    "title": "NOTES, SYMBOLS & SHEET LIST",
+    "isPlaceholder": false,
+    "viewportCount": 4,
+    "placedViewCount": 4,
+    "placedScheduleCount": 3,
+    "titleBlockCount": 1,
+    "sheetOutline": {
+      "minU": 8.337514706413529e-17,
+      "minV": -5.551115123125783e-17,
+      "maxU": 3.5000000000000053,
+      "maxV": 2.4999999999999996
+    },
+    "viewportIds": [
+      1565194,
+      1602409,
+      1602410,
+      1685471
+    ],
+    "viewportGeometry": [
+      {
+        "viewportId": 1565194,
+        "viewId": 1564095,
+        "viewportType": {
+          "id": 1565446,
+          "name": "Legend Views"
+        },
+        "rotation": "None",
+        "center": {
+          "u": 2.6631687129350725,
+          "v": 0.3820995466078131
+        },
+        "box": {
+          "minU": 2.4355289544807595,
+          "minV": 0.19840183034826703,
+          "maxU": 2.890808471389386,
+          "maxV": 0.5657972628673592
+        }
+      },
+      {
+        "viewportId": 1602409,
+        "viewId": 1602400,
+        "viewportType": {
+          "id": 9835,
+          "name": "Views Typical"
+        },
+        "rotation": "None",
+        "center": {
+          "u": 2.6080809926118764,
+          "v": 0.832701193405592
+        },
+        "box": {
+          "minU": 2.2817327972827894,
+          "minV": 0.6350684970149338,
+          "maxU": 2.9344291879409634,
+          "maxV": 1.0303338897962502
+        }
+      },
+      {
+        "viewportId": 1602410,
+        "viewId": 1602389,
+        "viewportType": {
+          "id": 9835,
+          "name": "Views Typical"
+        },
+        "rotation": "None",
+        "center": {
+          "u": 2.6080809926118764,
+          "v": 1.2600937521468525
+        },
+        "box": {
+          "minU": 2.2817327972827894,
+          "minV": 1.0653803763506742,
+          "maxU": 2.9344291879409634,
+          "maxV": 1.4548071279430308
+        }
+      },
+      {
+        "viewportId": 1685471,
+        "viewId": 1684273,
+        "viewportType": {
+          "id": 1565446,
+          "name": "Legend Views"
+        },
+        "rotation": "None",
+        "center": {
+          "u": 2.252169668671196,
+          "v": 0.3266222711517027
+        },
+        "box": {
+          "minU": 2.0860446581163434,
+          "minV": 0.08045147889666134,
+          "maxU": 2.418294679226049,
+          "maxV": 0.5727930634067442
+        }
+      }
+    ],
+    "placedViews": [
+      {
+        "viewId": 1564095,
+        "name": "POWER SYMBOLS",
+        "viewType": "Legend",
+        "scale": 96,
+        "viewportIds": [
+          1565194
+        ]
+      },
+      {
+        "viewId": 1602389,
+        "name": "Parking Garage_Look West",
+        "viewType": "Rendering",
+        "scale": 1,
+        "viewportIds": [
+          1602410
+        ]
+      },
+      {
+        "viewId": 1602400,
+        "name": "Parking Garage_Look East",
+        "viewType": "Rendering",
+        "scale": 1,
+        "viewportIds": [
+          1602409
+        ]
+      },
+      {
+        "viewId": 1684273,
+        "name": "LIGHTING TYPES & SYMBOLS",
+        "viewType": "Legend",
+        "scale": 96,
+        "viewportIds": [
+          1685471
+        ]
+      }
+    ],
+    "placedSchedules": [
+      {
+        "placementType": "ScheduleSheetInstance",
+        "instanceId": 1391409,
+        "scheduleId": 1391387,
+        "name": "Sheet List",
+        "viewType": "Schedule",
+        "point": {
+          "u": 2.5299192578087415,
+          "v": 2.076674999988263
+        },
+        "boundingBox": {
+          "minU": 2.522974813364297,
+          "minV": 1.4790903670594329,
+          "maxU": 2.934429187940964,
+          "maxV": 2.076674999988263
+        }
+      },
+      {
+        "placementType": "ScheduleSheetInstance",
+        "instanceId": 1495832,
+        "scheduleId": 1495825,
+        "name": "Linked Model Summary",
+        "viewType": "Schedule",
+        "point": {
+          "u": 2.5299192578087415,
+          "v": 2.400283455343555
+        },
+        "boundingBox": {
+          "minU": 2.522974813364297,
+          "minV": 2.114686125769455,
+          "maxU": 2.9289534249616764,
+          "maxV": 2.400283455343555
+        }
+      },
+      {
+        "placementType": "ScheduleSheetInstance",
+        "instanceId": 1735934,
+        "scheduleId": 1735930,
+        "name": "<Revision Schedule> 13",
+        "viewType": "Schedule",
+        "point": {
+          "u": 3.0104166773677217,
+          "v": 1.1224371739549142
+        },
+        "boundingBox": {
+          "minU": 3.003472232923277,
+          "minV": 0.6421086519900814,
+          "maxU": 3.4340139349206518,
+          "maxV": 1.1293816183993586
+        }
+      }
+    ],
+    "titleBlocks": [
+      {
+        "elementId": 1391399,
+        "typeId": 1704694,
+        "familyName": "E1 30 x 42 Horizontal_Snowdon",
+        "typeName": "E1 30 x 42 Horizontal_Snowdon",
+        "boundingBox": {
+          "minU": 8.337514706413529e-17,
+          "minV": -5.551115123125783e-17,
+          "maxU": 3.5000000000000053,
+          "maxV": 2.4999999999999996
+        }
+      }
+    ],
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "c63ea6ae79acfb67b77d7df0d7c6579c",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/sheets",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-12T03:44:53.778606+00:00"
+    }
+  }
+}

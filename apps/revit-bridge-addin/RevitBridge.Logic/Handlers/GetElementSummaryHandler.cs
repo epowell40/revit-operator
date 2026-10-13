@@ -20,6 +20,8 @@ namespace RevitBridge.Logic.Handlers
 
             // Optional: evaluate bounding boxes in a specific view context (for sheet/view-space targeting).
             public long? viewId { get; set; }
+            public bool includeElectricalCircuitMembership { get; set; }
+            public int? electricalPanelSlotNumber { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -27,6 +29,11 @@ namespace RevitBridge.Logic.Handlers
             var p = JsonSerializer.Deserialize<Params>(jsonData);
             var ids = p?.elementIds ?? p?.ids;
             if (ids == null) throw new ArgumentException("Missing 'elementIds' (or legacy 'ids').");
+            if (p?.includeElectricalCircuitMembership == true && (ids.Count == 0 || ids.Count > 200 || ids.Exists(id => id <= 0) || new HashSet<long>(ids).Count != ids.Count))
+                throw new ArgumentException("Electrical membership reads require 1-200 positive exact elementIds.");
+            if (p?.electricalPanelSlotNumber.HasValue == true &&
+                (p.electricalPanelSlotNumber.Value <= 0 || !p.includeElectricalCircuitMembership))
+                throw new ArgumentException("A positive electricalPanelSlotNumber requires includeElectricalCircuitMembership:true.");
 
             var doc = app.ActiveUIDocument?.Document;
             if (doc == null) throw new InvalidOperationException("No active document.");
@@ -39,6 +46,7 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var results = new List<object>(ids.Count);
+            var electricalCircuits = new Dictionary<long, object>();
             foreach (var id in ids)
             {
                 var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
@@ -103,6 +111,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(elem.Id),
                     found = true,
+                    uniqueId = elem.UniqueId,
                     className = elem.GetType().Name,
                     fullClassName = elem.GetType().FullName,
                     category = elem.Category?.Name,
@@ -119,10 +128,15 @@ namespace RevitBridge.Logic.Handlers
                     viewScale = elem is View scaledView ? (int?)scaledView.Scale : null,
                     boundingBox = bboxObj,
                     location = locationObj,
+                    electricalCircuitMembership = p?.includeElectricalCircuitMembership == true
+                        ? NativeElectricalCircuitSummary.Read(doc, elem, p.electricalPanelSlotNumber, electricalCircuits) : null,
                     viewIdUsed = viewForBbox != null ? (long?)RevitBridge.Common.ElementIdCompat.GetValue(viewForBbox.Id) : null
                 });
             }
 
+            if (p?.includeElectricalCircuitMembership == true)
+                return Task.FromResult<object>(new { schema = "operator.electrical_membership_read.v1", complete = true,
+                    requestedElementIds = ids, items = results, circuits = electricalCircuits.Values });
             return Task.FromResult<object>(results);
         }
     }

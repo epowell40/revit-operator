@@ -1,6 +1,10 @@
+import { updatedScheduleCellReadbackMatches } from "./verification/schedule_cell_postcondition_v2.js";
 import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 import { createdTemplateSatisfiedV2 } from './verification/created_template_postcondition_v2.js';
+import { existingTagRepairReadbackMatchesV2 } from './verification/tag_property_readback_v2.js';
+import { circuitMembershipSatisfiedV2 } from './verification/circuit_membership_postcondition_v2.js';
+import { elementTypeSatisfiedV2 } from './verification/element_type_postcondition_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -44,6 +48,7 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  verification_input?: unknown;
   affected_target_identities?: readonly string[];
   native_artifact_receipt?: unknown;
   capability_id?: unknown;
@@ -409,6 +414,21 @@ export function expectedPostconditionValuesV2(
   const operationPath = operationContractPath(value, contract);
   const semanticInput = operationPath === "/revit/set-parameter"
     ? setParameterSemanticInput(semanticApplyInput(value)) : semanticApplyInput(value);
+  // The explicit parameter tool admits at most 100 changes. Do not reuse the
+  // generic traversal's 32-value prefix as proof of an entire larger batch.
+  if (operationPath === "/revit/set-parameter" && Array.isArray(objectValue(semanticInput).changes)) {
+    const input = objectValue(semanticInput), changes = input.changes as unknown[];
+    const excluded = input.excludeElementIds ?? [];
+    if (!changes.length || changes.length > 100 || !Array.isArray(excluded)) return [];
+    for (const candidate of changes) {
+      const row = objectValue(candidate);
+      if (!Number.isSafeInteger(row.elementId) || Number(row.elementId) <= 0
+        || typeof row.parameterName !== "string" || !row.parameterName.trim() || typeof row.value !== "string") return [];
+      if (excluded.includes(row.elementId)) continue;
+      for (const token of namedParameterTokens(row, false, [String(row.elementId)])) values.add(token);
+    }
+    return [...values].sort();
+  }
   if (operationPath === "/revit/create-view" && objectValue(semanticInput).action === "rename_batch")
     return exactViewRenameValues(semanticInput);
   if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
@@ -601,6 +621,13 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === "/revit/change-element-type")
+    return elementTypeSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/assign-electrical-circuit")
+    return circuitMembershipSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/update-schedule-cell") return updatedScheduleCellReadbackMatches(applyInput, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/tag-elements" && objectValue(semanticApplyInput(applyInput)).repairExistingTagId)
+    return existingTagRepairReadbackMatchesV2(applyInput, contract.verification_input, structuredValue(verificationPayload));
   if (operationPath === "/revit/create-view") {
     const request = objectValue(semanticApplyInput(applyInput));
     if (["create_view_template", "view_template"].includes(String(request.action ?? "").trim().toLowerCase()))

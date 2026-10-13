@@ -30,10 +30,136 @@ import { createAssignmentKernelV2ModelReceiptRecorder } from "../src/assignments
 import { localThinReferenceLimits, runThinReferenceTurns } from "../src/brains/thin_reference_execution.js";
 import { getThinReferenceCodexProfile } from "../src/brains/codex_turn_profile.js";
 import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { codexAssignmentEvidenceContextV2 } from "../src/brains/codex_assignment_evidence.js";
+import { assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work_allowance_v2.js";
+
+test("fresh tool context warns inside a long provider turn without manufacturing model observations or extending authority",()=>fixture(true,f=>{
+ const s=structuredClone(f.state());
+ const count=Math.ceil(s.spec.execution_policy!.max_provider_calls*.75);
+ s.provider_calls=Object.fromEntries(Array.from({length:count},(_,i)=>[`call${i}`,{admitted_at:s.spec.created_at,model:"gpt-6.1-sol",usage:{input_tokens:10,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:1,total_tokens:11}}])) as any;
+ const before=JSON.stringify(s);
+ const budget=assignmentWorkBudgetStatusV2(s,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString());
+ const context=JSON.parse(codexAssignmentEvidenceContextV2(s,undefined,budget));
+ assert.deepEqual(context.observations,[]);assert.deepEqual(context.pending_verification,[]);
+ assert.equal(context.host_budget.resources.provider_calls.used,count);
+ assert.equal(context.host_budget.resources.provider_calls.remaining,budget.resources.provider_calls.limit-count);
+ assert.equal(context.host_budget.checkpoint_recommended,true);
+ assert.equal(JSON.stringify(s),before);
+ const instructions=getThinReferenceCodexProfile("test",true).baseInstructions;
+ assert.match(instructions,/execute it and inspect its result before broad discovery/);
+ assert.match(instructions,/Simple single-item work does not require a checklist/);
+ assert.match(instructions,/unverified claims/);
+}));
 import { AssignmentJournalV2, canonicalJsonV2, decideAssignmentProgressV2, deriveAssignmentOutcomeV2, type AssignmentSnapshotV2, type AssignmentEventV2 } from "../src/domain/assignment-kernel/index.js";
 
 const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only", { OPERATOR_API_BASE_URL: "http://127.0.0.1:7007" }) };
 const proposal = { claimed_completed: ["Drafted a useful partial network."], remaining_work: ["Review terminal connections."], uncertainties: ["Drawing elevation is ambiguous."] };
+
+test('unavailable scope-check attempt is retained and replayable without certifying work',()=>fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'typical',description:'Panel leaders off typical',source_basis:'Marked E010'}],assumptions:[]}});
+  const lease=open(f,'scope-incomplete-read');settle(f,lease);
+  const before=structuredClone(f.state());
+  const result=manageAssignmentWorkPlan({binding:f.binding,action:'check_scope',item_id:'typical',scope_check:{category:'OST_ElectricalEquipmentTags',view_ids:[10],has_leader:false},operation_ids:[lease.operation_id]});
+  assert.equal(result.scope_checks.length,1);assert.equal(result.scope_checks[0]!.available,false);
+  assert.match((result.scope_checks[0] as any).reason,/tag_scope_one_inventory_required/);
+  const saved=f.state();assert.equal(saved.work_plan_scope_requests!.length,1);
+  assert.deepEqual(saved.criteria,before.criteria);assert.deepEqual(saved.work_plan,before.work_plan);
+  assert.deepEqual(saved.operations,before.operations);assert.deepEqual(saved.unresolved_unknown_operation_ids,before.unresolved_unknown_operation_ids);
+  __testOnlyResetGoalListCache();assert.deepEqual(manageAssignmentWorkPlan({binding:f.binding,action:'status'}).scope_checks,result.scope_checks);
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'check_scope',item_id:'missing',scope_check:{category:'OST_ElectricalEquipmentTags',view_ids:[10],has_leader:false},operation_ids:[lease.operation_id]}),/work_plan_scope_request_invalid/);
+  assert.equal(f.state().work_plan_scope_requests!.length,1);
+}));
+
+test('retained49 scope request without opaque IDs retains an unavailable current-evidence attempt and never completes work',()=>fixture(true,f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'plumbing-halftone',description:'Plumbing fixtures halftone typical',source_basis:'Original marked source'}],assumptions:[]}});
+ const scope={kind:'category_graphics_v1' as const,category:'OST_PlumbingFixtures',disciplines:['Electrical'],view_types:['FloorPlan','CeilingPlan','EngineeringPlan','Section','Elevation','ThreeD'],halftone:true,hidden_policy:'exclude_hidden' as const};
+ const before=structuredClone(f.state());
+ const result=manageAssignmentWorkPlan({binding:f.binding,action:'check_scope',item_id:'plumbing-halftone',scope_check:scope});
+ assert.equal(result.scope_checks[0]!.available,false);assert.equal(result.scope_checks[0]!.declared_scope_satisfied,false);
+ assert.match((result.scope_checks[0] as any).reason,/no_current_native_reads/);
+ assert.match((result.scope_checks[0] as any).guidance,/after the latest model edit or SaveAs/);
+ const s=f.state();assert.deepEqual(s.work_plan,before.work_plan);assert.deepEqual(s.operations,before.operations);assert.deepEqual(s.criteria,before.criteria);
+ assert.equal(s.work_plan_scope_requests![0]!.read_selection,'current_native_reads_v1');assert.deepEqual(s.work_plan_scope_requests![0]!.operation_ids,[]);
+ __testOnlyResetGoalListCache();assert.deepEqual(manageAssignmentWorkPlan({binding:f.binding,action:'status'}).scope_checks,result.scope_checks);
+ assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'check_scope',scope_check:scope}),/work_plan_scope_item_required.*itemId/);
+ assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'check_scope',item_id:'plumbing-halftone',scope_check:scope,operation_ids:[]}),/work_plan_scope_arguments_invalid/);
+}));
+
+test("preliminary advisory inspection can precede a saved-copy edit without fabricating edit dependencies", () => fixture(true, f => {
+  const items=[{item_id:"ratings",kind:"inspection" as const,description:"Read actual current ratings without changes.",source_basis:"User's three named panels."},
+    {item_id:"save_copy",kind:"edit" as const,description:"Save a separate copy without overwrite.",source_basis:"User's exact destination."},
+    {item_id:"verify_copy",kind:"inspection" as const,depends_on:["save_copy"],description:"Verify fresh native document path.",source_basis:"Native save result and readback."}];
+  const declared=manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items,assumptions:[]}});
+  assert.deepEqual(declared.work_plan!.ready_items.items,["ratings","save_copy"]);
+  const completed=manageAssignmentWorkPlan({binding:f.binding,action:"complete",item_id:"ratings",operation_ids:[]});
+  assert.equal(f.state().work_plan!.items[0].completed_at,undefined,"advisory claim is not strict read proof");
+  assert.equal(f.state().work_plan_claims!.length,1);
+  assert.equal(completed.work_plan!.scope.items[0].claimed_unverified,true);
+  __testOnlyResetGoalListCache();
+  assert.equal(manageAssignmentWorkPlan({binding:f.binding,action:"status"}).work_plan!.total_count,3);
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items:[
+    {item_id:"bad_read",kind:"inspection",description:"Read",source_basis:"Source",depends_on:["missing"]}],assumptions:[]}}),/work_plan_dependencies_invalid/);
+}));
+
+test("strict post-edit inspection still requires explicit edit dependencies", () => fixture(false, f => {
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items:[
+    {item_id:"ratings",kind:"inspection",description:"Read current ratings",source_basis:"User panels"},
+    {item_id:"save_copy",description:"Save copy",source_basis:"Destination"}],assumptions:[]}}),/work_plan_dependencies_invalid/);
+  assert.equal(f.state().work_plan,undefined);
+}));
+
+test("defer one question, keep independent drafting ready, and retain dependency order through reload", () => fixture(true, f => {
+  const items=[{item_id:"delete_sheet",description:"Delete obsolete sheet",source_basis:"Marked sheet"},
+    {item_id:"renumber",description:"Reuse its number",source_basis:"Notes sheet",depends_on:["delete_sheet"]},
+    {item_id:"coordinate",description:"Coordinate charging",source_basis:"Architect comment"},
+    {item_id:"draft",description:"Update project date",source_basis:"Cover comment"}];
+  manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items,assumptions:[]}});
+  const result=manageAssignmentWorkPlan({binding:f.binding,action:"defer",item_id:"coordinate",reason:"Architect must confirm EV charger count."});
+  assert.deepEqual(result.work_plan!.ready_items.items,["delete_sheet","draft"]);
+  assert.equal(result.work_plan!.deferred_count,1);
+  assert.equal(f.state().outcome,"active");
+  assert.equal(f.state().pending_input_variable_ids.length,0,"local question does not block unrelated tasks");
+  __testOnlyResetGoalListCache();
+  const restored=manageAssignmentWorkPlan({binding:f.binding,action:"status"});
+  assert.equal(restored.work_plan!.deferred_count,1);
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:"complete",item_id:"coordinate",operation_ids:[]}),/deferred/);
+  const resumed=manageAssignmentWorkPlan({binding:f.binding,action:"resume_item",item_id:"coordinate",reason:"Revisit after independent drafting; still no invented answer."});
+  assert.equal(resumed.work_plan!.deferred_count,0);
+  assert.equal(f.state().work_plan!.items[2].deferrals!.length,1);
+  assert(f.state().work_plan!.items[2].deferrals![0].resumed_at);
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items:[
+    {item_id:"cycle_a",description:"A",source_basis:"Source",depends_on:["cycle_b"]},
+    {item_id:"cycle_b",description:"B",source_basis:"Source",depends_on:["cycle_a"]}],assumptions:[]}}),/work_plan_dependency_cycle/);
+  assert.equal(f.state().work_plan!.items.length,4,"rejected cycle does not mutate saved scope");
+}));
+
+test("resumed corrections retain claims but require a fresh claim before dependent work", () => fixture(true, f => {
+  manageAssignmentWorkPlan({binding:f.binding,action:"declare",declaration:{items:[
+    {item_id:"draft",description:"Correct drafting",source_basis:"Redline"},
+    {item_id:"dependent",description:"Use corrected result",source_basis:"Redline",depends_on:["draft"]}],assumptions:[]}});
+  manageAssignmentWorkPlan({binding:f.binding,action:"complete",item_id:"draft",operation_ids:[]});
+  manageAssignmentWorkPlan({binding:f.binding,action:"defer",item_id:"draft",reason:"Review found a correction."});
+  const resumed=manageAssignmentWorkPlan({binding:f.binding,action:"resume_item",item_id:"draft",reason:"Correction now specified."});
+  assert.deepEqual(resumed.work_plan!.ready_items.items,["draft"]);
+  assert.equal(f.state().work_plan_claims!.length,1);
+  __testOnlyResetGoalListCache();
+  assert.deepEqual(manageAssignmentWorkPlan({binding:f.binding,action:"status"}).work_plan!.ready_items.items,["draft"]);
+  const fresh=manageAssignmentWorkPlan({binding:f.binding,action:"complete",item_id:"draft",operation_ids:[]});
+  assert.deepEqual(fresh.work_plan!.ready_items.items,["dependent"]);
+  assert.equal(f.state().work_plan_claims!.length,2);
+}));
+
+test("work-plan and provider prompt expose the same host-owned remaining allowance", () => fixture(true, f => {
+  const before=structuredClone(f.state().spec.execution_policy);
+  const status=manageAssignmentWorkPlan({binding:f.binding,action:"status"});
+  assert.equal(status.budget_status.resources.total_tokens.limit,8_000_000);
+  assert.equal(status.budget_status.resources.total_tokens.remaining,8_000_000);
+  const prompt=prepareCodexAssignmentProgressV2(f.binding).prompt;
+  assert.match(prompt,/Host budget status:/);
+  assert.match(prompt,/check operator_manage_work_plan status after each useful batch/);
+  assert.deepEqual(f.state().spec.execution_policy,before);
+  assert.equal(f.state().outcome,"active");
+}));
 async function fixture(advisory: boolean | "installation", fn: (f: ReturnType<typeof setup>) => unknown | Promise<unknown>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-advisory-"));
   const env = { OPERATOR_WORKSPACE_ROOT: root, REVIT_OPERATOR_MODE: advisory === "installation" ? "development" : "local",
@@ -130,6 +256,12 @@ test("installation enrollment rejects nonlocal identities, unavailable profiles 
     OPERATOR_ASSIGNMENT_KERNEL_V2: "1", OPERATOR_LOCAL_EXECUTOR_PROFILE: "codex_v2_advisory_v1" };
   const binding = { ...f.binding, session_id: "ordinary-unlisted" };
   assert.equal(selectLocalAdvisoryPolicy(binding, enabled, local)?.mode, "local_advisory_v1");
+  const progressEnv={...enabled,OPERATOR_LOCAL_PROGRESS_ALLOWANCE:"verified_native_changes_v1"};
+  assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"read")?.progress_allowance,undefined);
+  assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"preview")?.progress_allowance,undefined);
+  assert.deepEqual(selectLocalAdvisoryPolicy(binding,progressEnv,local,"apply")?.progress_allowance,
+    {mode:"verified_native_changes_v1",max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000});
+  assert.equal(selectLocalAdvisoryPolicy(binding,{...progressEnv,REVIT_OPERATOR_MODE:"hosted"},local,"apply"),undefined);
   for (const changes of [
     { OPERATOR_LOCAL_EXECUTOR_PROFILE: "" }, { OPERATOR_LOCAL_EXECUTOR_PROFILE: "CODEX_V2_ADVISORY_V1" },
     { OPERATOR_LOCAL_EXECUTOR_PROFILE: "codex_v2_advisory_v1 " }, { OPERATOR_ASSIGNMENT_KERNEL_V2: "0" },

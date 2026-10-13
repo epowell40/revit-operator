@@ -25,11 +25,14 @@ namespace RevitBridge.Common
         public bool RollbackRequested { get; private set; }
 
         public void ConfigureAfterStart(Func<string> status, Action<bool> clearAfterRollback,
-            Action installPreprocessor)
+            Action installPreprocessor, bool captureBeforeSilentRollback = false)
         {
             if (!string.Equals(status(), "Started", StringComparison.Ordinal))
                 throw new InvalidOperationException("Noninteractive failure handling requires a started transaction.");
-            clearAfterRollback(true);
+            // Intentional preview rollback can skip failure preprocessing when
+            // failures are cleared at entry. Opt in to capturing them first;
+            // the native adapter must enable silent clearing after capture.
+            clearAfterRollback(!captureBeforeSilentRollback);
             installPreprocessor();
         }
 

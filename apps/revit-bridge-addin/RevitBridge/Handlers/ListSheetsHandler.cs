@@ -35,6 +35,9 @@ namespace RevitBridge.Handlers
             public bool? includeViewportGeometry { get; set; }
             public bool? includeSheetOutline { get; set; }
             public bool? includeSchedules { get; set; }
+            // Optional subjects of a placement check. Detail still returns the
+            // complete sheet inventory, including unrelated placements.
+            public long[]? placementIds { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -45,6 +48,10 @@ namespace RevitBridge.Handlers
             var q = (p.query ?? "").Trim();
             var prefix = (p.sheetNumberPrefix ?? "").Trim();
             var exact = p.exact ?? false;
+            if (p.placementIds != null && (actionLower != "detail" || p.placementIds.Length == 0
+                || p.placementIds.Length > 256 || p.placementIds.Any(id => id <= 0)
+                || p.placementIds.Distinct().Count() != p.placementIds.Length))
+                throw new ArgumentException("placementIds requires detail mode and 1-256 distinct positive element IDs.");
             var doc = app.ActiveUIDocument.Document;
             var countOnly = (p.countOnly ?? false) || actionLower.Equals("count", StringComparison.OrdinalIgnoreCase);
 
@@ -400,6 +407,7 @@ namespace RevitBridge.Handlers
                 sheetName = ReadSheetName(sheet),
                 title = ReadSheetName(sheet),
                 isPlaceholder = sheet.IsPlaceholder,
+                requestedPlacementIds = p.placementIds,
                 viewportCount = viewportIds.Count,
                 placedViewCount = placedViews.Count,
                 placedScheduleCount = placedSchedules.Count,

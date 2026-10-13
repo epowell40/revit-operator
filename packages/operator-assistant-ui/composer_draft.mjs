@@ -95,3 +95,21 @@ export function staleComposerNotice(saved) {
     ? 'Operator was updated. Refresh to continue; your unsent text and attachments are saved.'
     : 'Operator was updated. Copy your unsent text and keep the original attachments before refreshing; local draft recovery is unavailable.';
 }
+
+const REFRESH_TARGET_KEY = 'operator-desktop.composer-refresh-target';
+/** An intentional composer Refresh can reopen its draft's conversation for
+ * review. This is navigation intent only; never execution or Resume authority. */
+export function saveComposerRefreshTarget(storage, tabId, sessionId, now = Date.now()) {
+  if (typeof tabId !== 'string' || !tabId || tabId.length > 240 || typeof sessionId !== 'string' || sessionId.length > 240) throw Error('Invalid refresh target');
+  storage.setItem(REFRESH_TARGET_KEY, JSON.stringify({ schema: 'revit-operator.composer-refresh/v1', tabId, sessionId, at: now }));
+}
+export function readComposerRefreshTarget(storage, tabId, now = Date.now()) {
+  try {
+    const value = JSON.parse(storage.getItem(REFRESH_TARGET_KEY));
+    if (value?.schema === 'revit-operator.composer-refresh/v1' && value.tabId === tabId
+      && typeof value.sessionId === 'string' && value.sessionId.length <= 240
+      && Number.isFinite(value.at) && value.at <= now + 60_000 && now - value.at <= MAX_AGE_MS) return value;
+  } catch { /* Corrupt or unavailable navigation storage grants nothing. */ }
+  return null;
+}
+export function clearComposerRefreshTarget(storage) { storage.removeItem(REFRESH_TARGET_KEY); }

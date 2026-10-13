@@ -10208,7 +10208,7 @@
       "path": "/revit/assign-electrical-circuit",
       "examples": [
         {
-          "name": "Preflight assigning a new receptacle to the same circuit as an exemplar",
+          "name": "Preview real reassignment into the exact exemplar circuit with verified restoration",
           "request": {
             "elementIds": [
               22222
@@ -10217,62 +10217,63 @@
             "dryRun": true
           },
           "expected_response_shape": {
-            "schema": "operator.assign_electrical_circuit.v2",
+            "schema": "operator.assign_electrical_circuit.v5",
             "applied": false,
             "mode": "strict_exact_source_power_system",
-            "results": [
-              {
-                "elementId": 22222,
-                "action": "preflight_match_source_electrical_system",
-                "before": {
-                  "panel": null,
-                  "circuitNumber": null
-                },
-                "after": {
-                  "panel": null,
-                  "circuitNumber": null
-                },
-                "dryRun": true
-              }
-            ]
+            "previewExecuted": true,
+            "rollbackVerified": true,
+            "transaction": {
+              "status": "rolled_back",
+              "committed": false
+            }
           }
         },
         {
-          "name": "Create one native power circuit from newly drafted uncircuitized devices",
+          "name": "Create a native circuit from uncircuitized devices",
           "request": {
-            "elementIds": [22222, 22223],
+            "elementIds": [
+              22222,
+              22223
+            ],
             "createSystemType": "PowerCircuit",
             "panelElementId": 33333,
             "dryRun": false,
             "confirm": true
           },
           "expected_response_shape": {
-            "schema": "operator.assign_electrical_circuit.v3",
+            "schema": "operator.assign_electrical_circuit.v4",
             "status": "Applied",
-            "applied": true,
             "mode": "create_new_power_circuit",
             "createdElectricalSystemId": 44444,
-            "verifiedMemberElementIds": [22222, 22223],
-            "panelElementId": 33333
+            "transaction": {
+              "status": "committed",
+              "committed": true
+            }
           }
         },
         {
-          "name": "Apply writable panel and circuit parameters when Revit exposes them",
+          "name": "Move one existing exact-member native circuit into a resolved panel schedule slot",
           "request": {
             "elementIds": [
-              22222
+              22222,
+              22223
             ],
-            "panelName": "P401",
-            "circuitNumber": "1",
+            "electricalSystemId": 44444,
+            "panelElementId": 33333,
+            "targetPanelSlotNumber": 1,
+            "expectedCircuitNumber": "1",
             "dryRun": false,
-            "confirm": true,
-            "parameterOnlyFallback": true
+            "confirm": true
           },
           "expected_response_shape": {
-            "schema": "operator.assign_electrical_circuit.v2",
-            "applied": true,
-            "mode": "explicit_parameter_only_fallback",
-            "limitation": "Direct panel/circuit values are labels only and do not prove circuit membership."
+            "schema": "operator.assign_electrical_circuit.v5",
+            "status": "Applied",
+            "mode": "move_existing_power_circuit",
+            "electricalSystemId": 44444,
+            "transaction": {
+              "status": "committed",
+              "committed": true
+            }
           }
         }
       ]

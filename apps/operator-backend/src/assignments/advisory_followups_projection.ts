@@ -4,7 +4,8 @@ import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/snapshot.
 export function projectAdvisoryFollowupsV2(snapshot: AssignmentSnapshotV2, start = 0) {
   if (!Number.isSafeInteger(start) || start < 0) throw new Error("advisory_followup_page_invalid");
   const retained = snapshot.advisory_followups ?? [];
-  const pending = retained.filter(item => item.state === "open" || item.state === "deferred");
+  const pending = retained.map((item,index)=>({...item,question_ref:`QF${index+1}`}))
+    .filter(item => item.state === "open" || item.state === "deferred");
   const items: typeof pending = [];
   for (const item of pending.slice(start, start + 8)) {
     // A legal 1,000-character text and reason can each escape to 6,000 JSON bytes.
@@ -33,7 +34,7 @@ export function advisoryFollowupsHandoffV2(snapshot: AssignmentSnapshotV2): stri
   if (!page.unresolved_total) return "";
   return ["### Saved unfinished items (unverified)",
     "These earlier reports remain open unless explicitly resolved or superseded; deferred reports stay visible.",
-    ...page.items.map(item => "- " + (item.state === "deferred" ? "Deferred: " : "") + item.text.replace(/\r?\n/g, "\n  ") + (item.disposition_reason ? " Reason: " + item.disposition_reason : "")),
+    ...page.items.map(item => "- " + item.question_ref + ": " + (item.state === "deferred" ? "Deferred: " : "") + item.text.replace(/\r?\n/g, "\n  ") + (item.disposition_reason ? " Reason: " + item.disposition_reason : "")),
     ...(page.not_shown ? [page.not_shown + " more unfinished items are saved. This handoff shows the first page; the assistant can retrieve the rest from saved task status."] : [])
   ].join("\n\n");
 }

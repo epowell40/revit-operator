@@ -45,6 +45,31 @@ export type OperatorBackendClientOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
+// Only completion delivery is replayable. Admission, dispatch, and model work
+// must never be retried here. The backend rejects a changed receipt/binding and
+// rehydrates an exact duplicate without a second native operation or journal write.
+const TRANSIENT_DELIVERY_CODES = new Set([
+  "ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"
+]);
+
+function transientDeliveryCode(error: unknown): string | null {
+  let cursor = error;
+  for (let depth = 0; depth < 4 && cursor && typeof cursor === "object"; depth++) {
+    const row = cursor as { code?: unknown; cause?: unknown };
+    if (typeof row.code === "string" && TRANSIENT_DELIVERY_CODES.has(row.code)) return row.code;
+    cursor = row.cause;
+  }
+  return null;
+}
+
+export class OperatorCompletionDeliveryError extends Error {
+  constructor(readonly first_failure: unknown, readonly last_failure: unknown, readonly transport_code: string) {
+    super(`Operator V2 operation settlement delivery failed after two attempts (${transport_code}); original receipt retained`, { cause: first_failure });
+    this.name = "OperatorCompletionDeliveryError";
+  }
+}
+
 function configuredBaseUrl(): string {
   return (process.env.OPERATOR_API_BASE_URL || "http://127.0.0.1:7007").trim().replace(/\/+$/, "");
 }
@@ -65,17 +90,32 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
     });
     const headers = buildOperatorBackendAuthHeaders(auth, targetUrl);
     if (compactOperationHandoff) headers.set("X-Operator-Assignment-Handoff", "operation_handoff_v1");
-    const response = await fetchImpl(targetUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      let details = "";
-      try { details = redactOperatorBackendAuthText(await response.text(), auth); } catch {}
-      throw new Error(`${label} responded with status ${response.status}${details ? `: ${details}` : ""}`);
+    const serializedBody = JSON.stringify(body);
+    let firstFailure: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const attemptHeaders = new Headers(headers);
+        // Avoid reusing the connection that lost the acknowledgement.
+        if (attempt > 0) attemptHeaders.set("Connection", "close");
+        const response = await fetchImpl(targetUrl, { method: "POST", headers: attemptHeaders, body: serializedBody });
+        if (!response.ok) {
+          let details = "";
+          try { details = redactOperatorBackendAuthText(await response.text(), auth); } catch {}
+          throw new Error(`${label} responded with status ${response.status}${details ? `: ${details}` : ""}`);
+        }
+        return await response.json();
+      } catch (error) {
+        const code = transientDeliveryCode(error);
+        if (attempt > 0) throw new OperatorCompletionDeliveryError(firstFailure, error, transientDeliveryCode(firstFailure)!);
+        if (path !== ASSIGNMENT_V2_OPERATION_RESULT_PATH || !code) throw error;
+        firstFailure = error;
+        // Fixed fields only: retain transport cause without exposing credentials,
+        // request bodies, source content, or arbitrary exception messages.
+        console.warn(JSON.stringify({ event: "assignment_completion_delivery_retry", path, transport_code: code, failed_attempt: 1, retry_limit: 1 }));
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
     }
-    return await response.json();
+    throw new Error("Operator completion delivery loop exhausted");
   }
 
   return {

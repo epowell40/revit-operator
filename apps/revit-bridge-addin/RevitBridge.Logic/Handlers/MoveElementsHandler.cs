@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
@@ -307,6 +308,16 @@ namespace RevitBridge.Logic.Handlers
 
         private static object SnapshotLocation(Element e, bool requireKnown = false)
         {
+            // Sheet placements expose typed native anchors even when Location
+            // and the model-wide bounding box are null. Keep their semantics;
+            // a schedule insertion point is not a viewport box center.
+            if (e is ScheduleSheetInstance schedule)
+                return SnapshotSheetAnchor(() => schedule.Point, "ScheduleInsertion", schedule.OwnerViewId, requireKnown);
+            if (e is PanelScheduleSheetInstance panelSchedule)
+                return SnapshotSheetAnchor(() => panelSchedule.Origin, "PanelScheduleOrigin", panelSchedule.OwnerViewId, requireKnown);
+            if (e is Viewport viewport)
+                return SnapshotSheetAnchor(() => viewport.GetBoxCenter(), "ViewportBoxCenter", viewport.OwnerViewId, requireKnown);
+
             if (e is TextNote textNote)
             {
                 // View-owned text can have neither a generic location nor a model box.
@@ -374,6 +385,23 @@ namespace RevitBridge.Logic.Handlers
             catch { }
 
             if (requireKnown) throw new InvalidOperationException("Native location readback is unavailable.");
+            return new { kind = "Unknown" };
+        }
+
+        private static object SnapshotSheetAnchor(Func<XYZ> read, string kind, ElementId ownerViewId, bool requireKnown)
+        {
+            try
+            {
+                var point = read();
+                if (point != null)
+                {
+                    var coordinates = new[] { point.X, point.Y, point.Z };
+                    if (coordinates.All(value => !double.IsNaN(value) && !double.IsInfinity(value)))
+                        return new { kind, pointXyz = coordinates, ownerViewId = ElementIdCompat.GetValue(ownerViewId) };
+                }
+            }
+            catch { }
+            if (requireKnown) throw new InvalidOperationException($"Native {kind} readback is unavailable.");
             return new { kind = "Unknown" };
         }
 

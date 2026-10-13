@@ -823,6 +823,7 @@ namespace RevitBridge.Operator
                             { "includeTitleBlocks", Bool() }, // detail
                             { "includeViewportGeometry", Bool() }, // detail
                             { "includeSheetOutline", Bool() }, // detail
+                            { "placementIds", SheetPlacementReadContract.SelectorSchema() }, // detail readback metadata
                             { "includeSchedules", Bool() } // detail
                         },
                         required: Array.Empty<string>(),

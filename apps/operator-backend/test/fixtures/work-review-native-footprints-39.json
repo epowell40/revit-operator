@@ -1,0 +1,2628 @@
+{
+  "notice": "Minimal retained E107 protocol replay. Exact operation requests, settlement/proof identities and raw native applies; PDF content, attachment locations and unrelated discovery omitted. Not a new live run.",
+  "snapshot": {
+    "current_binding": {
+      "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+      "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+      "generation": 1,
+      "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "assignment_version": 561,
+    "unresolved_unknown_operation_ids": [],
+    "in_flight_operation_ids": [],
+    "outcome": "awaiting_user_review",
+    "quiescent": true,
+    "terminal": false,
+    "operations": {
+      "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605": {
+        "operation_id": "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/assign-electrical-circuit",
+          "request_signature": "edcaa18cbc354c252b1545d20a1e3a384d32ab0798cb80038c17c2d319181a6d"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1521972",
+            "target_1": "id:1492512",
+            "target_2": "id:1493610",
+            "target_3": "id:1521972",
+            "target_4": "panelelementid:1492512",
+            "target_5": "sourceelementid:1493610"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/assign-electrical-circuit",
+          "body": {
+            "elementIds": [
+              1521972
+            ],
+            "sourceElementId": 1493610,
+            "panelElementId": 1492512,
+            "expectedCircuitNumber": "11",
+            "dryRun": false,
+            "confirm": true
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_b89a8eb604b2dab38e501d9182da3da380c9a8b829d7cecda9126d86f000bcd4"
+        ],
+        "verification_operation_ids": [
+          "opv2_ef7583a5f5048c572a24fe4602009aaf07e5c443eecee2c8610bd16d05fa7744"
+        ],
+        "opened_at": "2026-10-13T05:54:53.721Z",
+        "settled_assignment_version": 403,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_2840e435688d032458ed7f751f961a0ecaf9114867759ccedd69d2b6f4c70daf",
+          "operation_id": "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/assign-electrical-circuit/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:101014",
+            "element_id:1492512",
+            "element_id:1495045",
+            "element_id:1521972",
+            "element_id:1523553",
+            "element_id:1629322",
+            "element_id:1668940",
+            "element_id:1668955",
+            "element_id:1668984",
+            "element_id:1669131",
+            "element_id:1670604",
+            "element_id:669230"
+          ],
+          "raw_payload_hash": "045a421baba03f2f6277577773eb9830b9a0a2643c4693b4755245efc03a1955",
+          "receipt_id": "5f05e0fcde357d5b8c78eca9fcc98919df12f7cd56a0741c475e82930961fdbe",
+          "native_correlation_id": "5f05e0fcde357d5b8c78eca9fcc98919df12f7cd56a0741c475e82930961fdbe",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/assign-electrical-circuit",
+            "request_signature": "edcaa18cbc354c252b1545d20a1e3a384d32ab0798cb80038c17c2d319181a6d"
+          },
+          "completed_at": "2026-10-13T05:54:54.174Z"
+        }
+      },
+      "opv2_a7c10d35502e79bce9500e4d1b8ac5e155ba7ae10577e7cf38684a63e086af12": {
+        "operation_id": "opv2_a7c10d35502e79bce9500e4d1b8ac5e155ba7ae10577e7cf38684a63e086af12",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "request_signature": "9fa078194733ce7aaf6e6f8bf67aaf9784475b827dea0c8cc00fef40d49d976b"
+        },
+        "target": {
+          "target_id": "id:1521972",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1521972",
+            "target_1": "id:1521972"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "body": {
+            "elementIds": [
+              1521972
+            ],
+            "names": [
+              "Type"
+            ],
+            "limit": 100
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_b7da8f69c164035f8551b46d91e17a7d8f981bed5993c7b54af530791367cb0f"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449",
+        "opened_at": "2026-10-13T05:54:27.710Z",
+        "settled_assignment_version": 358,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_b5c4b34b3fbad5869f3471f76ac4a58de6d5869e52a6bcec4e1452da41041d81",
+          "operation_id": "opv2_a7c10d35502e79bce9500e4d1b8ac5e155ba7ae10577e7cf38684a63e086af12",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-parameters/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "37ebcf06f1217e89db355d5ad3fe2db0d585847aa574432d4900835de28f7050",
+          "receipt_id": "d9a492825264aa6a7b6b0651ee8634a443df42ad5a3ee15961120e5c6e8753b0",
+          "native_correlation_id": "d9a492825264aa6a7b6b0651ee8634a443df42ad5a3ee15961120e5c6e8753b0",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-parameters",
+            "request_signature": "9fa078194733ce7aaf6e6f8bf67aaf9784475b827dea0c8cc00fef40d49d976b"
+          },
+          "completed_at": "2026-10-13T05:54:27.846Z"
+        }
+      },
+      "opv2_67867e3316163114d9b95ff9738d09e58a750d96d225b3981e0cb4eb91f5f96d": {
+        "operation_id": "opv2_67867e3316163114d9b95ff9738d09e58a750d96d225b3981e0cb4eb91f5f96d",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "request_signature": "33a4606fc44e4e24974475dd82d8d020754c68dd0fccc138c715792821c44419"
+        },
+        "target": {
+          "target_id": "id:1735584",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:1735584",
+            "target_1": "repairexistingtagid:1735584"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "body": {
+            "viewId": 1490490,
+            "repairExistingTagId": 1735584,
+            "tagHeadPositionXyz": [
+              -94.5,
+              8.8,
+              -4.416666666666664
+            ],
+            "leaderEndXyz": [
+              -90.9062500000004,
+              10.499999999999499,
+              -4.416666666666664
+            ],
+            "leaderElbowXyz": [
+              -92,
+              8.8,
+              -4.416666666666664
+            ],
+            "hasLeader": true,
+            "leaderEndCondition": "Free",
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_384d3f68123e0d2d3c5331745f53ba5e263c6b3c9a9733daf3c1df2cd0ed5dba"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:56:07.187Z",
+        "settled_assignment_version": 513,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_23f2551119002b08c256512e2efe86e1103b1f9ed13d4f748f034d936268366f",
+          "operation_id": "opv2_67867e3316163114d9b95ff9738d09e58a750d96d225b3981e0cb4eb91f5f96d",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/tag-elements/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1735584"
+          ],
+          "raw_payload_hash": "5e3cc0a01e1779e38e93487a84f8c885c329628d9626615cbbfc31470839f051",
+          "receipt_id": "93b4ab8b771a9315818f3adc887ba8d0679781409830109b4d80adee702c8944",
+          "native_correlation_id": "93b4ab8b771a9315818f3adc887ba8d0679781409830109b4d80adee702c8944",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/tag-elements",
+            "request_signature": "33a4606fc44e4e24974475dd82d8d020754c68dd0fccc138c715792821c44419"
+          },
+          "completed_at": "2026-10-13T05:56:07.541Z"
+        }
+      },
+      "opv2_acfc8033c4ae5e17f7a5b14473ed330fb4107c464aec9fdaa7d1e26c0ba0ad3e": {
+        "operation_id": "opv2_acfc8033c4ae5e17f7a5b14473ed330fb4107c464aec9fdaa7d1e26c0ba0ad3e",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "preview",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "request_signature": "51cf6cbb2e8fc48981af01b0c7045782881aeb612d2c1a3e26914f90b33bd748"
+        },
+        "target": {
+          "target_id": "id:1735584",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:1735584",
+            "target_1": "repairexistingtagid:1735584"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "body": {
+            "viewId": 1490490,
+            "repairExistingTagId": 1735584,
+            "dryRun": true
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_90de6b5e1f1f6bd7e5e5b65d8b49b6a93926e076d4037c28fea32c8c1d0258f3"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:56:14.005Z",
+        "settled_assignment_version": 520,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_cc9cd0d953f5a094321fdd903e477837c63e2238a5d9eb05647f2a491bb5f60c",
+          "operation_id": "opv2_acfc8033c4ae5e17f7a5b14473ed330fb4107c464aec9fdaa7d1e26c0ba0ad3e",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "failed_after_dispatch",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_started",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/tag-elements/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "fa9812e7888a142fccabb99159b3ea6799995840957a05b0bf6e9f7c1f83103e",
+          "receipt_id": "90bb6e9f7dcfa54d5a36613d3db3eab9be6a707e22d6e8f2b353078d6726f191",
+          "native_correlation_id": "90bb6e9f7dcfa54d5a36613d3db3eab9be6a707e22d6e8f2b353078d6726f191",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/tag-elements",
+            "request_signature": "51cf6cbb2e8fc48981af01b0c7045782881aeb612d2c1a3e26914f90b33bd748"
+          },
+          "completed_at": "2026-10-13T05:56:14.296Z",
+          "error_code": "native_preview_execution_unproven"
+        }
+      },
+      "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5": {
+        "operation_id": "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/duplicate-element-type",
+          "request_signature": "e3e86ec9353ea12f06f1294eac75cc1f6f439859ab81fc517ed6bb37bf5c8517"
+        },
+        "target": {
+          "target_id": "id:1379884",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:1379884",
+            "target_1": "sourcetypeid:1379884"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/duplicate-element-type",
+          "body": {
+            "sourceTypeId": 1379884,
+            "newTypeName": "GFCI - Weather Proof",
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_6a2a2942135b9ff315bed95207cad3bef43e980007b3c9e179280e0401fc93ca"
+        ],
+        "verification_operation_ids": [
+          "opv2_5bd1f332f7100b6efab6e3706cddffbf1de10270dc3a516204fc2b1f10e53ceb"
+        ],
+        "opened_at": "2026-10-13T05:54:14.674Z",
+        "settled_assignment_version": 321,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_b843c6ed226f09c8372b73b20271a1353d1a9d4d694396a827ac494af828873d",
+          "operation_id": "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/duplicate-element-type/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1735582",
+            "element_id:1735583"
+          ],
+          "raw_payload_hash": "8adb07efd2096e73f67b4d4fdc054767a4d2cc0acd4467a798391eed85301358",
+          "receipt_id": "ab2f2d6a5c8aa8824fffd7fa0fe168e0dbb4bcc0fc0574822e3157e6fa63053d",
+          "native_correlation_id": "ab2f2d6a5c8aa8824fffd7fa0fe168e0dbb4bcc0fc0574822e3157e6fa63053d",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/duplicate-element-type",
+            "request_signature": "e3e86ec9353ea12f06f1294eac75cc1f6f439859ab81fc517ed6bb37bf5c8517"
+          },
+          "completed_at": "2026-10-13T05:54:15.121Z"
+        }
+      },
+      "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781": {
+        "operation_id": "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "discovery",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/export-image",
+          "request_signature": "1c43cad384e692ed86e28582fd0d44acd7faa9f77f2dcf3a8cb17b1bdd9ff46a"
+        },
+        "target": {
+          "target_id": "id:1490509",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:1490509",
+            "target_1": "viewid:1490509"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/export-image",
+          "body": {
+            "viewId": 1490509,
+            "imageSize": 2400
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_2730c4681fd747e3cddbb652c0a222f0dcbdcea17293468f7df3c7fa87e0867d"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:56:23.465Z",
+        "settled_assignment_version": 534,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_38a5eafbcd9d6d4f0d8648c114bb039f80cbaa69cf92748ee6b54d68dc1e998d",
+          "operation_id": "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/export-image/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "fb29237b6e3072d399431da22c9e21928cb8ee344df5b9f71bb3ac57d9882075",
+          "receipt_id": "7e955958ead494855a4d34b902c5896e0e8db8f4623cd58aacd4c372fc27f6b7",
+          "native_correlation_id": "7e955958ead494855a4d34b902c5896e0e8db8f4623cd58aacd4c372fc27f6b7",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/export-image",
+            "request_signature": "1c43cad384e692ed86e28582fd0d44acd7faa9f77f2dcf3a8cb17b1bdd9ff46a"
+          },
+          "completed_at": "2026-10-13T05:56:25.177Z"
+        }
+      },
+      "opv2_9bebc97663ec4ea8d17725d1b727b150391547b0c5a33d0bf2b476a5d925d337": {
+        "operation_id": "opv2_9bebc97663ec4ea8d17725d1b727b150391547b0c5a33d0bf2b476a5d925d337",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "discovery",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/create-text",
+          "request_signature": "7a77a4e7b0db878d0fc22b50abe25a94a9fadf8aa61ea266913a80d76cf08592"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/create-text",
+          "body": {
+            "action": "inspect",
+            "textNoteId": 1735585
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_c1a3346a2082714a7a7b661bfe51d37e7026e71ecd8357fb4b694af20f7814f5"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:56:17.676Z",
+        "settled_assignment_version": 527,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_822aaef2e70d2db735a5ade5484af04658984933fc0a29ecd8668b0277e6b569",
+          "operation_id": "opv2_9bebc97663ec4ea8d17725d1b727b150391547b0c5a33d0bf2b476a5d925d337",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/create-text/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "166f0f60e344c676fc66cf62ad4e6165a4a750ad8a6b92194a0f505d8f8722d6",
+          "receipt_id": "4ed7e42918b1f8187a07cb12a81930a06e8763ec2f902e0501bbc2fde38e9bbd",
+          "native_correlation_id": "4ed7e42918b1f8187a07cb12a81930a06e8763ec2f902e0501bbc2fde38e9bbd",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/create-text",
+            "request_signature": "7a77a4e7b0db878d0fc22b50abe25a94a9fadf8aa61ea266913a80d76cf08592"
+          },
+          "completed_at": "2026-10-13T05:56:17.964Z"
+        }
+      },
+      "opv2_7fb6092de2415c364f8a4eb08480a36bd13d48f52b882de1b37547dc9e1b7068": {
+        "operation_id": "opv2_7fb6092de2415c364f8a4eb08480a36bd13d48f52b882de1b37547dc9e1b7068",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "request_signature": "a1d69e4fcce41ee81f76107cc2873ecc7f8e65c246cd117099f1fc558bf89b88"
+        },
+        "target": {
+          "target_id": "id:1494957",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1494957",
+            "target_1": "id:1494957"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "body": {
+            "elementIds": [
+              1494957
+            ],
+            "names": [
+              "Type"
+            ],
+            "limit": 100
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_3d85635b475d0715f47563dc1a31e5467c66e208a3e46a6324c9c3a05efe94ab"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d",
+        "opened_at": "2026-10-13T05:54:00.657Z",
+        "settled_assignment_version": 308,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_42567e2866d73a74e89148a9ba25338db419cfdf8ea3a7a4809384b650a87f56",
+          "operation_id": "opv2_7fb6092de2415c364f8a4eb08480a36bd13d48f52b882de1b37547dc9e1b7068",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-parameters/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "601a67320fd1bf446c728f9662f03675cfb4c8522715e63b74d327512c49b654",
+          "receipt_id": "246cf09d41fabb621629dc4b7b21e1dc5e6ff015dbb9413c300573f5a1742333",
+          "native_correlation_id": "246cf09d41fabb621629dc4b7b21e1dc5e6ff015dbb9413c300573f5a1742333",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-parameters",
+            "request_signature": "a1d69e4fcce41ee81f76107cc2873ecc7f8e65c246cd117099f1fc558bf89b88"
+          },
+          "completed_at": "2026-10-13T05:54:00.819Z"
+        }
+      },
+      "opv2_86c0246e459bc63a8a40228ad415b30f37fa5caf66ade53921d88d6ea43d624e": {
+        "operation_id": "opv2_86c0246e459bc63a8a40228ad415b30f37fa5caf66ade53921d88d6ea43d624e",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/create-text",
+          "request_signature": "6f3462e4ce9a8fa3f384d7f06c72e211b639f7a1bfe705d66d9100626b21fff7"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:10352",
+            "target_1": "id:1490490",
+            "target_2": "typeid:10352",
+            "target_3": "viewid:1490490"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/create-text",
+          "body": {
+            "action": "create",
+            "viewId": 1490490,
+            "x": -80.1,
+            "y": 24.8,
+            "text": "GFCI",
+            "typeId": 10352,
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_8fe924cfee8f95cfa2cfb003ff42b28385f60e935c44c652f14c3bf18ac3422a"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:55:48.729Z",
+        "settled_assignment_version": 492,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_42c9614a5ce48edd3552428eec213150e1d16581561c0bc27f240b28835086da",
+          "operation_id": "opv2_86c0246e459bc63a8a40228ad415b30f37fa5caf66ade53921d88d6ea43d624e",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/create-text/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1735585"
+          ],
+          "raw_payload_hash": "4db3c9d76f57c0f992cb51ecc025fd09768b66694afc843ddc27ce2dff5566ee",
+          "receipt_id": "43ecf337dbce4ce859704727aee5be9d8ee6b917b19907e9f01383b35b3fbcd7",
+          "native_correlation_id": "43ecf337dbce4ce859704727aee5be9d8ee6b917b19907e9f01383b35b3fbcd7",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/create-text",
+            "request_signature": "6f3462e4ce9a8fa3f384d7f06c72e211b639f7a1bfe705d66d9100626b21fff7"
+          },
+          "completed_at": "2026-10-13T05:55:49.043Z"
+        }
+      },
+      "opv2_5bd1f332f7100b6efab6e3706cddffbf1de10270dc3a516204fc2b1f10e53ceb": {
+        "operation_id": "opv2_5bd1f332f7100b6efab6e3706cddffbf1de10270dc3a516204fc2b1f10e53ceb",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "request_signature": "09b7a2bb07d58bb25015dbbc30d3520eaabe9fa2d149a661c968ad17c4e9c4a0"
+        },
+        "target": {
+          "target_id": "id:1735582",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1735582",
+            "target_1": "id:1735582"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "body": {
+            "elementId": 1735582,
+            "names": [
+              "Label",
+              "Type Name",
+              "Family Name",
+              "Switch Voltage",
+              "Load"
+            ],
+            "limit": 1
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_cb8fdcdf6d5403bd94e491ca4c5b560a04edaac2a1ccbaab82d1d0714185fbd1"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5",
+        "opened_at": "2026-10-13T05:54:18.650Z",
+        "settled_assignment_version": 329,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_e2950f33cc0ac5cc87847c80694858107349e8c32cde78e3c480dd8cd41d840a",
+          "operation_id": "opv2_5bd1f332f7100b6efab6e3706cddffbf1de10270dc3a516204fc2b1f10e53ceb",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-parameters/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "8f42f2269144eac13a706b5d6b3fa4aee3298381b93f3ce037674d88f5403063",
+          "receipt_id": "8ae67671e90ba0d7925c777972f266aae8d10be2e4b608a4285fe341ee6a9d95",
+          "native_correlation_id": "8ae67671e90ba0d7925c777972f266aae8d10be2e4b608a4285fe341ee6a9d95",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-parameters",
+            "request_signature": "09b7a2bb07d58bb25015dbbc30d3520eaabe9fa2d149a661c968ad17c4e9c4a0"
+          },
+          "completed_at": "2026-10-13T05:54:18.862Z"
+        }
+      },
+      "opv2_4e5cb19e6ab0cbf29ff5ce97d2a864a95f927340da3362c6cbeecbe896481afa": {
+        "operation_id": "opv2_4e5cb19e6ab0cbf29ff5ce97d2a864a95f927340da3362c6cbeecbe896481afa",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "request_signature": "6891367e890fd954e9d26ab0d48ed29f221bffed3ca5d0ba4ae6183f3ffca4b4"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1521972",
+            "target_1": "id:1480833",
+            "target_2": "id:1490490",
+            "target_3": "id:1521972",
+            "target_4": "tagtypeid:1480833",
+            "target_5": "viewid:1490490"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/tag-elements",
+          "body": {
+            "viewId": 1490490,
+            "elementIds": [
+              1521972
+            ],
+            "tagTypeId": 1480833,
+            "onlyUntagged": true,
+            "addLeader": true,
+            "orientation": "horizontal",
+            "offsetX": -3,
+            "offsetY": -1,
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_84752e0a8a35b2732bf8cc2d2ddaaad591755fd9236ed94bf3de9588dc944d4a"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:55:32.957Z",
+        "settled_assignment_version": 466,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_c551ebd63d6cd060893dba0d3788c8eab009ecc615dd1a8e0365af796348e1a4",
+          "operation_id": "opv2_4e5cb19e6ab0cbf29ff5ce97d2a864a95f927340da3362c6cbeecbe896481afa",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/tag-elements/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1735584"
+          ],
+          "raw_payload_hash": "35bc19d6dc0f50d13410870e8e69a6713c2ab50f84ecc7c147a470410e605360",
+          "receipt_id": "df0f9cb20e8a12c5590aa08beb1d73ee203f8350bbc3bd5b046c99538fedd495",
+          "native_correlation_id": "df0f9cb20e8a12c5590aa08beb1d73ee203f8350bbc3bd5b046c99538fedd495",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/tag-elements",
+            "request_signature": "6891367e890fd954e9d26ab0d48ed29f221bffed3ca5d0ba4ae6183f3ffca4b4"
+          },
+          "completed_at": "2026-10-13T05:55:33.331Z"
+        }
+      },
+      "opv2_46226b6b4ba4fc932b2923b9a37cb43d0af1d2aff2c67286cf6fca648abf5c22": {
+        "operation_id": "opv2_46226b6b4ba4fc932b2923b9a37cb43d0af1d2aff2c67286cf6fca648abf5c22",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "discovery",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "request_signature": "feb36c00c74ff531ffdb9e2f6fcd9de0ad6d1582bb9515acb4e4a5ae3e2f20c6"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1494957",
+            "target_1": "elementids:1523553",
+            "target_2": "elementids:1735584",
+            "target_3": "elementids:1735585",
+            "target_4": "id:1494957",
+            "target_5": "id:1523553",
+            "target_6": "id:1735584",
+            "target_7": "id:1735585"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "body": {
+            "elementIds": [
+              1523553,
+              1494957,
+              1735584,
+              1735585
+            ],
+            "includeElectricalCircuitMembership": true
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_1c092241d42bdda5ebcb3b730a8f96dc5caa20fdee9913b94f6c6fa7c4772891"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-13T05:55:53.124Z",
+        "settled_assignment_version": 499,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_2ab10fab1f76f955abe0d498f4a2273101ea6bf40131b72b53ddf4756608dde2",
+          "operation_id": "opv2_46226b6b4ba4fc932b2923b9a37cb43d0af1d2aff2c67286cf6fca648abf5c22",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-element-summary/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "f7cd15b224a80859ffe01788d967f626f25fb6b6234d3592cc24028c1dcc74ee",
+          "receipt_id": "f1e6869867e3d24d626d2227075c1dc0ae216d5cd4491942dcfb768b65602731",
+          "native_correlation_id": "f1e6869867e3d24d626d2227075c1dc0ae216d5cd4491942dcfb768b65602731",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-element-summary",
+            "request_signature": "feb36c00c74ff531ffdb9e2f6fcd9de0ad6d1582bb9515acb4e4a5ae3e2f20c6"
+          },
+          "completed_at": "2026-10-13T05:55:53.395Z"
+        }
+      },
+      "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d": {
+        "operation_id": "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/change-element-type",
+          "request_signature": "8bd1ed23b9b60e9c3ed522ca457de02da792103bdb39908270e48cf751a464dd"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1494957",
+            "target_1": "id:1494957",
+            "target_2": "id:629792",
+            "target_3": "id:629794",
+            "target_4": "newtypeid:629792",
+            "target_5": "typeid:629794"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/change-element-type",
+          "body": {
+            "elementId": 1494957,
+            "newTypeId": 629792,
+            "expectedOldTypes": [
+              {
+                "elementId": 1494957,
+                "typeId": 629794
+              }
+            ],
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_29f88ae56ff78a63f911618541210860b451aacbf0da02423d0ad5e508f0db67"
+        ],
+        "verification_operation_ids": [
+          "opv2_7fb6092de2415c364f8a4eb08480a36bd13d48f52b882de1b37547dc9e1b7068"
+        ],
+        "opened_at": "2026-10-13T05:53:59.544Z",
+        "settled_assignment_version": 302,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_315bddec1799bc757db12e261173d82ff3a62ffd61eeee78f27e13120b188f9a",
+          "operation_id": "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/change-element-type/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:101014",
+            "element_id:1390820",
+            "element_id:1492512",
+            "element_id:1494957",
+            "element_id:1668940",
+            "element_id:1668955",
+            "element_id:1670604",
+            "element_id:669230",
+            "element_id:731023"
+          ],
+          "raw_payload_hash": "b248e3d9ac7cadee2c8392190a7c2cbf9e58f25f51b543d67e3ad85875435b46",
+          "receipt_id": "2d2f1502c64dba34c9f687d24cf18a61f8023d4ec68d4edad5d9bd2f7337357c",
+          "native_correlation_id": "2d2f1502c64dba34c9f687d24cf18a61f8023d4ec68d4edad5d9bd2f7337357c",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/change-element-type",
+            "request_signature": "8bd1ed23b9b60e9c3ed522ca457de02da792103bdb39908270e48cf751a464dd"
+          },
+          "completed_at": "2026-10-13T05:54:00.332Z"
+        }
+      },
+      "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6": {
+        "operation_id": "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "native:POST:/revit/set-parameter",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "native:POST:/revit/set-parameter",
+          "method": "POST",
+          "path": "/revit/set-parameter",
+          "request_signature": "6e7a0e115129c1f95fa1c88edcde1bd49ab388b8f6f054f02877368770b3b953"
+        },
+        "target": {
+          "target_id": "id:1735582",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1735582",
+            "target_1": "id:1735582"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/set-parameter",
+          "body": {
+            "changes": [
+              {
+                "elementId": 1735582,
+                "parameterName": "Label",
+                "value": "WP/GFCI",
+                "expectedOldValue": "WP"
+              }
+            ],
+            "apply": true,
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_4d08540e5e6aafb83e525689b73e7aa249513016e64bcbaaa9aba8bf2a192bfd"
+        ],
+        "verification_operation_ids": [
+          "opv2_f0bfd09023ed06b428ccaf0dd191e4c49c7e00c2887db15b6ede7a1f3ee0f2fa"
+        ],
+        "opened_at": "2026-10-13T05:54:21.740Z",
+        "settled_assignment_version": 338,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_0e7a4775abb2078cb34469080f1002bc4cd0a4fa2989eddcf9cfce410013b9d4",
+          "operation_id": "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/set-parameter/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1735582"
+          ],
+          "raw_payload_hash": "6243483c3bebb2f8915dc3724c41dd1e5c1de77b1c2eb749884b06edfcae3ae8",
+          "receipt_id": "abd7a2867638255b680659b1c607192fcd1c56ab4dec246dd5591f2fe1047c28",
+          "native_correlation_id": "abd7a2867638255b680659b1c607192fcd1c56ab4dec246dd5591f2fe1047c28",
+          "request_identity": {
+            "capability_id": "native:POST:/revit/set-parameter",
+            "method": "POST",
+            "path": "/revit/set-parameter",
+            "request_signature": "6e7a0e115129c1f95fa1c88edcde1bd49ab388b8f6f054f02877368770b3b953"
+          },
+          "completed_at": "2026-10-13T05:54:22.332Z"
+        }
+      },
+      "opv2_ef7583a5f5048c572a24fe4602009aaf07e5c443eecee2c8610bd16d05fa7744": {
+        "operation_id": "opv2_ef7583a5f5048c572a24fe4602009aaf07e5c443eecee2c8610bd16d05fa7744",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "request_signature": "62a5f08a4a6f87215ac846eaa6036219b5967c6724e1985d748ccb1c1a2b5aee"
+        },
+        "target": {
+          "target_id": "id:1521972",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1521972",
+            "target_1": "id:1521972"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "body": {
+            "elementIds": [
+              1493610,
+              1521972
+            ],
+            "includeElectricalCircuitMembership": true
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_c18ea649e3920e0061bedbf35a393673288c26063056753842188c92a9cd6dfd"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605",
+        "opened_at": "2026-10-13T05:54:54.564Z",
+        "settled_assignment_version": 409,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_e3723c28c0045fdfdad77937f3c0ef2e32f79bff1ec3960a8175457fa99b4393",
+          "operation_id": "opv2_ef7583a5f5048c572a24fe4602009aaf07e5c443eecee2c8610bd16d05fa7744",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-element-summary/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "e56fe8d656814e935a89c02607996b58d2882a9c7a8a1fd6852badaa8fdabfd1",
+          "receipt_id": "36c050d11e00a66f8783aba36e638f99f8f3667a192ea4d44c9ef238280e97bc",
+          "native_correlation_id": "36c050d11e00a66f8783aba36e638f99f8f3667a192ea4d44c9ef238280e97bc",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-element-summary",
+            "request_signature": "62a5f08a4a6f87215ac846eaa6036219b5967c6724e1985d748ccb1c1a2b5aee"
+          },
+          "completed_at": "2026-10-13T05:54:54.703Z"
+        }
+      },
+      "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449": {
+        "operation_id": "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/change-element-type",
+          "request_signature": "4a15827f9fe57888e53c010b71363350d4304810a9d27bc1ae47cfdfa8fe6127"
+        },
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementid:1521972",
+            "target_1": "id:1379884",
+            "target_2": "id:1521972",
+            "target_3": "id:1735582",
+            "target_4": "newtypeid:1735582",
+            "target_5": "typeid:1379884"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/change-element-type",
+          "body": {
+            "elementId": 1521972,
+            "newTypeId": 1735582,
+            "expectedOldTypes": [
+              {
+                "elementId": 1521972,
+                "typeId": 1379884
+              }
+            ],
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_8e9c35d7f17ded8875329350b815ed692c7cac066d247a3d820f7cf03dfecc1f"
+        ],
+        "verification_operation_ids": [
+          "opv2_a7c10d35502e79bce9500e4d1b8ac5e155ba7ae10577e7cf38684a63e086af12"
+        ],
+        "opened_at": "2026-10-13T05:54:26.816Z",
+        "settled_assignment_version": 352,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_a924139d8542baaecb353b391fe3b767f5d19d9cd8554a1c7f429e815871621e",
+          "operation_id": "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/change-element-type/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:101014",
+            "element_id:1492512",
+            "element_id:1521972",
+            "element_id:1668940",
+            "element_id:1668955",
+            "element_id:1670604",
+            "element_id:669230",
+            "element_id:731023"
+          ],
+          "raw_payload_hash": "8971e0e260af6de321a128c4b4788c340b2706c51d024d7ad4c99fe2b3f0c0ad",
+          "receipt_id": "6229767a3b44c228efc480f881e0e0e55bf7f85a99b60969d21a3a0bf3cac864",
+          "native_correlation_id": "6229767a3b44c228efc480f881e0e0e55bf7f85a99b60969d21a3a0bf3cac864",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/change-element-type",
+            "request_signature": "4a15827f9fe57888e53c010b71363350d4304810a9d27bc1ae47cfdfa8fe6127"
+          },
+          "completed_at": "2026-10-13T05:54:27.371Z"
+        }
+      },
+      "opv2_f0bfd09023ed06b428ccaf0dd191e4c49c7e00c2887db15b6ede7a1f3ee0f2fa": {
+        "operation_id": "opv2_f0bfd09023ed06b428ccaf0dd191e4c49c7e00c2887db15b6ede7a1f3ee0f2fa",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "request_signature": "cbfe510deac949915280765a102d5e277f871c4d07b5aa2501b13078a18a88a5"
+        },
+        "target": {
+          "target_id": "id:1735582",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1735582",
+            "target_1": "id:1735582"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-parameters",
+          "body": {
+            "elementIds": [
+              1735582
+            ],
+            "names": [
+              "Label"
+            ],
+            "limit": 500
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_823a6edef565498d36756f1f4f935f270bdc6903c499d408010daf4f1545fe4f"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6",
+        "opened_at": "2026-10-13T05:54:22.776Z",
+        "settled_assignment_version": 345,
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_443d07f51fa545e4255d0ba99586d78fd216355d66c2ddac6e98948ebb5c4b40",
+          "operation_id": "opv2_f0bfd09023ed06b428ccaf0dd191e4c49c7e00c2887db15b6ede7a1f3ee0f2fa",
+          "binding": {
+            "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+            "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+            "generation": 1,
+            "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-parameters/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "3f1797cf0b245f95dea3035bc015c19045185ddcad96113375360129c1cb707c",
+          "receipt_id": "9bac794da04e80f3dad657294ece22fd31a1d15dfa7b96bbbc89a310b0b9ee06",
+          "native_correlation_id": "9bac794da04e80f3dad657294ece22fd31a1d15dfa7b96bbbc89a310b0b9ee06",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-parameters",
+            "request_signature": "cbfe510deac949915280765a102d5e277f871c4d07b5aa2501b13078a18a88a5"
+          },
+          "completed_at": "2026-10-13T05:54:22.900Z"
+        }
+      }
+    },
+    "observations": {
+      "obsv2_84752e0a8a35b2732bf8cc2d2ddaaad591755fd9236ed94bf3de9588dc944d4a": {
+        "observation_id": "obsv2_84752e0a8a35b2732bf8cc2d2ddaaad591755fd9236ed94bf3de9588dc944d4a",
+        "operation_id": "opv2_4e5cb19e6ab0cbf29ff5ce97d2a864a95f927340da3362c6cbeecbe896481afa",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "35bc19d6dc0f50d13410870e8e69a6713c2ab50f84ecc7c147a470410e605360",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_b7da8f69c164035f8551b46d91e17a7d8f981bed5993c7b54af530791367cb0f": {
+        "observation_id": "obsv2_b7da8f69c164035f8551b46d91e17a7d8f981bed5993c7b54af530791367cb0f",
+        "operation_id": "opv2_a7c10d35502e79bce9500e4d1b8ac5e155ba7ae10577e7cf38684a63e086af12",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "37ebcf06f1217e89db355d5ad3fe2db0d585847aa574432d4900835de28f7050",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_c18ea649e3920e0061bedbf35a393673288c26063056753842188c92a9cd6dfd": {
+        "observation_id": "obsv2_c18ea649e3920e0061bedbf35a393673288c26063056753842188c92a9cd6dfd",
+        "operation_id": "opv2_ef7583a5f5048c572a24fe4602009aaf07e5c443eecee2c8610bd16d05fa7744",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "e56fe8d656814e935a89c02607996b58d2882a9c7a8a1fd6852badaa8fdabfd1",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_8e9c35d7f17ded8875329350b815ed692c7cac066d247a3d820f7cf03dfecc1f": {
+        "observation_id": "obsv2_8e9c35d7f17ded8875329350b815ed692c7cac066d247a3d820f7cf03dfecc1f",
+        "operation_id": "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "8971e0e260af6de321a128c4b4788c340b2706c51d024d7ad4c99fe2b3f0c0ad",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_2730c4681fd747e3cddbb652c0a222f0dcbdcea17293468f7df3c7fa87e0867d": {
+        "observation_id": "obsv2_2730c4681fd747e3cddbb652c0a222f0dcbdcea17293468f7df3c7fa87e0867d",
+        "operation_id": "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "fb29237b6e3072d399431da22c9e21928cb8ee344df5b9f71bb3ac57d9882075",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_c1a3346a2082714a7a7b661bfe51d37e7026e71ecd8357fb4b694af20f7814f5": {
+        "observation_id": "obsv2_c1a3346a2082714a7a7b661bfe51d37e7026e71ecd8357fb4b694af20f7814f5",
+        "operation_id": "opv2_9bebc97663ec4ea8d17725d1b727b150391547b0c5a33d0bf2b476a5d925d337",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "166f0f60e344c676fc66cf62ad4e6165a4a750ad8a6b92194a0f505d8f8722d6",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_cb8fdcdf6d5403bd94e491ca4c5b560a04edaac2a1ccbaab82d1d0714185fbd1": {
+        "observation_id": "obsv2_cb8fdcdf6d5403bd94e491ca4c5b560a04edaac2a1ccbaab82d1d0714185fbd1",
+        "operation_id": "opv2_5bd1f332f7100b6efab6e3706cddffbf1de10270dc3a516204fc2b1f10e53ceb",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "8f42f2269144eac13a706b5d6b3fa4aee3298381b93f3ce037674d88f5403063",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_8fe924cfee8f95cfa2cfb003ff42b28385f60e935c44c652f14c3bf18ac3422a": {
+        "observation_id": "obsv2_8fe924cfee8f95cfa2cfb003ff42b28385f60e935c44c652f14c3bf18ac3422a",
+        "operation_id": "opv2_86c0246e459bc63a8a40228ad415b30f37fa5caf66ade53921d88d6ea43d624e",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "4db3c9d76f57c0f992cb51ecc025fd09768b66694afc843ddc27ce2dff5566ee",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_3d85635b475d0715f47563dc1a31e5467c66e208a3e46a6324c9c3a05efe94ab": {
+        "observation_id": "obsv2_3d85635b475d0715f47563dc1a31e5467c66e208a3e46a6324c9c3a05efe94ab",
+        "operation_id": "opv2_7fb6092de2415c364f8a4eb08480a36bd13d48f52b882de1b37547dc9e1b7068",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "601a67320fd1bf446c728f9662f03675cfb4c8522715e63b74d327512c49b654",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_384d3f68123e0d2d3c5331745f53ba5e263c6b3c9a9733daf3c1df2cd0ed5dba": {
+        "observation_id": "obsv2_384d3f68123e0d2d3c5331745f53ba5e263c6b3c9a9733daf3c1df2cd0ed5dba",
+        "operation_id": "opv2_67867e3316163114d9b95ff9738d09e58a750d96d225b3981e0cb4eb91f5f96d",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "5e3cc0a01e1779e38e93487a84f8c885c329628d9626615cbbfc31470839f051",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_29f88ae56ff78a63f911618541210860b451aacbf0da02423d0ad5e508f0db67": {
+        "observation_id": "obsv2_29f88ae56ff78a63f911618541210860b451aacbf0da02423d0ad5e508f0db67",
+        "operation_id": "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "b248e3d9ac7cadee2c8392190a7c2cbf9e58f25f51b543d67e3ad85875435b46",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_823a6edef565498d36756f1f4f935f270bdc6903c499d408010daf4f1545fe4f": {
+        "observation_id": "obsv2_823a6edef565498d36756f1f4f935f270bdc6903c499d408010daf4f1545fe4f",
+        "operation_id": "opv2_f0bfd09023ed06b428ccaf0dd191e4c49c7e00c2887db15b6ede7a1f3ee0f2fa",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "3f1797cf0b245f95dea3035bc015c19045185ddcad96113375360129c1cb707c",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_b89a8eb604b2dab38e501d9182da3da380c9a8b829d7cecda9126d86f000bcd4": {
+        "observation_id": "obsv2_b89a8eb604b2dab38e501d9182da3da380c9a8b829d7cecda9126d86f000bcd4",
+        "operation_id": "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "045a421baba03f2f6277577773eb9830b9a0a2643c4693b4755245efc03a1955",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_90de6b5e1f1f6bd7e5e5b65d8b49b6a93926e076d4037c28fea32c8c1d0258f3": {
+        "observation_id": "obsv2_90de6b5e1f1f6bd7e5e5b65d8b49b6a93926e076d4037c28fea32c8c1d0258f3",
+        "operation_id": "opv2_acfc8033c4ae5e17f7a5b14473ed330fb4107c464aec9fdaa7d1e26c0ba0ad3e",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "fa9812e7888a142fccabb99159b3ea6799995840957a05b0bf6e9f7c1f83103e",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_6a2a2942135b9ff315bed95207cad3bef43e980007b3c9e179280e0401fc93ca": {
+        "observation_id": "obsv2_6a2a2942135b9ff315bed95207cad3bef43e980007b3c9e179280e0401fc93ca",
+        "operation_id": "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "8adb07efd2096e73f67b4d4fdc054767a4d2cc0acd4467a798391eed85301358",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_4d08540e5e6aafb83e525689b73e7aa249513016e64bcbaaa9aba8bf2a192bfd": {
+        "observation_id": "obsv2_4d08540e5e6aafb83e525689b73e7aa249513016e64bcbaaa9aba8bf2a192bfd",
+        "operation_id": "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "6243483c3bebb2f8915dc3724c41dd1e5c1de77b1c2eb749884b06edfcae3ae8",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_1c092241d42bdda5ebcb3b730a8f96dc5caa20fdee9913b94f6c6fa7c4772891": {
+        "observation_id": "obsv2_1c092241d42bdda5ebcb3b730a8f96dc5caa20fdee9913b94f6c6fa7c4772891",
+        "operation_id": "opv2_46226b6b4ba4fc932b2923b9a37cb43d0af1d2aff2c67286cf6fca648abf5c22",
+        "binding": {
+          "assignment_id": "350aa7f4-c53d-411c-9c47-48091007a185",
+          "run_id": "chat:b15d0517-7236-4ad9-9eba-139a0c33db88",
+          "generation": 1,
+          "session_id": "86ea5bb0-76c5-4934-8821-8abc8563bd39",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "raw_payload_hash": "f7cd15b224a80859ffe01788d967f626f25fb6b6234d3592cc24028c1dcc74ee",
+        "facts": [
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      }
+    },
+    "work_plan": {
+      "schema": "revit-operator.assignment-work-plan/v2",
+      "assumptions": [],
+      "items": [
+        {
+          "item_id": "gfci-counter",
+          "description": "Set the marked counter receptacle beside vending to GFCI and verify its symbol.",
+          "source_basis": "Snowdon-Electrical-marked-original.pdf, SHA256 1b6f0df0fb9686103b25907dfb52671f3df89b50cab8727780e858ecab40ae01, page 12 E107 Caf\u00c3\u00a9 enlarged plan; gfci arrow near P102/8.",
+          "declared_at": "2026-10-13T05:50:58.736Z",
+          "operation_ids": []
+        },
+        {
+          "item_id": "gfci-west",
+          "description": "Set the marked west-wall WP receptacle to GFCI and verify its symbol.",
+          "source_basis": "Same PDF page 12 E107, lower-left caf\u00c3\u00a9 WP receptacle; note gfci + circuit connect to P102/11.",
+          "declared_at": "2026-10-13T05:50:58.736Z",
+          "operation_ids": []
+        },
+        {
+          "item_id": "circuit-west",
+          "description": "Connect the marked west-wall receptacle to existing P102 circuit 11, preserving existing loads.",
+          "source_basis": "Same PDF page 12 E107; explicit circuit connection note.",
+          "depends_on": [
+            "gfci-west"
+          ],
+          "declared_at": "2026-10-13T05:50:58.736Z",
+          "operation_ids": []
+        }
+      ]
+    },
+    "work_plan_claims": [
+      {
+        "item_id": "gfci-counter",
+        "operation_ids": [
+          "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d",
+          "opv2_9bebc97663ec4ea8d17725d1b727b150391547b0c5a33d0bf2b476a5d925d337",
+          "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781"
+        ],
+        "claimed_at": "2026-10-13T05:56:53.898Z",
+        "verified": false
+      },
+      {
+        "item_id": "gfci-west",
+        "operation_ids": [
+          "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449",
+          "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6",
+          "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781"
+        ],
+        "claimed_at": "2026-10-13T05:56:58.932Z",
+        "verified": false
+      },
+      {
+        "item_id": "circuit-west",
+        "operation_ids": [
+          "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605",
+          "opv2_46226b6b4ba4fc932b2923b9a37cb43d0af1d2aff2c67286cf6fca648abf5c22",
+          "opv2_acfc8033c4ae5e17f7a5b14473ed330fb4107c464aec9fdaa7d1e26c0ba0ad3e",
+          "opv2_8ba59d9b36bd8b2e695fef4836a193cc13fc52cb4401f6b78f23d8e463e37781"
+        ],
+        "claimed_at": "2026-10-13T05:57:11.360Z",
+        "verified": false
+      }
+    ]
+  },
+  "native_applies": {
+    "opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d": {
+      "count": 1,
+      "newTypeId": 629792,
+      "newTypeName": "GFCI",
+      "changedElementIds": [
+        1494957
+      ],
+      "changes": [
+        {
+          "elementId": 1494957,
+          "resultingElementId": 1494957,
+          "ok": true,
+          "oldTypeId": 629794,
+          "oldTypeName": "Standard",
+          "newTypeId": 629792,
+          "newTypeName": "GFCI"
+        }
+      ],
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          101014,
+          669230,
+          731023,
+          1390820,
+          1492512,
+          1494957,
+          1668940,
+          1668955,
+          1670604
+        ],
+        "affected_element_ids": [
+          101014,
+          669230,
+          731023,
+          1390820,
+          1492512,
+          1494957,
+          1668940,
+          1668955,
+          1670604
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "verified": true,
+      "ok": true,
+      "readback": [
+        {
+          "elementId": 1494957,
+          "resultingElementId": 1494957,
+          "actualTypeId": 629792,
+          "expectedTypeId": 629792
+        }
+      ],
+      "committed": true,
+      "status": "Applied",
+      "rolledBack": false
+    },
+    "opv2_8816414e00363708f4054508d7d4a2d0e2026d9277fc85a90f5e4ad768f728d5": {
+      "dryRun": false,
+      "sourceTypeId": 1379884,
+      "sourceTypeName": "Standard",
+      "newTypeId": 1735582,
+      "newTypeName": "GFCI - Weather Proof",
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [],
+        "affected_element_ids": [
+          1735582,
+          1735583
+        ],
+        "added_element_ids": [
+          1735582,
+          1735583
+        ],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "verified": true,
+      "ok": true,
+      "status": "Applied"
+    },
+    "opv2_1ecb92304768643f4a292889596492a823a88dfc803343b0e8325af691b282a6": {
+      "status": "Applied and Verified",
+      "dryRun": false,
+      "requestedCount": 1,
+      "effectiveCount": 1,
+      "excludedCount": 0,
+      "changedCount": 1,
+      "previewChangedCount": 0,
+      "writeFailedCount": 0,
+      "changedElementIds": [
+        1735582
+      ],
+      "missingAfterElementIds": [],
+      "verificationPerformed": true,
+      "verifiedCount": 1,
+      "verificationFailedCount": 0,
+      "unresolvedElementIds": [],
+      "verification": [
+        {
+          "elementId": 1735582,
+          "parameterName": "Label",
+          "expectedValue": "WP/GFCI",
+          "status": "verified",
+          "actual": {
+            "storageType": "String",
+            "value": "WP/GFCI",
+            "valueString": "WP/GFCI"
+          },
+          "error": null
+        }
+      ],
+      "diffs": [
+        {
+          "elementId": 1735582,
+          "parameterName": "Label",
+          "ok": true,
+          "changed": true,
+          "before": {
+            "storageType": "String",
+            "value": "WP",
+            "valueString": "WP"
+          },
+          "after": {
+            "storageType": "String",
+            "value": "WP/GFCI",
+            "valueString": "WP/GFCI"
+          }
+        }
+      ],
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          1735582
+        ],
+        "affected_element_ids": [
+          1735582
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "capturedFailures": [],
+      "failureRollbackRequested": false,
+      "requiredConfirm": null,
+      "confirmReceived": "",
+      "titleblockImpacts": null
+    },
+    "opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449": {
+      "count": 1,
+      "newTypeId": 1735582,
+      "newTypeName": "GFCI - Weather Proof",
+      "changedElementIds": [
+        1521972
+      ],
+      "changes": [
+        {
+          "elementId": 1521972,
+          "resultingElementId": 1521972,
+          "ok": true,
+          "oldTypeId": 1379884,
+          "oldTypeName": "Standard",
+          "newTypeId": 1735582,
+          "newTypeName": "GFCI - Weather Proof"
+        }
+      ],
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          101014,
+          669230,
+          731023,
+          1492512,
+          1521972,
+          1668940,
+          1668955,
+          1670604
+        ],
+        "affected_element_ids": [
+          101014,
+          669230,
+          731023,
+          1492512,
+          1521972,
+          1668940,
+          1668955,
+          1670604
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "verified": true,
+      "ok": true,
+      "readback": [
+        {
+          "elementId": 1521972,
+          "resultingElementId": 1521972,
+          "actualTypeId": 1735582,
+          "expectedTypeId": 1735582
+        }
+      ],
+      "committed": true,
+      "status": "Applied",
+      "rolledBack": false
+    },
+    "opv2_56968bc430c028a2e7c7e87cae7de0d972b1234911b29fbaf7b9bcb6bf7c9605": {
+      "results": [
+        {
+          "elementId": 1521972,
+          "ok": true,
+          "action": "match_source_electrical_system",
+          "detail": "Matched electrical circuit from the source exemplar (P102/11). Removed prior circuit memberships: P102/14.",
+          "before": {
+            "panel": "P102",
+            "circuitNumber": "14",
+            "primaryLabel": "P102/14",
+            "labels": [
+              "P102/14"
+            ],
+            "normalizedLabels": [
+              "P102/14"
+            ],
+            "systemCount": 1,
+            "systemIds": [
+              1523553
+            ],
+            "powerSystemIds": [
+              1523553
+            ],
+            "exactPowerSystemCount": 1
+          },
+          "after": {
+            "panel": "P102",
+            "circuitNumber": "11",
+            "primaryLabel": "P102/11",
+            "labels": [
+              "P102/11"
+            ],
+            "normalizedLabels": [
+              "P102/11"
+            ],
+            "systemCount": 1,
+            "systemIds": [
+              1495045
+            ],
+            "powerSystemIds": [
+              1495045
+            ],
+            "exactPowerSystemCount": 1
+          }
+        }
+      ],
+      "nativeCircuitReadback": {
+        "systemElementId": 1495045,
+        "systemType": "PowerCircuit",
+        "memberElementIds": [
+          1493610,
+          1493660,
+          1493921,
+          1494096,
+          1494189,
+          1494218,
+          1494267,
+          1521972
+        ],
+        "panelElementId": 1492512,
+        "panelName": "P102",
+        "circuitNumber": "11",
+        "trueLoadInternal": 15500.031000061997,
+        "apparentLoadInternal": 15500.031000061997,
+        "voltageInternal": 1291.6692500051665,
+        "poles": 1,
+        "limitation": "Native Revit factual readback only. Values do not by themselves prove breaker sizing, conductor ampacity, panel capacity, continuous-load treatment, or code compliance."
+      },
+      "verifiedMemberElementIds": [
+        1493610,
+        1493660,
+        1493921,
+        1494096,
+        1494189,
+        1494218,
+        1494267,
+        1521972
+      ],
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          101014,
+          669230,
+          1492512,
+          1495045,
+          1521972,
+          1523553,
+          1629322,
+          1668940,
+          1668955,
+          1668984,
+          1669131,
+          1670604
+        ],
+        "affected_element_ids": [
+          101014,
+          669230,
+          1492512,
+          1495045,
+          1521972,
+          1523553,
+          1629322,
+          1668940,
+          1668955,
+          1668984,
+          1669131,
+          1670604
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "schema": "operator.assign_electrical_circuit.v5",
+      "mode": "strict_exact_source_power_system",
+      "sourceElementId": 1493610,
+      "electricalSystemId": 1495045,
+      "panelElementId": 1492512,
+      "expectedCircuitNumber": "11",
+      "dryRun": false,
+      "transactionGroupRolledBack": false,
+      "rollbackVerified": false,
+      "previewExecuted": false,
+      "applied": true,
+      "verified": true,
+      "ok": true,
+      "warnings": [],
+      "nativeFailures": [],
+      "verification": {
+        "nativePowerCircuit": true,
+        "exactTargetSystemIdentity": true,
+        "exactMemberSet": true,
+        "exactPanelIdentity": true,
+        "expectedCircuitNumberMatched": true,
+        "rollbackVerified": null,
+        "complianceEvaluated": false
+      },
+      "status": "Applied",
+      "limitation": "Reassigns existing family instances into one native source PowerCircuit; code compliance and engineering sizing require separate checks."
+    },
+    "opv2_4e5cb19e6ab0cbf29ff5ce97d2a864a95f927340da3362c6cbeecbe896481afa": {
+      "status": "Success",
+      "success": true,
+      "viewId": 1490490,
+      "targetCount": 1,
+      "taggedCount": 1,
+      "attemptedCount": 1,
+      "deferredCount": 0,
+      "deferredElementIds": [],
+      "continuationRequired": false,
+      "continuationReason": null,
+      "skippedAlreadyTagged": 0,
+      "skippedNoLocation": 0,
+      "errorCount": 0,
+      "unresolvedCategories": [],
+      "mappingWarnings": [],
+      "tagFamily": null,
+      "tagVisibility": {
+        "Status": "not_requested",
+        "Requested": false,
+        "CategoryId": null,
+        "CategoryName": null,
+        "OwnerViewId": null,
+        "OwnerViewName": null,
+        "OwnerKind": null,
+        "WasHidden": false,
+        "IsHidden": false,
+        "Changed": false,
+        "Error": null
+      },
+      "placementMode": "offset",
+      "placementProfile": null,
+      "geometry": null,
+      "tagIds": [
+        1735584
+      ],
+      "tags": [
+        {
+          "tagId": 1735584,
+          "targetElementId": 1521972,
+          "viewId": 1490490,
+          "targetCategory": "Electrical Fixtures",
+          "tagCategory": "Electrical Fixture Tags",
+          "tagTypeId": 1480833,
+          "tagTypeName": "Electrical Device Panel-Circuit Tag",
+          "tagFamilyName": "Electrical Device Panel-Circuit Tag",
+          "value": "P102/11",
+          "tagHeadPosition": null,
+          "geometryPlacement": null
+        }
+      ],
+      "tagReadback": [
+        {
+          "tagId": 1735584,
+          "targetElementId": 1521972,
+          "viewId": 1490490,
+          "targetCategory": "Electrical Fixtures",
+          "tagCategory": "Electrical Fixture Tags",
+          "tagTypeId": 1480833,
+          "tagTypeName": "Electrical Device Panel-Circuit Tag",
+          "tagFamilyName": "Electrical Device Panel-Circuit Tag",
+          "value": "P102/11",
+          "tagHeadPosition": null,
+          "geometryPlacement": null
+        }
+      ],
+      "errors": [],
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [],
+        "affected_element_ids": [
+          1735584
+        ],
+        "added_element_ids": [
+          1735584
+        ],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "transactionStages": [
+        {
+          "transaction": {
+            "status": "committed",
+            "committed": true,
+            "modified_element_ids": [],
+            "affected_element_ids": [
+              1735584
+            ],
+            "added_element_ids": [
+              1735584
+            ],
+            "deleted_element_ids": []
+          },
+          "success": true,
+          "error": null,
+          "changeTracking": {
+            "documentChangedObserved": true,
+            "exhaustiveChangeInventory": true,
+            "eventCount": 1,
+            "matchingEventCount": 1,
+            "distinctWrapperMatchCount": 1,
+            "captureFailureCount": 0
+          }
+        }
+      ]
+    },
+    "opv2_86c0246e459bc63a8a40228ad415b30f37fa5caf66ade53921d88d6ea43d624e": {
+      "action": "create",
+      "textNoteId": 1735585,
+      "viewId": 1490490,
+      "textType": {
+        "id": 10352,
+        "name": "3/32\" Arial"
+      },
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [],
+        "affected_element_ids": [
+          1735585
+        ],
+        "added_element_ids": [
+          1735585
+        ],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "status": "Success",
+      "textNote": {
+        "textNoteId": 1735585,
+        "viewId": 1490490,
+        "viewName": "Enlarged Plan Power CAFE",
+        "text": "GFCI\r",
+        "point": {
+          "x": -80.1,
+          "y": 24.8,
+          "z": 0
+        },
+        "widthFt": 0.026476377952755904,
+        "widthSpace": "paper",
+        "modelSpaceWidthFt": 1.2708661417322835,
+        "viewScale": 48,
+        "isTextWrappingActive": false,
+        "leaderCount": 0,
+        "textType": {
+          "id": 10352,
+          "name": "3/32\" Arial"
+        }
+      }
+    },
+    "opv2_67867e3316163114d9b95ff9738d09e58a750d96d225b3981e0cb4eb91f5f96d": {
+      "before": {
+        "tagId": 1735584,
+        "ownerViewId": 1490490,
+        "typeId": 1480833,
+        "visibleText": "P102/11",
+        "tagHeadPosition": {
+          "x": -92.92187500000027,
+          "y": 10.49999999999952,
+          "z": -4.416666666666651
+        },
+        "hasLeader": true,
+        "leaderEndCondition": "Attached",
+        "taggedReferenceCount": 1,
+        "taggedElementIds": [
+          1521972
+        ],
+        "leaderEnd": null,
+        "leaderElbow": null,
+        "boundingBox": {
+          "min": {
+            "x": -93.95179498775961,
+            "y": 10.19319861077978,
+            "z": -4.416666666666651
+          },
+          "max": {
+            "x": -90.92187500000027,
+            "y": 10.797923020228598,
+            "z": -4.416666666666648
+          }
+        }
+      },
+      "after": {
+        "tagId": 1735584,
+        "ownerViewId": 1490490,
+        "typeId": 1480833,
+        "visibleText": "P102/11",
+        "tagHeadPosition": {
+          "x": -94.5,
+          "y": 8.8,
+          "z": -4.416666666666664
+        },
+        "hasLeader": true,
+        "leaderEndCondition": "Free",
+        "taggedReferenceCount": 1,
+        "taggedElementIds": [
+          1521972
+        ],
+        "leaderEnd": {
+          "x": -90.9062500000004,
+          "y": 10.499999999999499,
+          "z": -4.416666666666664
+        },
+        "leaderElbow": {
+          "x": -92,
+          "y": 8.8,
+          "z": -4.416666666666664
+        },
+        "boundingBox": {
+          "min": {
+            "x": -95.52991998775934,
+            "y": 8.49319861078026,
+            "z": -4.416666666666651
+          },
+          "max": {
+            "x": -90.9062500000004,
+            "y": 10.499999999999499,
+            "z": -4.416666666666648
+          }
+        }
+      },
+      "changed": true,
+      "dryRun": false,
+      "previewExecuted": false,
+      "success": true,
+      "transaction": {
+        "status": "committed",
+        "committed": true,
+        "modified_element_ids": [
+          1735584
+        ],
+        "affected_element_ids": [
+          1735584
+        ],
+        "added_element_ids": [],
+        "deleted_element_ids": []
+      },
+      "changeTracking": {
+        "documentChangedObserved": true,
+        "exhaustiveChangeInventory": true,
+        "eventCount": 1,
+        "matchingEventCount": 1,
+        "distinctWrapperMatchCount": 1,
+        "captureFailureCount": 0
+      },
+      "applied": true,
+      "status": "Repaired",
+      "rolledBack": false,
+      "transactionStages": [
+        {
+          "transaction": {
+            "status": "committed",
+            "committed": true,
+            "modified_element_ids": [
+              1735584
+            ],
+            "affected_element_ids": [
+              1735584
+            ],
+            "added_element_ids": [],
+            "deleted_element_ids": []
+          },
+          "success": true,
+          "error": null,
+          "changeTracking": {
+            "documentChangedObserved": true,
+            "exhaustiveChangeInventory": true,
+            "eventCount": 1,
+            "matchingEventCount": 1,
+            "distinctWrapperMatchCount": 1,
+            "captureFailureCount": 0
+          }
+        }
+      ]
+    }
+  },
+  "source_publication_sha256": "374c7a29124fd07579c515f19d607b41059c353aafb93bf999991853787e1e3a"
+}

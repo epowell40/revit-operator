@@ -1,4 +1,5 @@
 import { selectLocalAdvisoryPolicy, trustedLocalExperimentHost } from "./local_advisory_policy.js";
+import type { PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 import { createHash } from "node:crypto";
 import { requiresDurableWorkPlan } from "./work_plan_intent.js";
 import { retainedIntakeDecision } from "../conversation_intake.js";
@@ -181,6 +182,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
   generation?: number;
   document_fingerprint?: string;
   created_at?: string;
+  source_work_allowance?: PdfWorkAllowanceV1;
 }>): AssignmentSpecV2 {
   const sessionId = text(input.goal.related_session_id, 200);
   // The authenticated request edge owns principal identity. Goal.created_by is
@@ -198,7 +200,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     principal_id: principalId,
     ...(documentFingerprint ? { document_fingerprint: documentFingerprint } : {})
   };
-  const executionPolicy = selectLocalAdvisoryPolicy(binding);
+  const executionPolicy = selectLocalAdvisoryPolicy(binding, process.env, undefined, requestedEffect(input.goal),input.source_work_allowance);
   const effect = requestedEffect(input.goal);
   // Re-fetch the exact authenticated intake receipt. Work-budget/client hints
   // cannot smuggle interpreted authority into a newly created Assignment.

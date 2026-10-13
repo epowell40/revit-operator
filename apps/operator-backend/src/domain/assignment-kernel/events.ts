@@ -72,8 +72,11 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
   | { event_type: "result_delivered"; delivery: AssignmentResultDeliveryV2 }
   | { event_type: "work_plan_declared"; declaration: import("./work_plan.js").WorkPlanDeclarationV2 }
+  | { event_type: "work_plan_location_recorded"; item_id: string; location_hint: import("./work_plan_location.js").WorkPlanLocationHintV2 }
   | { event_type: "advisory_followup_disposition_recorded"; disposition: import("./advisory_followups.js").AdvisoryFollowupDispositionV2 }
   | { event_type: "work_plan_item_claimed"; item_id: string; operation_ids: readonly string[] }
+  | { event_type: "work_plan_scope_requested"; item_id: string; scope: import('./work_plan_scope.js').WorkPlanScopeV1; operation_ids: readonly string[]; read_selection?: 'current_native_reads_v1' }
+  | { event_type: "work_plan_item_deferred"; item_id: string; action: "defer" | "resume_item"; reason: string }
   | { event_type: "work_plan_item_completed"; item_id: string; operation_ids: readonly string[]; inspection?: import("./work_plan.js").WorkPlanInspectionV2 }
   | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string; completion_proposal?: import("./execution_policy.js").AdvisoryCompletionProposalV1 }
   | { event_type: "review_resolved"; review_id: string; decision: string; continuation?: AdvisoryCheckpointContinuationV1 }

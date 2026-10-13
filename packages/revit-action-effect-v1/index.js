@@ -147,6 +147,7 @@ function genericConditionalIntentEffect(row) {
 }
 
 function explicitConditionalActionPathEffect(normalized, row) {
+  if (normalized === "/revit/assign-electrical-circuit") return row.dryRun === false ? "apply" : "preview";
   if (normalized === "/revit/existing-conditions-mep-draft-workflow") {
     // This native wrapper rolls back only when dryRun is explicitly true.
     // Missing or conflicting intent must reserve apply authority.

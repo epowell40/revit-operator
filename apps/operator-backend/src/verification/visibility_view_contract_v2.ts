@@ -36,10 +36,51 @@ function propertyToken(id: string, field: string, value: unknown): string | null
   return choices.includes(text) ? `native_view_property:${id}:${field}:${text}` : null;
 }
 
+function categoryLabel(value: unknown): string | null {
+  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  const label = value.trim();
+  if (!label || label.length > 256) return null;
+  // Native resolution trims and compares labels case-insensitively. Keep
+  // non-ASCII spelling exact rather than guessing localized category names.
+  return label.replace(/[A-Z]/g, letter => letter.toLowerCase());
+}
+
+function categorySelector(value: unknown): string | null {
+  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  const selector = value.trim();
+  if (/^OST_[A-Za-z0-9_]+$/.test(selector)) return selector;
+  if (/^OST_/i.test(selector)) return null;
+  const label = categoryLabel(selector);
+  return label ? `label:${JSON.stringify(label)}` : null;
+}
+
 export function visibilityExpectedValuesV2(value: unknown): readonly string[] {
   const root = record(value);
   const body = record(root.body ?? root.arguments ?? value);
   const id = viewId(body.viewId);
+  if (body.action === "set_category_override") {
+    // Both selectors accepted by the native handler must be checkable. A
+    // display label is matched to native returned identity, never translated
+    // through an English label-to-enum table or an echoed request.
+    const selector = categorySelector(body.categoryName);
+    if (!id || body.dryRun === true || body.apply === false || !selector
+      || ["linkedModelInstanceId", "linkedModelId", "revitLinkInstanceId", "linkedModelName", "revitLinkName", "linkName"].some(k => body[k] != null)) return [];
+    const prefix = `native_category_property:${id}:${selector}:`;
+    const tokens: string[] = [];
+    if (Object.hasOwn(body, "halftone")) {
+      if (typeof body.halftone !== "boolean") return [];
+      tokens.push(prefix + `halftone:${body.halftone}`);
+    }
+    if (Object.hasOwn(body, "lineWeight")) {
+      if (!Number.isInteger(body.lineWeight) || Number(body.lineWeight) < 1 || Number(body.lineWeight) > 16) return [];
+      tokens.push(prefix + `lineWeight:${body.lineWeight}`);
+    }
+    if (["r", "g", "b"].some(k => Object.hasOwn(body, k))) {
+      if (!["r", "g", "b"].every(k => Number.isInteger(body[k]) && Number(body[k]) >= 0 && Number(body[k]) <= 255)) return [];
+      tokens.push(prefix + `color:${body.r},${body.g},${body.b}`);
+    }
+    return tokens;
+  }
   const field = ({ set_scale: "scale", set_detail_level: "detailLevel", set_discipline: "discipline" } as Record<string, string>)[String(body.action ?? "").trim().toLowerCase()];
   if (!id || !field || body.dryRun === true) return [];
   const token = propertyToken(id, field, body[field]);
@@ -52,14 +93,36 @@ export function visibilityObservedValuesV2(value: unknown): readonly string[] {
   // Do not recursively search wrappers: echoed inputs and conflicting copies
   // of a view projection cannot supplement the actual returned view.
   if (root.status !== "Ok" || root.action !== "get"
-      || root.dryRun !== false || root.success === false || root.ok === false || root.error) return [];
+      || root.dryRun !== false || root.success === false || root.ok === false || root.error || root.truncated === true) return [];
   const view = record(root.view);
   const id = viewId(view.id);
   if (!id) return [];
-  return ["scale", "detailLevel", "discipline"].flatMap(field => {
+  const values = ["scale", "detailLevel", "discipline"].flatMap(field => {
     const token = propertyToken(id, field, view[field]);
     return token ? [token] : [];
   });
+  const category = record(view.categoryOverride);
+  if (/^OST_[A-Za-z0-9_]+$/.test(String(category.builtInCategory ?? ""))
+    && Number.isSafeInteger(category.categoryId) && Number(category.categoryId) < 0) {
+    const selectors = [String(category.builtInCategory)];
+    const label = categoryLabel(category.categoryName);
+    const snapshot = record(view.categorySnapshot), target = record(snapshot.target);
+    // Display-label proof requires the separate native category snapshot's
+    // resolved target, not a free-standing name beside a graphics value.
+    if (label && snapshot.complete === true && snapshot.targetCategoryId === category.categoryId
+        && target.id === category.categoryId && categoryLabel(target.name) === label)
+      selectors.push(`label:${JSON.stringify(label)}`);
+    for (const selector of selectors) {
+      const prefix = `native_category_property:${id}:${selector}:`;
+      if (typeof category.halftone === "boolean") values.push(prefix + `halftone:${category.halftone}`);
+      if (Number.isInteger(category.lineWeight) && Number(category.lineWeight) >= 1 && Number(category.lineWeight) <= 16)
+        values.push(prefix + `lineWeight:${category.lineWeight}`);
+      const color = record(category.color);
+      if (["r", "g", "b"].every(k => Number.isInteger(color[k]) && Number(color[k]) >= 0 && Number(color[k]) <= 255))
+        values.push(prefix + `color:${color.r},${color.g},${color.b}`);
+    }
+  }
+  return values;
 }
 
 export function visibilityTargetTokensV2(value: unknown): readonly string[] {

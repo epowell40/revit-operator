@@ -31,6 +31,7 @@ namespace RevitBridge.Logic.Handlers
             public bool? filterVisible { get; set; }
             public int? scale { get; set; }
             public int? lineWeight { get; set; } // projection line weight
+            public bool? halftone { get; set; } // null preserves the existing override; false explicitly clears halftone
             public int? r { get; set; } // projection line color red [0..255]
             public int? g { get; set; } // projection line color green [0..255]
             public int? b { get; set; } // projection line color blue [0..255]
@@ -142,6 +143,7 @@ namespace RevitBridge.Logic.Handlers
                         p.filterVisible,
                         p.scale,
                         p.lineWeight,
+                        p.halftone,
                         p.r,
                         p.g,
                         p.b,
@@ -373,6 +375,12 @@ namespace RevitBridge.Logic.Handlers
                     var ogs = view.GetCategoryOverrides(category.Id);
                     var changed = false;
 
+                    if (p.halftone.HasValue)
+                    {
+                        ogs.SetHalftone(p.halftone.Value);
+                        changed = true;
+                    }
+
                     if (p.lineWeight.HasValue)
                     {
                         if (p.lineWeight.Value < 1 || p.lineWeight.Value > 16)
@@ -394,7 +402,7 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     if (!changed)
-                        throw new InvalidOperationException("visibility.set_category_override requires lineWeight and/or r,g,b.");
+                        throw new InvalidOperationException("visibility.set_category_override requires halftone, lineWeight and/or r,g,b.");
 
                     view.SetCategoryOverrides(category.Id, ogs);
                     return;
@@ -1068,6 +1076,7 @@ namespace RevitBridge.Logic.Handlers
                     p.linkName,
                     p.categoryName,
                     p.lineWeight,
+                    p.halftone,
                     p.r,
                     p.g,
                     p.b
@@ -1337,7 +1346,7 @@ namespace RevitBridge.Logic.Handlers
             }
             var phase = TryGetPhase(doc, view);
             var phaseFilter = TryGetPhaseFilter(doc, view);
-            var linkedModels = (p?.includeLinkedModels ?? false) ? BuildLinkedModelsState(doc) : null;
+            var linkedModels = (p?.includeLinkedModels ?? false) ? BuildLinkedModelsState(doc, view) : null;
             var temporaryModes = new
             {
                 hideIsolate = TryGetTempModeState(view, TemporaryViewMode.TemporaryHideIsolate),
@@ -1399,7 +1408,9 @@ namespace RevitBridge.Logic.Handlers
                     categoryOverride,
                     categorySnapshot = p?.includeCategoryState == true ? RevitBridge.Common.ViewCategoryReadback.Read(doc, view, ResolveCategory(doc, p.categoryName), !string.IsNullOrWhiteSpace(p.categoryName)) : null,
                     viewTemplate = viewTemplate?.Name,
-                    viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
+                    viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id),
+                    templateControlsModelGraphics = TemplateControlsModelGraphics(viewTemplate),
+                    templateCategoryOverride = viewTemplate == null ? null : BuildCategoryOverrideState(doc, viewTemplate, p?.categoryName)
                 }
             };
         }
@@ -1432,7 +1443,36 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
-        private static object[] BuildLinkedModelsState(Document doc)
+        private static bool? TemplateControlsModelGraphics(View? template)
+        {
+            if (template == null) return false;
+            try
+            {
+                if (!Enum.TryParse<BuiltInParameter>("VIS_GRAPHICS_MODEL", out var parameter)) return null;
+                var id = RevitBridge.Common.ElementIdCompat.Create((long)parameter);
+                return template.GetTemplateParameterIds().Contains(id) && !template.GetNonControlledTemplateParameterIds().Contains(id);
+            }
+            catch { return null; }
+        }
+
+        private static object BuildLinkGraphicsState(View view, ElementId linkId)
+        {
+            try
+            {
+                // Reflection keeps the same read surface across Revit years.
+                // Missing/unsupported data stays unknown, never ByHostView.
+                var method = typeof(View).GetMethod("GetLinkOverrides", new[] { typeof(ElementId) });
+                var settings = method?.Invoke(view, new object[] { linkId });
+                if (settings == null) return new { supported = false, linkVisibilityType = (string?)null, linkedViewId = (long?)null };
+                var mode = settings.GetType().GetProperty("LinkVisibilityType")?.GetValue(settings)?.ToString();
+                var linkedId = settings.GetType().GetProperty("LinkedViewId")?.GetValue(settings) as ElementId;
+                return new { supported = !string.IsNullOrEmpty(mode), linkVisibilityType = mode,
+                    linkedViewId = linkedId == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(linkedId) };
+            }
+            catch { return new { supported = false, linkVisibilityType = (string?)null, linkedViewId = (long?)null }; }
+        }
+
+        private static object[] BuildLinkedModelsState(Document doc, View view)
         {
             var links = new FilteredElementCollector(doc)
                 .OfClass(typeof(RevitLinkInstance))
@@ -1454,6 +1494,7 @@ namespace RevitBridge.Logic.Handlers
                     isLoaded = linkDoc != null,
                     documentTitle = linkDoc?.Title,
                     pathName = SafePathName(linkDoc),
+                    graphics = BuildLinkGraphicsState(view, link.Id),
                     phases = BuildPhaseInventory(linkDoc),
                     commonCategories = BuildLinkedCategoryInventory(linkDoc),
                     phaseMap = BuildPhaseMapState(doc, linkDoc, linkType)
@@ -1570,6 +1611,8 @@ namespace RevitBridge.Logic.Handlers
             try { hidden = view.GetCategoryHidden(category.Id); } catch { }
 
             var lineWeight = ogs == null ? null : TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
+            bool? halftone = null;
+            try { if (ogs != null) halftone = ogs.Halftone; } catch { }
             var color = ogs == null ? null : TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
             var patternId = ogs == null ? null : TryReadElementId(ogs, "ProjectionLinePatternId", "GetProjectionLinePatternId");
             LinePatternElement? pattern = null;
@@ -1582,7 +1625,9 @@ namespace RevitBridge.Logic.Handlers
             {
                 categoryId = RevitBridge.Common.ElementIdCompat.GetValue(category.Id),
                 categoryName = category.Name,
+                builtInCategory = Enum.GetName(typeof(BuiltInCategory), (int)RevitBridge.Common.ElementIdCompat.GetValue(category.Id)),
                 hidden,
+                halftone,
                 lineWeight,
                 linePatternId = patternId,
                 linePatternName = pattern?.Name,

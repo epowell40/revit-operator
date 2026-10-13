@@ -1,0 +1,254 @@
+{
+  "notice": "Exact committed repair with native-accepted Attached casing. Later root read is retained replay data only, never retrospective live integral proof.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1490490,
+      "repairExistingTagId": 1736673,
+      "tagHeadPositionXyz": [
+        -95,
+        8.5,
+        -4.416666666666664
+      ],
+      "hasLeader": true,
+      "leaderEndCondition": "Attached",
+      "dryRun": false
+    }
+  },
+  "read_input": {
+    "method": "POST",
+    "path": "/revit/native-api-ops",
+    "body": {
+      "operations": [
+        {
+          "id": "tag",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1736673
+          ]
+        },
+        {
+          "id": "read_OwnerViewId",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "read_TagText",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "TagText"
+        },
+        {
+          "id": "read_HasLeader",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "HasLeader"
+        },
+        {
+          "id": "read_TagHeadPosition",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "TagHeadPosition"
+        },
+        {
+          "id": "type",
+          "op": "call",
+          "target": "$tag",
+          "memberId": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+          "args": []
+        },
+        {
+          "id": "subjects",
+          "op": "call",
+          "target": "$tag",
+          "memberId": "method:Autodesk.Revit.DB.IndependentTag.GetTaggedLocalElements()",
+          "args": []
+        }
+      ],
+      "returns": [
+        "$tag",
+        "$read_OwnerViewId",
+        "$read_TagText",
+        "$read_HasLeader",
+        "$read_TagHeadPosition",
+        "$type",
+        "$subjects"
+      ]
+    }
+  },
+  "native_read": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 7,
+    "duration_ms": 0,
+    "operations": [
+      {
+        "id": "tag",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1736673,
+          "unique_id": "757c5111-52b6-408e-950d-a18a8f4cb2f0-001a7fe1",
+          "name": "Electrical Device Panel-Circuit Tag",
+          "category": "Electrical Fixture Tags"
+        }
+      },
+      {
+        "id": "read_OwnerViewId",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1490490
+        }
+      },
+      {
+        "id": "read_TagText",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagText",
+        "signature": "string IndependentTag.TagText { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": "P102/11"
+      },
+      {
+        "id": "read_HasLeader",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool IndependentTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": true
+      },
+      {
+        "id": "read_TagHeadPosition",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagHeadPosition",
+        "signature": "XYZ IndependentTag.TagHeadPosition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "x": -95,
+          "y": 8.5,
+          "z": -4.416666666666664
+        }
+      },
+      {
+        "id": "type",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+        "property": null,
+        "signature": "ElementId Element.GetTypeId()",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1480833
+        }
+      },
+      {
+        "id": "subjects",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.IndependentTag.GetTaggedLocalElements()",
+        "property": null,
+        "signature": "ICollection<Element> IndependentTag.GetTaggedLocalElements()",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.Element, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+          "deferred_enumeration": true
+        }
+      }
+    ],
+    "results": {
+      "tag": {
+        "id": 1736673,
+        "unique_id": "757c5111-52b6-408e-950d-a18a8f4cb2f0-001a7fe1",
+        "name": "Electrical Device Panel-Circuit Tag",
+        "category": "Electrical Fixture Tags"
+      },
+      "read_OwnerViewId": {
+        "id": 1490490
+      },
+      "read_TagText": "P102/11",
+      "read_HasLeader": true,
+      "read_TagHeadPosition": {
+        "x": -95,
+        "y": 8.5,
+        "z": -4.416666666666664
+      },
+      "type": {
+        "id": 1480833
+      },
+      "subjects": {
+        "count": 1,
+        "items": [
+          {
+            "id": 1521972,
+            "unique_id": "10d34372-8427-404a-a5ce-5dbcd3e53d4d-00173934",
+            "name": "GFCI WP",
+            "category": "Electrical Fixtures"
+          }
+        ],
+        "limit": 50,
+        "hasMore": false,
+        "truncated": false,
+        "complete": true,
+        "total": 1
+      }
+    },
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "9329badb5348205d05b9d695c110a448",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/native-api-ops",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-13T12:14:21.5590988+00:00"
+    }
+  },
+  "binding": {
+    "assignment_id": "e2fb577e-b508-4bf9-a1b4-6b8c6181ad9b",
+    "run_id": "chat:73908aca-15dd-45c7-93f9-9e2a0e8ef937",
+    "generation": 1,
+    "session_id": "93a8e08e-99d8-48e6-8697-159683fb76a6",
+    "principal_id": "local:shared-token",
+    "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+  },
+  "operation_id": "opv2_02bf7a096ebd1c1016602ccf85766470b1da5147e2878f2dd531ee63e5a5fd17"
+}

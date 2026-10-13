@@ -1,0 +1,141 @@
+{
+  "schema": "operator.retained-native-parameter-failure.v1",
+  "method": "POST",
+  "request": {
+    "changes": [
+      {
+        "elementId": 1582196,
+        "parameterName": "Family and Type",
+        "value": "1429110",
+        "expectedOldValue": "1564014"
+      },
+      {
+        "elementId": 1582261,
+        "parameterName": "Family and Type",
+        "value": "1429110",
+        "expectedOldValue": "1564014"
+      }
+    ],
+    "dryRun": true,
+    "apply": false
+  },
+  "purpose": "Exact disposable two-fixture incompatible-host preview returned HTTP200; model addresses are sample-only",
+  "payload": {
+    "status": "Native Failure",
+    "dryRun": true,
+    "requestedCount": 2,
+    "effectiveCount": 2,
+    "excludedCount": 0,
+    "changedCount": 0,
+    "previewChangedCount": 2,
+    "writeFailedCount": 0,
+    "changedElementIds": [],
+    "missingAfterElementIds": [],
+    "verificationPerformed": false,
+    "verifiedCount": 0,
+    "verificationFailedCount": 0,
+    "unresolvedElementIds": [],
+    "verification": [],
+    "diffs": [
+      {
+        "elementId": 1582196,
+        "parameterName": "Family and Type",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "ElementId",
+          "value": 1564014,
+          "valueString": "Duplex Receptacle: Flush Valve"
+        },
+        "after": {
+          "storageType": "ElementId",
+          "value": 1564014,
+          "valueString": "Duplex Receptacle: Flush Valve"
+        }
+      },
+      {
+        "elementId": 1582261,
+        "parameterName": "Family and Type",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "ElementId",
+          "value": 1564014,
+          "valueString": "Duplex Receptacle: Flush Valve"
+        },
+        "after": {
+          "storageType": "ElementId",
+          "value": 1564014,
+          "valueString": "Duplex Receptacle: Flush Valve"
+        }
+      }
+    ],
+    "transaction": {
+      "status": "rolled_back",
+      "committed": false,
+      "modified_element_ids": [],
+      "affected_element_ids": [
+        1582196,
+        1582261
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [
+      {
+        "severity": "Error",
+        "message": "Can't use this type in this host.",
+        "elementIds": [
+          1582196
+        ],
+        "failureDefinitionId": "7b9da962-66b1-4f6f-ad43-bbbe1658c092",
+        "captureErrors": []
+      },
+      {
+        "severity": "Error",
+        "message": "Can't use this type in this host.",
+        "elementIds": [
+          1582261
+        ],
+        "failureDefinitionId": "7b9da962-66b1-4f6f-ad43-bbbe1658c092",
+        "captureErrors": []
+      }
+    ],
+    "failureRollbackRequested": true,
+    "requiredConfirm": null,
+    "confirmReceived": "",
+    "titleblockImpacts": null,
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "7195cac8b8851bd51f2ad789cd1dc1ae",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "preview",
+      "method": "POST",
+      "path": "/revit/set-parameter",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "verified_native_rollback",
+      "effect_authority": "native_rollback",
+      "affected_target_identities": [
+        "element_id:1582196",
+        "element_id:1582261"
+      ],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-12T08:43:08.6800232-04:00"
+    }
+  },
+  "path": "/revit/set-parameter"
+}

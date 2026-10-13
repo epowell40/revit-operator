@@ -13,6 +13,7 @@ import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachment
 import { READ_OUTPUT_PDF_TOOL, readOutputPdf } from "../attachments/read_output_pdf.js";
 import { describeCodeModeImageTool } from "./code_mode_images.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/feature_flag.js";
+import { assertMcpInventoryHandshake } from './mcp_inventory_handshake.js';
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -120,10 +121,14 @@ export class CodexMcpToolRuntime {
     const client = new Client({ name: "revit-operator-backend-mcp-adapter", version: "1.0.0" }, { capabilities: {} });
     try {
       await client.connect(transport);
+      const timeout = toolTimeoutMs(this.opts.spawnEnv);
+      assertMcpInventoryHandshake(await client.callTool({ name: 'operator_runtime_probe', arguments: {} }, undefined,
+        { timeout, maxTotalTimeout: timeout }));
       this.transport = transport;
       this.client = client;
     } catch (error) {
       try { await transport.close(); } catch {}
+      if (error instanceof Error && error.message.startsWith('operator_mcp_inventory_mismatch:')) throw error;
       const detail = this.stderrTail.trim();
       throw new Error(`Could not start the Revit Operator MCP runtime.${detail ? ` stderr: ${detail}` : ""}`, { cause: error });
     }

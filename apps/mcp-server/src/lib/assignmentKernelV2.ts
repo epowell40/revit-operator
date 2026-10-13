@@ -76,7 +76,19 @@ type NativeCall = {
   observation_payload?: unknown;
   payload_provenance?: ReturnType<typeof payloadProvenance>;
   settlement?: unknown;
+  settlement_error?: AssignmentKernelNativeSettlementErrorV2;
 };
+
+/** Delivery failure is distinct from native execution failure. Never replace a
+ * retained native result with an inferred failure merely because its handoff
+ * failed; the authenticated outbox owns recovery of those exact bytes. */
+export class AssignmentKernelNativeSettlementErrorV2 extends Error {
+  constructor(readonly operationId: string, cause: unknown) {
+    const detail = String(cause instanceof Error ? cause.message : cause).replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 1000);
+    super(`assignment_kernel_v2_native_settlement_failed:${operationId}:${detail}`, { cause });
+    this.name = "AssignmentKernelNativeSettlementErrorV2";
+  }
+}
 type ChildAdmissionInput = {
   parent_operation_id: string;
   child_ordinal: number;
@@ -530,8 +542,13 @@ export async function recordAssignmentKernelNativeResultV2(
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, false);
     const settlementEnvelope = mcpEnvelopeForCall(call, result);
-    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
-    call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
+    try {
+      retainAssignmentCompletionV2(call.lease, settlementEnvelope);
+      call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
+    } catch (error) {
+      call.settlement_error = new AssignmentKernelNativeSettlementErrorV2(call.operation_id, error);
+      throw call.settlement_error;
+    }
   }
   call.state = "completed";
 }
@@ -543,6 +560,7 @@ export async function recordAssignmentKernelNativeFailureV2(
   const scope = storage.getStore();
   const call = nativeCall(request);
   if (!scope || !call || call.state === "completed") return;
+  if (call.settlement_error) throw call.settlement_error;
   const errorRecord = object(error);
   const bridgeDetails = object(errorRecord.bridgeDetails);
   const phase = text(errorRecord.phase) || text(bridgeDetails.phase);
@@ -567,8 +585,13 @@ export async function recordAssignmentKernelNativeFailureV2(
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, true);
     const settlementEnvelope = mcpEnvelopeForCall(call, result);
-    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
-    call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
+    try {
+      retainAssignmentCompletionV2(call.lease, settlementEnvelope);
+      call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
+    } catch (error) {
+      call.settlement_error = new AssignmentKernelNativeSettlementErrorV2(call.operation_id, error);
+      throw call.settlement_error;
+    }
   }
   call.state = "completed";
 }
@@ -590,6 +613,10 @@ function nativeDomainFailure(payload: unknown): boolean {
   const root = object(payload);
   const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
   return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
+    // Native HTTP success only confirms delivery. A requested failure rollback
+    // or explicit native failure remains a rejected operation; effect truth is
+    // still derived separately from the authoritative settlement receipt.
+    || aliasedField(root, ["failureRollbackRequested"]) === true || status === "nativefailure"
     || status === "failed" || status === "partialfailure" || status === "printfailed" || status === "blocked"
     || status === "notfound" || status === "ambiguous"
     || status === "blockedrolledback" || status === "blockedrollbackfailed";
@@ -998,6 +1025,8 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
     } };
   }
   const calls = scope.native_calls;
+  const failedSettlement = calls.find(call => call.settlement_error)?.settlement_error;
+  if (failedSettlement) throw failedSettlement;
   if (calls.some(call => call.state !== "completed")) throw new Error("assignment_kernel_v2_native_result_missing");
   const failed = Boolean(object(result).isError);
   const parentCall = calls.find(call => call.operation_role === "root");

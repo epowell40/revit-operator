@@ -1,3 +1,4 @@
+import { recoverAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -387,6 +388,9 @@ for (const [withAssessment, withProjection] of [[false, false], [true, false], [
   assert.equal(mapping.observations[0].observation_id, observationId);
   assert.equal(mapping.observations[0].result_item_eligibility, "result");
   assert.equal(mapping.observations[0].evidence_id, observation.raw_payload_ref.replace(/^evidence:/, ""));
+  assert.equal(mapping.host_budget.resources.provider_calls.used,Object.keys(afterReads.provider_calls).length,
+    "the executing tool boundary returns current host budget without another model call");
+  assert.equal(mapping.host_budget.resources.operations.used,Object.keys(afterReads.operations).length);
   assert.deepEqual(mapping.observations[0].eligible_criterion_ids, [snapshot.spec.criteria[0]!.criterion_id]);
   const assessment = { overview: "Review the drainage design before treating this pipe as ready.",
     findings: [{ priority: "high" as const, title: "Confirm sizing", text: "The selected pipe belongs to the sanitary system. Check its size against the design load.", evidence_indices: [2, 3] }],
@@ -1689,4 +1693,31 @@ test(`reroute planning ${variant} retains evidence and admits later apply only a
       assert.deepEqual(applied.spec, snapshot.spec); assert.equal(applied.terminal, false);
     }
   } finally { endTeammateLoopOwner(owner); }
+}));
+
+
+test("expired read recovery retains failure without clearing dispatched writes or granting continuation", () => workspace(async () => {
+  const { binding, snapshot } = start();
+  const read = openAssignmentKernelOperationV2({snapshot,provider_turn_id:"provider",controller_request_id:"expired-read",
+    capability_id:"inventory.read",classified_effect:"read",arguments:{}});
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  const before = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const waiting = await recoverAssignmentCompletionsV2(binding,undefined,new Date(Date.parse(read.deadline_at)-1));
+  assert.deepEqual(waiting.snapshot,before);
+  const recovered = await recoverAssignmentCompletionsV2(binding,undefined,new Date(Date.parse(read.deadline_at)+1));
+  assert.equal(recovered.snapshot.operations[read.operation_id].result!.status,"failed_after_dispatch");
+  assert.equal(recovered.snapshot.operations[read.operation_id].persistent_effect,"none");
+  assert.equal(recovered.snapshot.quiescent,true);
+  const repeated = await recoverAssignmentCompletionsV2(binding,undefined,new Date(Date.parse(read.deadline_at)+1));
+  assert.deepEqual(repeated.recovered_operation_ids,[]);
+  assert.deepEqual(repeated.snapshot,recovered.snapshot);
+  const w = start("Replace selected note with exact literal Verified text.","write-recovery");
+  const write = openAssignmentKernelOperationV2({snapshot:w.snapshot,
+    provider_turn_id:"provider",controller_request_id:"expired-write",capability_id:"revit_call_tool",
+    classified_effect:"apply",arguments:{method:"POST",path:"/revit/replace-text-note",body:{elementId:1,newText:"Verified text",dryRun:false}}});
+  markAssignmentKernelOperationDispatchStartedV2(write);
+  const pendingWrite=getAssignmentKernelSnapshotV2(w.binding.assignment_id)!;
+  const preserved=await recoverAssignmentCompletionsV2(w.binding,undefined,new Date(Date.parse(write.deadline_at)+1));
+  assert.deepEqual(preserved.snapshot,pendingWrite);
+  assert(preserved.unresolved_operation_ids.includes(write.operation_id));
 }));

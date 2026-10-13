@@ -1,0 +1,13 @@
+{
+  "source": "Retained cumulative E107 run42 request and actual Revit journal0898 hosting error. Original assignment outcome remains unknown; this fixture does not reconcile it.",
+  "path": "/revit/change-element-type",
+  "request": {
+    "elementIds": [1582196, 1582261],
+    "newTypeId": 1429110,
+    "expectedOldTypes": [{"elementId":1582196,"typeId":1564014},{"elementId":1582261,"typeId":1564014}],
+    "dryRun": false
+  },
+  "native_failure": "Can't use this type in this host.",
+  "first_operation_id": "opv2_514626c5bad64a4bcab820c27c97ec1f70172d1881568de07c047c69a681947e",
+  "first_correlation_id": "d039a06cc4d3539fc4e407076e7e6ad5077dadf54d88407a9bb8af71f0834cec"
+}

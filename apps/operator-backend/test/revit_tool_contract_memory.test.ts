@@ -136,6 +136,68 @@ test("failure classifier covers exact observed courier and bridge diagnostics", 
   }
 });
 
+test("serialized native failure schema does not teach dropping focused parameter names", { concurrency: false }, () => withStore(() => {
+  const failure = JSON.stringify({schema:"revit-operator.revit-bridge-failure.v1",ok:false,code:"revit_bridge_http_error",
+    method:"POST",path:"/revit/get-parameters",status:500,
+    error:`[revit_bridge_http_error] POST /revit/get-parameters received HTTP 500: ${JSON.stringify({error:"Element not found",type:"System.InvalidOperationException",stack:"native stack ".repeat(100)})}`});
+  assert.equal(classifyRevitToolFailure(failure),"revit_context");
+  const args={method:"POST",path:"/revit/get-parameters",body:{elementId:1,names:["Comments"]}};
+  recordRevitToolOutcome({tool:"revit_call_tool",arguments:args,success:false,error:failure});
+  recordRevitToolOutcome({tool:"revit_call_tool",arguments:{...args,body:{elementId:2}},success:true});
+  const store=readRevitToolContractStoreForTests();
+  assert.equal(store.failure_receipts.length,1);assert.equal(store.failure_receipts[0].classification,"revit_context");
+  assert.equal(store.pending_failures.length,0);assert.equal(store.corrections.length,0);
+  assert.equal(formatRevitToolContractMemoryForPrompt(),"");
+}));
+
+test("structured genuine validation still learns and malformed wrapper metadata cannot learn", { concurrency: false }, () => withStore(() => {
+  assert.equal(classifyRevitToolFailure(JSON.stringify({schema:"failure.v1",issues:[{message:"Required",path:["action"]}]})),"contract");
+  assert.equal(classifyRevitToolFailure('{"schema":"failure.v1","error":"request body must be'),"unknown");
+  recordRevitToolOutcome({tool:"revit_call_tool",arguments:{method:"POST",path:"/revit/views",body:{action:"bad"}},success:false,
+    error:JSON.stringify({schema:"failure.v1",error:"views.action must be 'list'",stack:"noise".repeat(500)})});
+  const corrected=recordRevitToolOutcome({tool:"revit_call_tool",arguments:{method:"POST",path:"/revit/views",body:{action:"list"}},success:true});
+  assert.ok(corrected);assert.match(formatRevitToolContractMemoryForPrompt(),/action must be 'list'/);
+  assert.doesNotMatch(formatRevitToolContractMemoryForPrompt(),/noise|failure.v1/);
+}));
+
+test("explicit MCP validation issues support redacted correction learning only", { concurrency: false }, () => withStore(() => {
+  const failure = {code:"mcp_request_validation_failed",validation_issues:[{field_path:"body.planType",expected_type:"enum",
+    expected_constraint:{allowed_values:["floor","engineering"]},actual_value:"confidential-invalid-value"}]};
+  assert.equal(classifyRevitToolFailure(JSON.stringify(failure)),"contract");
+  for (const value of [{...failure,code:"native_execution_failed"},{validation_issues:failure.validation_issues},
+    {...failure,validation_issues:[]},{...failure,validation_issues:[{field_path:"private data",expected_type:"enum"}]},
+    {...failure,validation_issues:[{field_path:"body.planType",expected_type:"private data"}]}]) {
+    assert.equal(classifyRevitToolFailure(value),"unknown");
+  }
+  const args={method:"POST",path:"/revit/create-view",body:{planType:"confidential-invalid-value",name:"Private project"}};
+  recordRevitToolOutcome({threadId:"structured",tool:"revit_call_tool",arguments:args,success:false,error:failure});
+  assert.ok(recordRevitToolOutcome({threadId:"structured",tool:"revit_call_tool",arguments:{...args,body:{planType:"engineering",name:"Private project"}},success:true}));
+  const prompt=formatRevitToolContractMemoryForPrompt();
+  assert.match(prompt,/"planType":"engineering"/);assert.doesNotMatch(prompt,/confidential-invalid-value|Private project|allowed_values/);
+}));
+
+test("legacy false corrections are excluded from prompts without deleting receipts or quarantines", { concurrency: false }, () => withStore(root => {
+  recordRevitToolOutcome({threadId:"legacy",tool:"revit_call_tool",arguments:{path:"/revit/get-parameters",body:{names:["Comments"]}},success:false,error:"schema validation failed"});
+  recordRevitToolOutcome({threadId:"legacy",tool:"revit_call_tool",arguments:{path:"/revit/get-parameters",body:{}},success:true});
+  setRevitToolQuarantine({method:"POST",path:"/revit/unsafe",active:true,reason:"confirmed native defect"});
+  const target=path.join(root,"memory.json");const store=JSON.parse(fs.readFileSync(target,"utf8"));
+  store.corrections[0].failure_summary=JSON.stringify({schema:"revit-operator.revit-bridge-failure.v1",error:"Element not found"});
+  fs.writeFileSync(target,JSON.stringify(store));const before=fs.readFileSync(target,"utf8");
+  const prompt=formatRevitToolContractMemoryForPrompt();assert.doesNotMatch(prompt,/get-parameters|Element not found/);assert.match(prompt,/QUARANTINED POST \/revit\/unsafe/);
+  assert.equal(fs.readFileSync(target,"utf8"),before,"projection must not rewrite historical store");
+  assert.equal(readRevitToolContractStoreForTests().corrections.length,1);
+  assert.equal(readRevitToolContractStoreForTests().failure_receipts.length,1);
+}));
+
+test("legacy misclassified pending failure cannot become a new correction after success", { concurrency: false }, () => withStore(root => {
+  recordRevitToolOutcome({tool:"revit_call_tool",arguments:{path:"/revit/get-parameters",body:{names:["Comments"]}},success:false,error:"schema validation failed"});
+  const target=path.join(root,"memory.json"),store=JSON.parse(fs.readFileSync(target,"utf8"));
+  store.pending_failures[0].error=JSON.stringify({schema:"failure.v1",error:"Element not found"});fs.writeFileSync(target,JSON.stringify(store));
+  assert.equal(recordRevitToolOutcome({tool:"revit_call_tool",arguments:{path:"/revit/get-parameters",body:{}},success:true}),null);
+  assert.equal(readRevitToolContractStoreForTests().corrections.length,0);
+  assert.equal(readRevitToolContractStoreForTests().failure_receipts.length,1);
+}));
+
 test("pending contract failures are paired within their thread instead of across sessions", { concurrency: false }, () => {
   withStore(() => {
     recordRevitToolOutcome({ sessionId: "session-a", threadId: "thread-a", tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/sheets", body: { action: "bad-a" } }, success: false, error: "A action must be 'list'" });
