@@ -271,7 +271,9 @@
     "saved_document_postcondition_v2.test.ts",
     "committed_saved_document_readback_plan_v2.test.ts",
     "category_visibility_scope_v1.test.ts",
-    "family_static_text_scope_v1.test.ts"
+    "family_static_text_scope_v1.test.ts",
+    "requested_family_scope_readback_v1.test.ts",
+    "requested_family_scope_dispatch_v1.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -3965,6 +3967,13 @@
         "backend:family_static_text_scope_v1.test.ts",
         "mcp:lib/workPlanStdio.test.ts",
         "mcp:lib/family_static_text_scope_schema.test.ts"
+      ]
+    },
+    {
+      "id": "requested_scope_filtered_stale_reads_host_collection",
+      "coverage": [
+        "backend:requested_family_scope_readback_v1.test.ts",
+        "backend:requested_family_scope_dispatch_v1.test.ts"
       ]
     }
   ],

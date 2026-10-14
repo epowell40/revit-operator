@@ -1,0 +1,465 @@
+{
+  "provenance": {
+    "source_publication_sha256": "b5ae9a70f67c403d84ec2b2a849b72e3b38e43c546bef2802195b331af22b228",
+    "notice": "Retained73 scope request and operation selection inputs/timetable. Artifact paths omitted; no observations included. Active test owner is constructed separately, not a reopened terminal run or substituted proof."
+  },
+  "request": {
+    "item_id": "titleblocks-wsp",
+    "scope": {
+      "kind": "family_static_text_v1",
+      "category": "Title Blocks",
+      "expected_text": "WSP USA Buildings, Inc\n1001 Morehead Square Dr,\nCharlotte, NC 28203"
+    },
+    "operation_ids": [],
+    "requested_at": "2026-10-14T11:55:41.478Z",
+    "read_selection": "current_native_reads_v1"
+  },
+  "current_binding": {
+    "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+    "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+    "generation": 1,
+    "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+    "principal_id": "local:shared-token",
+    "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+  },
+  "operations": {
+    "opv2_425a7445dfb2b8a5f8a569b8507715fcbcc3cb203a7e0e2503bfc5f62e784d1d": {
+      "operation_id": "opv2_425a7445dfb2b8a5f8a569b8507715fcbcc3cb203a7e0e2503bfc5f62e784d1d",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content"
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:47:51.820Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "operator-mcp-transport",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:47:52.178Z",
+        "raw_payload_hash": "c8346d02e4553747828aff21f347e17cd2817bf49b861f2f9b31eb4226314bd7"
+      },
+      "observation_ids": []
+    },
+    "opv2_1f230c2d456c649693fa08b78819d9b86f7d7ad4badc09e2b9a6b48e012efd5d": {
+      "operation_id": "opv2_1f230c2d456c649693fa08b78819d9b86f7d7ad4badc09e2b9a6b48e012efd5d",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content",
+        "body": {
+          "elementId": 1709388,
+          "maxElements": 500,
+          "includeParameters": true,
+          "includeOtherElements": true
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:48:20.994Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:48:21.778Z",
+        "raw_payload_hash": "57ebbc9f4b3f06d8404715d46242d9b2c7391b79a36fe5b07192075672b84a76"
+      },
+      "observation_ids": []
+    },
+    "opv2_3089ea880d8631685f9246fab0dd90849a7ed7384fea91cf81032c3f5d862eb7": {
+      "operation_id": "opv2_3089ea880d8631685f9246fab0dd90849a7ed7384fea91cf81032c3f5d862eb7",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content",
+        "body": {
+          "elementId": 1709388,
+          "contains": "WSP",
+          "maxElements": 5000,
+          "includeParameters": true
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:48:30.481Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:48:30.944Z",
+        "raw_payload_hash": "089cbe91d435e9ba4834f79d9f7223b96d12087af56fb1deeea8280b722a8703"
+      },
+      "observation_ids": []
+    },
+    "opv2_a81182d5ac1ef93e45d49bc2dce8e41320559165a79190a2b88e6d1b011aa3df": {
+      "operation_id": "opv2_a81182d5ac1ef93e45d49bc2dce8e41320559165a79190a2b88e6d1b011aa3df",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/find-elements",
+        "body": {
+          "category": "OST_TitleBlocks",
+          "includeGeometry": true,
+          "limit": 5000
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:48:49.978Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:49:03.215Z",
+        "raw_payload_hash": "e3869e1cd23540d8438690d479f0f0b46bfc19725c34157610c91f6ba16f8497"
+      },
+      "observation_ids": []
+    },
+    "opv2_c1cda9beaba509313d6ae1e07b5657c3c355f60e4e893b5d5fd76a7329484a77": {
+      "operation_id": "opv2_c1cda9beaba509313d6ae1e07b5657c3c355f60e4e893b5d5fd76a7329484a77",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content",
+        "body": {
+          "elementId": 1391113,
+          "contains": "MEP",
+          "maxElements": 2000,
+          "includeParameters": true
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:49:29.071Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:49:29.587Z",
+        "raw_payload_hash": "3fb5049886b52682a08343d2be040c210a2e285a218aa4c6d89f239e7d9946e8"
+      },
+      "observation_ids": []
+    },
+    "opv2_4333330ca7aa932ec8031a4855d75fe8c79933b97e4fb2c37b20aa633f8486c8": {
+      "operation_id": "opv2_4333330ca7aa932ec8031a4855d75fe8c79933b97e4fb2c37b20aa633f8486c8",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/find-elements",
+        "body": {
+          "category": "OST_TitleBlocks",
+          "familyNameContains": "E1 30 x 42 Horizontal_Snowdon",
+          "limit": 5000
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:49:56.239Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:49:56.402Z",
+        "raw_payload_hash": "e94fb523d6dc199dbaa484149c3a4eb1a2bce601cf9b47de3c9d494145ecc5e6"
+      },
+      "observation_ids": []
+    },
+    "opv2_2057836b14c3cdbb7c976ec9126be58bf0c475457f715d0fa39507efa86afbe1": {
+      "operation_id": "opv2_2057836b14c3cdbb7c976ec9126be58bf0c475457f715d0fa39507efa86afbe1",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/export-pdf"
+      },
+      "requested_effect": "apply",
+      "persistent_effect": "applied",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:51:19.640Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:52:44.640Z",
+        "raw_payload_hash": "e8d3d6210a1599978b5e82ecb1cce2beed6d9e58a747b0146057cc016f25defa"
+      },
+      "observation_ids": []
+    },
+    "opv2_a918a9262044ce29bc1fd04fae9d3e5c3b24c2c523ad72f41dac2418397b26fa": {
+      "operation_id": "opv2_a918a9262044ce29bc1fd04fae9d3e5c3b24c2c523ad72f41dac2418397b26fa",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/save-as"
+      },
+      "requested_effect": "apply",
+      "persistent_effect": "applied",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:52:58.058Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:53:05.250Z",
+        "raw_payload_hash": "814ca4d664087e9bd230e67327c1b4367157ef4a782f02b6a5be2e4de444789a"
+      },
+      "observation_ids": []
+    },
+    "opv2_dfd5211de9ed91e23559fb7e571a883ec4c41a0ed6e92fbf31d0a5fa13182c13": {
+      "operation_id": "opv2_dfd5211de9ed91e23559fb7e571a883ec4c41a0ed6e92fbf31d0a5fa13182c13",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content",
+        "body": {
+          "elementId": 1709388,
+          "contains": "MEP",
+          "maxElements": 2000
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:55:25.849Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:55:26.459Z",
+        "raw_payload_hash": "8f15876f764023a3977fab6f732b70205157b4420aad79ca77d4073106b61f90"
+      },
+      "observation_ids": []
+    },
+    "opv2_98dae5574d13467a4c3be98545cd1579f4fe07788999060ceec90fd8316d40f2": {
+      "operation_id": "opv2_98dae5574d13467a4c3be98545cd1579f4fe07788999060ceec90fd8316d40f2",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/inspect-family-content",
+        "body": {
+          "elementId": 1391113,
+          "contains": "MEP",
+          "maxElements": 2000
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:55:31.382Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:55:32.141Z",
+        "raw_payload_hash": "5173c7d3a358d70e10632a3c9e30a6c99801d27874224768dc65ba7720d245cd"
+      },
+      "observation_ids": []
+    },
+    "opv2_ec174f29914d93fa752fc77bddbddc61e417ee3fd5aea52e56091e3016286b27": {
+      "operation_id": "opv2_ec174f29914d93fa752fc77bddbddc61e417ee3fd5aea52e56091e3016286b27",
+      "binding": {
+        "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+        "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+        "generation": 1,
+        "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/find-elements",
+        "body": {
+          "category": "OST_TitleBlocks",
+          "limit": 5000
+        }
+      },
+      "requested_effect": "read",
+      "persistent_effect": "none",
+      "dispatch_state": "dispatched",
+      "settlement_state": "settled",
+      "opened_at": "2026-10-14T11:55:35.892Z",
+      "result": {
+        "binding": {
+          "assignment_id": "0b5182ad-beae-4163-879e-66a1c608ef1f",
+          "run_id": "chat:2055a3e7-3723-4381-b7d7-cf109f80aa5e",
+          "generation": 1,
+          "session_id": "637da5cf-1070-4bd0-b6d6-194858545d16",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "status": "succeeded",
+        "dispatch_state": "dispatched",
+        "completed_at": "2026-10-14T11:55:36.089Z",
+        "raw_payload_hash": "5e4a5a7ef0cf43ae9a2933e5a0f23d0d5e4d9a2d00dba432c176b89b3babef80"
+      },
+      "observation_ids": []
+    }
+  }
+}

@@ -64,6 +64,8 @@ import { committedSheetMoveReadbackPlanV2 } from "../verification/sheet_move_pos
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
+import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
+import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -254,11 +256,24 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (v2Snapshot && v2Binding) {
     if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
       try {
-        const result = await runtime.callTool(params.tool, boundArguments.arguments, {
+        let result = await runtime.callTool(params.tool, boundArguments.arguments, {
           turnId: params.turnId,
           sessionId,
           assignmentKernelV2Binding: v2Binding
         });
+        let hostScopeNotice:string|undefined;
+        // The actor requested a supported coverage check. Gather missing native
+        // evidence through ordinary guarded calls, not through a longer prompt.
+        if(params.tool==='operator_manage_work_plan'&&boundArguments.arguments.action==='check_scope'
+          &&validFamilyStaticTextScopeV1(boundArguments.arguments.scopeCheck)
+          &&boundArguments.arguments.operationIds===undefined&&!result?.isError){
+          parallel.release();
+          try {
+            const host=await codexRequestedScopeReadbackV1({runtime,request:boundRequest,binding:v2Binding,
+              session_id:sessionId,arguments:boundArguments.arguments,dispatch:r=>handleCodexDynamicToolCall(runtime,r)});
+            if(host){result=host.result;hostScopeNotice=host.notice;}
+          }catch(error){hostScopeNotice='Host native scope readback remains unavailable: '+String(error).slice(0,800);}
+        }
         recordTeammateMcpResult(runtime, teammateGate, result);
         const afterInteraction = getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
         if (afterInteraction && (afterInteraction.completion_proposal || afterInteraction.terminal
@@ -269,6 +284,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         const response = adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
         });
+        if(hostScopeNotice)response.contentItems.push({type:'inputText',text:hostScopeNotice});
         attachCurrentAssignmentContext(response, params.tool, v2Binding.assignment_id);
         return response;
       } catch (error) {
