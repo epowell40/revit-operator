@@ -2738,15 +2738,22 @@ test("read-only native API operations verify an applied target without consuming
       arguments: {
         method: "POST", path: "/revit/native-api-ops",
         body: {
-          operations: [{ id: "schedule", op: "call", target: "doc", args: [1542984] }],
-          returns: ["$schedule"]
+          operations: [
+            { id: "schedule", op: "call", target: "doc", memberId: "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)", args: [1542984] },
+            { id: "striped", op: "get_property", target: "$schedule", property: "HasStripedRows" }
+          ],
+          returns: ["schedule", "striped"]
         }
       }
     });
     assert.equal(verify.allowed, true);
     assert.equal(verify.call?.effect, "read");
     recordTeammateMcpResult(owner, verify, {
-      content: [{ type: "text", text: JSON.stringify({ status: "Ok", results: { schedule: { id: 1542984, HasStripedRows: true } } }) }]
+      content: [{ type: "text", text: JSON.stringify({ version: "operator.native_api_ops.v2", ok:true, read_only:true, operation_count:2,
+        operations: [
+          {id:"schedule",op:"call",member_id:"method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",target_type:"Autodesk.Revit.DB.Document",result_preview:{id:1542984,unique_id:"native-schedule-identity"}},
+          {id:"striped",op:"get_property",property:"HasStripedRows",target_type:"Autodesk.Revit.DB.ViewSchedule",result_preview:true}
+        ], results: { schedule: { id: 1542984,unique_id:"native-schedule-identity" }, striped:true } }) }]
     });
     const verified = teammateLoopReceiptForOwner(owner);
     assert.equal(verified?.verified, true);

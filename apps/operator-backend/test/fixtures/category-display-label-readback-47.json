@@ -1,0 +1,297 @@
+{
+  "schema": "operator.test.category-display-label-native.v1",
+  "source_sha256": "7bcf2e697b3da70fce912bd6d863018b05ffdaa382b68c4fc185c7cdac43649d",
+  "apply_input": {
+    "method": "POST",
+    "path": "/revit/visibility",
+    "body": {
+      "action": "set_category_override",
+      "viewId": 1490610,
+      "categoryName": "Plumbing Fixtures",
+      "halftone": true,
+      "dryRun": false
+    }
+  },
+  "verification_input": {
+    "method": "POST",
+    "path": "/revit/visibility",
+    "body": {
+      "action": "get",
+      "viewId": 1490610,
+      "categoryName": "Plumbing Fixtures",
+      "includeCategoryState": true,
+      "includeLinkedModels": false
+    }
+  },
+  "verification_payload": {
+    "status": "Ok",
+    "action": "get",
+    "dryRun": false,
+    "view": {
+      "id": 1490610,
+      "name": "Power Plan - Enlarged",
+      "isTemplate": true,
+      "viewType": "FloorPlan",
+      "levelId": null,
+      "levelName": null,
+      "levelElevationFeet": null,
+      "scale": 96,
+      "detailLevel": "Coarse",
+      "discipline": "Electrical",
+      "sectionBox": null,
+      "cropBox": null,
+      "scopeBox": null,
+      "underlay": {
+        "levelId": -1,
+        "levelName": null,
+        "topLevelId": -1,
+        "topLevelName": null,
+        "orientation": "LookDown"
+      },
+      "viewRange": {
+        "top": {
+          "levelId": -2,
+          "levelName": null,
+          "offsetFeet": 0
+        },
+        "cut": {
+          "levelId": -3,
+          "levelName": null,
+          "offsetFeet": 4
+        },
+        "bottom": {
+          "levelId": -3,
+          "levelName": null,
+          "offsetFeet": 0
+        },
+        "viewDepth": {
+          "levelId": -3,
+          "levelName": null,
+          "offsetFeet": 0
+        }
+      },
+      "phase": null,
+      "phaseFilter": {
+        "id": 22797,
+        "name": "Show All"
+      },
+      "linkedModels": null,
+      "temporaryModes": {
+        "hideIsolate": false,
+        "revealHidden": false
+      },
+      "viewFilters": [
+        {
+          "id": 1357201,
+          "name": "ABL - General Power",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2001020
+            ],
+            "categories": [
+              {
+                "id": -2001020,
+                "name": "Electrical Analytical Loads",
+                "builtInCategory": "OST_ElectricalLoadZoneInstance"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "rule",
+                      "nativeType": "FilterElementIdRule",
+                      "parameterId": -1153533,
+                      "parameterName": "Area Based Load Type",
+                      "builtInParameter": "RBS_AREA_BASED_LOAD_TYPE",
+                      "evaluator": "FilterNumericEquals",
+                      "value": 1357188,
+                      "valueType": "element_id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": true,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 1357202,
+          "name": "ABL - General Lighting",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2001020
+            ],
+            "categories": [
+              {
+                "id": -2001020,
+                "name": "Electrical Analytical Loads",
+                "builtInCategory": "OST_ElectricalLoadZoneInstance"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "rule",
+                      "nativeType": "FilterElementIdRule",
+                      "parameterId": -1153533,
+                      "parameterName": "Area Based Load Type",
+                      "builtInParameter": "RBS_AREA_BASED_LOAD_TYPE",
+                      "evaluator": "FilterNumericEquals",
+                      "value": 1357187,
+                      "valueType": "element_id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": true,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 1363135,
+          "name": "Not Electrical Grids - Levels",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2000240,
+              -2000220
+            ],
+            "categories": [
+              {
+                "id": -2000240,
+                "name": "Levels",
+                "builtInCategory": "OST_Levels"
+              },
+              {
+                "id": -2000220,
+                "name": "Grids",
+                "builtInCategory": "OST_Grids"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "not",
+                      "child": {
+                        "kind": "rule",
+                        "nativeType": "FilterStringRule",
+                        "parameterId": -1002001,
+                        "parameterName": "Type Name",
+                        "builtInParameter": "SYMBOL_NAME_PARAM",
+                        "value": "E",
+                        "valueType": "string",
+                        "evaluator": "FilterStringBeginsWith"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      ],
+      "categoryOverride": {
+        "categoryId": -2001160,
+        "categoryName": "Plumbing Fixtures",
+        "builtInCategory": "OST_PlumbingFixtures",
+        "hidden": false,
+        "halftone": true,
+        "lineWeight": -1,
+        "linePatternId": -1,
+        "linePatternName": null,
+        "color": null
+      },
+      "categorySnapshot": {
+        "schema": "revit.category-visibility-snapshot.v1",
+        "complete": true,
+        "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+        "count": 777,
+        "targetCategoryId": -2001160,
+        "target": {
+          "id": -2001160,
+          "parentId": null,
+          "name": "Plumbing Fixtures",
+          "canHide": true,
+          "hidden": false,
+          "overridable": true,
+          "graphics": {
+            "cutBackgroundPatternColor": null,
+            "cutBackgroundPatternId": -1,
+            "cutForegroundPatternColor": null,
+            "cutForegroundPatternId": -1,
+            "cutLineColor": null,
+            "cutLinePatternId": -1,
+            "cutLineWeight": -1,
+            "detailLevel": "Undefined",
+            "halftone": true,
+            "isCutBackgroundPatternVisible": true,
+            "isCutForegroundPatternVisible": true,
+            "isSurfaceBackgroundPatternVisible": true,
+            "isSurfaceForegroundPatternVisible": true,
+            "projectionLineColor": null,
+            "projectionLinePatternId": -1,
+            "projectionLineWeight": -1,
+            "surfaceBackgroundPatternColor": null,
+            "surfaceBackgroundPatternId": -1,
+            "surfaceForegroundPatternColor": null,
+            "surfaceForegroundPatternId": -1,
+            "transparency": 0
+          }
+        },
+        "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+        "allCategoriesSha256": "sha256:52d84eca1517d4a2f8e6142c7e167bedfaf074c8663e1f9e5b5cc68b8c15eca8",
+        "categoryValuesSha256": "sha256:d40d52f9c42c09bc055f75713e9f808bb18611dde54c94972095b2e6ea66d89e",
+        "otherCategoriesSha256": "sha256:13ea0b9fd92b895081817a9f205aedac3abc808ab712c8cf948ffd79e3ac8360"
+      },
+      "viewTemplate": null,
+      "viewTemplateId": -1,
+      "templateControlsModelGraphics": false,
+      "templateCategoryOverride": null
+    }
+  }
+}

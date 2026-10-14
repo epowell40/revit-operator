@@ -95,7 +95,7 @@ test("a legal report and reason with maximal JSON escaping cannot stall advisory
   // Maximum-length safe versions, original index, parent identity, replacement index and reason all count.
   const page = projectAdvisoryFollowupsV2({ assignment_version: version + 2, advisory_followups: items } as AssignmentSnapshotV2, 30);
   assert.equal(page.items.length, 1, "the first legal item must fit rather than return the same empty cursor forever");
-  assert.equal(page.next_start, null);assert.deepEqual(page.items, [items.at(-1)!]);
+  assert.equal(page.next_start, null);assert.deepEqual(page.items, [{...items.at(-1)!,question_ref:"QF32"}]);
   assert.equal(page.items[0]!.parent_item_id, parent.item_id);assert.equal(page.items[0]!.source_index, 7);
   assert.ok(Buffer.byteLength(JSON.stringify(page.items)) > 12000);
   assert.ok(Buffer.byteLength(JSON.stringify(page.items)) <= 16384);

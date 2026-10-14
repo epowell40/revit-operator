@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import {
   ASSIGNMENT_CLARIFICATION_PATH,
   createOperatorBackendClient,
@@ -8,6 +9,7 @@ import {
   EXISTING_CONDITIONS_REGISTRATION_PATH,
   NOOP_COMPLETION_CLAIM_PATH,
   READ_COMPLETION_CLAIM_PATH,
+  OperatorCompletionDeliveryError,
   SEMANTIC_MEP_ROUTE_PLAN_PATH
 } from "./operatorBackendClient.js";
 import {
@@ -16,6 +18,65 @@ import {
   buildOperatorBackendAuthHeaders,
   runWithOperatorBackendAuth
 } from "./operatorBackendAuth.js";
+
+test("completion receipt retries one lost acknowledgement with identical body and authority over real HTTP", async () => {
+  const bodies: string[] = [], headers: Array<{ token: string | undefined; handoff: string | undefined }> = [];
+  let committedReceipt = "";
+  const server = createServer(async (req, res) => {
+    let body = ""; for await (const chunk of req) body += chunk;
+    bodies.push(body);
+    headers.push({token: req.headers["x-operator-token"] as string, handoff: req.headers["x-operator-assignment-handoff"] as string});
+    if (!committedReceipt) committedReceipt = body;
+    assert.equal(body, committedReceipt, "an acknowledgement retry cannot change the already committed receipt");
+    if (bodies.length === 1) { req.socket.destroy(); return; }
+    res.setHeader("Content-Type", "application/json"); res.end('{"ok":true,"result_id":"same-result"}');
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (server.address() as {port:number}).port;
+    const client = createOperatorBackendClient({baseUrl:`http://127.0.0.1:${port}`,token:"test-only-delivery"});
+    const body = {operation_id:"one-native-commit",mcp_result:{result_id:"same-result",native_transaction_state:"committed"}};
+    assert.deepEqual(await client.settleAssignmentOperationV2(body), {ok:true,result_id:"same-result"});
+    assert.equal(bodies.length, 2); assert.equal(bodies[0], JSON.stringify(body)); assert.equal(bodies[0], bodies[1]);
+    assert.deepEqual(headers, Array(2).fill({token:"test-only-delivery",handoff:"operation_handoff_v1"}));
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test("receipt transport retry is bounded and preserves first failure; other posts never retry", async () => {
+  const first = new TypeError("fetch failed", {cause:Object.assign(new Error("lost socket"),{code:"UND_ERR_SOCKET"})});
+  const second = new TypeError("fetch failed", {cause:Object.assign(new Error("reset"),{code:"ECONNRESET"})});
+  let calls = 0;
+  const client = createOperatorBackendClient({token:"test-only",fetchImpl:async()=>{calls++;throw calls===1?first:second;}});
+  await assert.rejects(client.settleAssignmentOperationV2({}), (error:unknown)=>{
+    assert(error instanceof OperatorCompletionDeliveryError); assert.equal(error.cause,first);assert.equal(error.first_failure,first);
+    assert.equal(error.last_failure,second);assert.equal(error.transport_code,"UND_ERR_SOCKET");return true;
+  });
+  assert.equal(calls,2);
+  for (const action of [()=>client.openAssignmentChildOperationV2({}),()=>client.markAssignmentOperationDispatchV2({}),
+    ()=>client.manageAssignmentWorkPlanV2({}),()=>client.retrieveEvidence({})]) {
+    calls=0;await assert.rejects(action(),error=>error===first);assert.equal(calls,1);
+  }
+});
+
+test("receipt retry never retries HTTP rejection, invalid JSON, credential errors, or unclassified exceptions", async () => {
+  for (const failure of [new Response('{"error":"binding mismatch"}',{status:400}),new Response('denied',{status:401}),
+    new Response('{"ok":', {status:200}),new TypeError("invalid URL"),
+    new TypeError("fetch failed",{cause:Object.assign(new Error("TLS"),{code:"CERT_HAS_EXPIRED"})})]) {
+    let calls=0;
+    const client=createOperatorBackendClient({token:"test-only",fetchImpl:async()=>{calls++;if(failure instanceof Error)throw failure;return failure;}});
+    await assert.rejects(client.settleAssignmentOperationV2({}));assert.equal(calls,1);
+  }
+});
+
+test("receipt retry also handles interrupted response bytes without retrying malformed JSON", async () => {
+  let calls=0;
+  const client=createOperatorBackendClient({token:"test-only",fetchImpl:async()=>{
+    calls++;
+    if(calls===1)return {ok:true,json:async()=>{throw Object.assign(new TypeError("terminated"),{cause:{code:"UND_ERR_SOCKET"}});}} as unknown as Response;
+    return new Response('{"ok":true}',{status:200});
+  }});
+  assert.deepEqual(await client.settleAssignmentOperationV2({operation_id:"same"}),{ok:true});assert.equal(calls,2);
+});
 
 test("semantic MEP backend client uses only the fixed authenticated planner path", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];

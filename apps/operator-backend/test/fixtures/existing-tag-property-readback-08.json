@@ -1,0 +1,389 @@
+{
+  "provenance": "Retained native read from a disposable Autodesk Snowdon sample after natural redline run. Root read was not internal acceptance; replay tests add normal durable settlement.",
+  "apply_input": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1657878,
+      "repairExistingTagId": 1659176,
+      "hasLeader": false,
+      "dryRun": false
+    }
+  },
+  "read_input": {
+    "method": "POST",
+    "path": "/revit/native-api-ops",
+    "body": {
+      "operations": [
+        {
+          "id": "tag1659176",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1659176
+          ]
+        },
+        {
+          "id": "OwnerViewId1659176",
+          "op": "get_property",
+          "target": "$tag1659176",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "HasLeader1659176",
+          "op": "get_property",
+          "target": "$tag1659176",
+          "property": "HasLeader"
+        },
+        {
+          "id": "TagHeadPosition1659176",
+          "op": "get_property",
+          "target": "$tag1659176",
+          "property": "TagHeadPosition"
+        },
+        {
+          "id": "LeaderEndCondition1659176",
+          "op": "get_property",
+          "target": "$tag1659176",
+          "property": "LeaderEndCondition"
+        },
+        {
+          "id": "tag1654928",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1654928
+          ]
+        },
+        {
+          "id": "OwnerViewId1654928",
+          "op": "get_property",
+          "target": "$tag1654928",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "HasLeader1654928",
+          "op": "get_property",
+          "target": "$tag1654928",
+          "property": "HasLeader"
+        },
+        {
+          "id": "TagHeadPosition1654928",
+          "op": "get_property",
+          "target": "$tag1654928",
+          "property": "TagHeadPosition"
+        },
+        {
+          "id": "LeaderEndCondition1654928",
+          "op": "get_property",
+          "target": "$tag1654928",
+          "property": "LeaderEndCondition"
+        },
+        {
+          "id": "tag1654931",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1654931
+          ]
+        },
+        {
+          "id": "OwnerViewId1654931",
+          "op": "get_property",
+          "target": "$tag1654931",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "HasLeader1654931",
+          "op": "get_property",
+          "target": "$tag1654931",
+          "property": "HasLeader"
+        },
+        {
+          "id": "TagHeadPosition1654931",
+          "op": "get_property",
+          "target": "$tag1654931",
+          "property": "TagHeadPosition"
+        },
+        {
+          "id": "LeaderEndCondition1654931",
+          "op": "get_property",
+          "target": "$tag1654931",
+          "property": "LeaderEndCondition"
+        }
+      ],
+      "returns": [
+        "tag1659176",
+        "OwnerViewId1659176",
+        "HasLeader1659176",
+        "TagHeadPosition1659176",
+        "LeaderEndCondition1659176",
+        "tag1654928",
+        "OwnerViewId1654928",
+        "HasLeader1654928",
+        "TagHeadPosition1654928",
+        "LeaderEndCondition1654928",
+        "tag1654931",
+        "OwnerViewId1654931",
+        "HasLeader1654931",
+        "TagHeadPosition1654931",
+        "LeaderEndCondition1654931"
+      ]
+    }
+  },
+  "native_read": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 15,
+    "duration_ms": 0,
+    "operations": [
+      {
+        "id": "tag1659176",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1659176,
+          "unique_id": "67a20872-66b4-4bce-8f27-916a4ee7acd5-00195128",
+          "name": "Electrical Equipment Panel Tag",
+          "category": "Electrical Equipment Tags"
+        }
+      },
+      {
+        "id": "OwnerViewId1659176",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1657878
+        }
+      },
+      {
+        "id": "HasLeader1659176",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool IndependentTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": false
+      },
+      {
+        "id": "TagHeadPosition1659176",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagHeadPosition",
+        "signature": "XYZ IndependentTag.TagHeadPosition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "x": -85.62499999999979,
+          "y": 29.541666666666913,
+          "z": -1.91666666666666
+        }
+      },
+      {
+        "id": "LeaderEndCondition1659176",
+        "op": "get_property",
+        "member_id": null,
+        "property": "LeaderEndCondition",
+        "signature": "LeaderEndCondition IndependentTag.LeaderEndCondition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": "Attached"
+      },
+      {
+        "id": "tag1654928",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1654928,
+          "unique_id": "b9203b89-aadf-4756-99e4-51ef8c974852-00194090",
+          "name": "Electrical Equipment Panel Tag",
+          "category": "Electrical Equipment Tags"
+        }
+      },
+      {
+        "id": "OwnerViewId1654928",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1645239
+        }
+      },
+      {
+        "id": "HasLeader1654928",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool IndependentTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": false
+      },
+      {
+        "id": "TagHeadPosition1654928",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagHeadPosition",
+        "signature": "XYZ IndependentTag.TagHeadPosition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "x": -37.249999999999794,
+          "y": -6.364583333333197,
+          "z": 12.083333333334775
+        }
+      },
+      {
+        "id": "LeaderEndCondition1654928",
+        "op": "get_property",
+        "member_id": null,
+        "property": "LeaderEndCondition",
+        "signature": "LeaderEndCondition IndependentTag.LeaderEndCondition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": "Attached"
+      },
+      {
+        "id": "tag1654931",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1654931,
+          "unique_id": "b9203b89-aadf-4756-99e4-51ef8c974852-00194093",
+          "name": "Electrical Equipment Panel Tag",
+          "category": "Electrical Equipment Tags"
+        }
+      },
+      {
+        "id": "OwnerViewId1654931",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1645239
+        }
+      },
+      {
+        "id": "HasLeader1654931",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool IndependentTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": false
+      },
+      {
+        "id": "TagHeadPosition1654931",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagHeadPosition",
+        "signature": "XYZ IndependentTag.TagHeadPosition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "x": -23.777054271596473,
+          "y": 13.437500000000064,
+          "z": 12.083333333334764
+        }
+      },
+      {
+        "id": "LeaderEndCondition1654931",
+        "op": "get_property",
+        "member_id": null,
+        "property": "LeaderEndCondition",
+        "signature": "LeaderEndCondition IndependentTag.LeaderEndCondition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": "Attached"
+      }
+    ],
+    "results": {
+      "tag1659176": {
+        "id": 1659176,
+        "unique_id": "67a20872-66b4-4bce-8f27-916a4ee7acd5-00195128",
+        "name": "Electrical Equipment Panel Tag",
+        "category": "Electrical Equipment Tags"
+      },
+      "OwnerViewId1659176": {
+        "id": 1657878
+      },
+      "HasLeader1659176": false,
+      "TagHeadPosition1659176": {
+        "x": -85.62499999999979,
+        "y": 29.541666666666913,
+        "z": -1.91666666666666
+      },
+      "LeaderEndCondition1659176": "Attached",
+      "tag1654928": {
+        "id": 1654928,
+        "unique_id": "b9203b89-aadf-4756-99e4-51ef8c974852-00194090",
+        "name": "Electrical Equipment Panel Tag",
+        "category": "Electrical Equipment Tags"
+      },
+      "OwnerViewId1654928": {
+        "id": 1645239
+      },
+      "HasLeader1654928": false,
+      "TagHeadPosition1654928": {
+        "x": -37.249999999999794,
+        "y": -6.364583333333197,
+        "z": 12.083333333334775
+      },
+      "LeaderEndCondition1654928": "Attached",
+      "tag1654931": {
+        "id": 1654931,
+        "unique_id": "b9203b89-aadf-4756-99e4-51ef8c974852-00194093",
+        "name": "Electrical Equipment Panel Tag",
+        "category": "Electrical Equipment Tags"
+      },
+      "OwnerViewId1654931": {
+        "id": 1645239
+      },
+      "HasLeader1654931": false,
+      "TagHeadPosition1654931": {
+        "x": -23.777054271596473,
+        "y": 13.437500000000064,
+        "z": 12.083333333334764
+      },
+      "LeaderEndCondition1654931": "Attached"
+    }
+  }
+}

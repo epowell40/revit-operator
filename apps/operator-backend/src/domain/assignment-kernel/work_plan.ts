@@ -9,6 +9,8 @@ export type AssignmentWorkPlanItemV2 = Readonly<{
   item_id: string; description: string; source_basis: string; declared_at: string;
   kind?: "edit" | "inspection"; depends_on?: readonly string[]; inspection?: WorkPlanInspectionV2;
   operation_ids: readonly string[]; completed_at?: string;
+  location_history?: readonly import('./work_plan_location.js').WorkPlanLocationRecordV2[];
+  deferrals?: readonly { reason: string; deferred_at: string; prior_claim_count?: number; resumed_at?: string; resume_reason?: string }[];
 }>;
 export type AssignmentWorkPlanV2 = Readonly<{
   schema: "revit-operator.assignment-work-plan/v2";
@@ -35,15 +37,28 @@ export function declareWorkPlanV2(snapshot: AssignmentSnapshotV2, declaration: W
   const ids = new Set(prior.map(item => item.item_id));
   const added = declaration.items.map(item => {
     kernelAssertV2(item && typeof item.item_id === "string" && /^[a-z][a-z0-9_-]{0,79}$/.test(item.item_id)
+      && Object.keys(item).every(key=>['item_id','description','source_basis','kind','depends_on'].includes(key))
       && validText(item.description, 800) && validText(item.source_basis, 800) && !ids.has(item.item_id),
       "work_plan_item_invalid", "Use unique stable item IDs and source descriptions; existing items cannot be replaced or removed.");
     kernelAssertV2(item.kind === undefined || item.kind === "edit" || item.kind === "inspection", "work_plan_kind_invalid", "Use edit or inspection.");
-    kernelAssertV2(item.kind === "inspection" ? Array.isArray(item.depends_on) && item.depends_on.length > 0 && item.depends_on.length <= 128
+    kernelAssertV2(item.kind === "inspection" ? advisoryVerificationV2(snapshot) && item.depends_on === undefined
+      || Array.isArray(item.depends_on) && item.depends_on.length > 0 && item.depends_on.length <= 128
       && new Set(item.depends_on).size === item.depends_on.length && item.depends_on.every((id:string) => [...prior, ...declaration.items].some(p => p.item_id === id && p.kind !== "inspection"))
-      : item.depends_on === undefined, "work_plan_dependencies_invalid", "Inspections must name edit items whose completed work they inspect.");
+      : item.depends_on === undefined || Array.isArray(item.depends_on) && item.depends_on.length > 0 && item.depends_on.length <= 128
+        && new Set(item.depends_on).size === item.depends_on.length && item.depends_on.every((id: string) => id !== item.item_id && [...prior, ...declaration.items].some(p => p.item_id === id)),
+      "work_plan_dependencies_invalid", "Inspections must name edit items unless they are independent advisory reads; other dependencies must name existing distinct prerequisites.");
     ids.add(item.item_id);
     return { ...item, declared_at: occurredAt, operation_ids: [] };
   });
+  const graph = new Map([...prior, ...added].map(item => [item.item_id, item.depends_on ?? []]));
+  const visiting = new Set<string>(), visited = new Set<string>();
+  const visit = (id: string): void => {
+    kernelAssertV2(!visiting.has(id), "work_plan_dependency_cycle", "Dependencies must form an acyclic work order.");
+    if (visited.has(id)) return;
+    visiting.add(id); for (const dependency of graph.get(id) ?? []) visit(dependency);
+    visiting.delete(id); visited.add(id);
+  };
+  for (const id of graph.keys()) visit(id);
   kernelAssertV2(ids.size <= 128 && (advisoryVerificationV2(snapshot) || !snapshot.spec.work_plan_required || prior.length > 0 || added.length >= 2),
     "work_plan_scope_incomplete", "Break the multi-part request into at least two independently verifiable work items.");
   const assumptions = [...new Set([...(snapshot.work_plan?.assumptions ?? []), ...declaration.assumptions])];
@@ -54,6 +69,12 @@ export function declareWorkPlanV2(snapshot: AssignmentSnapshotV2, declaration: W
 export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: string, operationIds: readonly string[], occurredAt: string, inspection?: WorkPlanInspectionV2): AssignmentWorkPlanV2 {
   const plan = snapshot.work_plan, item = plan?.items.find(candidate => candidate.item_id === itemId);
   kernelAssertV2(Boolean(plan && item && (!item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot, item))), "work_plan_item_not_pending", "Complete an existing unfinished work item.");
+  kernelAssertV2(!workPlanItemDeferredV2(item!) && (item!.kind === "inspection" || (item!.depends_on ?? []).every(id => {
+    const dependency = plan!.items.find(p => p.item_id === id);
+    return dependency?.completed_at && !workPlanItemDeferredV2(dependency)
+      && (dependency.kind === "inspection" ? inspectionIsCurrentV2(snapshot, dependency)
+        : dependency.operation_ids.every(op => appliedOperationHasVerifiedPostconditionV2(snapshot, op)));
+  })), "work_plan_prerequisite_pending", "Resume the item and finish its prerequisites before completing it.");
   kernelAssertV2(Array.isArray(operationIds) && operationIds.length > 0 && operationIds.length <= 128
     && new Set(operationIds).size === operationIds.length, "work_plan_proof_missing", "Cite every applied operation for this item.");
   if (item!.kind === "inspection") {
@@ -76,10 +97,27 @@ export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: s
     : { ...candidate, operation_ids: [...operationIds].sort(), completed_at: occurredAt }) };
 }
 
+export function workPlanItemDeferredV2(item: AssignmentWorkPlanItemV2): boolean {
+  const latest = item.deferrals?.at(-1);
+  return Boolean(latest && !latest.resumed_at);
+}
+
+/** Deferral records a question/blocker, never completion or cleared effects. */
+export function deferWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: string, action: "defer" | "resume_item", reason: string, at: string): AssignmentWorkPlanV2 {
+  const plan=snapshot.work_plan, item=plan?.items.find(p=>p.item_id===itemId);
+  kernelAssertV2(item && !item.completed_at && validText(reason,800), "work_plan_deferral_invalid", "Name an unfinished item and a specific reason or question.");
+  const history=[...(item.deferrals ?? [])];
+  kernelAssertV2(action === "defer" ? !workPlanItemDeferredV2(item) && history.length < 16 : workPlanItemDeferredV2(item),
+    "work_plan_deferral_state", "Defer a ready item or resume a deferred one; retain its history.");
+  if(action === "defer") history.push({reason,deferred_at:at,prior_claim_count:(snapshot.work_plan_claims ?? []).filter(claim=>claim.item_id===itemId).length});
+  else history[history.length-1]={...history.at(-1)!,resumed_at:at,resume_reason:reason};
+  return {...plan!,items:plan!.items.map(p=>p.item_id===itemId?{...p,deferrals:history}:p)};
+}
+
 export function inspectionIsCurrentV2(snapshot: AssignmentSnapshotV2, item: AssignmentWorkPlanItemV2): boolean {
   if (item.kind !== "inspection" || !item.completed_at || !item.inspection || !item.depends_on?.length || !item.operation_ids.length) return false;
   const dependencies = item.depends_on.map(id => snapshot.work_plan?.items.find(p => p.item_id === id));
-  if (dependencies.some(p => !p || p.kind === "inspection" || !p.completed_at || !p.operation_ids.length || p.operation_ids.some(id => !appliedOperationHasVerifiedPostconditionV2(snapshot,id)))) return false;
+  if (dependencies.some(p => !p || workPlanItemDeferredV2(p) || p.kind === "inspection" || !p.completed_at || !p.operation_ids.length || p.operation_ids.some(id => !appliedOperationHasVerifiedPostconditionV2(snapshot,id)))) return false;
   const expected = dependencies.flatMap(p => p!.operation_ids.flatMap(id => verifiedNativeWorkTargetIdentitiesV2(snapshot,id)));
   if (!expected.length || expected.some(id => !item.inspection!.target_ids.includes(id))) return false;
   const lastEdit = Math.max(Date.parse(item.declared_at), ...Object.values(snapshot.operations).filter(op => op.persistent_effect === "applied").map(op => Date.parse(op.result?.completed_at ?? "")));

@@ -713,6 +713,53 @@ test("callRevit honors a structured pre-dispatch rejection for a mutation", asyn
   }
 });
 
+test("missing family close session retains native no-effect refusal without retry or false success", async () => {
+  const session = "4e462ecb6fad44da870cac8b02624191";
+  let requests = 0;
+  let legacy = false;
+  const refusal = {ok:false,closed:false,saved:false,code:"family_session_unavailable",familyDocumentId:session,
+    family_close_receipt:{schema:"revit-operator.family-session-close.v1",status:"lookup_rejected",session_id:session,
+      session_lookup_succeeded:false,native_save_started:false,native_close_started:false,save_requested:false},
+    canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",
+      method:"POST",path:"/revit/close-doc",request_dispatched:true,effect_state:"none",effect_reason:"family_session_unavailable",effect_authority:"native_receipt"}};
+  const server = http.createServer((_request,response)=>{
+    requests++;
+    response.statusCode=legacy?500:200; response.setHeader("content-type","application/json");
+    response.end(JSON.stringify(legacy?{error:"Family edit session not found (expired or closed).",request_dispatched:true,outcome_unknown:true}:refusal));
+  });
+  const port=await listen(server), restore=setTestEnvironment(`http://127.0.0.1:${port}`,2000);
+  try {
+    const result=await callRevit("/revit/close-doc","POST",{docId:session,saveChanges:false});
+    assert.deepEqual(result,refusal); assert.equal(requests,1);
+    assert.equal(result.ok,false); assert.equal(result.closed,false);
+    legacy=true;
+    await assert.rejects(callRevit("/revit/close-doc","POST",{docId:session,saveChanges:false}), (error:unknown)=>{
+      assert.ok(error instanceof RevitBridgeCallError);assert.equal(error.outcome_unknown,true);return true;
+    });
+    assert.equal(requests,2,"neither rejected request is retried");
+  } finally {restore();await close(server);}
+});
+
+test("family inspection refusal preserves read failure without unknown mutation or retry", async () => {
+  const errorText = "The family is already open for editing. Close the existing edit session before inspecting loaded project content; this read did not close the editor or discard its edits.";
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests++; response.statusCode = 500; response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({error:errorText,request_dispatched:true,outcome_unknown:false,
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"read",
+        method:"POST",path:"/revit/inspect-family-content",request_dispatched:true,effect_state:"none",
+        effect_reason:"read_has_no_persistent_effect",effect_authority:"native_host"}}));
+  });
+  const port=await listen(server), restore=setTestEnvironment(`http://127.0.0.1:${port}`,2000);
+  try {
+    await assert.rejects(callRevit("/revit/inspect-family-content","POST",{elementId:1709388}), (error:unknown)=>{
+      assert.ok(error instanceof RevitBridgeCallError); assert.equal(error.outcome_unknown,false);
+      assert.equal(error.status,500); assert.match(error.message,/already open for editing/); return true;
+    });
+    assert.equal(requests,1,"inspection refusal is retained, not silently retried");
+  } finally {restore();await close(server);}
+});
+
 test("callRevit settles a truncated mutation error body as outcome unknown", async () => {
   const server = http.createServer((_request, response) => {
     response.writeHead(503, {

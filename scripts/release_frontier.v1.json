@@ -1,9 +1,17 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "created_tag_postcondition_v2.test.ts",
+    "duplicated_type_postcondition_v2.test.ts",
+    "committed_duplicated_type_readback_v2.test.ts",
+    "native_change_inventory_v2.test.ts",
+    "work_review_handoff.test.ts",
     "artifact_delivery_profile.test.ts",
     "external_provider_lifecycle.test.ts",
     "sidecar_execution_failure.test.ts",
+    "sidecar_supporting_receipt.test.ts",
+    "external_semantic_scope.test.ts",
+    "pdf_work_allowance.test.ts",
     "rename_view_plan_receipt.test.ts",
     "sidecar_agent_profile_endpoint.test.ts",
     "registered_duct_branch.test.ts",
@@ -65,6 +73,8 @@
     "candidate53_v2_native_evidence_authority.test.ts",
     "codex_app_server_compatibility.test.ts",
     "codex_timeout_policy.test.ts",
+    "codex_assignment_timeout.test.ts",
+    "courier_turn_allowance.test.ts",
     "dynamic_runtime_orchestration.test.ts",
     "direct_revit_execution_authorization.test.ts",
     "endpoint_mutability.test.ts",
@@ -77,6 +87,8 @@
     "openai_brain_recovery.test.ts",
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
+    "parameter_batch_readback.test.ts",
+    "committed_parameter_readback_plan_v2.test.ts",
     "view_owned_detailing_v2.test.ts",
     "detailing_model_projection.test.ts",
     "provider_dynamic_program.test.ts",
@@ -167,6 +179,7 @@
     "existing_conditions_reconstruction.test.ts",
     "route_connectivity.test.ts",
     "family_placement_postcondition_v2.test.ts",
+    "sheet_move_postcondition_v2.test.ts",
     "work_plan_projection.test.ts",
     "assignment_work_allowance_v2.test.ts",
     "work_plan_inspection.test.ts",
@@ -222,7 +235,39 @@
     "air_device_retained_replay.test.ts",
     "family_session_open_v1.test.ts",
     "prior_assignment_context.test.ts",
-    "desktop_response_store.test.ts"
+    "desktop_response_store.test.ts",
+    "assignment_budget_prompt.test.ts",
+    "category_graphics_scope_v1.test.ts",
+    "circuit_membership_postcondition_v2.test.ts",
+    "codex_pdf_navigation.test.ts",
+    "committed_circuit_readback_v2.test.ts",
+    "committed_element_type_readback_v2.test.ts",
+    "committed_model_point_move_readback_plan_v2.test.ts",
+    "committed_schedule_readback_plan_v2.test.ts",
+    "committed_sheet_move_readback_plan_v2.test.ts",
+    "committed_tag_readback_plan_v2.test.ts",
+    "committed_visibility_readback_v2.test.ts",
+    "element_type_postcondition_v2.test.ts",
+    "mcp_inventory_handshake.test.ts",
+    "model_point_move_postcondition_v2.test.ts",
+    "native_completion_delivery_recovery.test.ts",
+    "panel_schedule_move_kernel_v2.test.ts",
+    "parameter_table_projection.test.ts",
+    "pdf_document_navigation.test.ts",
+    "pdf_page_navigation.test.ts",
+    "pdf_source_overview.test.ts",
+    "provider_token_cost.test.ts",
+    "read_attachment_modes.test.ts",
+    "schedule_cell_kernel_v2.test.ts",
+    "schedule_cell_postcondition_v2.test.ts",
+    "tag_property_readback_v2.test.ts",
+    "tag_scope_readback_v1.test.ts",
+    "visibility_category_readback_v2.test.ts",
+    "work_plan_location.test.ts",
+    "native_element_property_readback_v1.test.ts",
+    "native_property_kernel_v2.test.ts",
+    "allowlist.test.ts",
+    "openai_brain_redline_targeting.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -264,6 +309,7 @@
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
+    "test/sidecar_supporting_receipt.test.js",
     "test/benchmark_verified_ui_close.test.js",
     "test/assignment_workspace_v2.test.js",
     "test/assignment_workspace_ux.test.js",
@@ -276,7 +322,8 @@
     "test/composer_intake.test.js",
     "test/conversation_rendering.test.js",
     "test/sidecar_revit_listener_identity.test.js",
-    "test/task_navigation.test.js"
+    "test/task_navigation.test.js",
+    "test/delegated_assignment_recovery.test.mjs"
   ],
   "dotnet_test_classes": [
     "RenameViewPlanSettlementTests",
@@ -353,6 +400,8 @@
     "NativeApiArgumentDocumentationTests",
     "NativeBranchConnectionTransactionTests",
     "NativeFailureGuardTests",
+    "ChangeTypeFailureHandlingTests",
+    "SetParameterFailureHandlingTests",
     "NativeGeometryGraphTests",
     "OperatorViewImageContractTests",
     "OrdinaryMutationTransactionTests",
@@ -363,7 +412,12 @@
     "OperatorFamilySaveReceiptTests",
     "OperatorFamilyReloadReceiptTests",
     "OperatorFamilyCloseReceiptTests",
-    "ScheduleSettlementTests"
+    "ScheduleSettlementTests",
+    "CreateSimilarSettlementTests",
+    "TemporaryDocumentInspectionTests",
+    "SourceCircuitRequestBoundaryTests",
+    "CircuitMoveCreateRequestBoundaryTests",
+    "SheetPlacementReadContractTests"
   ],
   "failure_families": [
     {
@@ -3690,10 +3744,192 @@
       ]
     },
     {
+      "id": "revit-dialog-intent-does-not-launch-another-application",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/revit_launch_intent.test.mjs",
+        "desktop:test/server_smoke.test.js"
+      ]
+    },
+    {
+      "id": "unadmitted-composer-draft-recovery-preserves-identity-and-dispatch-fences",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/chat_submission_admission.test.mjs",
+        "desktop:test/sidecar_secure_integration.test.js"
+      ]
+    },
+    {
       "id": "desktop-provider-late-response-recovery-without-redispatch",
       "coverage": [
         "backend:desktop_response_store.test.ts",
         "backend:desktop_computer_telemetry.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "dotnet:CreateSimilarSettlementTests",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "mcp:lib/previewSemanticEvidenceV2.test.ts"
+      ],
+      "id": "create-similar-preview-child-commit-requires-outer-rollback-and-exact-proposal"
+    },
+    {
+      "coverage": [
+        "desktop:test/delegated_assignment_recovery.test.mjs",
+        "desktop:test/server_smoke.test.js"
+      ],
+      "id": "long-binder-http-recovery-keeps-frozen-budget-and-native-effects"
+    },
+    {
+      "coverage": [
+        "backend:pdf_work_allowance.test.ts",
+        "backend:assignment_work_allowance_v2.test.ts"
+      ],
+      "id": "marked-pdf-allowance-rejects-duplicate-source-and-page-inflation"
+    },
+    {
+      "coverage": [
+        "backend:sheet_move_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:assignment_work_allowance_v2.test.ts"
+      ],
+      "id": "sheet-move-progress-needs-complete-fresh-native-anchor-readback"
+    },
+    {
+      "coverage": [
+        "backend:codex_assignment_timeout.test.ts",
+        "backend:codex_turn_completions.test.ts",
+        "backend:courier_turn_allowance.test.ts",
+        "backend:requirements_store.test.ts"
+      ],
+      "id": "marked-binder-provider-deadline-keeps-original-charged-history-and-active-leases"
+    },
+    {
+      "coverage": [
+        "backend:parameter_batch_readback.test.ts",
+        "backend:committed_parameter_readback_plan_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ],
+      "id": "explicit-parameter-batch-needs-complete-fresh-native-readback-for-every-target"
+    },
+    {
+      "id": "bounded-exact-parameter-context-and-retrievable-overflow",
+      "coverage": [
+        "backend:parameter_table_projection.test.ts",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "committed-model-point-move-independent-native-position-readback",
+      "coverage": [
+        "backend:model_point_move_postcondition_v2.test.ts",
+        "backend:committed_model_point_move_readback_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "compiled-mcp-inventory-admitted-peer-parity",
+      "coverage": [
+        "backend:mcp_inventory_handshake.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "real-existing-device-circuit-membership-and-source-request-boundary",
+      "coverage": [
+        "backend:circuit_membership_postcondition_v2.test.ts",
+        "backend:committed_circuit_readback_v2.test.ts",
+        "dotnet:SourceCircuitRequestBoundaryTests",
+        "dotnet:CircuitMoveCreateRequestBoundaryTests"
+      ]
+    },
+    {
+      "id": "committed-element-type-exact-built-in-native-readback",
+      "coverage": [
+        "backend:element_type_postcondition_v2.test.ts",
+        "backend:committed_element_type_readback_v2.test.ts"
+      ]
+    },
+    {
+      "id": "schedule-cell-exact-value-and-kernel-freshness",
+      "coverage": [
+        "backend:schedule_cell_postcondition_v2.test.ts",
+        "backend:schedule_cell_kernel_v2.test.ts",
+        "backend:committed_schedule_readback_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "panel-sheet-placement-selector-schema-and-fresh-readback",
+      "coverage": [
+        "backend:panel_schedule_move_kernel_v2.test.ts",
+        "backend:committed_sheet_move_readback_plan_v2.test.ts",
+        "dotnet:SheetPlacementReadContractTests"
+      ]
+    },
+    {
+      "id": "category-display-name-independent-native-identity-and-view-scope",
+      "coverage": [
+        "backend:visibility_category_readback_v2.test.ts",
+        "backend:committed_visibility_readback_v2.test.ts",
+        "backend:category_graphics_scope_v1.test.ts"
+      ]
+    },
+    {
+      "id": "persisted-source-page-crop-native-location-navigation",
+      "coverage": [
+        "backend:work_plan_location.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "pdf-overview-detail-parent-location-and-stable-source",
+      "coverage": [
+        "backend:pdf_source_overview.test.ts",
+        "backend:read_attachment_modes.test.ts",
+        "backend:pdf_page_navigation.test.ts"
+      ]
+    },
+    {
+      "id": "borrowed-family-editor-session-inspection-ownership",
+      "coverage": [
+        "dotnet:TemporaryDocumentInspectionTests",
+        "dotnet:OperatorFamilyCloseReceiptTests"
+      ]
+    },
+    {
+      "id": "tag-association-default-type-and-final-native-scope",
+      "coverage": [
+        "backend:created_tag_postcondition_v2.test.ts",
+        "backend:committed_tag_readback_plan_v2.test.ts",
+        "backend:tag_scope_readback_v1.test.ts"
+      ]
+    },
+    {
+      "id": "current-native-footprint-review-does-not-promote-whole-source",
+      "coverage": [
+        "backend:work_review_handoff.test.ts",
+        "backend:native_change_inventory_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native-getter-scalar-requires-exact-target-graph-and-fresh-independent-native-read",
+      "coverage": [
+        "backend:native_element_property_readback_v1.test.ts",
+        "backend:native_property_kernel_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "promoted_spatial_and_native_circuit_allowlist",
+      "coverage": [
+        "backend:allowlist.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts"
+      ]
+    },
+    {
+      "id": "legacy_circuit_bridge_requires_matching_native_source",
+      "coverage": [
+        "backend:openai_brain_redline_targeting.test.ts",
+        "dotnet:SourceCircuitRequestBoundaryTests"
       ]
     }
   ],
@@ -3709,6 +3945,8 @@
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
     "package/operator-assistant-ui/session_start.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",
+    "package/operator-assistant-ui/revit_launch_intent.test.mjs",
+    "package/operator-assistant-ui/chat_submission_admission.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",

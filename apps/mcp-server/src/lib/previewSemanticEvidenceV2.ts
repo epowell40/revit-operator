@@ -324,6 +324,78 @@ export function previewSemanticEvidenceV2(input: Readonly<{
       { fact_id: "task.preview_created_element_count", fact_class: "domain", value: transient.length }
     ] : [] };
   }
+  if (path === "/revit/create-similar-from-instance") {
+    const request = object(input.requestBody), result = object(input.payload), tx = object(result.transaction);
+    const requested = request.placements, rows = result.placements;
+    const validation = object(result.placementValidation), audit = object(validation.audit);
+    const auditRows = audit.items;
+    const names = request.parameterNamesToCopy ?? [];
+    const near = (a: unknown, b: unknown): boolean => typeof a === "number" && Number.isFinite(a)
+      && typeof b === "number" && Number.isFinite(b) && Math.abs(a - b) <= 1e-6;
+    const vectorMatches = (a: unknown, b: unknown): boolean => ["x", "y", "z"].every(k => near(object(a)[k], object(b)[k]));
+    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+    const empty = (v: unknown): boolean => Array.isArray(v) && v.length === 0;
+    const id = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) > 0;
+    // Exact world-point placement is typed here. Implicit room/chainage and
+    // parameter override modes need their own observed comparison first.
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview"
+      && request.dryRun === true && result.dryRun === true && result.status === "Planned"
+      && result.previewExecuted === true && result.rollbackVerified === true && result.transactionGroupRolledBack === true
+      && tx.status === "rolled_back" && tx.committed === false
+      && [tx.added_element_ids, tx.deleted_element_ids, tx.modified_element_ids, tx.affected_element_ids,
+        result.residualCreatedElementIds].every(empty)
+      && id(request.exemplarElementId) && object(result.exemplar).id === request.exemplarElementId
+      && id(object(result.host).id) && (request.hostElementId === undefined || request.hostElementId === object(result.host).id)
+      && id(object(result.familySymbol).id) && id(object(result.level).id)
+      && (request.levelName === undefined || request.levelName === object(result.level).name)
+      && request.roomId === undefined && request.roomNumber === undefined && request.roomSide === undefined
+      && request.parameterOverrides === undefined && request.alongHostOffsetsFt === undefined
+      && Array.isArray(names) && names.every(n => typeof n === "string" && n.trim().length > 0)
+      && new Set(names.map(n => String(n).trim())).size === names.length
+      && Array.isArray(requested) && Array.isArray(rows) && Array.isArray(auditRows)
+      && requested.length > 0 && requested.length <= 200 && requested.length === rows.length && rows.length === auditRows.length
+      && validation.valid === true && [validation.invalidIds, validation.missingIds, validation.offRoomIds,
+        validation.offWallIds, validation.unsupportedIds].every(empty)
+      && new Set(rows.map(raw => object(raw).temporaryElementId)).size === rows.length
+      && rows.every((raw, index) => {
+        const row = object(raw), desired = object(requested[index]);
+        const item = object(auditRows.find(raw => object(raw).elementId === row.temporaryElementId));
+        const context = object(item.placementContext), point = desired.pointXyz;
+        const level = object(row.levelContext), phase = object(row.phasing), workset = object(row.workset);
+        const sourceOrientation = object(row.sourceOrientation), actualOrientation = object(context.orientation);
+        const copied = row.copiedParameterReadback;
+        const circuit = object(row.electricalCircuit), sourceCircuit = object(object(result.exemplar).electricalCircuit);
+        const matchOrientation = request.matchOrientationFromSource !== false;
+        return row.index === index && row.elementId === null && id(row.temporaryElementId)
+          && Array.isArray(point) && point.length === 3 && point.every(v => typeof v === "number" && Number.isFinite(v))
+          && desired.alongHostOffsetFt === undefined && desired.targetChainageFt === undefined && desired.targetNormalizedChainage === undefined
+          && desired.elevationFt === undefined && desired.elevationDeltaFt === undefined
+          && vectorMatches(row.placementPoint, { x: point[0], y: point[1], z: point[2] })
+          && vectorMatches(context.insertionPoint, row.placementPoint)
+          && context.typeId === object(result.familySymbol).id && object(context.host).id === object(result.host).id
+          && item.valid === true && context.elementId === row.temporaryElementId
+          && level.resolvedLevelMatched === true && level.requestedLevelId === object(result.level).id
+          && level.verifiedCreatedLevelId === level.requestedLevelId
+          && phase.sourceCreatedPhaseMatched === true && phase.sourceCreatedPhaseId === phase.verifiedCreatedPhaseId
+          && (row.workset === null || workset.sourceWorksetMatched === true && workset.sourceWorksetId === workset.verifiedCreatedWorksetId)
+          && (!matchOrientation || request.copyRotation === false || ["basisX", "basisY", "basisZ"].every(k => vectorMatches(sourceOrientation[k], actualOrientation[k])))
+          && (!matchOrientation || request.copyFacingHandState === false || ["facing", "hand"].every(k => vectorMatches(sourceOrientation[k], actualOrientation[k]))
+            && ["handFlipped", "facingFlipped"].every(k => typeof sourceOrientation[k] === "boolean" && sourceOrientation[k] === actualOrientation[k]))
+          && Array.isArray(copied) && copied.length === names.length && names.every(name => {
+            const p = object(copied.find(raw => object(raw).name === String(name).trim()));
+            return p.sourcePresent === true && p.createdPresent === true && typeof p.sourceStorageType === "string"
+              && p.sourceStorageType === p.createdStorageType && Object.hasOwn(p, "sourceValue") && Object.hasOwn(p, "createdValue")
+              && same(p.sourceValue, p.createdValue);
+          })
+          && (request.matchElectricalCircuitFromSource !== true || circuit.exactPowerSystemCount === 1
+            && sourceCircuit.exactPowerSystemCount === 1 && same(circuit.powerSystemIds, sourceCircuit.powerSystemIds)
+            && same(object(context.electricalCircuit).powerSystemIds, sourceCircuit.powerSystemIds));
+      });
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "task.preview_created_element_count", fact_class: "domain", value: (rows as unknown[]).length }
+    ] : [] };
+  }
   if (path === "/revit/create-family-instance") {
     const admitted = admitsFamilyInstancePreview(input);
     return { recognized: true, admitted, facts: admitted ? [

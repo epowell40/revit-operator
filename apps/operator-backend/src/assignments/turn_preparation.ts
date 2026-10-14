@@ -7,6 +7,7 @@ import type { GoalRecord } from "../goals/service.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/index.js";
 import { assignmentKernelV2ForBinding, createAssignmentKernelForGoalV2, type AssignmentKernelTurnBindingV2 } from "./assignment_kernel_v2_factory.js";
 import { assignmentRunForBinding, ensureAssignmentRunForTurn, journalAssignmentToolResults } from "./turn_journal.js";
+import { preparePdfWorkAllowance, type PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 
 function text(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -50,6 +51,26 @@ export function bindPreparedAssignmentToRequest(request: ChatRequest, prepared: 
   };
 }
 
+/** Ordinary chat counts the same authenticated source workload as external
+ * assignments, without requiring budget vocabulary in the user's request. */
+export async function prepareAssignmentTurnWithAttachments(input: Omit<Parameters<typeof prepareAssignmentTurn>[0], "sourceWorkAllowance"> & {
+  userAttachments: ChatRequest["user_attachments"];
+}): Promise<PreparedAssignmentTurn | null> {
+  const { userAttachments, ...turn } = input;
+  const supplied = input.suppliedBinding;
+  if (input.toolResults.length || supplied?.assignment_id !== undefined
+      || supplied?.assignment_run_id !== undefined || supplied?.assignment_generation !== undefined)
+    return prepareAssignmentTurn(turn);
+  const identity = { session_id: input.sessionId, message_id: input.messageId, user_text: input.userText };
+  assertConversationIntakeResolved(identity);
+  const intake = retainedIntakeDecision(identity);
+  const sourceWorkAllowance = intake?.route === "task" && intake.operation_scope?.requested_effect === "apply"
+    ? await preparePdfWorkAllowance({ session_id: input.sessionId, start_assignment_run: true,
+      work_budget: { requested_effect: "apply", attachment_ids: (userAttachments ?? []).map(attachment => attachment.id) } })
+    : undefined;
+  return prepareAssignmentTurn({ ...turn, sourceWorkAllowance });
+}
+
 export function prepareAssignmentTurn(input: {
   sessionId: string;
   messageId: string;
@@ -59,6 +80,8 @@ export function prepareAssignmentTurn(input: {
   createdBy: string | null;
   requestContext?: unknown;
   suppliedBinding?: { assignment_id?: unknown; assignment_run_id?: unknown; assignment_generation?: unknown };
+  /** Host-derived before creation, never copied from chat request fields. */
+  sourceWorkAllowance?: PdfWorkAllowanceV1;
   onGoalStarted?: (goal: GoalRecord, signals: string[]) => void;
 }): PreparedAssignmentTurn | null {
   const assignmentId = text(input.suppliedBinding?.assignment_id, 240);
@@ -106,7 +129,9 @@ export function prepareAssignmentTurn(input: {
       run_id: `chat:${input.messageId}`,
       document_fingerprint: typeof started.work_budget?.document_fingerprint === "string"
         ? started.work_budget.document_fingerprint
-        : undefined
+        : undefined,
+      ...(started.work_budget?.conversation_message_id === input.messageId
+        ? { source_work_allowance: input.sourceWorkAllowance } : {})
     });
     return {
       assignmentId: binding.assignment_id,

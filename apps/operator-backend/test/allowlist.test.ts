@@ -9,9 +9,11 @@ const retainedPostPaths = [
   "/revit/update-schedule-cell",
   "/revit/get-placement-context",
   "/revit/find-elements",
+  "/revit/locate-elements",
   "/revit/get-connectors",
   "/revit/connect-existing-mep-branch",
   "/revit/set-parameter",
+  "/revit/assign-electrical-circuit",
   "/tools/redline/verify-visual",
   "/tools/mep/semantic-route-plan"
 ];
@@ -21,14 +23,12 @@ const excludedPaths = [
   "/revit/replace-schedule-values",
   "/revit/plan-room-receptacles-from-analog",
   "/revit/apply-room-receptacles-from-analog",
-  "/revit/locate-elements",
   "/revit/rank-similar-devices-on-wall",
   "/revit/project-point-to-host-frame",
   "/revit/audit-hosted-instance-placement",
   "/revit/resolve-redline-target",
   "/revit/propose-fix",
   "/revit/adjust-hosted-instance-on-host",
-  "/revit/assign-electrical-circuit",
   "/revit/low-voltage-layout",
   "/revit/link-revit",
   "/revit/audit-electrical-circuit-loading",
@@ -66,4 +66,13 @@ test("supported branch connection still requires inclusion in the caller's scope
   assert.equal(isAllowlisted("POST", path, readOnly), false);
   assert.equal(isAllowlisted("GET", path, readOnly), false);
   assert.deepEqual(filterAllowlistedActions([{ action_id: "branch", method: "POST", path, body: {} }], readOnly), []);
+});
+
+test("promoted spatial and native circuit primitives still require the caller's scoped allowlist", () => {
+  const restricted = { GET: new Set<string>(), POST: new Set(["/revit/get-connectors"]) };
+  for (const path of ["/revit/locate-elements", "/revit/assign-electrical-circuit"]) {
+    assert.equal(isAllowlisted("POST", path, restricted), false);
+    assert.equal(isAllowlisted("GET", path, { GET: new Set([path]), POST: new Set([path]) }), false);
+    assert.deepEqual(filterAllowlistedActions([{ action_id: "restricted", method: "POST", path, body: {} }], restricted), []);
+  }
 });

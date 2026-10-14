@@ -8053,6 +8053,8 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (!SheetPlacementReadContract.Validate(obj.Value, sheetsAction, out error)) return false;
+
                 if (obj.Value.TryGetProperty("offset", out var off) && off.ValueKind != JsonValueKind.Null)
                 {
                     if (off.ValueKind != JsonValueKind.Number || !off.TryGetInt32(out var v))

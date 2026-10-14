@@ -297,7 +297,9 @@ export async function handleAssignmentHttpRoute(
       if (!authorizeSession(binding.session_id)) return true;
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any, completion_proposal: body?.completion_proposal as any,
-        item_id: body?.item_id as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
+        location_hint: body?.location_hint as any,
+        scope_check: body?.scope_check as any,
+        item_id: body?.item_id as string, reason: body?.reason as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
         operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number,
         followup: body?.followup as any, followup_start: body?.followup_start as number });
       writeJson(res, 200, result);

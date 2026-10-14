@@ -1,8 +1,68 @@
 import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2, absoluteAssignmentWorkCallLimitV2 } from "../src/assignments/assignment_work_allowance_v2.js";
+import { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2, absoluteAssignmentWorkCallLimitV2, assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 as ordinary } from "../src/assignments/assignment_kernel_v2_progress.js";
+
+test("whole-set redline usage warns before the cached-context limit without changing authority", () => {
+  const s:any = fixture();
+  s.spec.created_at = "2026-10-11T16:54:36Z";
+  s.spec.execution_policy = { mode:"local_advisory_v1", max_provider_calls:64, max_operations:256,
+    max_total_tokens:8_000_000, max_wall_clock_ms:1_200_000 };
+  s.provider_calls = { retained: { admitted_at:s.spec.created_at, completed_at:"2026-10-11T17:01:06Z",
+    usage:{total_tokens:8_188_259, input_tokens:8_181_432, output_tokens:6_827, cached_input_tokens:7_978_425} } };
+  const original = JSON.stringify(s);
+  const status = assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z");
+  assert.equal(status.resources.total_tokens.remaining,0);
+  assert.equal(status.cached_input_tokens,7_978_425);
+  assert.deepEqual(status.token_breakdown,{input_tokens:8_181_432,cached_input_tokens:7_978_425,
+    cache_write_input_tokens:null,uncached_input_tokens:null,output_tokens:6_827,
+    input_includes_cached:true,input_includes_cache_write:true,cost_estimate_available:false});
+  assert.equal(status.cost_estimate.total_usd,null,"an aggregate without request categories and model cannot establish cost");
+  assert.equal(status.checkpoint_recommended,true);
+  assert.deepEqual(status.approaching_limits,["total_tokens"]);
+  assert.equal(JSON.stringify(s),original,"projection never resets usage or changes the frozen policy");
+  s.provider_calls.retained.usage.total_tokens=6_000_000;
+  assert.equal(assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z").checkpoint_recommended,true);
+  s.provider_calls.retained.usage.total_tokens=5_999_999;
+  assert.equal(assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z").checkpoint_recommended,false);
+  delete s.provider_calls.retained.usage;
+  delete s.provider_calls.retained.admitted_at;
+  const missing=assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z");
+  assert.equal(missing.missing_usage_calls,1);
+  assert.equal(missing.token_breakdown.uncached_input_tokens,null);
+  assert.equal(missing.token_breakdown.output_tokens,null);
+  assert.equal(missing.resources.active_execution_ms.remaining,null);
+  assert.equal(missing.checkpoint_recommended,true);
+});
+
+test("budget telemetry prices exact requests with coverage while leaving admission and usage unchanged", () => {
+  const s:any=fixture();
+  s.provider_calls={
+    first:{model:"gpt-6.1-sol",usage:{input_tokens:150_000,cached_input_tokens:140_000,cache_write_input_tokens:1000,output_tokens:10,total_tokens:150_010}},
+    second:{model:"gpt-6.1-sol",usage:{input_tokens:150_000,cached_input_tokens:140_000,cache_write_input_tokens:1000,output_tokens:10,total_tokens:150_010}}
+  };
+  const original=JSON.stringify(s),status=assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z");
+  assert.equal(status.token_breakdown.uncached_input_tokens,18_000);
+  assert.equal(status.token_breakdown.cache_write_input_tokens,2000);
+  assert.equal(status.cost_estimate.status,"complete");
+  assert.equal(status.cost_estimate.total_usd,(9000*2+140_000*.1+1000*2.5+10*10)*2/1_000_000,
+    "assignment aggregate above272K does not apply a per-request multiplier");
+  assert.equal(status.token_breakdown.cost_estimate_available,true);
+  assert.equal(JSON.stringify(s),original);
+  s.provider_calls.second.model="unpriced-model";
+  const partial=assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z");
+  assert.equal(partial.cost_estimate.status,"partial");
+  assert.equal(partial.cost_estimate.total_usd,null);
+  assert.equal(partial.cost_estimate.priced_calls,1);
+  assert.equal(partial.cost_estimate.unpriced_calls,1);
+  assert.equal(partial.cost_estimate.known_subtotal_usd,status.cost_estimate.total_usd!/2);
+  s.provider_calls={};
+  const empty=assignmentWorkBudgetStatusV2(s,ordinary,"2026-10-11T17:02:00Z");
+  assert.equal(empty.cost_estimate.status,"unavailable");
+  assert.equal(empty.cost_estimate.total_usd,null);
+  assert.equal(empty.cost_estimate.known_subtotal_usd,null);
+});
 
 function fixture(count=0): any {
   const binding={assignment_id:"area",run_id:"run",generation:1,session_id:"session"};
@@ -18,6 +78,63 @@ function fixture(count=0): any {
   }
   return s;
 }
+
+test("local work earns bounded continuation from distinct native readbacks without rewriting its frozen policy",()=>{
+  const s=fixture(2);
+  s.spec.created_at="2026-09-16T00:00:00Z";
+  s.spec.execution_policy={mode:"local_advisory_v1",max_provider_calls:48,max_operations:256,max_total_tokens:8_000_000,max_wall_clock_ms:1_800_000,
+    progress_allowance:{mode:"verified_native_changes_v1",max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000}};
+  delete s.work_plan;
+  s.provider_calls={used:{usage:{total_tokens:7_000_000}}};
+  const retained=JSON.stringify(s);
+  assert.deepEqual(assignmentWorkAllowanceV2(s),{broad:true,verified_changes:2,provider_calls:64});
+  const budget=defaultAssignmentWorkBudgetV2(s,ordinary);
+  assert.equal(budget.max_total_tokens,10_000_000);
+  assert.equal(budget.max_operations,320);
+  assert.equal(budget.max_wall_clock_ms,1_800_000);
+  assert.equal(JSON.stringify(s),retained,"neither ledger nor creation policy changes");
+  assert.deepEqual(defaultAssignmentWorkBudgetV2(JSON.parse(retained),ordinary),budget,"cold replay earns the same credit");
+  for(const change of [
+    (n:any)=>n.operations.read1.target.target_id="id:1",
+    (n:any)=>n.observations.observation1.authority="model",
+    (n:any)=>n.operations.edit1.persistent_effect="unknown",
+    (n:any)=>n.operations.edit1.result.native_transaction_state="pending",
+    (n:any)=>n.operations.edit1.result.binding={...n.current_binding,generation:2},
+    (n:any)=>n.observations.observation1.facts[0].value=false,
+    (n:any)=>n.operations.edit1.request_identity.request_signature="request0"
+  ]){const n=structuredClone(s);change(n);assert.equal(assignmentWorkAllowanceV2(n).verified_changes,1);}
+  const old=structuredClone(s);delete old.spec.execution_policy.progress_allowance;
+  assert.equal(defaultAssignmentWorkBudgetV2(old,ordinary).max_total_tokens,8_000_000,"historical fixed budget stays fixed");
+  const read=structuredClone(s);read.spec.requested_effect="read";
+  assert.equal(assignmentWorkAllowanceV2(read).verified_changes,0);
+  const unproved=structuredClone(s);unproved.observations={};
+  assert.equal(defaultAssignmentWorkBudgetV2(unproved,ordinary).max_provider_calls,48,"claims and reads alone cannot earn calls");
+  const maximum=fixture(100);maximum.spec={...maximum.spec,created_at:s.spec.created_at,execution_policy:s.spec.execution_policy};
+  const cap=defaultAssignmentWorkBudgetV2(maximum,ordinary);
+  assert.equal(cap.max_total_tokens,32_000_000);assert.equal(cap.max_provider_calls,256);assert.equal(cap.max_operations,1024);
+});
+
+test("sheet movement credit requires exact requested placements and never substitutes the owning sheet",()=>{
+  const s=fixture(1);
+  s.operations.edit0.request_identity.path="/revit/move-elements";
+  s.operations.read0.request_identity={path:"/revit/sheets"};
+  s.operations.read0.target.target_id="id:999";
+  const deliverable={fact_id:"verification.deliverable_target_identities",fact_class:"verification",value:[] as unknown[]};
+  s.observations.observation0.facts.push(deliverable);
+  assert.equal(assignmentWorkAllowanceV2(s).verified_changes,0,"a missing historical input must fail closed without crashing");
+  for(const ids of [undefined,[],[0],["12"]]){
+    s.operations.edit0.input={body:{ids}};
+    assert.equal(assignmentWorkAllowanceV2(s).verified_changes,0);
+  }
+  s.operations.edit0.input={body:{ids:[12,13]}};
+  assert.equal(assignmentWorkAllowanceV2(s).verified_changes,0,"request arguments alone cannot create checked deliverables");
+  deliverable.value=["element_id:12","element_id:13"];
+  assert.equal(assignmentWorkAllowanceV2(s).verified_changes,1,"one verified native batch earns one credit");
+  for(const value of [["element_id:0"],["element_id:12","element_id:12"],[12],"element_id:12",[]]){
+    const n=structuredClone(s);n.observations.observation0.facts[1].value=value;
+    assert.equal(assignmentWorkAllowanceV2(n).verified_changes,0,"malformed host deliverable facts cannot earn fallback credit");
+  }
+});
 
 test("C43 broad work gets bounded planning credit; ordinary short work keeps its budget",()=>{
   const s=fixture(); assert.equal(assignmentWorkAllowanceV2(s).provider_calls,64);

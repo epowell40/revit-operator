@@ -11,6 +11,26 @@ namespace RevitBridge.Common.Tests
     public class OperatorNativeTransactionExecutionTests
     {
         [Theory]
+        [InlineData("Committed", "applied")]
+        [InlineData("RolledBack", "none")]
+        [InlineData("Pending", "unknown")]
+        public void CleanupFailurePreservesObservedGroupAuthorityWithoutRetry(string status, string effect)
+        {
+            int edits = 0, cleanups = 0;
+            var response = OperatorNativeTransactionExecution.ExecuteWithCleanup(() =>
+                OperatorNativeTransactionExecution.Execute(() => "Started", () => status,
+                    () => throw new Exception("must not replay"), () => status,
+                    () => { edits++; return new Dictionary<string, object?>(); },
+                    () => OperatorNativeTransactionReceipt.Committed(new[] { 42L })),
+                () => { cleanups++; throw new Exception("group disposal failed"); });
+            Assert.Equal(1, edits); Assert.Equal(1, cleanups);
+            Assert.Equal(false, response["success"]);
+            Assert.Equal(false, response["verified"]);
+            Assert.Contains("group disposal failed", Assert.IsType<string>(response["error"]));
+            Assert.Equal(effect, OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/assign-electrical-circuit").EffectState);
+        }
+
+        [Theory]
         [InlineData("RolledBack", "none", true)]
         [InlineData("Pending", "unknown", false)]
         public void ExactThinRotatePreviewRequiresObservedRollbackAndRetainsOnlyTransientEvidence(string status, string effect, bool previewRetained)

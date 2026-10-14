@@ -15,8 +15,10 @@ namespace RevitBridge.Common.Tests
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(217, implemented.Count);
-            Assert.Equal(107, OperatorToolManifest.Tools.Count);
-            Assert.Equal(107, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(109, OperatorToolManifest.Tools.Count);
+            Assert.Equal(109, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/model-health"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/linked-room-boundaries"));

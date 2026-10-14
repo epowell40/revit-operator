@@ -27,6 +27,7 @@ import type { LaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js
 import type { LaboratoryMoveEvidenceAdmission } from "./laboratoryMoveEvidence.js";
 import {
   beginAssignmentKernelNativeRequestV2,
+  AssignmentKernelNativeSettlementErrorV2,
   markAssignmentKernelNativeRequestDispatchingV2,
   recordAssignmentKernelNativeFailureV2,
   recordAssignmentKernelNativeResultV2,
@@ -646,6 +647,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     await recordAssignmentKernelNativeResultV2(upperMethod, path, parsed, kernelNativeRequest);
     return parsed;
   } catch (error) {
+    if (error instanceof AssignmentKernelNativeSettlementErrorV2) throw error;
     const outcomeUnknown = mutating;
     const bridgeError = new RevitBridgeCallError({
       code: "revit_bridge_invalid_response",

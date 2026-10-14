@@ -1,0 +1,252 @@
+{
+  "notice": "Exact immutable native move and separate read payloads retained from disposable Snowdon E101 trial59. Read includes an unchanged contextual device; settlement still requires admitted matching read targets. No project answer is given to the actor.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1584583
+      ],
+      "mode": "vector",
+      "vectorX": 0,
+      "vectorY": -6.333333333333333,
+      "vectorZ": 0,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "options": {
+        "failOnPinned": true
+      }
+    }
+  },
+  "native_apply": {
+    "movedIds": [
+      1584583
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        101014,
+        669230,
+        1390814,
+        1584583,
+        1585792
+      ],
+      "affected_element_ids": [
+        101014,
+        669230,
+        1390814,
+        1584583,
+        1585792
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1584583,
+        "before": {
+          "kind": "LocationPoint",
+          "pointXyz": [
+            -20.739583333333318,
+            11.208333333333359,
+            0
+          ],
+          "rotationRadians": 4.188790204786382,
+          "rotationDegrees": 239.99999999999946
+        },
+        "after": {
+          "kind": "LocationPoint",
+          "pointXyz": [
+            -20.739583333333346,
+            4.875000000000027,
+            0
+          ],
+          "rotationRadians": 4.188790204786382,
+          "rotationDegrees": 239.99999999999946
+        }
+      }
+    ],
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": false
+  },
+  "actual_read": {
+    "schema": "operator.electrical_membership_read.v1",
+    "complete": true,
+    "requestedElementIds": [
+      1584583,
+      1736522
+    ],
+    "items": [
+      {
+        "id": 1584583,
+        "found": true,
+        "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182dc7",
+        "className": "FamilyInstance",
+        "fullClassName": "Autodesk.Revit.DB.FamilyInstance",
+        "category": "Electrical Fixtures",
+        "name": "Plain",
+        "familyName": "Quadruplex Receptacle",
+        "typeName": "Plain",
+        "levelId": 1474365,
+        "levelIdBasis": "native_effective_level",
+        "levelName": "L1 - Block 37",
+        "viewType": null,
+        "viewScale": null,
+        "boundingBox": {
+          "min": {
+            "x": -20.739583333333346,
+            "y": 4.687500000000027,
+            "z": -0.3958333333333416
+          },
+          "max": {
+            "x": -20.515624999999908,
+            "y": 5.0625000000000515,
+            "z": 0.01456475469287829
+          }
+        },
+        "location": {
+          "type": "point",
+          "x": -20.739583333333346,
+          "y": 4.875000000000027,
+          "z": 0,
+          "rotationRadians": 4.188790204786382
+        },
+        "electricalCircuitMembership": {
+          "schema": "operator.electrical_membership_summary.v1",
+          "complete": true,
+          "kind": "family_instance",
+          "powerSystemIds": [
+            1585772
+          ]
+        },
+        "viewIdUsed": null
+      },
+      {
+        "id": 1736522,
+        "found": true,
+        "uniqueId": "637ab8f0-9bf4-49b3-bd1e-d9ed2e255cf5-001a7f4a",
+        "className": "FamilyInstance",
+        "fullClassName": "Autodesk.Revit.DB.FamilyInstance",
+        "category": "Electrical Fixtures",
+        "name": "Plain",
+        "familyName": "Quadruplex Receptacle",
+        "typeName": "Plain",
+        "levelId": 1474365,
+        "levelIdBasis": "native_effective_level",
+        "levelName": "L1 - Block 37",
+        "viewType": null,
+        "viewScale": null,
+        "boundingBox": {
+          "min": {
+            "x": -49.25520833333284,
+            "y": -16.687500000000025,
+            "z": -0.3958333333333416
+          },
+          "max": {
+            "x": -49.031249999999396,
+            "y": -16.3125,
+            "z": 0.01456475469287829
+          }
+        },
+        "location": {
+          "type": "point",
+          "x": -49.031249999999396,
+          "y": -16.5,
+          "z": 0,
+          "rotationRadians": 2.0943951023931957
+        },
+        "electricalCircuitMembership": {
+          "schema": "operator.electrical_membership_summary.v1",
+          "complete": true,
+          "kind": "family_instance",
+          "powerSystemIds": [
+            1585772
+          ]
+        },
+        "viewIdUsed": null
+      }
+    ],
+    "circuits": [
+      {
+        "systemElementId": 1585772,
+        "systemUniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-0018326c",
+        "systemType": "PowerCircuit",
+        "memberElementIds": [
+          1584372,
+          1584399,
+          1584583,
+          1584659,
+          1584930,
+          1585163,
+          1585560,
+          1585661,
+          1736522
+        ],
+        "memberIdentities": [
+          {
+            "elementId": 1584372,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182cf4"
+          },
+          {
+            "elementId": 1584399,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182d0f"
+          },
+          {
+            "elementId": 1584583,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182dc7"
+          },
+          {
+            "elementId": 1584659,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182e13"
+          },
+          {
+            "elementId": 1584930,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00182f22"
+          },
+          {
+            "elementId": 1585163,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-0018300b"
+          },
+          {
+            "elementId": 1585560,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-00183198"
+          },
+          {
+            "elementId": 1585661,
+            "uniqueId": "9873f7f8-bb25-432e-9f25-de790ea4ec44-001831fd"
+          },
+          {
+            "elementId": 1736522,
+            "uniqueId": "637ab8f0-9bf4-49b3-bd1e-d9ed2e255cf5-001a7f4a"
+          }
+        ],
+        "panelElementId": 1488616,
+        "panelUniqueId": "01d5840b-88f5-4948-b348-cc42c5bf771f-0016b6e8",
+        "circuitNumber": "3",
+        "trueLoadInternal": 34875.0697501395,
+        "apparentLoadInternal": 34875.0697501395,
+        "inspectedPanelSlotNumber": null,
+        "panelSlots": [],
+        "complete": true
+      }
+    ]
+  }
+}

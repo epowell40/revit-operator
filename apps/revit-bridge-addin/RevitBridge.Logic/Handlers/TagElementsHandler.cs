@@ -2187,6 +2187,20 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            // Spatial tags are not IndependentTags. Only a non-orphaned local
+            // association may suppress a local subject; a linked ID can collide
+            // with a host ID and must never be treated as the host subject.
+            // Revit rejects RoomTag/SpaceTag as OfClass filters: they are API
+            // subclasses, not native filterable classes. Filter the native
+            // SpatialElementTag base, then inspect its exact managed subtype.
+            foreach (var tag in new FilteredElementCollector(doc, viewId).OfClass(typeof(SpatialElementTag)).Cast<SpatialElementTag>())
+            {
+                if (tag.IsOrphaned || tag.IsTaggingLink) continue;
+                SpatialElement? subject = tag is RoomTag roomTag ? roomTag.Room
+                    : tag is SpaceTag spaceTag ? spaceTag.Space : null;
+                if (subject != null && subject.Document.Equals(doc)) ids.Add(ElementIdCompat.GetValue(subject.Id));
+            }
+
             return ids;
         }
 

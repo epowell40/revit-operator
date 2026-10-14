@@ -9,6 +9,71 @@ namespace RevitBridge.Common.Electrical
         public const string None = "none";
         public const string MatchSourceSystem = "match_source_system";
 
+        public static void RequireNativeMemberBatch(IEnumerable<long> memberElementIds)
+        {
+            var members = memberElementIds.ToList();
+            RequirePositiveMembers(members);
+            if (members.Count > 100 || members.Distinct().Count() != members.Count)
+                throw new InvalidOperationException("native_power_circuit_requires_at_most_100_unique_member_ids");
+        }
+
+        public static void RequireNativeAssignmentMode(long? sourceElementId, long? electricalSystemId,
+            string? createSystemType, bool parameterOnlyFallback, string? panelName, string? circuitNumber)
+        {
+            if (parameterOnlyFallback || !string.IsNullOrWhiteSpace(panelName) || !string.IsNullOrWhiteSpace(circuitNumber))
+                throw new InvalidOperationException("circuit_assignment_requires_native_membership; use set-parameter for explicit label-only changes");
+            var modes = (sourceElementId.HasValue ? 1 : 0) + (electricalSystemId.HasValue ? 1 : 0) +
+                (!string.IsNullOrWhiteSpace(createSystemType) ? 1 : 0);
+            if (modes != 1) throw new InvalidOperationException("select_exactly_one_native_circuit_assignment_mode");
+            if (!string.IsNullOrWhiteSpace(createSystemType) && !IsExactPowerCircuitType(createSystemType))
+                throw new InvalidOperationException("createSystemType must be PowerCircuit when supplied.");
+        }
+
+        public static void RequireSourceAssignmentRequest(long sourceElementId, IEnumerable<long> targetElementIds,
+            bool hasOtherAssignmentMode)
+        {
+            if (sourceElementId <= 0) throw new InvalidOperationException("source_element_id_must_be_positive");
+            if (hasOtherAssignmentMode) throw new InvalidOperationException("source_power_circuit_mode_cannot_create_move_or_use_parameter_fallback");
+            var targets = targetElementIds.ToList();
+            if (targets.Count == 0 || targets.Any(id => id <= 0))
+                throw new InvalidOperationException("source_power_circuit_requires_positive_target_element_ids");
+        }
+
+        public static void RequireCircuitMoveRequest(long systemElementId, long? panelElementId, int? slotNumber,
+            IEnumerable<long> memberElementIds, bool hasOtherAssignmentMode)
+        {
+            if (systemElementId <= 0) throw new InvalidOperationException("electrical_system_id_must_be_positive");
+            if (hasOtherAssignmentMode) throw new InvalidOperationException("existing_power_circuit_move_cannot_mix_assignment_modes");
+            if (!panelElementId.HasValue || panelElementId.Value <= 0)
+                throw new InvalidOperationException("existing_power_circuit_move_requires_panel_element_id");
+            if (!slotNumber.HasValue || slotNumber.Value <= 0)
+                throw new InvalidOperationException("existing_power_circuit_move_requires_positive_target_panel_slot_number");
+            RequirePositiveMembers(memberElementIds);
+        }
+
+        public static void RequireCircuitCreateRequest(IEnumerable<long> memberElementIds, long? panelElementId,
+            int? slotNumber, long? connectorId, string? expectedCircuitNumber, bool hasOtherAssignmentMode)
+        {
+            var members = memberElementIds.ToList();
+            RequirePositiveMembers(members);
+            if (hasOtherAssignmentMode) throw new InvalidOperationException("new_power_circuit_cannot_mix_assignment_modes");
+            if (panelElementId.HasValue && panelElementId.Value <= 0)
+                throw new InvalidOperationException("panel_element_id_must_be_positive");
+            if (slotNumber.HasValue && (slotNumber.Value <= 0 || !panelElementId.HasValue))
+                throw new InvalidOperationException("positive_target_panel_slot_requires_panel_element_id");
+            if (!string.IsNullOrWhiteSpace(expectedCircuitNumber) && !slotNumber.HasValue)
+                throw new InvalidOperationException("expected_circuit_number_requires_target_panel_slot_number");
+            if (connectorId.HasValue && (connectorId.Value < 0 || members.Count != 1))
+                throw new InvalidOperationException("electrical_connector_id_requires_exactly_one_member_and_nonnegative_id");
+        }
+
+        private static void RequirePositiveMembers(IEnumerable<long> memberElementIds)
+        {
+            var members = memberElementIds.ToList();
+            if (members.Count == 0 || members.Any(id => id <= 0))
+                throw new InvalidOperationException("native_power_circuit_requires_positive_member_element_ids");
+        }
+
         public static string NormalizeMode(string? value)
         {
             var mode = (value ?? string.Empty).Trim().ToLowerInvariant();

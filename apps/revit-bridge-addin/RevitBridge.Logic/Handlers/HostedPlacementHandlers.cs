@@ -4499,6 +4499,18 @@ namespace RevitBridge.Logic.Handlers
 
     public class CreateSimilarFromInstanceHandler : IRequestHandler
     {
+        private static object? ReadCopiedParameterValue(Parameter? parameter)
+        {
+            if (parameter == null) return null;
+            switch (parameter.StorageType)
+            {
+                case StorageType.String: return parameter.AsString() ?? "";
+                case StorageType.Double: return parameter.AsDouble();
+                case StorageType.Integer: return parameter.AsInteger();
+                case StorageType.ElementId: return ElementIdCompat.GetValue(parameter.AsElementId());
+                default: return null;
+            }
+        }
         public sealed class PlacementInput
         {
             [JsonConverter(typeof(FlexibleXyzArrayConverter))]
@@ -4842,6 +4854,16 @@ namespace RevitBridge.Logic.Handlers
                             sourceWorksetMatched
                         },
                         hostLocalFrame = framePayload,
+                        sourceOrientation = HostedPlacementUtil.BuildOrientationPayload(matchOrientation ? orientationSource : exemplar),
+                        copiedParameterReadback = (p.parameterNamesToCopy ?? new List<string>()).Select(rawName =>
+                        {
+                            var name = rawName.Trim();
+                            var sourceParameter = exemplar.LookupParameter(name);
+                            var createdParameter = created.LookupParameter(name);
+                            return new { name, sourcePresent = sourceParameter != null, createdPresent = createdParameter != null,
+                                sourceStorageType = sourceParameter?.StorageType.ToString(), createdStorageType = createdParameter?.StorageType.ToString(),
+                                sourceValue = ReadCopiedParameterValue(sourceParameter), createdValue = ReadCopiedParameterValue(createdParameter) };
+                        }).ToArray(),
                         electricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(created),
                         label = item.label
                     });
@@ -4942,53 +4964,60 @@ namespace RevitBridge.Logic.Handlers
                         );
                     }
 
-                    tg.RollBack();
-                }
+                    var rollbackStatus = tg.RollBack();
+                    var residualCreatedIds = createdIds.Where(id => doc.GetElement(ElementIdCompat.Create(id)) != null).ToArray();
+                    var rollbackConfirmed = rollbackStatus == TransactionStatus.RolledBack
+                        && tg.GetStatus() == TransactionStatus.RolledBack
+                        && createdIds.Count > 0 && residualCreatedIds.Length == 0;
+                    if (!rollbackConfirmed)
+                        throw new InvalidOperationException("Create-similar preview outer rollback was not confirmed or left transient elements in the document.");
 
-                return Task.FromResult<object>(new
-                {
-                    status = placementValidation?.valid == false ? "InvalidPreview" : "Planned",
-                    dryRun = true,
-                    exemplar = new { id = ElementIdCompat.GetValue(exemplar.Id), name = exemplar.Name, electricalCircuit = exemplarElectricalCircuit },
-                    host = new { id = ElementIdCompat.GetValue(host.Id), category = host.Category?.Name, name = host.Name },
-                    familySymbol = new { id = ElementIdCompat.GetValue(symbol.Id), family = symbol.FamilyName, symbol = symbol.Name },
-                    level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
-                    placements = resultRows,
-                    placementValidation,
-                    transactionStatus,
-                    failures,
-                    preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
-                    warnings
-                });
+                    // The child commit above is provisional. Report only the
+                    // observed outer rollback as persistent transaction truth.
+                    return Task.FromResult<object>(new
+                    {
+                        status = placementValidation?.valid == false ? "InvalidPreview" : "Planned",
+                        dryRun = true,
+                        previewExecuted = true,
+                        transactionGroupRolledBack = true,
+                        rollbackVerified = rollbackConfirmed,
+                        residualCreatedElementIds = residualCreatedIds,
+                        transaction = OperatorNativeTransactionReceipt.FromAtomicGroupRollback(rollbackConfirmed),
+                        exemplar = new { id = ElementIdCompat.GetValue(exemplar.Id), name = exemplar.Name, electricalCircuit = exemplarElectricalCircuit },
+                        host = new { id = ElementIdCompat.GetValue(host.Id), category = host.Category?.Name, name = host.Name },
+                        familySymbol = new { id = ElementIdCompat.GetValue(symbol.Id), family = symbol.FamilyName, symbol = symbol.Name },
+                        level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
+                        placements = resultRows,
+                        placementValidation,
+                        transactionStatus,
+                        failures,
+                        preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
+                        warnings
+                    });
+                }
             }
 
-            using (var tx = new Transaction(doc, "Create Similar From Instance"))
+            var nativeApply = NativeSingleTransaction.Execute(app, doc, "Create Similar From Instance", nativeCreated =>
             {
-                try
-                {
-                    tx.Start();
-                    tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true));
-                    CreateRows();
-                    doc.Regenerate();
-                    placementValidation = ValidateRows();
-                    if (placementValidation.valid == false)
-                    {
-                        tx.RollBack();
-                        throw new InvalidOperationException($"Placement validation failed; transaction rolled back. {placementValidation.reason}");
-                    }
-                    var st = tx.Commit();
-                    transactionStatus = st.ToString();
-                    if (st != TransactionStatus.Committed)
-                    {
-                        throw new InvalidOperationException($"Create-similar transaction did not commit (status={transactionStatus}).{BuildCommitFailureText()}");
-                    }
-                }
-                catch
-                {
-                    if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
-                    throw;
-                }
-            }
+                CreateRows();
+                foreach (var id in createdIds) nativeCreated.Add(id);
+                doc.Regenerate();
+                placementValidation = ValidateRows();
+                if (placementValidation.valid == false)
+                    throw new InvalidOperationException($"Placement validation failed. {placementValidation.reason}");
+                return new Dictionary<string, object?>();
+            }, configureTransaction: tx => tx.SetFailureHandlingOptions(
+                FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true)));
+            nativeApply["status"] = OperatorNativeTransactionExecution.OutcomeStatus(nativeApply, "Placed");
+            nativeApply["dryRun"] = false;
+            var applyReceipt = (OperatorNativeTransactionReceipt)nativeApply["transaction"]!;
+            transactionStatus = applyReceipt.Status;
+            if (applyReceipt.CommittedValue != true) return Task.FromResult<object>(nativeApply);
+
+            // A readback/export exception after commit must retain the native
+            // commit receipt rather than inviting a duplicate placement retry.
+            try
+            {
             var missingCreatedIds = createdIds
                 .Where(id => id <= 0 || doc.GetElement(ElementIdCompat.Create(id)) == null)
                 .ToList();
@@ -5033,9 +5062,9 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
-            return Task.FromResult<object>(new
+            nativeApply["postconditionVerified"] = true;
+            var presentation = new
             {
-                status = "Placed",
                 dryRun = false,
                 exemplar = new { id = ElementIdCompat.GetValue(exemplar.Id), name = exemplar.Name, electricalCircuit = exemplarElectricalCircuit },
                 host = new { id = ElementIdCompat.GetValue(host.Id), category = host.Category?.Name, name = host.Name },
@@ -5048,7 +5077,21 @@ namespace RevitBridge.Logic.Handlers
                 failures,
                 preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                 warnings
-            });
+            };
+            using (var presentationJson = JsonDocument.Parse(JsonSerializer.Serialize(presentation)))
+                foreach (var property in presentationJson.RootElement.EnumerateObject())
+                    nativeApply[property.Name] = property.Value.Clone();
+            return Task.FromResult<object>(nativeApply);
+            }
+            catch (Exception ex)
+            {
+                nativeApply["status"] = "CommittedWithErrors";
+                nativeApply["postconditionVerified"] = false;
+                nativeApply["success"] = false;
+                nativeApply["error"] = ex.Message;
+                nativeApply["elementIds"] = createdIds;
+                return Task.FromResult<object>(nativeApply);
+            }
         }
     }
 

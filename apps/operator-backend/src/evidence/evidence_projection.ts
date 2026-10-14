@@ -1,6 +1,7 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
+import { projectParameterTable } from "./parameter_table_projection.js";
 import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
@@ -151,7 +152,14 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
   let afterHash: string | null = null;
   let effectState: "none" | "unknown" | "applied" | null = null;
   let bestInventory: IdentityInventory | null = null;
-  const queue: Array<{ value: unknown; path: string; depth: number }> = [{ value: raw, path: "$", depth: 0 }];
+  const queue: Array<{ value: unknown; path: string; depth: number; diagnosticArray?: boolean }> = [{ value: raw, path: "$", depth: 0 }];
+  function pushDiagnostic(path: string, value: unknown): void {
+    const text = scalar(value);
+    if (text === undefined) return;
+    if (diagnostics.length >= 12) { omitted = true; return; }
+    omitted ||= typeof value === "string" && value.trim().length > 200;
+    diagnostics.push(`${path}: ${boundedText(text, 200)}`);
+  }
   const rootRecord = safeRecord(raw);
   // Dynamic runtime receipts are embedded JSON strings, not ordinary nested
   // objects. Preserve their reported settlement before bulky worker/snapshot
@@ -190,13 +198,20 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
       if (Object.keys(counts).length < 24) counts[`${current.path}.length`] = current.value.length;
       if (current.depth >= 5) { omitted ||= current.value.length > 0; continue; }
       for (let i = 0; i < Math.min(current.value.length, 128); i++) {
-        queue.push({ value: current.value[i], path: `${current.path}[${i}]`, depth: current.depth + 1 });
+        queue.push({ value: current.value[i], path: `${current.path}[${i}]`, depth: current.depth + 1,
+          diagnosticArray: current.diagnosticArray });
       }
       omitted ||= current.value.length > 128;
       continue;
     }
     const row = safeRecord(current.value);
-    if (!row) continue;
+    if (!row) {
+      // Warning/error arrays commonly contain scalar messages. Keep their
+      // bounded text in model feedback; ordinary arrays and unrelated fields
+      // remain unselected. Presentation does not authenticate the message.
+      if (current.diagnosticArray) pushDiagnostic(current.path, current.value);
+      continue;
+    }
     if (!(rootLooksLikeMcpEnvelope && current.path === "$")) {
       for (const inventory of identityInventories(row, current.path)) {
         if (!bestInventory || inventory.identityRows > bestInventory.identityRows
@@ -217,12 +232,13 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
       if (/^after_?(?:sha256|hash)$/i.test(key) && typeof value === "string") afterHash = boundedText(value, 128);
       if (/^(?:effect_?)?state$/i.test(key) && (value === "none" || value === "unknown" || value === "applied")) effectState = value;
       if (valueScalar !== undefined && ACCEPTANCE_KEY.test(key) && Object.keys(facts).length < 48) facts[path] = valueScalar;
-      if (valueScalar !== undefined && DIAGNOSTIC_KEY.test(key) && diagnostics.length < 12) diagnostics.push(`${path}: ${boundedText(valueScalar, 200)}`);
+      if (valueScalar !== undefined && DIAGNOSTIC_KEY.test(key)) pushDiagnostic(path, value);
       if (STRUCTURED_TEXT_KEY.test(key) && !rootLooksLikeMcpEnvelope) {
         const structured = parseBoundedStructuredJson(value);
         if (structured) queue.push({ value: structured, path: `${path}.$json`, depth: current.depth + 1 });
       }
-      if (value && typeof value === "object" && !rootEnvelopePayloadField) queue.push({ value, path, depth: current.depth + 1 });
+      if (value && typeof value === "object" && !rootEnvelopePayloadField) queue.push({ value, path, depth: current.depth + 1,
+        diagnosticArray: Array.isArray(value) && DIAGNOSTIC_KEY.test(key) });
     }
   }
   if (bestInventory) {
@@ -358,6 +374,16 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
           inline_payload: payload, truncated: false };
         if (projectionBytes(complete) <= maxBytes) candidate = complete;
         else {
+          // Generic scalar facts are not a complete presentation of nested
+          // native values, even when the traversal itself stayed within bounds.
+          candidate = { ...candidate, truncated: true };
+          const parameterBase = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope };
+          const table = projectParameterTable(payload, maxBytes - projectionBytes(parameterBase) - 32);
+          if (table) {
+            const compact = { ...parameterBase, inline_payload: table,
+              truncated: (table.coverage as { page_rows_complete: boolean }).page_rows_complete !== true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
           const inventory = completeElementIdInventory(payload);
           if (inventory) {
             const compact = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,

@@ -175,7 +175,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
-import { handleSidecarExecutionFailureHttp } from "./assignments/sidecar_execution_failure_http.js";
+import { handleSidecarExecutionReportHttp } from "./assignments/sidecar_execution_report_http.js";
 import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
@@ -183,10 +183,10 @@ import {
 } from "./assignments/turn_journal.js";
 import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.js";
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
-import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
+import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
+import { prepareExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1245,6 +1245,7 @@ const server = http.createServer(async (req, res) => {
       if (!sessionId) return writeJson(res, 400, { error: "session_id is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
       try {
+        const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const current = getCurrentGoalForSession(sessionId);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
@@ -1253,13 +1254,13 @@ const server = http.createServer(async (req, res) => {
         if (replaceBlockedSidecar) clearAgentGoal(sessionId, "Superseded by a fresh Operator Desktop assignment.");
         const owner = sessionOwnerForPrincipal(auth.principal);
         const goal = setAgentGoal(sessionId, {
-          ...normalizeExternalAssignmentRequest(body as Record<string, unknown>),
+          ...normalizedRequest,
           ...(owner ? { created_by: owner.owner_user_id } : {})
         });
         const requestedRunId = trimText((body as any)?.assignment_run_id ?? (body as any)?.assignmentRunId, 200);
         const assignmentRun = (body as any)?.start_assignment_run === true
           ? startExternalAssignmentRun({
-              sessionId, goal, requestedRunId,
+              sessionId, goal, requestedRunId, source_work_allowance:sourceAllowance,
               actor: trimText((body as any)?.assignment_run_actor, 160) || "external_assignment_controller"
             })
           : null;
@@ -1290,12 +1291,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
-      if (req.method === "POST" && url.pathname === "/api/agent-goal/sidecar-execution-failure") {
-        return handleSidecarExecutionFailureHttp(req, res, {
-          normalizeSessionId: value => trimText(value, 160),
-          sessionAllowed: sessionId => sessionAccessAllowed(res, sessionId, auth.principal)
-        });
-      }
+      if(await handleSidecarExecutionReportHttp(req,res,url,{
+        normalizeSessionId: value => trimText(value,160),
+        sessionAllowed: sessionId => sessionAccessAllowed(res,sessionId,auth.principal)
+      }))return;
       const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete|sidecar-settle)$/);
       if (req.method === "POST" && goalAction) {
         const body = await readJson(req, 1_000_000).catch(() => ({}));
@@ -2212,9 +2211,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const owner = sessionOwnerForPrincipal(auth.principal);
-      const assignmentBinding = prepareAssignmentTurn({
+      const assignmentBinding = await prepareAssignmentTurnWithAttachments({
         sessionId: parsed.session_id, messageId: parsed.message_id, userText,
-        toolResults, source: "stream", createdBy: owner?.owner_user_id ?? null,
+        toolResults, userAttachments, source: "stream", createdBy: owner?.owner_user_id ?? null,
         requestContext: canonicalRequest.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
           goal_id: goal.id, status: goal.status, signals
@@ -2594,9 +2593,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const owner = sessionOwnerForPrincipal(auth.principal);
-      const assignmentBinding = prepareAssignmentTurn({
+      const assignmentBinding = await prepareAssignmentTurnWithAttachments({
         sessionId: parsed.session_id, messageId: parsed.message_id, userText,
-        toolResults, source: "chat", createdBy: owner?.owner_user_id ?? null,
+        toolResults, userAttachments, source: "chat", createdBy: owner?.owner_user_id ?? null,
         requestContext: parsed.context, suppliedBinding: parsed,
         onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
           goal_id: goal.id, status: goal.status, signals

@@ -12,9 +12,9 @@ if (-not $RepoRoot) {
 if (-not $RepoRoot) { throw "Unable to resolve repository root." }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 
-$backendRoot = Join-Path $RepoRoot "operator-backend"
+$backendRoot = Join-Path $RepoRoot "apps/operator-backend"
 if (-not (Test-Path -LiteralPath (Join-Path $backendRoot "src") -PathType Container)) {
-  $backendRoot = Join-Path $RepoRoot "apps/operator-backend"
+  $backendRoot = Join-Path $RepoRoot "operator-backend"
 }
 $sourceRoot = Join-Path $backendRoot "src"
 if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
@@ -36,7 +36,7 @@ foreach ($entry in @($manifest.exceptions)) {
   $exceptions[$relativePath] = $entry
 }
 
-$results = foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Filter "*.ts") {
+$results = @(foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Filter "*.ts") {
   if ($file.Name.EndsWith(".d.ts", [System.StringComparison]::OrdinalIgnoreCase)) { continue }
   $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart("\", "/").Replace("\", "/")
   $lineCount = [System.IO.File]::ReadAllLines($file.FullName).Length
@@ -47,7 +47,8 @@ $results = foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -Fi
     Limit = $limit
     Status = if ($lineCount -le $limit) { "PASS" } else { "FAIL" }
   }
-}
+})
+if ($results.Count -eq 0) { throw "Backend module inventory is empty: $sourceRoot" }
 
 $failures = @($results | Where-Object { $_.Status -eq "FAIL" } | Sort-Object Lines -Descending)
 $largest = @($results | Sort-Object Lines -Descending | Select-Object -First 15)

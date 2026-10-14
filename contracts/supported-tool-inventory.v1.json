@@ -3,6 +3,10 @@
   "description": "Fixed product support scope. Inclusion permits existing authorization checks; it is not execution authority or a claim of live verification. No runtime mode expands this inventory.",
   "native_routes": [
     {
+      "method": "POST",
+      "path": "/revit/locate-elements"
+    },
+    {
       "method": "GET",
       "path": "/revit/capabilities"
     },
@@ -45,6 +49,10 @@
     {
       "method": "POST",
       "path": "/revit/apply-revision-to-sheets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/assign-electrical-circuit"
     },
     {
       "method": "POST",
@@ -160,6 +168,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow"
+    },
+    {
+      "method": "POST",
       "path": "/revit/export-elements-xlsx"
     },
     {
@@ -184,19 +196,11 @@
     },
     {
       "method": "POST",
-      "path": "/revit/existing-conditions-mep-draft-workflow"
-    },
-    {
-      "method": "POST",
       "path": "/revit/find-elements"
     },
     {
       "method": "POST",
       "path": "/revit/find-text-notes"
-    },
-    {
-      "method": "POST",
-      "path": "/revit/view-owned-detailing"
     },
     {
       "method": "POST",
@@ -232,11 +236,11 @@
     },
     {
       "method": "POST",
-      "path": "/revit/list-element-types"
+      "path": "/revit/linked-room-boundaries"
     },
     {
       "method": "POST",
-      "path": "/revit/linked-room-boundaries"
+      "path": "/revit/list-element-types"
     },
     {
       "method": "POST",
@@ -424,6 +428,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/view-owned-detailing"
+    },
+    {
+      "method": "POST",
       "path": "/revit/views"
     },
     {
@@ -437,11 +445,11 @@
     "operator_manage_work_plan",
     "operator_plan_existing_conditions_duct_continuation",
     "operator_plan_semantic_mep_route",
-    "operator_register_existing_conditions_interpretation",
-    "operator_resume_existing_conditions_registration",
     "operator_record_execution_strategy",
+    "operator_register_existing_conditions_interpretation",
     "operator_request_assignment_input",
     "operator_request_clarification",
+    "operator_resume_existing_conditions_registration",
     "operator_retrieve_evidence",
     "operator_run_dynamic_revit_program",
     "operator_runtime_probe",
@@ -452,6 +460,7 @@
     "read_pdf_text",
     "read_word",
     "revit_activate_view",
+    "revit_assign_electrical_circuit",
     "revit_call_tool",
     "revit_capture_sheet_region",
     "revit_capture_view",

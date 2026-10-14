@@ -4,6 +4,30 @@ import { readFileSync } from "node:fs";
 
 import { normalizeTextNoteTextV2, previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
+import { createSimilarPreviewFixture } from "./createSimilarPreviewEvidence.fixtures.js";
+
+test("create-similar preview requires observed position, host, type, circuit, orientation and copied values", () => {
+  const f = createSimilarPreviewFixture();
+  const evaluate = (payload: any = f.payload, body: any = f.body, authoritativePreview = true) => previewSemanticEvidenceV2({
+    path: f.path, payload, requestBody: body, requestedEffect: "preview", authoritativePreview });
+  assert.equal(evaluate().admitted, true);
+  assert.equal(evaluate(f.payload, f.body, false).admitted, false);
+  for (const mutate of [
+    (p: any) => delete p.transaction, (p: any) => p.rollbackVerified = false,
+    (p: any) => p.residualCreatedElementIds.push(1736522), (p: any) => p.placements[0].elementId = 1736522,
+    (p: any) => p.exemplar.id = 2, (p: any) => p.placementValidation.audit.items[0].placementContext.insertionPoint.x += 1,
+    (p: any) => p.placementValidation.audit.items[0].placementContext.typeId = 2,
+    (p: any) => p.placementValidation.audit.items[0].placementContext.host.id = 2,
+    (p: any) => p.placements[0].levelContext.verifiedCreatedLevelId = 2,
+    (p: any) => p.placements[0].phasing.verifiedCreatedPhaseId = 2,
+    (p: any) => p.placements[0].sourceOrientation.basisX.x = 1,
+    (p: any) => p.placements[0].copiedParameterReadback[0].createdValue = "changed",
+    (p: any) => p.placements[0].electricalCircuit.powerSystemIds = [2],
+    (p: any) => p.placementValidation.valid = false
+  ]) { const p = structuredClone(f.payload); mutate(p); assert.equal(evaluate(p).admitted, false); }
+  assert.equal(evaluate(f.payload, { ...f.body, parameterOverrides: { Comments: "override" } }).admitted, false);
+  assert.equal(evaluate(f.payload, { ...f.body, placements: [{ alongHostOffsetFt: 4 }] }).admitted, false);
+});
 
 test("retained C105 staged duct preview proves the requested stage was rolled back", () => {
   const fixture = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/c105-registered-stage-preview.json", import.meta.url), "utf8"));

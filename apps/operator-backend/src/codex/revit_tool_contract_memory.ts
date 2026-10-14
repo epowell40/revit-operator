@@ -248,14 +248,59 @@ function correctionId(route: RevitToolRoute, failedArguments: unknown, acceptedA
 }
 
 export function isContractShapedFailure(error: unknown): boolean {
-  const diagnostic = cleanString(error, 2_000);
+  const diagnostic = failureDiagnostic(error);
   return CONTRACT_FAILURE_PATTERN.test(diagnostic)
     || CONTRACT_VALUE_EXPECTATION_PATTERN.test(diagnostic)
     || CONTRACT_BOUNDARY_PATTERN.test(diagnostic);
 }
 
+/** Error envelope metadata is not a tool-contract diagnostic. In particular,
+ * every native failure has a schema field, including missing model targets.
+ * Parse before truncating; incomplete legacy envelopes cannot justify learning. */
+function failureDiagnostic(value: unknown, depth = 0): string {
+  if (depth > 6) return "";
+  if (typeof value === "string") {
+    const text = value.trim().slice(0, 64_000);
+    const start = text.indexOf("{");
+    if (start >= 0) {
+      try { return failureDiagnostic(JSON.parse(text.slice(start)), depth + 1); }
+      catch { return cleanString(text.slice(0, start), 2_000); }
+    }
+    if (text.startsWith("[")) {
+      try { return failureDiagnostic(JSON.parse(text), depth + 1); }
+      catch { /* Plain bracketed transport prefixes remain diagnostic text. */ }
+    }
+    return cleanString(text, 2_000);
+  }
+  if (Array.isArray(value)) return value.slice(0, 8).map(item => failureDiagnostic(item, depth + 1)).filter(Boolean).join("; ").slice(0, 2_000);
+  if (!value || typeof value !== "object") return "";
+  const error = value as JsonObject;
+  for (const key of ["error", "message"] as const) {
+    if (error[key] !== undefined) {
+      const diagnostic = failureDiagnostic(error[key], depth + 1);
+      if (diagnostic) return diagnostic;
+    }
+  }
+  const issues = Array.isArray(error.issues) ? error.issues : [];
+  const messages = issues.slice(0, 8).map(issue => cleanString(parseObject(issue).message, 240)).filter(Boolean);
+  if (messages.length) return `validation: ${messages.join("; ")}`;
+  // MCP validation records have structured expectations, rather than a message.
+  // Require the explicit request-validation code; native receipt metadata is not
+  // evidence of a contract failure. Never learn supplied values or constraints.
+  if (error.code !== "mcp_request_validation_failed" || !Array.isArray(error.validation_issues)) return "";
+  const structured = error.validation_issues.slice(0, 8).flatMap(issue => {
+    const record = parseObject(issue);
+    const field = cleanString(record.field_path, 120);
+    const expected = cleanString(record.expected_type, 32);
+    if (!/^[A-Za-z_][A-Za-z0-9_.\[\]-]*$/.test(field)
+      || !/^(enum|object|array|string|number|integer|boolean|null)$/.test(expected)) return [];
+    return [`invalid request field ${field}; expected ${expected}`];
+  });
+  return structured.length ? `validation: ${structured.join("; ")}` : "";
+}
+
 export function classifyRevitToolFailure(errorValue: unknown): RevitToolFailureClass {
-  const error = cleanString(errorValue, 2_000);
+  const error = failureDiagnostic(errorValue);
   if (isContractShapedFailure(error)) return "contract";
   if (/\b(404|unknown\s+(?:route|tool)|no\s+handler|route\s+not\s+found|unsupported\s+dynamic\s+tool\s+namespace)\b/i.test(error)) return "routing";
   if (/\b(external[_ -]?event[_ -]?busy|queue|circuit|deadline|timed?\s*out|host\s+unavailable|cancel(?:led|ed)|outcome\s+unknown)\b/i.test(error)) return "scheduler";
@@ -298,7 +343,7 @@ export function recordRevitToolOutcome(input: {
   const store = readStore();
 
   if (input.success === false) {
-    const classification = classifyRevitToolFailure(error);
+    const classification = classifyRevitToolFailure(input.error);
     const failureId = crypto
       .createHash("sha256")
       .update(JSON.stringify({ route: route.key, observedAt, error, compactedArguments }))
@@ -327,7 +372,7 @@ export function recordRevitToolOutcome(input: {
       thread_id: scope.threadId,
       turn_id: cleanString(input.turnId, 120) || null,
       observed_at: observedAt,
-      error,
+      error: sanitizeDiagnostic(failureDiagnostic(input.error), 600),
       failed_arguments: compactedArguments
     });
     store.pending_failures = store.pending_failures.slice(-MAX_PENDING_FAILURES);
@@ -340,6 +385,10 @@ export function recordRevitToolOutcome(input: {
   if (pendingIndex < 0) return null;
   const pending = store.pending_failures[pendingIndex];
   store.pending_failures.splice(pendingIndex, 1);
+  if (!isContractShapedFailure(pending.error)) {
+    writeStore(store);
+    return null;
+  }
   if (Date.parse(observedAt) - Date.parse(pending.observed_at) > MAX_PENDING_AGE_MS) {
     writeStore(store);
     return null;
@@ -384,6 +433,7 @@ function routeLabel(route: RevitToolRoute): string {
 export function formatRevitToolContractMemoryForPrompt(maxCorrections = 8): string {
   const store = readStore();
   const corrections = [...store.corrections]
+    .filter(item => isContractShapedFailure(item.failure_summary))
     .sort((a, b) => b.last_observed_at.localeCompare(a.last_observed_at))
     .slice(0, Math.max(0, Math.min(16, maxCorrections)));
   const quarantines = store.quarantines.filter(item => item.active);
@@ -394,7 +444,7 @@ export function formatRevitToolContractMemoryForPrompt(maxCorrections = 8): stri
   ];
   for (const correction of corrections) {
     lines.push(
-      `- ${routeLabel(correction.route)} failed with ${JSON.stringify(correction.failed_arguments)} and later accepted ${JSON.stringify(correction.accepted_arguments)}. Failure: ${correction.failure_summary}`
+      `- ${routeLabel(correction.route)} failed with ${JSON.stringify(correction.failed_arguments)} and later accepted ${JSON.stringify(correction.accepted_arguments)}. Failure: ${sanitizeDiagnostic(failureDiagnostic(correction.failure_summary), 240)}`
     );
   }
   for (const quarantine of quarantines) {

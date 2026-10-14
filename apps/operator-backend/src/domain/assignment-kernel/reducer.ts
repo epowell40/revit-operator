@@ -1,4 +1,5 @@
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
+import { recordWorkPlanLocationV2 } from './work_plan_location.js';
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
@@ -13,12 +14,13 @@ import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import { nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
-import { declareWorkPlanV2, completeWorkPlanItemV2, workPlanPendingV2 } from "./work_plan.js";
+import { declareWorkPlanV2, completeWorkPlanItemV2, workPlanPendingV2, deferWorkPlanItemV2, workPlanItemDeferredV2 } from "./work_plan.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2, AdvisoryCheckpointContinuationV1 } from "./events.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./progress/execution_time.js";
 import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
+import { validWorkPlanScopeV1 } from './work_plan_scope.js';
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
 import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
@@ -1022,18 +1024,38 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           "advisory_followup_command_invalid", "Disposition retries must retain their command identity.");
         snapshot = { ...snapshot, advisory_followups: dispositionAdvisoryFollowupV2(snapshot.advisory_followups, event.disposition, event.assignment_version) };
         break;
+      case "work_plan_item_deferred":
+        kernelAssertV2(event.actor === "operator-work-plan" && (event.action === "defer" || event.action === "resume_item"), "work_plan_authority_invalid", "Work plans use the trusted assignment boundary.");
+        snapshot = {...snapshot,work_plan:deferWorkPlanItemV2(snapshot,event.item_id,event.action,event.reason,event.occurred_at)};
+        break;
+      case 'work_plan_scope_requested':
+        kernelAssertV2(event.actor==='operator-work-plan' && validWorkPlanScopeV1(event.scope)
+          && Boolean(snapshot.work_plan?.items.some(item=>item.item_id===event.item_id))
+          && (event.read_selection===undefined||event.read_selection==='current_native_reads_v1')
+          && Array.isArray(event.operation_ids)&&(event.operation_ids.length>0||event.read_selection==='current_native_reads_v1')&&event.operation_ids.length<=128
+          &&new Set(event.operation_ids).size===event.operation_ids.length
+          &&event.operation_ids.every(id=>snapshot.operations[id]?.requested_effect==='read')
+          &&(snapshot.work_plan_scope_requests?.length??0)<256,
+          'work_plan_scope_request_invalid','A scope check retains a bounded selector and native read references; it cannot mark work complete.');
+        snapshot={...snapshot,work_plan_scope_requests:[...(snapshot.work_plan_scope_requests??[]),
+          {item_id:event.item_id,scope:event.scope,operation_ids:[...event.operation_ids],requested_at:event.occurred_at,
+            ...(event.read_selection?{read_selection:event.read_selection}:{})}]};
+        break;
       case "work_plan_item_claimed":
         kernelAssertV2(advisoryVerificationV2(snapshot) && event.actor === "operator-work-plan", "advisory_claim_not_enabled", "Unverified checklist claims require the trusted experimental boundary.");
         kernelAssertV2(Boolean(snapshot.work_plan?.items.some(item => item.item_id === event.item_id))
           && Array.isArray(event.operation_ids) && event.operation_ids.length <= 128
           && event.operation_ids.every(id => Boolean(snapshot.operations[id])), "advisory_claim_invalid", "A claim must identify an existing item and retained operations.");
+        kernelAssertV2(!workPlanItemDeferredV2(snapshot.work_plan!.items.find(item=>item.item_id===event.item_id)!), "work_plan_item_deferred", "Resume a deferred item before claiming its work.");
         snapshot = { ...snapshot, work_plan_claims: [...(snapshot.work_plan_claims ?? []), { item_id: event.item_id, operation_ids: [...event.operation_ids], claimed_at: event.occurred_at, verified: false }] };
         break;
       case "work_plan_declared":
+      case "work_plan_location_recorded":
       case "work_plan_item_completed":
         kernelAssertV2(event.actor === "operator-work-plan", "work_plan_authority_invalid", "Work plans use the trusted assignment boundary.");
         snapshot = { ...snapshot, work_plan: event.event_type === "work_plan_declared"
           ? declareWorkPlanV2(snapshot, event.declaration, event.occurred_at)
+          : event.event_type === 'work_plan_location_recorded' ? recordWorkPlanLocationV2(snapshot,event.item_id,event.location_hint,event.occurred_at)
           : completeWorkPlanItemV2(snapshot, event.item_id, event.operation_ids, event.occurred_at, event.inspection) };
         break;
       case "review_requested":

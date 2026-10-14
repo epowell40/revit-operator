@@ -106,6 +106,44 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
   return journal;
 }
 
+test('saved scope selectors replay without certifying checklist claims or criterion truth',()=>{
+  const assignment=spec('apply');assignment.work_units=[...assignment.work_units,{...assignment.work_units[0]!,work_unit_id:'work-2',requested_effect:'read',rollback_scope:'none'}];
+  const journal=createJournal(assignment);
+  journal.append({...event(journal,{event_type:'work_plan_declared',declaration:{items:[{item_id:'typical',description:'Typical tags',source_basis:'Original drawing'}],assumptions:[]}}),actor:'operator-work-plan'});
+  journal.append(event(journal,{event_type:'operation_admitted',operation:{...operation('read','evidence_read'),work_unit_id:'work-2'}}));
+  const body={event_type:'work_plan_scope_requested' as const,item_id:'typical',scope:{category:'OST_ElectricalEquipmentTags',view_ids:[123],has_leader:false},operation_ids:['operation-1']};
+  const before=journal.snapshot();
+  assert.throws(()=>journal.append(event(journal,body)),/scope check/);
+  assert.deepEqual(journal.snapshot(),before);
+  journal.append({...event(journal,body),actor:'operator-work-plan'});
+  const saved=journal.snapshot();assert.equal(saved.work_plan_scope_requests?.length,1);
+  assert.equal(saved.work_plan!.items[0]!.completed_at,undefined);
+  assert.deepEqual(saved.criterion_evaluation_versions,before.criterion_evaluation_versions);
+  assert.deepEqual(saved.criteria,before.criteria);
+  assert.deepEqual(reduceAssignmentEventsV2(journal.events()),saved);
+  assert.throws(()=>journal.append({...event(journal,{...body,operation_ids:[]}),actor:'operator-work-plan'}),/scope check/);
+});
+
+test('saved work-item locations replay exactly and cannot bypass binding or proof authority',()=>{
+  const journal=createJournal(spec('apply'));
+  journal.append({...event(journal,{event_type:'work_plan_declared',declaration:{items:[{item_id:'redline',description:'Pick up indicated redline',source_basis:'Attached drawing'}],assumptions:[]}}),actor:'operator-work-plan'});
+  const location_hint={status:'candidate' as const,reason:'Full page anchor retained; native address still needs checking.',
+    source:{attachment_id:'binder',filename:'drawings.pdf',sha256:'a'.repeat(64),page:4,page_count:26,sheet_label:'E010',region:{min_u:.48,min_v:.6,max_u:.76,max_v:.727}},
+    native:{document_fingerprint:binding.document_fingerprint!,view_id:1661139,view_name:'CONCEPTUAL POWER DISTRIBUTION',sheet_number:'E010'}};
+  const retained={...event(journal,{event_type:'work_plan_location_recorded',item_id:'redline',location_hint}),actor:'operator-work-plan'};
+  const before=journal.snapshot();const after=journal.append(retained);
+  assert.deepEqual(new AssignmentJournalV2(JSON.parse(JSON.stringify(journal.events()))).snapshot(),after,'cold durable replay retains exact source and model address');
+  journal.append(retained);assert.equal(journal.snapshot().work_plan!.items[0]!.location_history!.length,1,'exact duplicate event does not append history');
+  assert.equal(after.work_plan!.items[0]!.location_history![0]!.verified,false);
+  assert.equal(after.work_plan!.items[0]!.completed_at,undefined);
+  assert.deepEqual(after.criteria,before.criteria);assert.deepEqual(after.operations,before.operations);
+  for(const bad of [
+    {...event(journal,{event_type:'work_plan_location_recorded',item_id:'redline',location_hint}),actor:'untrusted'},
+    {...event(journal,{event_type:'work_plan_location_recorded',item_id:'redline',location_hint}),actor:'operator-work-plan',binding:{...binding,generation:2}},
+    {...event(journal,{event_type:'work_plan_location_recorded',item_id:'redline',location_hint:{...location_hint,native:{...location_hint.native,document_fingerprint:'foreign'}}}),actor:'operator-work-plan'}
+  ]){assert.throws(()=>journal.append(bad as AssignmentEventV2));assert.deepEqual(journal.snapshot(),after,'rejected hint never alters accepted state');}
+});
+
 test('content verified journal cache preserves cold replay, payloads, duplicates and rejected append isolation',()=>{
  const cache=createContentVerifiedJournalV2({maxEntries:2,maxBytes:4*1024*1024});
  const events=[...createJournal().events()];

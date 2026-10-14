@@ -1,0 +1,495 @@
+{
+  "notice": "Exact retained apply and later independent native read. A later Type change makes the final type different from the original create request. This is a negative creation-proof vector, not retrospective verification.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1490490,
+      "elementIds": [
+        1521972
+      ],
+      "tagTypeId": 439373,
+      "onlyUntagged": true,
+      "addLeader": true,
+      "orientation": "horizontal",
+      "placementMode": "geometry_aware",
+      "placementProfile": "electrical",
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "status": "Success",
+    "success": true,
+    "viewId": 1490490,
+    "targetCount": 1,
+    "taggedCount": 1,
+    "attemptedCount": 1,
+    "deferredCount": 0,
+    "deferredElementIds": [],
+    "continuationRequired": false,
+    "continuationReason": null,
+    "skippedAlreadyTagged": 0,
+    "skippedNoLocation": 0,
+    "errorCount": 0,
+    "unresolvedCategories": [],
+    "mappingWarnings": [],
+    "tagFamily": {
+      "status": "requested",
+      "targetTagCategory": "OST_ElectricalFixtureTags",
+      "sourceTagCategory": null,
+      "sourceProjectPath": null,
+      "familyName": "Electrical Device Circuit Tag",
+      "typeName": "Electrical Device Circuit Tag",
+      "typeId": 439373,
+      "familyId": 439179,
+      "generatedFamilyPath": null,
+      "error": null,
+      "elementInventoryStatus": null,
+      "elementInventoryError": null,
+      "elementInventoryTotalCount": 0,
+      "elementInventoryTruncated": false,
+      "elementInventory": [],
+      "contentProfile": "none",
+      "contentSanitizationStatus": "not_requested",
+      "keptTextElements": [],
+      "removedTextElements": [],
+      "sourceCandidates": []
+    },
+    "tagVisibility": {
+      "Status": "already_visible",
+      "Requested": true,
+      "CategoryId": -2005004,
+      "CategoryName": "Electrical Fixture Tags",
+      "OwnerViewId": 1490610,
+      "OwnerViewName": "Power Plan - Enlarged",
+      "OwnerKind": "view_template",
+      "WasHidden": false,
+      "IsHidden": false,
+      "Changed": false,
+      "Error": null
+    },
+    "placementMode": "geometry_aware",
+    "placementProfile": "electrical",
+    "geometry": {
+      "evaluatedCount": 1,
+      "collisionFreeCount": 1,
+      "repairedCount": 0,
+      "unresolvedCollisionCount": 0,
+      "leaderAppliedCount": 1,
+      "actualLeaderReadbackCount": 1,
+      "predictedLeaderFallbackCount": 0,
+      "unavailableLeaderGeometryCount": 0,
+      "leaderCrossingCount": 0,
+      "leaderProtectedCrossingCount": 0
+    },
+    "tagIds": [
+      1736673
+    ],
+    "tags": [
+      {
+        "tagId": 1736673,
+        "targetElementId": 1521972,
+        "viewId": 1490490,
+        "targetCategory": "Electrical Fixtures",
+        "tagCategory": "Electrical Fixture Tags",
+        "tagTypeId": 439373,
+        "tagTypeName": "Electrical Device Circuit Tag",
+        "tagFamilyName": "Electrical Device Circuit Tag",
+        "value": "11",
+        "tagHeadPosition": {
+          "x": -96.70655167653811,
+          "y": 9.899827934458738,
+          "z": -4.416666666666664
+        },
+        "geometryPlacement": {
+          "status": "placed",
+          "side": "left",
+          "attempts": 1,
+          "collisionCount": 0,
+          "softObstacleCount": 0,
+          "softObstacleArea": 0,
+          "outsideTarget": true,
+          "collisionFree": true,
+          "leaderApplied": true,
+          "leaderGeometryStatus": "actual",
+          "leaderEndConditionBefore": "Attached",
+          "leaderEndConditionAfter": "Free",
+          "leaderEndpointAssigned": true,
+          "leaderGeometryError": null,
+          "leaderLength": 2.615095248489299,
+          "leaderCrossingCount": 0,
+          "leaderProtectedCrossingCount": 0,
+          "leaderSegments": [
+            {
+              "startU": -94.1623890505026,
+              "startV": 10.504773957633848,
+              "endU": -96.70655167653811,
+              "endV": 9.899827934458738,
+              "length": 2.615095248489299
+            }
+          ],
+          "targetBounds": {
+            "minU": -94.1623890505026,
+            "minV": 10.202411752909434,
+            "maxU": -90.72916666666694,
+            "maxV": 10.807136162358264,
+            "centerU": -92.44577785858476,
+            "centerV": 10.504773957633848
+          },
+          "tagBounds": {
+            "minU": -96.70655167653804,
+            "minV": 9.899827934458731,
+            "maxU": -94.65822642446713,
+            "maxV": 11.109719980808967,
+            "centerU": -95.6823890505026,
+            "centerV": 10.504773957633848
+          },
+          "anchorOffset": {
+            "u": 1.024162626035519,
+            "v": 0.6049460231751098
+          }
+        }
+      }
+    ],
+    "tagReadback": [
+      {
+        "tagId": 1736673,
+        "targetElementId": 1521972,
+        "viewId": 1490490,
+        "targetCategory": "Electrical Fixtures",
+        "tagCategory": "Electrical Fixture Tags",
+        "tagTypeId": 439373,
+        "tagTypeName": "Electrical Device Circuit Tag",
+        "tagFamilyName": "Electrical Device Circuit Tag",
+        "value": "11",
+        "tagHeadPosition": {
+          "x": -96.70655167653811,
+          "y": 9.899827934458738,
+          "z": -4.416666666666664
+        },
+        "geometryPlacement": {
+          "status": "placed",
+          "side": "left",
+          "attempts": 1,
+          "collisionCount": 0,
+          "softObstacleCount": 0,
+          "softObstacleArea": 0,
+          "outsideTarget": true,
+          "collisionFree": true,
+          "leaderApplied": true,
+          "leaderGeometryStatus": "actual",
+          "leaderEndConditionBefore": "Attached",
+          "leaderEndConditionAfter": "Free",
+          "leaderEndpointAssigned": true,
+          "leaderGeometryError": null,
+          "leaderLength": 2.615095248489299,
+          "leaderCrossingCount": 0,
+          "leaderProtectedCrossingCount": 0,
+          "leaderSegments": [
+            {
+              "startU": -94.1623890505026,
+              "startV": 10.504773957633848,
+              "endU": -96.70655167653811,
+              "endV": 9.899827934458738,
+              "length": 2.615095248489299
+            }
+          ],
+          "targetBounds": {
+            "minU": -94.1623890505026,
+            "minV": 10.202411752909434,
+            "maxU": -90.72916666666694,
+            "maxV": 10.807136162358264,
+            "centerU": -92.44577785858476,
+            "centerV": 10.504773957633848
+          },
+          "tagBounds": {
+            "minU": -96.70655167653804,
+            "minV": 9.899827934458731,
+            "maxU": -94.65822642446713,
+            "maxV": 11.109719980808967,
+            "centerU": -95.6823890505026,
+            "centerV": 10.504773957633848
+          },
+          "anchorOffset": {
+            "u": 1.024162626035519,
+            "v": 0.6049460231751098
+          }
+        }
+      }
+    ],
+    "errors": [],
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [],
+      "affected_element_ids": [
+        1736673
+      ],
+      "added_element_ids": [
+        1736673
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "transactionStages": [
+      {
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [],
+          "affected_element_ids": [
+            1736673
+          ],
+          "added_element_ids": [
+            1736673
+          ],
+          "deleted_element_ids": []
+        },
+        "success": true,
+        "error": null,
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        }
+      }
+    ]
+  },
+  "read_input": {
+    "method": "POST",
+    "path": "/revit/native-api-ops",
+    "body": {
+      "operations": [
+        {
+          "id": "tag",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1736673
+          ]
+        },
+        {
+          "id": "read_OwnerViewId",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "OwnerViewId"
+        },
+        {
+          "id": "read_TagText",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "TagText"
+        },
+        {
+          "id": "read_HasLeader",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "HasLeader"
+        },
+        {
+          "id": "read_TagHeadPosition",
+          "op": "get_property",
+          "target": "$tag",
+          "property": "TagHeadPosition"
+        },
+        {
+          "id": "type",
+          "op": "call",
+          "target": "$tag",
+          "memberId": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+          "args": []
+        },
+        {
+          "id": "subjects",
+          "op": "call",
+          "target": "$tag",
+          "memberId": "method:Autodesk.Revit.DB.IndependentTag.GetTaggedLocalElements()",
+          "args": []
+        }
+      ],
+      "returns": [
+        "$tag",
+        "$read_OwnerViewId",
+        "$read_TagText",
+        "$read_HasLeader",
+        "$read_TagHeadPosition",
+        "$type",
+        "$subjects"
+      ]
+    }
+  },
+  "native_read": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 7,
+    "duration_ms": 6,
+    "operations": [
+      {
+        "id": "tag",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1736673,
+          "unique_id": "683527c1-4b3a-4e8e-b4d6-28747c7f1c5c-001a7fe1",
+          "name": "Electrical Device Panel-Circuit Tag",
+          "category": "Electrical Fixture Tags"
+        }
+      },
+      {
+        "id": "read_OwnerViewId",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1490490
+        }
+      },
+      {
+        "id": "read_TagText",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagText",
+        "signature": "string IndependentTag.TagText { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": "P102/11"
+      },
+      {
+        "id": "read_HasLeader",
+        "op": "get_property",
+        "member_id": null,
+        "property": "HasLeader",
+        "signature": "bool IndependentTag.HasLeader { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": true
+      },
+      {
+        "id": "read_TagHeadPosition",
+        "op": "get_property",
+        "member_id": null,
+        "property": "TagHeadPosition",
+        "signature": "XYZ IndependentTag.TagHeadPosition { get; }",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "x": -96.70655167653811,
+          "y": 9.899827934458738,
+          "z": -4.416666666666664
+        }
+      },
+      {
+        "id": "type",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Element.GetTypeId()",
+        "property": null,
+        "signature": "ElementId Element.GetTypeId()",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1480833
+        }
+      },
+      {
+        "id": "subjects",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.IndependentTag.GetTaggedLocalElements()",
+        "property": null,
+        "signature": "ICollection<Element> IndependentTag.GetTaggedLocalElements()",
+        "target_type": "Autodesk.Revit.DB.IndependentTag",
+        "duration_ms": 4,
+        "result_preview": {
+          "type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.Element, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+          "deferred_enumeration": true
+        }
+      }
+    ],
+    "results": {
+      "tag": {
+        "id": 1736673,
+        "unique_id": "683527c1-4b3a-4e8e-b4d6-28747c7f1c5c-001a7fe1",
+        "name": "Electrical Device Panel-Circuit Tag",
+        "category": "Electrical Fixture Tags"
+      },
+      "read_OwnerViewId": {
+        "id": 1490490
+      },
+      "read_TagText": "P102/11",
+      "read_HasLeader": true,
+      "read_TagHeadPosition": {
+        "x": -96.70655167653811,
+        "y": 9.899827934458738,
+        "z": -4.416666666666664
+      },
+      "type": {
+        "id": 1480833
+      },
+      "subjects": {
+        "count": 1,
+        "items": [
+          {
+            "id": 1521972,
+            "unique_id": "10d34372-8427-404a-a5ce-5dbcd3e53d4d-00173934",
+            "name": "GFCI WP",
+            "category": "Electrical Fixtures"
+          }
+        ],
+        "limit": 50,
+        "hasMore": false,
+        "truncated": false,
+        "complete": true,
+        "total": 1
+      }
+    },
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "612f9e8555f50a1674f96f9bf23a82e1",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/native-api-ops",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-13T11:33:49.5340601+00:00"
+    }
+  }
+}

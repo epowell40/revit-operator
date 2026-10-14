@@ -11,6 +11,15 @@ type EffectVector = {
   expected_effect: "read" | "preview" | "apply";
 };
 
+test("native circuit assignment defaults to actual rollback intent and certification follows explicit apply", () => {
+  for (const body of [{elementIds:[21],sourceElementId:20},{elementIds:[21],sourceElementId:20,dryRun:true}]) {
+    assert.equal(revitRouteEffect('/revit/assign-electrical-circuit','POST',body),'preview');
+    assert.equal(revitRouteCertificationEffect('/revit/assign-electrical-circuit','POST',body),'preview');
+  }
+  assert.equal(revitRouteEffect('/revit/assign-electrical-circuit','POST',{elementIds:[21],sourceElementId:20,dryRun:false,confirm:true}),'apply');
+  assert.equal(revitRouteCertificationEffect('/revit/assign-electrical-circuit','POST',{dryRun:false}),'apply');
+});
+
 test("Candidate 18 schedule child remains a read operation", () => {
   assert.equal(revitRouteEffect("/revit/schedules", "POST", { action: "list", query: "", max: 200 }), "read");
   assert.equal(revitRouteEffect("/revit/list-schedules", "POST", { action: "list", query: "", max: 200 }), "read");

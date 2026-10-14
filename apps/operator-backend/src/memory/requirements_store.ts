@@ -83,7 +83,8 @@ const MAX_QUERY_CHARS = 1_000;
 // A planning lease may outlive its owner when a process is killed or a machine
 // restarts. Codex turns are capped at 30 minutes, so a one-minute release grace
 // keeps a live turn protected without letting an orphan fence all future work.
-const MAX_PLANNING_LEASE_MS = 31 * 60_000;
+const DEFAULT_PLANNING_LEASE_MS = 31 * 60_000;
+const MAX_PLANNING_LEASE_MS = 121 * 60_000;
 const SCOPE_PRECEDENCE: Record<RequirementScopeKind, number> = {
   engineer: 100,
   office: 200,
@@ -131,7 +132,7 @@ function planningLeaseRecordIsActive(parsed: { pid?: unknown; created_at?: unkno
     // malformed evidence, but bound a well-formed legacy lease by the same
     // maximum turn lifetime so Windows PID reuse cannot create a permanent fence.
     if (!Number.isFinite(createdAt)) return true;
-    if (createdAt + MAX_PLANNING_LEASE_MS <= nowMs) return false;
+    if (createdAt + DEFAULT_PLANNING_LEASE_MS <= nowMs) return false;
   }
   return isPlanningLeaseProcessAlive(parsed.pid);
 }
@@ -152,7 +153,7 @@ function hasActiveFilesystemPlanningLease(leaseDir: string): boolean {
   return false;
 }
 
-export function beginRequirementsPlanningLease(receiptSha256: string, durationMs = MAX_PLANNING_LEASE_MS): RequirementsPlanningLease {
+export function beginRequirementsPlanningLease(receiptSha256: string, durationMs = DEFAULT_PLANNING_LEASE_MS): RequirementsPlanningLease {
   const hash = String(receiptSha256 ?? "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("receipt_sha256 is invalid for a requirements planning lease.");
   const boundedDurationMs = Math.max(60_000, Math.min(MAX_PLANNING_LEASE_MS, Math.trunc(durationMs)));

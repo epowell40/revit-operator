@@ -29,6 +29,44 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+test("diagnostic arrays retain bounded feedback through provider context without promoting trust", () => withWorkspace(() => {
+  // Native producer shape: large placement rows force compact presentation.
+  const raw = { status: "Ok", warnings: ["Source circuit matched.", "Linked host is unloaded; physical face hosting is unverified."],
+    errors: ["Readback unavailable."], metadata: { diagnostics: [["Nested diagnostic."]] },
+    ordinaryValues: ["Do not promote ordinary array text."],
+    items: Array.from({ length: 200 }, (_, id) => ({ id, detail: "large detail ".repeat(80) })) };
+  const saved = storeEvidence({ scope, source: "native:placement-feedback", trust_level: "untrusted_caller", raw }, 8192);
+  assert.deepEqual(saved.projection.diagnostics, [
+    "warnings[0]: Source circuit matched.",
+    "warnings[1]: Linked host is unloaded; physical face hosting is unverified.",
+    "errors[0]: Readback unavailable.",
+    "metadata.diagnostics[0][0]: Nested diagnostic."
+  ]);
+  assert.equal(saved.projection.inline_payload, undefined);
+  const context = assembleBoundedEvidenceContext({ projections: [saved.projection], ...scope });
+  const wire = modelEvidenceEnvelope(context.projections, context.omitted);
+  assert.deepEqual(wire.evidence_projections[0]!.diagnostics, saved.projection.diagnostics);
+  assert.equal(wire.evidence_projections[0]!.trust_level, "untrusted_caller");
+  assert.equal(wire.evidence_projections[0]!.effect_state, null);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref, scope).toString()), raw);
+}));
+
+test("diagnostic arrays obey count, text and traversal bounds and keep structured fields", () => withWorkspace(() => {
+  const raw = { warnings: Array.from({ length: 40 }, () => "x".repeat(400)),
+    ordinaryValues: ["not diagnostic"], errors: [{ message: "structured error", secret: "ordinary field" }] };
+  const saved = storeEvidence({ scope, source: "native:bounded-feedback", trust_level: "untrusted_caller", raw }, 8192);
+  assert.equal(saved.projection.diagnostics.length, 12);
+  assert(saved.projection.diagnostics.every(text => text.length <= 225));
+  assert.equal(saved.projection.truncated, true);
+  const structured = storeEvidence({ scope, source: "native:structured-feedback", trust_level: "untrusted_caller",
+    raw: { warnings: [{ message: "structured warning", secret: "not selected" }], errors: [] } }, 8192);
+  assert.deepEqual(structured.projection.diagnostics, ["warnings[0].message: structured warning"]);
+  const deep = storeEvidence({ scope, source: "native:deep-feedback", trust_level: "untrusted_caller",
+    raw: { a: { b: { c: { d: { warnings: ["outside traversal depth"] } } } } } }, 8192);
+  assert.deepEqual(deep.projection.diagnostics, []);
+  assert.equal(deep.projection.truncated, true);
+}));
+
 test("embedded dynamic receipts retain settlement in provider projection without promoting caller trust", () => withWorkspace(() => {
   for (const outcome of ["committed_verified", "rolled_back", "outcome_uncertain"]) {
     const raw = { execution_ok: true, evidence: {

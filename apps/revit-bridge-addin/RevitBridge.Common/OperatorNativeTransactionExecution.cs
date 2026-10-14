@@ -11,6 +11,26 @@ namespace RevitBridge.Common
     /// </summary>
     public static class OperatorNativeTransactionExecution
     {
+        /// <summary>Cleanup cannot discard a native outcome already observed by execution.</summary>
+        public static Dictionary<string, object?> ExecuteWithCleanup(Func<Dictionary<string, object?>> execute, Action cleanup)
+        {
+            Dictionary<string, object?>? result = null;
+            try { result = execute(); return result; }
+            finally
+            {
+                try { cleanup(); }
+                catch (Exception error) when (result != null)
+                {
+                    result["success"] = false;
+                    result["ok"] = false;
+                    result["verified"] = false;
+                    result["previewExecuted"] = false;
+                    result["error"] = JoinError(result.TryGetValue("error", out var prior) ? prior as string : null,
+                        "Native cleanup failed: " + error.Message);
+                }
+            }
+        }
+
         // Presentation follows native authority; it is never used to infer effect.
         public static string OutcomeStatus(Dictionary<string, object?> result, string committedSuccessStatus,
             string rolledBackSuccessStatus = "Dry Run")

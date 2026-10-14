@@ -4,6 +4,64 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+test("retained HTTP200 incompatible-host parameter failure stays failed with separately proven effect", async () => {
+  const fixture=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/parameter-incompatible-host-preview.json",import.meta.url),"utf8"));
+  for(const requested of ["preview","apply"] as const)
+  for(const variant of ["exact","status-only","flag-only","pending"] as const){
+    const body={...fixture.request,apply:requested==="apply",dryRun:requested==="preview"};
+    const payload=structuredClone(fixture.payload);
+    payload.canonical_attempt_settlement.requested_effect=requested;
+    if(variant==="status-only")delete payload.failureRollbackRequested;
+    if(variant==="flag-only")payload.status="Dry Run";
+    if(variant==="pending"){
+      payload.transaction.status="pending";payload.transaction.committed=null;
+      payload.canonical_attempt_settlement.effect_state="unknown";
+      payload.canonical_attempt_settlement.effect_authority="native_host";
+      payload.canonical_attempt_settlement.effect_reason="native_handler_returned_without_authoritative_settlement";
+    }
+    const decorated:any=await runWithAssignmentKernelV2(meta(requested,"discovery",{method:fixture.method,path:fixture.path,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2(fixture.method,fixture.path,body,{classified_effect:requested});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2(fixture.method,fixture.path,payload,request);
+      return decorateAssignmentKernelMcpResultV2({content:[{type:"text",text:JSON.stringify(payload)}]},"revit_call_tool");
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,"failed_after_dispatch",`${requested}/${variant}`);
+    assert.equal(result.persistent_effect,variant==="pending"?"unknown":"none");
+    assert.equal(result.native_transaction_state,variant==="pending"?"unknown":"rolled_back");
+    assert.equal(result.error_code,"native_domain_operation_failed");
+    assert.deepEqual(decorated.structuredContent.observation.raw_payload.capturedFailures,payload.capturedFailures);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact:any)=>
+      ["task.result_available","task.preview_valid"].includes(fact.fact_id)&&fact.value===true),false);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.find((fact:any)=>fact.fact_id==="control.domain_succeeded")?.value,false);
+  }
+});
+test("create-similar child commit remains unknown without outer authority, while rollback and apply receipts retain exact effects", async () => {
+  const route="/revit/create-similar-from-instance";
+  for(const variant of ["legacy-preview","rolled-preview","pending-preview","applied","applied-readback-failed"] as const){
+    const apply=variant.startsWith("applied"), knownPreview=variant==="rolled-preview";
+    const body={exemplarElementId:1585163,placements:[{pointXyz:[-49.03125,-16.5,0]}],dryRun:!apply};
+    const payload={status:apply?"Placed":"Planned",dryRun:!apply,transactionStatus:"Committed",
+      ...(variant==="applied-readback-failed"?{success:false,error:"Image failed after commit"}:{}),
+      ...(variant==="legacy-preview"?{}:{transaction:{status:apply?"committed":knownPreview?"rolled_back":"pending",committed:apply?true:knownPreview?false:null,
+        added_element_ids:apply?[1736522]:[],affected_element_ids:apply?[1736522]:[]}}),
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:apply?"apply":"preview",request_dispatched:true,
+        effect_state:apply?"applied":knownPreview?"none":"unknown",effect_authority:knownPreview?"native_rollback":apply?"native_transaction":"native_host",
+        effect_reason:knownPreview?"verified_native_rollback":apply?"native_transaction_committed":"native_handler_returned_without_authoritative_settlement",
+        affected_target_identities:apply?["element_id:1736522"]:[]}};
+    const decorated=await runWithAssignmentKernelV2(meta(apply?"apply":"preview","discovery",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:apply?"apply":"preview"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,payload,request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect,apply?"applied":knownPreview?"none":"unknown");
+    assert.equal(result.native_transaction_state,apply?"committed":knownPreview?"rolled_back":"unknown");
+    if(apply)assert.deepEqual(result.affected_target_identities,["element_id:1736522"]);
+    if(variant==="legacy-preview"||variant==="pending-preview")assert.equal(result.error_code,"native_preview_execution_unproven");
+  }
+});
 test("requested family parameters are verified inside native placement instead of silently skipped", () => {
   const source = readFileSync(process.env.OPERATOR_PLACEMENT_HANDLER_SOURCE_FOR_TEST
     ?? new URL("../../../revit-bridge-addin/RevitBridge.Logic/Handlers/PlaceFamiliesHandler.cs", import.meta.url), "utf8");
@@ -75,6 +133,25 @@ test("missing create-similar host is correctable only with authoritative not-sta
   }
 });
 import { ductPreviewFixture } from "./mepDuctPreviewEvidence.fixtures.js";
+import { createSimilarPreviewFixture } from "./createSimilarPreviewEvidence.fixtures.js";
+
+test("create-similar typed preview admits exact proposal but rejects wrong observed copy without retry", async () => {
+  for (const wrong of [false, true]) {
+    const f = createSimilarPreviewFixture();
+    if (wrong) f.payload.placementValidation.audit.items[0]!.placementContext.typeId = 2;
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: f.path, body: f.body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", f.path, f.body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", f.path, f.payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, wrong ? "failed_after_dispatch" : "succeeded");
+    assert.equal(result.persistent_effect, "none");
+    assert.equal(result.native_transaction_state, "rolled_back");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid"), !wrong);
+  }
+});
 
 test('atomic branch-network rollback is a failed operation; child commits and rollback prose cannot fabricate persistence', async () => {
   const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c40-atomic-network-rollback.json',import.meta.url),'utf8'));
@@ -517,6 +594,7 @@ import {
   ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_BINDING_META_KEY,
   ASSIGNMENT_KERNEL_V2_META_KEY,
+  AssignmentKernelNativeSettlementErrorV2,
   beginAssignmentKernelNativeRequestV2,
   currentAssignmentKernelTaskFulfillmentRoleV2,
   currentAssignmentKernelV2Binding,
@@ -526,6 +604,37 @@ import {
   recordAssignmentKernelNativeFailureV2,
   runWithAssignmentKernelV2
 } from "./assignmentKernelV2.js";
+
+test('child delivery failure preserves the first native result and original settlement error', async () => {
+  const fixture=JSON.parse(readFileSync(new URL('../../src/lib/fixtures/registry-native-read-31.json',import.meta.url),'utf8'));
+  // The durable observation strips transport controls. Reconstruct the test
+  // control envelope from its retained result, without labeling it raw bytes.
+  const raw={...fixture.native_payload,canonical_attempt_settlement:fixture.control_from_retained_result};
+  const workspace=fs.mkdtempSync(path.join(os.tmpdir(),'registry-settlement-'));
+  const previous=process.env.OPERATOR_WORKSPACE_ROOT,previousKey=process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;
+  process.env.OPERATOR_WORKSPACE_ROOT=workspace;process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY=completionOutboxKeyV2(workspace);
+  let child:any, deliveries=0;
+  const edge={async openChild(input:any){child={...meta('read','discovery')[ASSIGNMENT_KERNEL_V2_META_KEY],operation_id:'registry-child',
+    capability_id:input.capability_id,operation_role:'child',parent_operation_id:'operation-1',root_operation_id:'operation-1',blocks_parent_settlement:true,
+    request_identity:{capability_id:input.capability_id,method:input.method,path:input.path,request_signature:'registry-signature'}};return child;},
+    async markDispatch(){},async settle(){deliveries++;throw Error('Operator V2 operation settlement responded with status 503: temporary delivery failure');}};
+  try{await runWithAssignmentKernelV2(meta('read','discovery'),async()=>{
+    const request=await beginAssignmentKernelNativeRequestV2('GET','/revit/tool-registry',undefined,{classified_effect:'read'});
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await assert.rejects(recordAssignmentKernelNativeResultV2('GET','/revit/tool-registry',raw,request),AssignmentKernelNativeSettlementErrorV2);
+    const before:any=readCompletionOutboxV2(workspace,process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY!,child);
+    assert.equal(before.structuredContent.operation_result_v2.status,'succeeded');
+    assert.deepEqual(before.structuredContent.observation.raw_payload,fixture.native_payload);
+    await assert.rejects(recordAssignmentKernelNativeFailureV2(request,{request_dispatched:true,outcome_unknown:false}),/native_settlement_failed:registry-child:.*503/);
+    assert.throws(()=>decorateAssignmentKernelMcpResultV2({isError:true,content:[]},'revit_search_tools'),/native_settlement_failed:registry-child:.*503/);
+    assert.deepEqual(readCompletionOutboxV2(workspace,process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY!,child),before);
+    assert.equal(deliveries,1);
+  },edge as any);}finally{
+    if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;
+    if(previousKey===undefined)delete process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;else process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY=previousKey;
+    fs.rmSync(workspace,{recursive:true,force:true});
+  }
+});
 
 for (const effect of ["preview", "apply", "read"] as const) {
   for (const shape of ["direct", "bridgeDetails", "before_dispatch"] as const) {
@@ -1759,6 +1868,38 @@ test("typed MCP parent retains controller identity while its exact native action
   assert.equal(decorated.structuredContent.observation, undefined);
 });
 
+test('retained typed parameter batches preserve native child commit without promoting wrapper into proof',async()=>{
+ const fixture=JSON.parse(readFileSync(new URL('../../src/lib/fixtures/parameter-typed-batch-30.json',import.meta.url),'utf8'));
+ for(const f of fixture.batches){
+  const metadata:any=meta('apply');
+  const parent=metadata[ASSIGNMENT_KERNEL_V2_META_KEY];
+  parent.capability_id='revit_set_parameters';parent.request_identity.capability_id=parent.capability_id;
+  const settled:any[]=[];
+  const edge={async openChild(input:any){return {...parent,operation_id:'typed-child',operation_role:'child',parent_operation_id:parent.operation_id,
+   root_operation_id:parent.operation_id,blocks_parent_settlement:true,capability_id:input.capability_id,fulfillment_role:input.fulfillment_role,
+   eligible_criterion_ids:input.eligible_criterion_ids,request_identity:{capability_id:input.capability_id,method:input.method,path:input.path,request_signature:'child-signature'}};},
+   async markDispatch(){},async settle(lease:any,result:any){settled.push({lease,result});return {operation_id:lease.operation_id,settled:true,
+    evidence_projections:[{schema:'revit-operator.evidence-projection.v1',source:'assignment_kernel_v2:'+lease.capability_id,
+     assignment_id:binding.assignment_id,run_id:binding.run_id,generation:binding.generation,attempt_id:lease.operation_id,evidence_id:'ev1_typed_batch'}]};}};
+  const decorated:any=await runWithAssignmentKernelV2(metadata,async()=>{
+   const native=await beginAssignmentKernelNativeRequestV2('POST','/revit/set-parameter',f.input.body,{classified_effect:'apply',fulfillment_role:'delegated_task_execution'});
+   await markAssignmentKernelNativeRequestDispatchingV2(native);
+   const payload={...f.payload,canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',request_dispatched:true,
+    effect_state:'applied',effect_authority:'native_transaction',effect_reason:'native_transaction_committed',
+    affected_target_identities:f.payload.transaction.affected_element_ids.map((id:number)=>'element_id:'+id)}};
+   await recordAssignmentKernelNativeResultV2('POST','/revit/set-parameter',payload,native);
+   return decorateAssignmentKernelMcpResultV2({content:[{type:'text',text:JSON.stringify(payload)}]},'revit_set_parameters');
+  },edge);
+  assert.equal(settled.length,1);
+  const child=settled[0].result.structuredContent.operation_result_v2;
+  assert.equal(child.status,'succeeded');assert.equal(child.native_transaction_state,'committed');assert.equal(child.persistent_effect,'applied');
+  assert.deepEqual(child.affected_target_identities.slice().sort(),f.input.body.changes.map((c:any)=>'element_id:'+c.elementId).sort());
+  assert.equal(decorated.structuredContent.operation_result_v2.status,'completed_without_native_dispatch');
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,'none');assert.equal(decorated.structuredContent.observation,undefined);
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id,'typed-child');
+ }
+});
+
 test("a reviewed typed verification handler delegates its native read with the exact parent grant", async () => {
   const settled: any[] = [];
   const edge = {
@@ -2439,6 +2580,36 @@ test(`compact child handoff digest declares its scope without changing evidence 
   assert.equal(decorated.structuredContent.observation, undefined);
 });
 
+
+test("retained binder sheet move commits survive failed readback without becoming completion evidence", async () => {
+  const route = "/revit/move-elements";
+  const retained = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/binder-sheet-move-readback-failures.json", import.meta.url), "utf8"));
+  assert.equal(retained.length, 2);
+  for (const raw of retained) {
+    const affected = raw.transaction.affected_element_ids.map((id: number) => `element_id:${id}`);
+    // The exact retained handler result crosses the native classifier first; this is its authoritative transport envelope.
+    const payload = { ...raw, canonical_attempt_settlement: {
+      schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply", method: "POST", path: route,
+      effect_state: "applied", effect_authority: "native_transaction", effect_reason: "native_transaction_committed",
+      request_dispatched: true, affected_target_identities: affected
+    }};
+    const body = { ids: raw.movedIds, mode: "vector", vectorX: 0, vectorY: -0.1, vectorZ: 0, dryRun: false };
+    const decorated: any = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool");
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, "applied");
+    assert.equal(result.native_transaction_state, "committed");
+    assert.deepEqual(result.affected_target_identities, affected);
+    assert.deepEqual(decorated.structuredContent.observation.raw_payload.snapshots, []);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+      fact.fact_id === "task.result_available" && fact.value === true), false);
+  }
+});
 
 test("move short-line failure preserves observed rollback and never infers no effect from preview or diagnostics", async () => {
   const route = "/revit/move-elements";

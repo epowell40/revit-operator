@@ -51,7 +51,7 @@ export function beginRevitCourierTurnContext(input: { session_id: string; messag
     target_document_path: (input.target_document_path || "").trim() || undefined
   };
   activeByWorkspace.set(workspaceRoot, lease);
-  const ttlMs = Math.max(30_000, Math.min(60 * 60_000, input.ttl_ms || 20 * 60_000));
+  const ttlMs = Math.max(30_000, Math.min(121 * 60_000, input.ttl_ms || 20 * 60_000));
   writeContext(workspaceRoot, {
     version: "revit-operator.revit-courier-context.v1",
     active: true,

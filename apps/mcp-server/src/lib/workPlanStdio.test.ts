@@ -27,10 +27,38 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   await client.connect(transport);
   const workPlanTool = (await client.listTools()).tools.find(tool => tool.name === "operator_manage_work_plan");
   assert(workPlanTool);
+  assert.match(workPlanTool.description??'',/at most 24 entries.*at most 1000 characters/);
+  assert.match(workPlanTool.description??'',/Correct rejected report arguments without redoing model edits/);
+  for(const action of ["defer","resume_item"]) {
+    const meta={"revit-operator/assignment-kernel-binding-v2":{assignment_id:"area-assignment",run_id:"area-run",session_id:"area-session",generation:1,principal_id:"test"}};
+    assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action,itemId:"coordination",reason:"Need architect response"},_meta:meta})).isError,true);
+    assert.equal(requests.at(-1).body.reason,"Need architect response");
+    assert.equal(requests.at(-1).body.action,action);
+  }
+  requests.splice(0,requests.length);
   assert.match(workPlanTool.description ?? "", /\/revit\/view-owned-detailing/,
     "the agent must be told that a native copied-view read can close a detailing inspection");
   const binding = { assignment_id: "area-assignment", run_id: "area-run", session_id: "area-session", generation: 1, principal_id: "test" };
   const _meta = { "revit-operator/assignment-kernel-binding-v2": binding };
+  const scopeCheck={category:'OST_ElectricalEquipmentTags',view_ids:[123],subject_family_names:['Panelboard'],has_leader:false};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['inventory','property'],scopeCheck},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.scope_check,scopeCheck);
+  const scopeRequests=requests.length;
+  for(const arguments_ of [{action:'status',scopeCheck},{action:'check_scope',scopeCheck},
+    {action:'check_scope',scopeCheck:{...scopeCheck,pass:true},itemId:'typical',operationIds:['inventory']}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:arguments_,_meta})).isError,true);
+  assert.equal(requests.length,scopeRequests,'invalid scope arguments must not cross the HTTP boundary');
+  const graphicsScope={kind:'category_graphics_v1',category:'Plumbing Fixtures',disciplines:['Electrical'],view_types:['FloorPlan','Section','Elevation','ThreeD'],halftone:true,hidden_policy:'exclude_hidden'};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['view-census','read-all-views'],scopeCheck:graphicsScope},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.scope_check,graphicsScope);
+  const noOpaqueIds=await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'plumbing-halftone',scopeCheck:{...graphicsScope,category:'OST_PlumbingFixtures',view_types:['FloorPlan','CeilingPlan','EngineeringPlan','Section','Elevation','ThreeD']}},_meta});
+  assert.notEqual(noOpaqueIds.isError,true,'retained49 second request must reach host evidence selection without opaque operation IDs');
+  assert.equal(requests.at(-1).body.operation_ids,undefined);
+  const graphicsRequests=requests.length;
+  for(const scope of [{...graphicsScope,pass:true},{...graphicsScope,view_ids:[123]},{...graphicsScope,view_types:['DrawingSheet']},{...graphicsScope,halftone:'true'},{...graphicsScope,hidden_policy:'verified_unchanged'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['view-census'],scopeCheck:scope},_meta})).isError,true);
+  assert.equal(requests.length,graphicsRequests,'graphics selectors cannot claim a pass or drop census views at the MCP boundary');
+  requests.splice(0,requests.length);
   const items = [{ itemId: "room_a_supply", description: "Supply branch in first room", sourceBasis: "Source plan, first room" },
     { itemId: "room_b_supply", description: "Supply branch in second room", sourceBasis: "Source plan, second room" }];
   const declared = await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "declare", items, assumptions: ["Elevation inferred from context"] }, _meta });
@@ -82,4 +110,21 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   assert.equal(requests.length, count, "invalid proposals must not reach the backend");
   assert.deepEqual(requests[2].body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id,
     generation: 1, action: "status", start: 8, operation_start: 16, assumption_start: 2 });
+  const locationHint={status:"candidate",reason:"Located mark on full sheet; recheck model address before editing.",
+    source:{attachment_id:"binder",filename:"drawings.pdf",sha256:"a".repeat(64),page:4,page_count:26,sheet_label:"E010",region:{min_u:.48,min_v:.6,max_u:.76,max_v:.727}},
+    native:{document_fingerprint:"document-a",view_id:1661139,view_name:"CONCEPTUAL POWER DISTRIBUTION",sheet_number:"E010"}};
+  assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"locate",itemId:"room_a_supply",locationHint},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body,{assignment_id:binding.assignment_id,run_id:binding.run_id,session_id:binding.session_id,generation:1,
+    action:"locate",item_id:"room_a_supply",location_hint:locationHint});
+  const locationCount=requests.length;
+  for(const args of [{action:"locate",itemId:"room_a_supply"},{action:"locate",locationHint},
+    {action:"status",locationHint},{action:"locate",itemId:"room_a_supply",locationHint,operationIds:["native-op-a"]},
+    {action:"locate",itemId:"room_a_supply",locationHint:{...locationHint,verified:true}},
+    {action:"locate",itemId:"room_a_supply",locationHint:{...locationHint,source:{...locationHint.source,page:27}}},
+    {action:"locate",itemId:"room_a_supply",locationHint:{...locationHint,source:{...locationHint.source,region:{min_u:.8,min_v:.6,max_u:.7,max_v:.8}}}},
+    {action:"locate",itemId:"room_a_supply",locationHint:{status:"candidate",reason:"No address"}},
+    {action:"locate",itemId:"room_a_supply",locationHint:{...locationHint,native:{...locationHint.native,view_id:0}}}])
+    assert.equal((await client.callTool({name:"operator_manage_work_plan",arguments:args,_meta})).isError,true);
+  assert.equal((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"locate",itemId:"room_a_supply",locationHint}})).isError,true);
+  assert.equal(requests.length,locationCount,"invalid or unbound locations must not reach HTTP");
 });

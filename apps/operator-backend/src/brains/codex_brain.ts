@@ -16,6 +16,7 @@ import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
+import { codexAssignmentTurnTimeLimits } from "../codex/assignment_timeout.js";
 import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
@@ -175,13 +176,9 @@ function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
 }
 
-function getCodexHome(workspaceRoot: string): string {
-  return path.join(workspaceRoot, ".codex");
-}
-
 function getCodexProfilePaths(workspaceRoot: string, profile: CodexThreadStartProfile): { codexHome: string; cwd: string } {
   if (profile.certified) return prepareCertifiedCodexIsolation({ workspaceRoot });
-  const codexHome = getCodexHome(workspaceRoot);
+  const codexHome = path.join(workspaceRoot, ".codex");
   ensureCodexHomeAuth({ codexHome });
   ensureCodexHomeConfig({ codexHome });
   return { codexHome, cwd: workspaceRoot };
@@ -194,10 +191,6 @@ function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
   delete env.OPERATOR_OPENAI_API_KEY;
   env.OPERATOR_WORKSPACE_ROOT = workspaceRoot;
   return env;
-}
-
-function codexTurnTimeoutMs(): number {
-  return resolveCodexTurnTimeoutMs(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS);
 }
 
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
@@ -576,11 +569,22 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     return [...await buildCodexTurnInput(recovered, inputContextBlocks, thinReference), ...input.slice(initialInputLength)];
   };
 
+  const turnTimeLimits = codexAssignmentTurnTimeLimits({
+    snapshot: assignmentKernelV2 ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) : null,
+    now: new Date().toISOString(), configuredTimeout: process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS
+  });
+  const turnDeadlineMs = Date.now() + turnTimeLimits.maxWallMs;
+  if (turnTimeLimits.maxWallMs === 0) {
+    return stopBeforeProvider(
+      "The saved task is stopped or has no remaining execution time. Its edits and evidence are retained; no new provider work was started.",
+      `assignment-time:${req.message_id}`, "request_validation"
+    );
+  }
   let requirementsLease: ReturnType<typeof beginRequirementsPlanningLease> | null = null;
   if (requirementsReceipt) {
     try {
       const plannedReceiptSha256 = requirementsReceipt.receipt_sha256;
-      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, codexTurnTimeoutMs() + 60_000);
+      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, turnTimeLimits.maxWallMs + 60_000);
       const leasedReceipt = resolveRequirementsForChat(req);
       if (leasedReceipt.status !== "resolved" || leasedReceipt.receipt_sha256 !== plannedReceiptSha256) {
         endRequirementsPlanningLease(requirementsLease);
@@ -660,7 +664,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       courierContext = beginRevitCourierTurnContext({
         session_id: req.session_id,
         message_id: req.message_id,
-        ttl_ms: codexTurnTimeoutMs() + 60_000,
+        ttl_ms: turnTimeLimits.maxWallMs + 60_000,
         ...courierTarget!
       });
       if (assignmentKernelV2 && assignmentKernelV2.snapshot.in_flight_operation_ids.length > 0) {
@@ -849,7 +853,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         await c.waitForTurnCompleted({
           threadId,
           turnId,
-          timeoutMs: Math.min(codexTurnTimeoutMs(), 10_000)
+          timeoutMs: Math.min(resolveCodexTurnTimeoutMs(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS), 10_000)
         });
       } catch (error) {
         cleanupErrors.push(`interrupt drain: ${error instanceof Error ? error.message : String(error)}`);
@@ -1003,8 +1007,8 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       return await activeClient.waitForTurnCompleted({
         threadId,
         turnId,
-        timeoutMs: Math.min(codexTurnTimeoutMs(), 10 * 60_000),
-        maxWallMs: codexTurnTimeoutMs(),
+        timeoutMs: turnTimeLimits.timeoutMs,
+        maxWallMs: Math.max(0, turnDeadlineMs - Date.now()),
         abortSignal: activeTurnAbort.signal
       });
     });

@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isSupportedMcpAlias, requireSupportedToolRoute } from "./lib/supportedToolInventory.js";
+import { isSupportedMcpAlias, requireSupportedToolRoute, SUPPORTED_TOOL_INVENTORY_HASH } from "./lib/supportedToolInventory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
 import * as path from "path";
 import * as xlsx from "xlsx";
@@ -610,6 +611,7 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
       text: JSON.stringify({
         status: "ok",
         protocol: "operator.mcp.runtime.v1",
+        supportedToolInventory: { hash: SUPPORTED_TOOL_INVENTORY_HASH },
         revitTransport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
         toolExposure,
         certificationPolicy
@@ -750,18 +752,19 @@ server.tool("revit_query_views", "Query a bounded view index by exact level/type
   } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + canonical examples).",
+server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + canonical examples). Known product route aliases resolve to the canonical documented route; use that exact returned path for generic calls.",
   { method: z.enum(["GET", "POST"]), path: z.string() },
   async (args) => {
     try {
-      if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
+      const documentedArgs = { ...args, path: canonicalRevitActionPath(args.path) };
+      if (!isToolRouteExposedForSearch(documentedArgs.method, documentedArgs.path)) {
         throw new Error(`Tool documentation is hidden because search exposure is not certified for ${args.method} ${args.path}.`);
       }
-      const cacheKey = `/revit/tool-doc\u0000${args.method}\u0000${String(args.path ?? "").trim()}`;
+      const cacheKey = `/revit/tool-doc\u0000${documentedArgs.method}\u0000${documentedArgs.path}`;
       const cached = cachedToolMetadata.get(cacheKey);
       let data = cached && Date.now() - cached.fetchedAt < TOOL_REGISTRY_CACHE_MS ? cached.value : null;
       if (data === null) {
-        data = await callRevit("/revit/tool-doc", "POST", args);
+        data = await callRevit("/revit/tool-doc", "POST", documentedArgs);
         cachedToolMetadata.set(cacheKey, { fetchedAt: Date.now(), value: data });
       }
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -769,18 +772,19 @@ server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + cano
   }
 );
 
-server.tool("revit_tool_examples", "Get runnable examples for a Revit HTTP tool.",
+server.tool("revit_tool_examples", "Get runnable examples for a Revit HTTP tool. Known product route aliases resolve to its canonical documented route.",
   { method: z.enum(["GET", "POST"]), path: z.string() },
   async (args) => {
     try {
-      if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
+      const documentedArgs = { ...args, path: canonicalRevitActionPath(args.path) };
+      if (!isToolRouteExposedForSearch(documentedArgs.method, documentedArgs.path)) {
         throw new Error(`Tool examples are hidden because search exposure is not certified for ${args.method} ${args.path}.`);
       }
-      const cacheKey = `/revit/tool-examples\u0000${args.method}\u0000${String(args.path ?? "").trim()}`;
+      const cacheKey = `/revit/tool-examples\u0000${documentedArgs.method}\u0000${documentedArgs.path}`;
       const cached = cachedToolMetadata.get(cacheKey);
       let data = cached && Date.now() - cached.fetchedAt < TOOL_REGISTRY_CACHE_MS ? cached.value : null;
       if (data === null) {
-        data = await callRevit("/revit/tool-examples", "POST", args);
+        data = await callRevit("/revit/tool-examples", "POST", documentedArgs);
         cachedToolMetadata.set(cacheKey, { fetchedAt: Date.now(), value: data });
       }
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -1101,9 +1105,23 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_manage_work_plan", "Manage the saved task checklist and checkpoint. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
+server.tool("operator_manage_work_plan", "Manage the saved task checklist and checkpoint. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; each list has at most 24 entries and each entry at most 1000 characters. Put lengthy tables in a saved report artifact and reference it. Correct rejected report arguments without redoing model edits; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Use dependsOn for ordered edits (delete a sheet before reusing its number). Cycles are rejected. Use defer with itemId/reason for an unresolved question; continue ready independent items and consolidate questions. resume_item with itemId/reason revisits a deferred item without marking it done. Status shows ready_items, waiting_on and deferrals; these are planning advice, not execution authority. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
   {
-    action: z.enum(["declare", "complete", "status", "propose_completion", "update_followup"]),
+    action: z.enum(["declare", "complete", "status", "propose_completion", "update_followup", "defer", "resume_item", "locate", "check_scope"]),
+    scopeCheck: z.union([z.object({category:z.string().regex(/^OST_[A-Za-z0-9]+Tags$/),view_ids:z.array(z.number().int().positive()).min(1).max(128),
+      family_names:z.array(z.string().min(1).max(240)).min(1).max(32).optional(),subject_family_names:z.array(z.string().min(1).max(240)).min(1).max(32).optional(),has_leader:z.boolean()
+    }).strict(),z.object({kind:z.literal('category_graphics_v1'),category:z.string().min(1).max(256),
+      disciplines:z.array(z.enum(['Architectural','Structural','Mechanical','Electrical','Plumbing','Coordination'])).min(1).max(6),
+      view_types:z.array(z.enum(['FloorPlan','CeilingPlan','EngineeringPlan','Section','Elevation','ThreeD'])).min(1).max(6),
+      halftone:z.boolean(),hidden_policy:z.literal('exclude_hidden')
+    }).strict()]).optional().describe('check_scope + existing itemId recomputes declared coverage from native bytes, never actor counts. Omit operationIds to let the host select matching current read references; explicit references remain supported. It retains unavailable attempts and never marks an item complete. Reads must start after the latest edit, including SaveAs. Tags: one complete document /revit/find-elements category census (only limit/includeGeometry extras); fresh Document.GetElement + OwnerViewId + HasLeader for candidates selected by view_ids/family_names. subject_family_names additionally needs complete GetTaggedLocalElements and subject Family readbacks. Category graphics: kind=category_graphics_v1, declared disciplines/view_types; one complete /revit/views list with includeTemplates:true, no filters except the exact disciplines and limit/offset0. Then /revit/visibility get with categoryName + includeCategoryState:true for EVERY matching non-template view. Host derives controlling template/property and excluded hidden views. Does not prove hidden preservation, effective linked appearance, source interpretation or whole-item completion. Keep scope consistent; incomplete/changed evidence fails.'),
+    locationHint: z.object({ status: z.enum(['unresolved','ambiguous','candidate']), reason: z.string().min(1).max(240),
+      source: z.object({ attachment_id:z.string().min(1).max(160),filename:z.string().min(1).max(160),sha256:z.string().regex(/^[a-f0-9]{64}$/),
+        page:z.number().int().positive().max(100000),page_count:z.number().int().positive().max(100000),sheet_label:z.string().min(1).max(120).optional(),view_label:z.string().min(1).max(120).optional(),
+        region:z.object({min_u:z.number().min(0).max(1),min_v:z.number().min(0).max(1),max_u:z.number().min(0).max(1),max_v:z.number().min(0).max(1)}).strict().optional() }).strict().optional(),
+      native:z.object({document_fingerprint:z.string().min(1).max(240),view_id:z.number().int().positive(),view_name:z.string().min(1).max(120),sheet_number:z.string().min(1).max(40).optional()}).strict().optional()
+    }).strict().optional().describe('locate with itemId: persist source page/crop and candidate native view for restart. Keep unresolved/ambiguous locations explicit. Navigation hints never authorize edits or verify completion; native identity must be rechecked.'),
+    reason: z.string().min(1).max(800).optional().describe("For defer/resume_item only: specific unresolved question, blocker, or reason to revisit the item. Deferral is not completion."),
     followup: z.object({ command_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/), item_id: z.string().min(1).max(100),
       expected_version: z.number().int().positive(), disposition: z.enum(["resolved", "deferred", "superseded"]), reason: z.string().min(1).max(1000),
       replacements: z.array(z.object({ kind: z.enum(["remaining_work", "uncertainties"]), text: z.string().min(1).max(1000) }).strict()).min(1).max(8).optional() }).strict().optional(),
@@ -1120,6 +1138,19 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist and ch
     try {
       const binding = currentAssignmentKernelV2Binding();
       if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      if(args.action==='check_scope'&&!args.itemId)throw Error('work_plan_scope_item_required: use an existing checklist itemId from status');
+      if(args.action==='check_scope'&&(!args.scopeCheck||args.items||args.assumptions||args.completionProposal||args.followup||args.reason||args.locationHint))throw Error('work_plan_scope_arguments_invalid');
+      if(args.action!=='check_scope'&&args.scopeCheck!==undefined)throw Error('work_plan_scope_arguments_invalid');
+      if(args.action==='locate' && (!args.itemId || !args.locationHint || args.items || args.operationIds || args.assumptions || args.completionProposal || args.followup || args.reason)) throw new Error('work_plan_location_arguments_invalid');
+      if(args.action!=='locate' && args.locationHint!==undefined) throw new Error('work_plan_location_arguments_invalid');
+      if(args.locationHint) {
+        const {source,native,status}=args.locationHint;
+        const region=source?.region;
+        if(status==='candidate' && !source && !native || source && source.page>source.page_count
+          || region && (region.min_u>=region.max_u || region.min_v>=region.max_v)) throw new Error('work_plan_location_arguments_invalid');
+      }
+      if (["defer","resume_item"].includes(args.action) && (!args.itemId || !args.reason || args.items || args.operationIds || args.assumptions || args.completionProposal || args.followup)) throw new Error("work_plan_deferral_arguments_invalid");
+      if (!["defer","resume_item"].includes(args.action) && args.reason !== undefined) throw new Error("work_plan_deferral_arguments_invalid");
       if (args.action === "update_followup" && (!args.followup || args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_followup_arguments_invalid");
       if (args.action !== "update_followup" && args.followup) throw new Error("advisory_followup_arguments_invalid");
       if (args.action === "propose_completion" && (!args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_proposal_arguments_invalid");
@@ -1130,6 +1161,9 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist and ch
       const result = await createOperatorBackendClient().manageAssignmentWorkPlanV2({
         assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation, session_id: binding.session_id,
         action: args.action,
+        ...(args.scopeCheck ? {scope_check:args.scopeCheck} : {}),
+        ...(args.locationHint ? {location_hint:args.locationHint} : {}),
+        ...(args.reason !== undefined ? {reason:args.reason} : {}),
         ...(args.completionProposal ? { completion_proposal: args.completionProposal } : {}),
         ...(args.followup ? { followup: args.followup } : {}),
         ...(args.followupStart !== undefined ? { followup_start: args.followupStart } : {}),
@@ -2421,11 +2455,11 @@ server.tool("revit_delete_elements", "Delete elements.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_set_parameters", "Preview or update element parameters with optional expected-old-value preconditions and committed readback. Dry-run by default.",
+server.tool("revit_set_parameters", "Preview or update parameters on exact element targets, up to 100 changes in one bounded batch. Establish each target's actual subject before batching: a shared tag family can tag different equipment; inspect tagged subjects, not just tag-family names. Read current values first and include expectedOldValue per change to reject stale targets. Use changes[] for repeated edits rather than one call per element. Committed native readback is retained; the host also requests a separate complete target/field read for postcondition checking. Check each item's result and report partial failures; a batch count is not source-scope verification. Dry-run by default.",
   {
     changes: z.array(z.object({
       elementId: z.number().int().positive(),
-      parameterName: z.string().min(1),
+      parameterName: z.string().min(1).describe("Exact native parameter name from get-parameters, not a Revit API property name. Omit names on a representative parameter read when discovering available names, then read the chosen field on every target."),
       value: z.string(),
       expectedOldValue: z.string().optional(),
       preserveTextCase: z.boolean().optional()
@@ -2446,12 +2480,34 @@ server.tool("revit_set_parameters", "Preview or update element parameters with o
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_get_element_summary", "Get a lightweight summary (id/category/name/bbox/location) for specific element ids.",
-  { ids: z.array(z.number()) },
-  async ({ ids }) => {
+server.tool("revit_assign_electrical_circuit", "Create or change real native PowerCircuit membership for up to 100 exact family instances in one transaction group. Choose exactly one mode: sourceElementId joins the existing source device's single circuit; createSystemType:PowerCircuit creates a circuit from uncircuitized devices; electricalSystemId moves an existing entire circuit with its exact elementIds to an explicit panelElementId/targetPanelSlotNumber. Discover native membership first; labels are not connections. Optional expectedCircuitNumber fails closed on mismatch. dryRun executes and restores a real preview; dryRun:false and confirm:true apply authorized work. Separate host readback checks actual members, panel and requested slot. This does not size breakers, conductors or assess code compliance.",
+  {
+    elementIds: z.array(z.number().int().positive()).min(1).max(100).refine(ids => new Set(ids).size === ids.length, "Circuit members must be unique."),
+    sourceElementId: z.number().int().positive().optional(),
+    createSystemType: z.literal("PowerCircuit").optional(),
+    electricalSystemId: z.number().int().positive().optional(),
+    electricalConnectorId: z.number().int().nonnegative().optional(),
+    panelElementId: z.number().int().positive().optional(),
+    targetPanelSlotNumber: z.number().int().positive().optional(),
+    expectedCircuitNumber: z.string().min(1).optional(),
+    dryRun: z.boolean().default(true), confirm: z.boolean().default(false)
+  },
+  async (args) => {
+    try {
+      const data = await callRevit("/revit/assign-electrical-circuit", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+server.tool("revit_get_element_summary", "Get a lightweight summary (id/category/name/bbox/location) for specific element ids. Set includeElectricalCircuitMembership:true for fresh native circuit member/system/panel facts; electricalPanelSlotNumber additionally inspects that actual panel slot. The opt-in result has items and a deduplicated circuits array, not a repeated circuit inventory on every device. Label fields alone do not prove membership.",
+  { ids: z.array(z.number()), includeElectricalCircuitMembership: z.boolean().optional(), electricalPanelSlotNumber: z.number().int().positive().optional() },
+  async ({ ids, includeElectricalCircuitMembership, electricalPanelSlotNumber }) => {
     try {
       // The Revit endpoint now prefers `elementIds` (legacy `ids` still supported).
-      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids }, {
+      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids, includeElectricalCircuitMembership, electricalPanelSlotNumber }, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -3631,12 +3687,20 @@ server.tool("revit_create_family_from_template", "Create a new .rfa from a famil
   }
 );
 
-server.tool("revit_set_view_visibility", "Control view visibility and templates.",
+server.tool("revit_set_view_visibility", "Control view visibility, templates and direct category graphic overrides. Read actual values with action=get; host category settings do not certify linked-model appearance.",
   {
     viewId: z.number(),
-    action: z.enum(["get", "set_template", "hide_category", "show_category"]).describe("Action to perform."),
+    action: z.enum(["get", "set_template", "hide_category", "show_category", "set_category_override", "clear_category_override"]).describe("Action to perform."),
     templateName: z.string().optional().describe("If setting template, the name."),
-    categoryName: z.string().optional().describe("If hiding/showing category, the BuiltInCategory name (e.g. OST_Roofs).")
+    categoryName: z.string().optional().describe("Exact BuiltInCategory name (e.g. OST_PlumbingFixtures)."),
+    halftone: z.boolean().optional().describe("Category override: true turns on halftone, false turns it off; omission preserves it."),
+    lineWeight: z.number().int().min(1).max(16).optional(),
+    r: z.number().int().min(0).max(255).optional(),
+    g: z.number().int().min(0).max(255).optional(),
+    b: z.number().int().min(0).max(255).optional(),
+    includeCategoryState: z.boolean().optional().describe("Get complete direct category state for collateral comparison."),
+    includeLinkedModels: z.boolean().optional().describe("Get exact loaded links and supported link display modes; unknown is not ByHostView."),
+    dryRun: z.boolean().default(false)
   },
   async (args) => {
     try {

@@ -82,6 +82,17 @@ test(`health exposes the backend-authored Sidecar agent profile handshake (local
   });
 
   const health = await waitForHealth(`http://127.0.0.1:${port}/health`, token);
+  const receiptUrl = `http://127.0.0.1:${port}/api/agent-goal/sidecar-receipt`;
+  const unauthenticatedReceipt = await fetch(receiptUrl, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ session_id: "receipt-test" }) });
+  assert.ok([401, 403].includes(unauthenticatedReceipt.status));
+  const staleReceipt = await fetch(receiptUrl, { method: "POST",
+    headers: { "content-type": "application/json", "x-operator-token": token },
+    body: JSON.stringify({ session_id: "receipt-test", assignment_id: "missing",
+      assignment_run_id: "sidecar:missing", assignment_generation: 1,
+      receipt: { call_id: "call_test", tool_name: "delegate_revit_task", status: "success" } }) });
+  assert.equal(staleReceipt.status, 400);
+  assert.match((await staleReceipt.json() as {error:string}).error, /sidecar_supporting_receipt_binding_mismatch/);
   const expectedProfile = {
     schema: SIDECAR_AGENT_PROFILE_SCHEMA,
     source: "backend_environment",

@@ -1,6 +1,11 @@
+import { updatedScheduleCellReadbackMatches } from "./verification/schedule_cell_postcondition_v2.js";
 import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 import { createdTemplateSatisfiedV2 } from './verification/created_template_postcondition_v2.js';
+import { existingTagRepairReadbackMatchesV2 } from './verification/tag_property_readback_v2.js';
+import { circuitMembershipSatisfiedV2 } from './verification/circuit_membership_postcondition_v2.js';
+import { elementTypeSatisfiedV2 } from './verification/element_type_postcondition_v2.js';
+import { nativeElementBooleanReadbackV1 } from './verification/native_element_property_readback_v1.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -44,6 +49,8 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  apply_input?: unknown;
+  verification_input?: unknown;
   affected_target_identities?: readonly string[];
   native_artifact_receipt?: unknown;
   capability_id?: unknown;
@@ -285,8 +292,10 @@ function namedParameterTokens(
   return [...tokens].sort();
 }
 
-function observedScheduleContractTokens(value: unknown): readonly string[] {
+function observedScheduleContractTokens(value: unknown, contract: PostconditionOperationContractV2): readonly string[] {
   const tokens = new Set<string>();
+  const readContract=objectValue(contract.verification_input);
+  const nativeProgram=['/revit/native-api-ops','revit_native_api_ops'].includes(String(readContract.path??readContract.tool));
   const appearanceProperties = new Set(["showtitle", "showheaders", "stripedrows", "hasstripedrows", "freezeheaders"]);
   const settingProperties = new Set(["showgrandtotal", "showgrandtotals", "filterbysheet", "isfilteredbysheet", "isitemized"]);
   const visit = (node: unknown, depth = 0): void => {
@@ -302,6 +311,18 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
     if (typeof node !== "object") return;
     const row = node as Record<string, unknown>;
     const entries = Object.entries(row);
+    const requestedSchedule = objectValue(semanticApplyInput(contract.apply_input)).scheduleId;
+    if (contract.path === '/revit/configure-schedule' && Number.isSafeInteger(requestedSchedule)) {
+      const striped = nativeElementBooleanReadbackV1(contract.verification_input, row,
+        requestedSchedule as number, 'HasStripedRows', 'Autodesk.Revit.DB.ViewSchedule');
+      if (striped !== undefined) tokens.add(schedulePropertyValueToken('stripedRows',striped));
+    }
+    // Native Element serialization contains identity, not arbitrary schedule
+    // properties. Only the checked getter graph above may supply them.
+    if (nativeProgram) {
+      for (const [key,child] of entries) if (!isExcludedEvidenceContainerV2(key)) visit(child,depth+1);
+      return;
+    }
     const schedule = objectValue(row.schedule);
     const scheduleId = schedule.id;
     if (typeof scheduleId === "number" || typeof scheduleId === "string") {
@@ -409,6 +430,21 @@ export function expectedPostconditionValuesV2(
   const operationPath = operationContractPath(value, contract);
   const semanticInput = operationPath === "/revit/set-parameter"
     ? setParameterSemanticInput(semanticApplyInput(value)) : semanticApplyInput(value);
+  // The explicit parameter tool admits at most 100 changes. Do not reuse the
+  // generic traversal's 32-value prefix as proof of an entire larger batch.
+  if (operationPath === "/revit/set-parameter" && Array.isArray(objectValue(semanticInput).changes)) {
+    const input = objectValue(semanticInput), changes = input.changes as unknown[];
+    const excluded = input.excludeElementIds ?? [];
+    if (!changes.length || changes.length > 100 || !Array.isArray(excluded)) return [];
+    for (const candidate of changes) {
+      const row = objectValue(candidate);
+      if (!Number.isSafeInteger(row.elementId) || Number(row.elementId) <= 0
+        || typeof row.parameterName !== "string" || !row.parameterName.trim() || typeof row.value !== "string") return [];
+      if (excluded.includes(row.elementId)) continue;
+      for (const token of namedParameterTokens(row, false, [String(row.elementId)])) values.add(token);
+    }
+    return [...values].sort();
+  }
   if (operationPath === "/revit/create-view" && objectValue(semanticInput).action === "rename_batch")
     return exactViewRenameValues(semanticInput);
   if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
@@ -518,7 +554,7 @@ export function observedPostconditionValuesV2(value: unknown, contract: Postcond
   if (operationContractPath({}, contract) === "/revit/create-view")
     for (const token of observedTargetViewNames(value)) values.add(token);
   for (const token of visibilityObservedValuesV2(value)) values.add(token);
-  for (const token of observedScheduleContractTokens(value)) values.add(token);
+  for (const token of observedScheduleContractTokens(value,contract)) values.add(token);
   const controlLeaves = new Set([
     "action", "complete", "dryrun", "error", "failure", "message", "ok", "status", "success", "verified"
   ]);
@@ -601,6 +637,13 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === "/revit/change-element-type")
+    return elementTypeSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/assign-electrical-circuit")
+    return circuitMembershipSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/update-schedule-cell") return updatedScheduleCellReadbackMatches(applyInput, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
+  if (operationPath === "/revit/tag-elements" && objectValue(semanticApplyInput(applyInput)).repairExistingTagId)
+    return existingTagRepairReadbackMatchesV2(applyInput, contract.verification_input, structuredValue(verificationPayload));
   if (operationPath === "/revit/create-view") {
     const request = objectValue(semanticApplyInput(applyInput));
     if (["create_view_template", "view_template"].includes(String(request.action ?? "").trim().toLowerCase()))
@@ -625,11 +668,18 @@ export function postconditionSatisfiedByPayloadV2(
     return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);
   if (expected.length > 0) {
-    const observed = observedPostconditionValuesV2(verificationPayload, { ...contract, path: operationContractPath(applyInput, contract) });
+    const observed = observedPostconditionValuesV2(verificationPayload, { ...contract, apply_input: applyInput, path: operationContractPath(applyInput, contract) });
     return expected.every(value => observed.has(value));
   }
   // An untyped success/complete/exists flag cannot prove an arbitrary mutation.
   // Operations without assigned values require a capability-specific trusted
   // assertion from the controller until their postcondition has a typed adapter.
   return false;
+}
+
+/** Build readback comparison context from the actual pending calls. */
+export function observedReadbackCallValuesV2(payload: unknown,
+  apply: {path: string;raw_body: unknown} | null | undefined, read: {path: string;raw_body: unknown}): ReturnType<typeof observedPostconditionValuesV2> {
+  return observedPostconditionValuesV2(payload,{path:apply?.path,apply_input:{body:apply?.raw_body},
+    verification_input:{path:read.path,body:read.raw_body}});
 }

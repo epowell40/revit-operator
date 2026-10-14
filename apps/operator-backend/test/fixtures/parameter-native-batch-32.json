@@ -1,0 +1,1133 @@
+{
+  "fixture_notice": "Exact candidate32 native committed payload. Transport and operation binding are reconstructed only inside isolated tests; never retroactive live qualification.",
+  "source_sha256": "4ded171c58203c6f8531e721a8a7ee60373c9ea9f23209e0eeae15b1e977ce01",
+  "native_payload": {
+    "status": "Applied and Verified",
+    "dryRun": false,
+    "requestedCount": 35,
+    "effectiveCount": 35,
+    "excludedCount": 0,
+    "changedCount": 35,
+    "previewChangedCount": 0,
+    "writeFailedCount": 0,
+    "changedElementIds": [
+      1654928,
+      1654931,
+      1654936,
+      1654941,
+      1654944,
+      1654997,
+      1655000,
+      1655003,
+      1655006,
+      1655011,
+      1655014,
+      1655017,
+      1655020,
+      1655069,
+      1655072,
+      1655075,
+      1655078,
+      1655081,
+      1655084,
+      1655087,
+      1655090,
+      1655103,
+      1655106,
+      1655151,
+      1655154,
+      1655157,
+      1655162,
+      1655167,
+      1657890,
+      1657896,
+      1657905,
+      1657907,
+      1657908,
+      1657909,
+      1659176
+    ],
+    "missingAfterElementIds": [],
+    "verificationPerformed": true,
+    "verifiedCount": 35,
+    "verificationFailedCount": 0,
+    "unresolvedElementIds": [],
+    "verification": [
+      {
+        "elementId": 1654928,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1654931,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1654936,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1654941,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1654944,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1654997,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655000,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655003,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655006,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655011,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655014,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655017,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655020,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655069,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655072,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655075,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655078,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655081,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655084,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655087,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655090,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655103,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655106,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655151,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655154,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655157,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655162,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1655167,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657890,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657896,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657905,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657907,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657908,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1657909,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      },
+      {
+        "elementId": 1659176,
+        "parameterName": "Leader Line",
+        "expectedValue": "0",
+        "status": "verified",
+        "actual": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        },
+        "error": null
+      }
+    ],
+    "diffs": [
+      {
+        "elementId": 1654928,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1654931,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1654936,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1654941,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1654944,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1654997,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655000,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655003,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655006,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655011,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655014,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655017,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655020,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655069,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655072,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655075,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655078,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655081,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655084,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655087,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655090,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655103,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655106,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655151,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655154,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655157,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655162,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1655167,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657890,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657896,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657905,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657907,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657908,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1657909,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      },
+      {
+        "elementId": 1659176,
+        "parameterName": "Leader Line",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "Integer",
+          "value": 1,
+          "valueString": "Yes"
+        },
+        "after": {
+          "storageType": "Integer",
+          "value": 0,
+          "valueString": "No"
+        }
+      }
+    ],
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1654928,
+        1654931,
+        1654936,
+        1654941,
+        1654944,
+        1654997,
+        1655000,
+        1655003,
+        1655006,
+        1655011,
+        1655014,
+        1655017,
+        1655020,
+        1655069,
+        1655072,
+        1655075,
+        1655078,
+        1655081,
+        1655084,
+        1655087,
+        1655090,
+        1655103,
+        1655106,
+        1655151,
+        1655154,
+        1655157,
+        1655162,
+        1655167,
+        1657890,
+        1657896,
+        1657905,
+        1657907,
+        1657908,
+        1657909,
+        1659176
+      ],
+      "affected_element_ids": [
+        1654928,
+        1654931,
+        1654936,
+        1654941,
+        1654944,
+        1654997,
+        1655000,
+        1655003,
+        1655006,
+        1655011,
+        1655014,
+        1655017,
+        1655020,
+        1655069,
+        1655072,
+        1655075,
+        1655078,
+        1655081,
+        1655084,
+        1655087,
+        1655090,
+        1655103,
+        1655106,
+        1655151,
+        1655154,
+        1655157,
+        1655162,
+        1655167,
+        1657890,
+        1657896,
+        1657905,
+        1657907,
+        1657908,
+        1657909,
+        1659176
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "requiredConfirm": null,
+    "confirmReceived": "",
+    "titleblockImpacts": null
+  }
+}

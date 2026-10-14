@@ -15,7 +15,7 @@ import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPrev
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, recordTeammateEvidenceResult, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { canonicalTeammateInputs, canonicalTeammateOperationScope, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
-import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
+import { expectedPostconditionValuesV2, observedPostconditionValuesV2, observedReadbackCallValuesV2 } from "./postcondition_verification_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
@@ -929,7 +929,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of observedPostconditionValuesV2(verificationPayload, { path: state.apply_call?.path })) state.verification_observed_values.add(value);
+    for (const value of observedReadbackCallValuesV2(verificationPayload, state.apply_call, pending)) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
     if (accumulatedReadbackMatches(state, verificationPayload)) {
       markVerified(state, "target_bound_readback", actionId, verificationPayload);

@@ -14,6 +14,11 @@ import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshot
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
 import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 import { providerUsageHoldMessageV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
+import { assignmentWorkBudgetStatusV2 } from "../assignments/assignment_work_allowance_v2.js";
+import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../assignments/assignment_kernel_v2_progress.js";
+import { projectWorkPlan } from '../assignments/work_plan_projection.js';
+import { assignmentBudgetForPrompt } from './assignment_budget_prompt.js';
+import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -101,20 +106,23 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer.",
+        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer. Each list permits at most 24 entries, each at most 1000 characters. Keep entries concise; provide detailed tables/coordinates in a saved report artifact and include its usable reference. If proposal validation rejects a field, correct and resubmit the report without repeating model edits.",
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"
       ? ["CURRENT TASK:", progression.snapshot.spec.source_user_request,
           `Requested effect: ${progression.snapshot.spec.requested_effect}`,
           `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
-          `Saved work plan: ${JSON.stringify(progression.snapshot.work_plan?.items ?? [])}`,
+          `Saved work plan: ${JSON.stringify(projectWorkPlan(progression.snapshot.work_plan,undefined,0,progression.snapshot))}`,
           "Remaining work:", ...deriveProgressGapsV2(progression.snapshot).map(gap => `- ${gap.reason}`),
           "Continue useful work from existing results. Read back and repair as needed; do not repeat completed edits."].join("\n")
       : progressPrompt(progression.snapshot, progression.decision);
   return {
     snapshot: progression.snapshot,
-    prompt: prompt ? [prompt, executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
+    prompt: prompt ? [prompt,
+      `Host budget status: ${JSON.stringify(assignmentBudgetForPrompt(assignmentWorkBudgetStatusV2(progression.snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString())))}`,
+      "For multi-part work, retain a source-linked checklist, group related marks, and check operator_manage_work_plan status after each useful batch. Record completed operations and unresolved questions promptly. A near-limit warning means finish the current verification and save an honest checkpoint; do not spend the remaining allowance rediscovering completed work. Task counts and assistant claims do not authorize extra budget or prove completion.",
+      executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
       : finalCodexAssignmentMessageV2(progression.snapshot, progressMessage(progression.decision))
@@ -199,7 +207,16 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
     }
     if (!snapshot.quiescent || snapshot.in_flight_operation_ids.length || snapshot.in_flight_provider_call_ids.length)
       return "Work is still settling. Its progress is saved.";
-    return [advisoryHandoffMessage(snapshot.completion_proposal, projectAdvisoryFollowupsV2(snapshot).unresolved_total), advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join("\n\n");
+    const review = renderWorkReviewHandoffV2(snapshot);
+    const handoff = advisoryHandoffMessage(snapshot.completion_proposal, projectAdvisoryFollowupsV2(snapshot).unresolved_total);
+    if (review) {
+      const details = handoff.slice(handoff.indexOf('## Details'));
+      const unresolved = projectAdvisoryFollowupsV2(snapshot).unresolved_total;
+      return ['Ready for review (not independently verified).', review.summary,
+        ...(unresolved ? [`${unresolved} saved unfinished reports remain in Details; omitting a report does not resolve it.`] : []),
+        details, review.details, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join('\n\n');
+    }
+    return [handoff, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join("\n\n");
   }
   if (snapshot && !snapshot.terminal && snapshot.outcome === "awaiting_user_input") {
     const questions = Object.values(snapshot.clarifications)

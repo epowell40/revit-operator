@@ -1,0 +1,503 @@
+{
+  "provenance": {
+    "apply_binding": {
+      "assignment_id": "d6fcdb26-fbd4-4f1b-849e-85002c5c2e71",
+      "run_id": "chat:bb10ff0c-d7f1-4e56-996d-772d04d30bcf",
+      "generation": 1,
+      "session_id": "5145ae1a-783d-4e72-a6fa-5dbfb74432d8",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "operation_id": "opv2_57c85bd5372390ecd07d40627df5262da38c6b851e38e7edce0c4950ea46a84f",
+    "apply_native_sha256": "d054aa110914c140c4172ee2c9086f21e89c23e7384a963b169f5cf0dcc517c9",
+    "independent_later_read": "root-e307-layout-1791914437373.json",
+    "notice": "Exact retained native panel movement plus independent later sheet read from same cumulative model chain. Pure comparator fixture; different assignment read is not an integral kernel pass."
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1673462,
+        1673481,
+        1673544,
+        1673545,
+        1673546,
+        1673547,
+        1673548,
+        1673549,
+        1673593
+      ],
+      "mode": "vector",
+      "vectorX": 0.03,
+      "vectorY": 0,
+      "vectorZ": 0,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "moveTogether": true
+    }
+  },
+  "native_apply": {
+    "movedIds": [
+      1673462,
+      1673481,
+      1673544,
+      1673545,
+      1673546,
+      1673547,
+      1673548,
+      1673549,
+      1673593
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1673462,
+        1673481,
+        1673544,
+        1673545,
+        1673546,
+        1673547,
+        1673548,
+        1673549,
+        1673593
+      ],
+      "affected_element_ids": [
+        1673462,
+        1673481,
+        1673544,
+        1673545,
+        1673546,
+        1673547,
+        1673548,
+        1673549,
+        1673593
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1673462,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.007470118701383,
+            0.8136263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.037470118701383,
+            0.8136263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673481,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.007470118701383,
+            1.5011263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.037470118701383,
+            1.5011263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673544,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.0074701187013844,
+            2.1886263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            2.037470118701384,
+            2.1886263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673545,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0574701187013826,
+            0.8136263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0874701187013827,
+            0.8136263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673546,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0574701187013829,
+            1.5011263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0874701187013829,
+            1.5011263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673547,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0574701187013829,
+            2.1886263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            1.0874701187013829,
+            2.1886263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673548,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.10747011870138296,
+            0.8136263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.13747011870138295,
+            0.8136263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673549,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.10747011870138284,
+            1.5011263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.13747011870138284,
+            1.5011263142719606,
+            0
+          ]
+        }
+      },
+      {
+        "id": 1673593,
+        "before": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.1074701187013824,
+            2.1886263142719606,
+            0
+          ]
+        },
+        "after": {
+          "kind": "PanelScheduleOrigin",
+          "pointXyz": [
+            0.1374701187013824,
+            2.1886263142719606,
+            0
+          ]
+        }
+      }
+    ],
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": true
+  },
+  "actual_sheet": {
+    "status": "Ok",
+    "action": "detail",
+    "sheetElementId": 1673435,
+    "sheetId": 1673435,
+    "viewId": 1673435,
+    "sheetNumber": "E307",
+    "sheetName": "SWITCHBOARD & METER BANKS",
+    "title": "SWITCHBOARD & METER BANKS",
+    "isPlaceholder": false,
+    "viewportCount": 0,
+    "placedViewCount": 0,
+    "placedScheduleCount": 10,
+    "titleBlockCount": 1,
+    "sheetOutline": {
+      "minU": 8.337514706413529e-17,
+      "minV": -5.551115123125783e-17,
+      "maxU": 3.5000000000000053,
+      "maxV": 2.4999999999999996
+    },
+    "viewportIds": [],
+    "viewportGeometry": [],
+    "placedViews": [],
+    "placedSchedules": [
+      {
+        "placementType": "ScheduleSheetInstance",
+        "instanceId": 1736410,
+        "scheduleId": 1736406,
+        "name": "<Revision Schedule> 24",
+        "viewType": "Schedule",
+        "point": {
+          "u": 3.0104166773677217,
+          "v": 1.1224371739549142
+        },
+        "boundingBox": {
+          "minU": 3.003472232923277,
+          "minV": 0.6421086519900814,
+          "maxU": 3.4340139349206518,
+          "maxV": 1.1293816183993586
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673462,
+        "scheduleId": 1672140,
+        "name": "MAIN1",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 2.037470118701383,
+          "v": 0.8136263142719606
+        },
+        "boundingBox": {
+          "minU": 2.037470118701383,
+          "minV": 0.12612631427196064,
+          "maxU": 2.987470118701383,
+          "maxV": 0.8136263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673481,
+        "scheduleId": 1673473,
+        "name": "MAIN2",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 2.037470118701383,
+          "v": 1.5011263142719606
+        },
+        "boundingBox": {
+          "minU": 2.037470118701383,
+          "minV": 0.8136263142719606,
+          "maxU": 2.987470118701383,
+          "maxV": 1.5011263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673544,
+        "scheduleId": 1672156,
+        "name": "MB11",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 2.037470118701384,
+          "v": 2.1886263142719606
+        },
+        "boundingBox": {
+          "minU": 2.037470118701384,
+          "minV": 1.5011263142719606,
+          "maxU": 2.9874701187013843,
+          "maxV": 2.1886263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673545,
+        "scheduleId": 1672869,
+        "name": "MB12",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 1.0874701187013827,
+          "v": 0.8136263142719606
+        },
+        "boundingBox": {
+          "minU": 1.0874701187013827,
+          "minV": 0.12612631427196064,
+          "maxU": 2.037470118701383,
+          "maxV": 0.8136263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673546,
+        "scheduleId": 1672821,
+        "name": "MB13",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 1.0874701187013829,
+          "v": 1.5011263142719606
+        },
+        "boundingBox": {
+          "minU": 1.0874701187013827,
+          "minV": 0.8136263142719606,
+          "maxU": 2.0374701187013833,
+          "maxV": 1.5011263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673547,
+        "scheduleId": 1671868,
+        "name": "MB14",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 1.0874701187013829,
+          "v": 2.1886263142719606
+        },
+        "boundingBox": {
+          "minU": 1.0874701187013827,
+          "minV": 1.5011263142719606,
+          "maxU": 2.0374701187013833,
+          "maxV": 2.1886263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673548,
+        "scheduleId": 1672789,
+        "name": "MB21",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 0.13747011870138295,
+          "v": 0.8136263142719606
+        },
+        "boundingBox": {
+          "minU": 0.13747011870138293,
+          "minV": 0.12612631427196064,
+          "maxU": 1.0874701187013833,
+          "maxV": 0.8136263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673549,
+        "scheduleId": 1672805,
+        "name": "MB22",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 0.13747011870138284,
+          "v": 1.5011263142719606
+        },
+        "boundingBox": {
+          "minU": 0.13747011870138284,
+          "minV": 0.8136263142719606,
+          "maxU": 1.087470118701383,
+          "maxV": 1.5011263142719606
+        }
+      },
+      {
+        "placementType": "PanelScheduleSheetInstance",
+        "instanceId": 1673593,
+        "scheduleId": 1671783,
+        "name": "MB23",
+        "viewType": "PanelSchedule",
+        "point": {
+          "u": 0.1374701187013824,
+          "v": 2.1886263142719606
+        },
+        "boundingBox": {
+          "minU": 0.1374701187013824,
+          "minV": 1.5011263142719606,
+          "maxU": 1.0874701187013827,
+          "maxV": 2.1886263142719606
+        }
+      }
+    ],
+    "titleBlocks": [
+      {
+        "elementId": 1673440,
+        "typeId": 1704694,
+        "familyName": "E1 30 x 42 Horizontal_Snowdon",
+        "typeName": "E1 30 x 42 Horizontal_Snowdon",
+        "boundingBox": {
+          "minU": 8.337514706413529e-17,
+          "minV": -5.551115123125783e-17,
+          "maxU": 3.5000000000000053,
+          "maxV": 2.4999999999999996
+        }
+      }
+    ],
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "0bf417bd48fc6967dda2567aa0be4ea4",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/sheets",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-13T18:00:37.3704231+00:00"
+    }
+  }
+}

@@ -7917,7 +7917,14 @@ test("redline execution bridge finalizes hosted placement after audit includes c
   assert.match(response.assistant_message, /1735601=P403\/1/i);
 });
 
-test("redline execution bridge corrects explicit circuit mismatch after valid hosted placement", () => {
+// Planning cannot substitute a panel/circuit label for real source membership.
+// Native assignment and subsequent membership proof remain separate boundaries.
+for (const fixture of [
+  {name:"absent source",exemplar:undefined,canAssign:false},
+  {name:"conflicting source",exemplar:{id:1556486,name:"adjacent receptacle",electricalCircuit:{primaryLabel:"P405/1",panel:"P405",circuitNumber:"1"}},canAssign:false},
+  {name:"matching source",exemplar:{id:1556486,name:"adjacent receptacle",electricalCircuit:{primaryLabel:"P403/1",panel:"P403",circuitNumber:"1"}},canAssign:true}
+]) {
+test(`explicit requested circuit correction requires matching source evidence: ${fixture.name}`, () => {
   const response = __testOnlyBuildRedlineExecutionBridge({
     userText: "add receptacle in room 403 where indicated, circuit to P403/1",
     context: {
@@ -7936,6 +7943,7 @@ test("redline execution bridge corrects explicit circuit mismatch after valid ho
           status: "Placed",
           dryRun: false,
           elementIds: [1735601],
+          ...(fixture.exemplar ? {exemplar:fixture.exemplar} : {}),
           placements: [
             {
               index: 0,
@@ -7985,13 +7993,20 @@ test("redline execution bridge corrects explicit circuit mismatch after valid ho
   });
 
   assert.ok(response);
-  assert.equal(response.actions[0]?.path, "/revit/assign-electrical-circuit");
-  assert.deepEqual((response.actions[0]?.body as any)?.elementIds, [1735601]);
-  assert.equal((response.actions[0]?.body as any)?.panelName, "P403");
-  assert.equal((response.actions[0]?.body as any)?.circuitNumber, "1");
-  assert.equal((response.actions[0]?.body as any)?.parameterOnlyFallback, false);
-  assert.match(response.assistant_message, /correct the electrical system membership/i);
+  if (fixture.canAssign) {
+    assert.equal(response.actions[0]?.path, "/revit/assign-electrical-circuit");
+    assert.deepEqual((response.actions[0]?.body as any)?.elementIds, [1735601]);
+    assert.equal((response.actions[0]?.body as any)?.sourceElementId, 1556486);
+    for (const field of ["panelName","circuitNumber","parameterOnlyFallback"]) assert.equal((response.actions[0]?.body as any)?.[field],undefined);
+    assert.match(response.assistant_message, /correct the electrical system membership/i);
+  } else {
+    assert.deepEqual(response.actions, []);
+    assert.match(response.assistant_message, /circuit verification failed/i);
+    assert.match(response.assistant_message, /Expected P403\/1; observed 1735601=P405\/1/i);
+    assert.doesNotMatch(response.assistant_message, /Placed and verified/i);
+  }
 });
+}
 
 test("redline execution bridge corrects same-circuit mismatch from the source exemplar", () => {
   const response = __testOnlyBuildRedlineExecutionBridge({

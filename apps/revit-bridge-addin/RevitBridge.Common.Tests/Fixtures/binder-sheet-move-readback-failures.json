@@ -1,0 +1,85 @@
+[
+  {
+    "movedIds": [
+      1602409,
+      1602410
+    ],
+    "applied": true,
+    "success": false,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1391394,
+        1602409,
+        1602410
+      ],
+      "affected_element_ids": [
+        1391394,
+        1602409,
+        1602410
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": false,
+    "ok": false,
+    "error": "Native location readback is unavailable.",
+    "status": "Committed With Errors",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "snapshots": [],
+    "movedTogether": true
+  },
+  {
+    "movedIds": [
+      1685471
+    ],
+    "applied": true,
+    "success": false,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1391394,
+        1685471
+      ],
+      "affected_element_ids": [
+        1391394,
+        1685471
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": false,
+    "ok": false,
+    "error": "Native location readback is unavailable.",
+    "status": "Committed With Errors",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "snapshots": [],
+    "movedTogether": false
+  }
+]

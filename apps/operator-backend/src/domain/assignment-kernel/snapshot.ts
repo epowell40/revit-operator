@@ -13,6 +13,7 @@ import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-
 export { ASSIGNMENT_SNAPSHOT_V2_SCHEMA };
 
 export interface AssignmentSnapshotV2 {
+  work_plan_scope_requests?: readonly import('./work_plan_scope.js').WorkPlanScopeRequestV1[];
   schema: typeof ASSIGNMENT_SNAPSHOT_V2_SCHEMA;
   assignment_version: number;
   spec: AssignmentSpecV2;
