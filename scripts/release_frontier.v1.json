@@ -3975,6 +3975,13 @@
         "backend:requested_family_scope_readback_v1.test.ts",
         "backend:requested_family_scope_dispatch_v1.test.ts"
       ]
+    },
+    {
+      "id": "retained_complete_without_edit_ids_advisory_mcp_backend",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

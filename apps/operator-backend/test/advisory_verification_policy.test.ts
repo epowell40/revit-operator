@@ -32,6 +32,29 @@ import { getThinReferenceCodexProfile } from "../src/brains/codex_turn_profile.j
 import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
 import { codexAssignmentEvidenceContextV2 } from "../src/brains/codex_assignment_evidence.js";
 import { assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work_allowance_v2.js";
+import {projectWorkReviewV2} from '../src/assignments/work_review_handoff.js';
+
+test('retained74 omitted-reference completion reaches durable advisory claim without inventing an edit or certifying work',()=>fixture(true,f=>{
+ const retained=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/work-plan-completion-refusal-74.json'),'utf8'));
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'wsp-cover',description:'Cover firm/address already matches',source_basis:'Original cover redline'}],assumptions:[]}});
+ const before=structuredClone(f.state());
+ assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'wsp-cover',reason:retained.attempts[0].arguments.reason}),/work_plan_deferral_arguments_invalid.*reason is only/);
+ assert.deepEqual(f.state(),before,'explanation refusal leaves all state untouched');
+ const request=retained.attempts[1].arguments;
+ const result=manageAssignmentWorkPlan({binding:f.binding,action:request.action,item_id:request.itemId});
+ assert.equal(result.checklist_claims!.length,1);assert.deepEqual(result.checklist_claims![0]!.operation_ids,[]);
+ assert.equal(f.state().work_plan!.items[0]!.completed_at,undefined);
+ assert.deepEqual(f.state().operations,before.operations);assert.deepEqual(f.state().criteria,before.criteria);
+ assert.equal(projectWorkReviewV2(f.state()).counts.reported_unverified,1);assert.equal(projectWorkReviewV2(f.state()).counts.checked,0);
+ __testOnlyResetGoalListCache();assert.deepEqual(manageAssignmentWorkPlan({binding:f.binding,action:'status'}).checklist_claims,result.checklist_claims);
+ assert.match(result.notice!,/Record complete for each declared item/);
+}));
+test('MCP-compatible omitted or empty complete references cannot bypass strict independent proof',()=>fixture(false,f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'firm',description:'Firm text',source_basis:'Original redline'},{item_id:'other',description:'Second room',source_basis:'Other redline'}],assumptions:[]}});
+ const before=structuredClone(f.state());
+ for(const operation_ids of [undefined,[]])assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'firm',operation_ids}),/work_plan_completion_references_required/);
+ assert.deepEqual(f.state(),before);assert.equal(f.state().work_plan_claims,undefined);
+}));
 
 test("fresh tool context warns inside a long provider turn without manufacturing model observations or extending authority",()=>fixture(true,f=>{
  const s=structuredClone(f.state());

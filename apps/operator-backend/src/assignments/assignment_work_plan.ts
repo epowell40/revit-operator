@@ -33,7 +33,9 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
   if (input.followup_start !== undefined && (!Number.isSafeInteger(input.followup_start) || input.followup_start < 0)) throw new Error("advisory_followup_page_invalid");
   for (const offset of [input.start, input.operation_start, input.assumption_start])
     if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000)) throw new Error("work_plan_page_invalid");
-  if (input.action !== "defer" && input.action !== "resume_item" && input.reason !== undefined) throw new Error("work_plan_deferral_arguments_invalid");
+  if (input.action !== "defer" && input.action !== "resume_item" && input.reason !== undefined) throw new Error("work_plan_deferral_arguments_invalid: reason is only for defer/resume_item; complete uses an existing item_id and retained operation_ids. Omit operation_ids only for an unverified advisory claim, not strict completion.");
+  if(input.action==='complete'&&!advisoryVerificationV2(snapshot)&&!input.operation_ids?.length)
+    throw new Error('work_plan_completion_references_required: strict completion requires distinct independently verified native operations; already-correct advisory claims cannot certify strict work.');
   if(input.action==='check_scope') {
     if(!input.item_id)throw Error('work_plan_scope_item_required: use an existing checklist itemId from status');
     if(!validWorkPlanScopeV1(input.scope_check)||(input.operation_ids!==undefined&&!input.operation_ids.length)
@@ -88,7 +90,7 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
   } else if (input.action !== "status") throw new Error("work_plan_action_invalid");
   return { ok: true, outcome: snapshot.outcome, work_plan_required: !advisoryVerificationV2(snapshot) && snapshot.spec.work_plan_required === true,
     ...(advisoryVerificationV2(snapshot) ? { verification_policy: "advisory", completion_proposal: snapshot.completion_proposal ?? null, advisory_followups: projectAdvisoryFollowupsV2(snapshot, input.followup_start), checklist_claims: snapshot.work_plan_claims ?? [],
-      notice: "Inspection remains useful. Specialized proof is advisory; submit propose_completion with claimed_completed, remaining_work and uncertainties for independent review. This never certifies completion." } : {}),
+      notice: "Record complete for each declared item before propose_completion. In advisory mode, omit operation_ids for already-correct work; reference retained apply IDs for edits and saved artifacts to associate their checks. These are unverified item claims; native scope checks and source/layout review remain separate. Then propose_completion with claimed_completed, remaining_work and uncertainties. This never certifies completion." } : {}),
     work_allowance: { ...assignmentWorkAllowanceV2(snapshot), used_provider_calls: Object.keys(snapshot.provider_calls).length },
     budget_status: assignmentWorkBudgetStatusV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString()),
     work_plan: projectWorkPlan(snapshot.work_plan, input.start, input.assumption_start, snapshot),
