@@ -19,19 +19,19 @@
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L0",
           "path": "artifacts/certification/epic-0437/5d7a88495a5d.l0.json",
-          "sha256": "sha256:157ff421cb538374cf4d4c7052bce01b7e515a7e43ec82b387352fa1ea74ea9e"
+          "sha256": "sha256:3c9f751477957c7e0468f7a45f08c6ce43cecae42f372d5f1fe1c9cf282c6fdd"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L1",
           "path": "artifacts/certification/epic-0437/5d7a88495a5d.l1.json",
-          "sha256": "sha256:dc5c5a7b6413b2c9bb95d45dd24e822f2a5510815edf42624ed43a811839ca91"
+          "sha256": "sha256:de2a844bab45665927df6a67bb7a0124f78bd063c1e42e9f955178c70a1cfa15"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L2",
           "path": "artifacts/certification/epic-0437/5d7a88495a5d.l2.json",
-          "sha256": "sha256:77d659ae1e41a9a04183295649802a8527d5cdc60c347fe065079a66f9537185"
+          "sha256": "sha256:aeaff32633529dc924a5bdaca39b32ed5a892f5005c058abfa999adea82b2b31"
         }
       ]
     },
@@ -52,19 +52,19 @@
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L0",
           "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l0.json",
-          "sha256": "sha256:be717e0e88c1c04c72483ccf5073d61b75196ad50725474fcd6fb669a95da24a"
+          "sha256": "sha256:08f14fc20fb92afe1f27e1530c209cbb79cd46c5d1bee335bbfe836969d32c8e"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L1",
           "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l1.json",
-          "sha256": "sha256:6e0ecb944c4424e40eedfa9db2497c09454801e8ff4bc2ab960670e8069dfcb4"
+          "sha256": "sha256:b3c4bf114dcadcea175058d0bec8503cd06cbd9aa198f5689a5bb2f69738679f"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L2",
           "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l2.json",
-          "sha256": "sha256:c80efd08102cc5a5f026cbbc510eb2bbb299d3398e5ffa6b759ebf24d5cd3f20"
+          "sha256": "sha256:8f2f803ced30c7d255df85d10fbd2331845eab37c87bc5d81bcc5d17233d131a"
         }
       ]
     },
@@ -85,19 +85,19 @@
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L0",
           "path": "artifacts/certification/epic-0437/3fdfdce0e479.l0.json",
-          "sha256": "sha256:f3baa3802ea542134555375c2c19dc91849d93bbde2cedc71d43d1f061a4a898"
+          "sha256": "sha256:f3a33a2e0e5023dce94b94b0305578bf31cbd553a0484ea0cc29ed3e813f48ef"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L1",
           "path": "artifacts/certification/epic-0437/3fdfdce0e479.l1.json",
-          "sha256": "sha256:c1b8cace0abe2a62abde4bdc3befde49c1acee84b39213f00a016dda976d3c59"
+          "sha256": "sha256:95aa5a7521b3089dff4e2967a9d40dfabd1c12b7a11869bfa26358698e24c314"
         },
         {
           "schema": "revit-operator.certification-proof-artifact.v1",
           "level": "L2",
           "path": "artifacts/certification/epic-0437/3fdfdce0e479.l2.json",
-          "sha256": "sha256:f494b4129110b6b6014357b168b95c2b5bed451c11ac77a48e5f040540ee6a58"
+          "sha256": "sha256:23da52b2a2e7bb57b28385e9fbf79bfc770a424380baa5e535167864d7e3ac72"
         }
       ]
     }

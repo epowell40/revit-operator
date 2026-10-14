@@ -6,6 +6,8 @@ import { readEvidenceRef, readAuthoritativeEvidence } from '../evidence/evidence
 import { checkTagScopeReadbackV1 } from '../verification/tag_scope_readback_v1.js';
 import { checkCategoryGraphicsScopeV1 } from '../verification/category_graphics_scope_v1.js';
 import { checkCategoryVisibilityScopeV1 } from '../verification/category_visibility_scope_v1.js';
+import { checkFamilyStaticTextScopeV1 } from '../verification/family_static_text_scope_v1.js';
+import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
 import { validCategoryGraphicsScopeV1,validCategoryVisibilityScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
 import type { WorkPlanScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
 
@@ -23,7 +25,12 @@ export function selectWorkPlanScopeReadIdsV1(snapshot:AssignmentSnapshotV2,scope
     .sort((a,b)=>Date.parse(a.opened_at)-Date.parse(b.opened_at)||a.operation_id.localeCompare(b.operation_id));
   const latest=new Map<string,string>(),extras:string[]=[];
   for(const o of reads){const i=o.input as any,b=requestBody(i);if(i?.method!=='POST'||!b)continue;
-    if(graphics){
+    if(validFamilyStaticTextScopeV1(scope)){
+      if(i.path==='/revit/find-elements'&&b.category===scope.category
+        &&Object.entries(b).every(([k,v])=>['category','limit','includeGeometry'].includes(k)||v==null))latest.set('inventory',o.operation_id);
+      else if(i.path==='/revit/inspect-family-content'&&Number.isSafeInteger(b.elementId)&&b.elementId>0
+        &&Object.entries(b).every(([k,v])=>['elementId','maxElements','includeParameters','includeOtherElements'].includes(k)||v==null))latest.set('instance:'+b.elementId,o.operation_id);
+    }else if(graphics){
       if(i.path==='/revit/views'&&(b.action===undefined||b.action==='list')&&b.includeTemplates===true
         &&Object.keys(b).every(k=>['action','includeTemplates','disciplines','limit','offset'].includes(k))
         &&(b.offset===undefined||b.offset===0)
@@ -84,7 +91,8 @@ export function checkWorkPlanScopeV1(snapshot:AssignmentSnapshotV2, request:Work
     });
     return {item_id:request.item_id,requested_at:request.requested_at,available:true as const,
       ...(validCategoryGraphicsScopeV1(request.scope)?checkCategoryGraphicsScopeV1(request.scope,reads)
-        :validCategoryVisibilityScopeV1(request.scope)?checkCategoryVisibilityScopeV1(request.scope,reads):checkTagScopeReadbackV1(request.scope,reads)),
+        :validCategoryVisibilityScopeV1(request.scope)?checkCategoryVisibilityScopeV1(request.scope,reads)
+        :validFamilyStaticTextScopeV1(request.scope)?checkFamilyStaticTextScopeV1(request.scope,reads):checkTagScopeReadbackV1(request.scope,reads)),
       readback_window:{first_completed_at:new Date(Math.min(...readTimes)).toISOString(),last_completed_at:new Date(Math.max(...readTimes)).toISOString()},
       freshness_notice:'As of the retained native readbacks. Later assignment edits invalidate this check; changes outside this assignment require new reads.'};
   } catch(error) {
@@ -96,6 +104,9 @@ export function checkWorkPlanScopeV1(snapshot:AssignmentSnapshotV2, request:Work
       }:{}),
       ...(/^category_(visibility|graphics)_scope_(one_view_inventory_required|view_inventory_incomplete)$/.test(reason)?{
         guidance:'Read a complete unfiltered native view/template inventory AFTER the latest edit or SaveAs: /revit/views with action=list, includeTemplates=true, limit=500 and offset=0. If it is still truncated, report the incomplete scope rather than narrowing it. Then rerun check_scope with the same item and scope; new reads alone do not refresh an earlier check.'
+      }:{}),
+      ...(/^family_static_text_scope_(one_inventory_required|inventory_incomplete|candidate_read_missing|family_read_incomplete)$/.test(reason)?{
+        guidance:'After final edits, reloads and SaveAs, collect one complete unfiltered category /revit/find-elements census and unfiltered /revit/inspect-family-content for a discovered instance of EVERY returned type (maxElements=2000). Then rerun check_scope for the same item/scope. A truncated inventory is not complete; do not narrow it or repeat an uncertain edit.'
       }:{}),
       ...(reason==='scope_check_unsettled'?{
         blocking_operation_ids:[...new Set([...snapshot.in_flight_operation_ids,...snapshot.unresolved_unknown_operation_ids])].sort(),

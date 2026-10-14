@@ -70,6 +70,14 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
     {...visibilityScope,sheet_ids:[1661139,1661139]},{...visibilityScope,category:'OST_bad token'}])
     assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'data',scopeCheck:scope},_meta})).isError,true);
   assert.equal(requests.length,visibilityRequests,'Invalid visibility claims/subset shortcuts never reach HTTP');
+  const familyScope={kind:'family_static_text_v1',category:'OST_TitleBlocks',expected_text:'Example firm\nExample address'};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'firm',scopeCheck:familyScope},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.scope_check,familyScope);assert.equal(requests.at(-1).body.operation_ids,undefined);
+  const familyRequests=requests.length;
+  for(const scope of [{...familyScope,verified:true},{...familyScope,type_ids:[1]},{...familyScope,instance_ids:[1]},
+    {...familyScope,expected_count:26},{...familyScope,expected_text:''},{...familyScope,expected_text:'x\0'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'firm',scopeCheck:scope},_meta})).isError,true);
+  assert.equal(requests.length,familyRequests,'Actor subset/pass claims never reach the family scope HTTP boundary');
   requests.splice(0,requests.length);
   const items = [{ itemId: "room_a_supply", description: "Supply branch in first room", sourceBasis: "Source plan, first room" },
     { itemId: "room_b_supply", description: "Supply branch in second room", sourceBasis: "Source plan, second room" }];

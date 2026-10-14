@@ -1,3 +1,4 @@
+import { validFamilyStaticTextScopeV1,type FamilyStaticTextScopeV1 } from './work_plan_family_scope.js';
 /** A worker-selected search domain, not a source interpretation certificate. */
 export type TagScopeRequestV1 = Readonly<{
   category: string; view_ids: readonly number[];
@@ -24,7 +25,7 @@ export type CategoryVisibilityScopeV1 = Readonly<{
   disciplines: readonly string[]; view_types: readonly string[];
   hidden: boolean; sheet_ids?: readonly number[];
 }>;
-export type WorkPlanScopeV1 = TagScopeRequestV1 | CategoryGraphicsScopeV1 | CategoryVisibilityScopeV1;
+export type WorkPlanScopeV1 = TagScopeRequestV1 | CategoryGraphicsScopeV1 | CategoryVisibilityScopeV1 | FamilyStaticTextScopeV1;
 export function validCategoryVisibilityScopeV1(value: unknown): value is CategoryVisibilityScopeV1 {
   if (!value || typeof value!=='object' || Array.isArray(value)) return false;
   const v=value as CategoryVisibilityScopeV1;
@@ -48,7 +49,7 @@ export function validCategoryGraphicsScopeV1(value: unknown): value is CategoryG
     &&typeof v.halftone==='boolean'&&v.hidden_policy==='exclude_hidden';
 }
 export function validWorkPlanScopeV1(value: unknown): value is WorkPlanScopeV1 {
-  return validTagScopeRequestV1(value)||validCategoryGraphicsScopeV1(value)||validCategoryVisibilityScopeV1(value);
+  return validTagScopeRequestV1(value)||validCategoryGraphicsScopeV1(value)||validCategoryVisibilityScopeV1(value)||validFamilyStaticTextScopeV1(value);
 }
 export function validTagScopeRequestV1(value: unknown): value is TagScopeRequestV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

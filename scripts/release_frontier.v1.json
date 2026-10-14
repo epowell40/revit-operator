@@ -270,7 +270,8 @@
     "openai_brain_redline_targeting.test.ts",
     "saved_document_postcondition_v2.test.ts",
     "committed_saved_document_readback_plan_v2.test.ts",
-    "category_visibility_scope_v1.test.ts"
+    "category_visibility_scope_v1.test.ts",
+    "family_static_text_scope_v1.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -309,7 +310,8 @@
     "lib/operatorBackendClient.test.ts",
     "captureViewArguments.test.ts",
     "lib/viewOwnedDetailingAgentProjection.test.ts",
-    "lib/category_visibility_scope_schema.test.ts"
+    "lib/category_visibility_scope_schema.test.ts",
+    "lib/family_static_text_scope_schema.test.ts"
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
@@ -3955,6 +3957,14 @@
       "coverage": [
         "mcp:lib/category_visibility_scope_schema.test.ts",
         "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "shared_family_static_text_complete_native_scope",
+      "coverage": [
+        "backend:family_static_text_scope_v1.test.ts",
+        "mcp:lib/workPlanStdio.test.ts",
+        "mcp:lib/family_static_text_scope_schema.test.ts"
       ]
     }
   ],
