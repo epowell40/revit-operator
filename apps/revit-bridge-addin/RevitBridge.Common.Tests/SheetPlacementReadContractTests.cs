@@ -10,6 +10,18 @@ namespace RevitBridge.Common.Tests
     public class SheetPlacementReadContractTests
     {
         [Theory]
+        [InlineData(0.25868055555555974)]
+        [InlineData(-0.020399305555546754)]
+        [InlineData(0)]
+        public void NativeSheetAnchorSerializationPreservesAllThreeCoordinates(double z)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(SheetPlacementReadContract.AnchorCoordinates(1.822451245701026, 1.0345255861840672, z)));
+            Assert.Equal(1.822451245701026, document.RootElement.GetProperty("u").GetDouble());
+            Assert.Equal(1.0345255861840672, document.RootElement.GetProperty("v").GetDouble());
+            Assert.Equal(z, document.RootElement.GetProperty("z").GetDouble());
+        }
+
+        [Theory]
         [InlineData("{\"placementIds\":[1673544]}", "detail", true)]
         [InlineData("{\"placementIds\":[1,2]}", "detail", true)]
         [InlineData("{}", "list", true)]

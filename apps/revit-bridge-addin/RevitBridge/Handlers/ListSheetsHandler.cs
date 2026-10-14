@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Handlers
 {
@@ -272,13 +273,16 @@ namespace RevitBridge.Handlers
                     try
                     {
                         var c = vp.GetBoxCenter();
-                        center = new { u = c.X, v = c.Y };
+                        center = SheetPlacementReadContract.AnchorCoordinates(c.X, c.Y, c.Z);
                     }
                     catch
                     {
                         center = null;
                     }
 
+                    object? placementAnchor = null;
+                    try { placementAnchor = SheetViewportPlacement.Read(vp); }
+                    catch { /* A failed placement read remains missing, never a success flag. */ }
                     viewportGeometry.Add(new
                     {
                         viewportId = vpid,
@@ -286,6 +290,7 @@ namespace RevitBridge.Handlers
                         viewportType,
                         rotation = vp.Rotation.ToString(),
                         center,
+                        placementAnchor,
                         box
                     });
                 }
@@ -423,7 +428,7 @@ namespace RevitBridge.Handlers
 
         private static object? PointObject(XYZ? point)
         {
-            return point == null ? null : new { u = point.X, v = point.Y };
+            return point == null ? null : SheetPlacementReadContract.AnchorCoordinates(point.X, point.Y, point.Z);
         }
 
         private static object? BoundingBoxObject(Element element, ViewSheet sheet)

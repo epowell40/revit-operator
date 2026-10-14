@@ -1,0 +1,420 @@
+{
+  "provenance": {
+    "source": "Exact candidate79 Snowdon disposable native commit and UV-only reads; no retrospective verification credit",
+    "sha256": [
+      "bc2c9472af63e1128b4a0a508e3860d75a659d151409cfa68d589309e60e382e",
+      "8ab52b0fcc0801222e62c793896425a86029e7da386b3f28a37bc94cb79dfd33",
+      "eaef1b514828ef7df163b8f5e9c7d95bd48df94f1537a1b0394be68678e613f7",
+      "6a432e311069c2e9716161903af8aca939c1b93ef745aa4c250846b33a56b14d"
+    ]
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1483910,
+        1483922,
+        1483932
+      ],
+      "mode": "vector",
+      "vectorX": 0.303555904236556,
+      "vectorY": 0,
+      "vectorZ": 0,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "moveTogether": true
+    }
+  },
+  "native_apply": {
+    "movedIds": [
+      1483910,
+      1483922,
+      1483932
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1391171,
+        1391195,
+        1391219,
+        1483910,
+        1483922,
+        1483932
+      ],
+      "affected_element_ids": [
+        1391171,
+        1391195,
+        1391219,
+        1483910,
+        1483922,
+        1483932
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1483910,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.51889534146447,
+            1.0345255861840676,
+            0.1184895833333422
+          ],
+          "ownerViewId": 1391171
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.822451245701026,
+            1.0345255861840676,
+            0.1184895833333422
+          ],
+          "ownerViewId": 1391171
+        }
+      },
+      {
+        "id": 1483922,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.51889534146447,
+            1.0345255861840676,
+            0.04904513888889778
+          ],
+          "ownerViewId": 1391195
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.822451245701026,
+            1.0345255861840676,
+            0.04904513888889778
+          ],
+          "ownerViewId": 1391195
+        }
+      },
+      {
+        "id": 1483932,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.51889534146447,
+            1.0345255861840676,
+            -0.020399305555546754
+          ],
+          "ownerViewId": 1391219
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.822451245701026,
+            1.0345255861840676,
+            -0.020399305555546754
+          ],
+          "ownerViewId": 1391219
+        }
+      }
+    ],
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": true
+  },
+  "actual_sheets": [
+    {
+      "status": "Ok",
+      "action": "detail",
+      "sheetElementId": 1391195,
+      "sheetId": 1391195,
+      "viewId": 1391195,
+      "sheetNumber": "E104",
+      "sheetName": "POWER PLAN L4",
+      "title": "POWER PLAN L4",
+      "isPlaceholder": false,
+      "requestedPlacementIds": [
+        1483922
+      ],
+      "viewportCount": 1,
+      "placedViewCount": 1,
+      "placedScheduleCount": 1,
+      "titleBlockCount": 1,
+      "sheetOutline": {
+        "minU": 8.337514706413529e-17,
+        "minV": -5.551115123125783e-17,
+        "maxU": 3.5000000000000053,
+        "maxV": 2.4999999999999996
+      },
+      "viewportIds": [
+        1483922
+      ],
+      "viewportGeometry": [
+        {
+          "viewportId": 1483922,
+          "viewId": 1363337,
+          "viewportType": {
+            "id": 9835,
+            "name": "Views Typical"
+          },
+          "rotation": "None",
+          "center": {
+            "u": 1.822451245701026,
+            "v": 1.0345255861840676
+          },
+          "box": {
+            "minU": 0.7104733034610888,
+            "minV": 0.5078286826052795,
+            "maxU": 2.934429187940963,
+            "maxV": 1.5612224897628557
+          }
+        }
+      ],
+      "placedViews": [
+        {
+          "viewId": 1363337,
+          "name": "L4 - Power",
+          "viewType": "FloorPlan",
+          "scale": 96,
+          "viewportIds": [
+            1483922
+          ]
+        }
+      ],
+      "placedSchedules": [
+        {
+          "placementType": "ScheduleSheetInstance",
+          "instanceId": 1737413,
+          "scheduleId": 1737409,
+          "name": "<Revision Schedule> 5",
+          "viewType": "Schedule",
+          "point": {
+            "u": 3.0104166773677217,
+            "v": 1.1224371739549142
+          },
+          "boundingBox": {
+            "minU": 3.003472232923277,
+            "minV": 0.6421086519900814,
+            "maxU": 3.4340139349206518,
+            "maxV": 1.1293816183993586
+          }
+        }
+      ],
+      "titleBlocks": [
+        {
+          "elementId": 1391200,
+          "typeId": 1704694,
+          "familyName": "E1 30 x 42 Horizontal_Snowdon",
+          "typeName": "E1 30 x 42 Horizontal_Snowdon",
+          "boundingBox": {
+            "minU": 8.337514706413529e-17,
+            "minV": -5.551115123125783e-17,
+            "maxU": 3.5000000000000053,
+            "maxV": 2.4999999999999996
+          }
+        }
+      ]
+    },
+    {
+      "status": "Ok",
+      "action": "detail",
+      "sheetElementId": 1391219,
+      "sheetId": 1391219,
+      "viewId": 1391219,
+      "sheetNumber": "E105",
+      "sheetName": "POWER PLAN L5",
+      "title": "POWER PLAN L5",
+      "isPlaceholder": false,
+      "requestedPlacementIds": [
+        1483932
+      ],
+      "viewportCount": 1,
+      "placedViewCount": 1,
+      "placedScheduleCount": 1,
+      "titleBlockCount": 1,
+      "sheetOutline": {
+        "minU": 8.337514706413529e-17,
+        "minV": -5.551115123125783e-17,
+        "maxU": 3.5000000000000053,
+        "maxV": 2.4999999999999996
+      },
+      "viewportIds": [
+        1483932
+      ],
+      "viewportGeometry": [
+        {
+          "viewportId": 1483932,
+          "viewId": 1363347,
+          "viewportType": {
+            "id": 9835,
+            "name": "Views Typical"
+          },
+          "rotation": "None",
+          "center": {
+            "u": 1.822451245701026,
+            "v": 1.0345255861840676
+          },
+          "box": {
+            "minU": 0.7104733034610888,
+            "minV": 0.5078286826052795,
+            "maxU": 2.934429187940963,
+            "maxV": 1.5612224897628557
+          }
+        }
+      ],
+      "placedViews": [
+        {
+          "viewId": 1363347,
+          "name": "L5 - Power",
+          "viewType": "FloorPlan",
+          "scale": 96,
+          "viewportIds": [
+            1483932
+          ]
+        }
+      ],
+      "placedSchedules": [
+        {
+          "placementType": "ScheduleSheetInstance",
+          "instanceId": 1737418,
+          "scheduleId": 1737414,
+          "name": "<Revision Schedule> 6",
+          "viewType": "Schedule",
+          "point": {
+            "u": 3.0104166773677217,
+            "v": 1.1224371739549142
+          },
+          "boundingBox": {
+            "minU": 3.003472232923277,
+            "minV": 0.6421086519900814,
+            "maxU": 3.4340139349206518,
+            "maxV": 1.1293816183993586
+          }
+        }
+      ],
+      "titleBlocks": [
+        {
+          "elementId": 1391224,
+          "typeId": 1704694,
+          "familyName": "E1 30 x 42 Horizontal_Snowdon",
+          "typeName": "E1 30 x 42 Horizontal_Snowdon",
+          "boundingBox": {
+            "minU": 8.337514706413529e-17,
+            "minV": -5.551115123125783e-17,
+            "maxU": 3.5000000000000053,
+            "maxV": 2.4999999999999996
+          }
+        }
+      ]
+    },
+    {
+      "status": "Ok",
+      "action": "detail",
+      "sheetElementId": 1391171,
+      "sheetId": 1391171,
+      "viewId": 1391171,
+      "sheetNumber": "E103",
+      "sheetName": "POWER PLAN L3",
+      "title": "POWER PLAN L3",
+      "isPlaceholder": false,
+      "requestedPlacementIds": [
+        1483910
+      ],
+      "viewportCount": 1,
+      "placedViewCount": 1,
+      "placedScheduleCount": 1,
+      "titleBlockCount": 1,
+      "sheetOutline": {
+        "minU": 8.337514706413529e-17,
+        "minV": -5.551115123125783e-17,
+        "maxU": 3.5000000000000053,
+        "maxV": 2.4999999999999996
+      },
+      "viewportIds": [
+        1483910
+      ],
+      "viewportGeometry": [
+        {
+          "viewportId": 1483910,
+          "viewId": 1363327,
+          "viewportType": {
+            "id": 9835,
+            "name": "Views Typical"
+          },
+          "rotation": "None",
+          "center": {
+            "u": 1.822451245701026,
+            "v": 1.0345255861840676
+          },
+          "box": {
+            "minU": 0.7104733034610888,
+            "minV": 0.5078286826052795,
+            "maxU": 2.934429187940963,
+            "maxV": 1.5612224897628557
+          }
+        }
+      ],
+      "placedViews": [
+        {
+          "viewId": 1363327,
+          "name": "L3 - Power",
+          "viewType": "FloorPlan",
+          "scale": 96,
+          "viewportIds": [
+            1483910
+          ]
+        }
+      ],
+      "placedSchedules": [
+        {
+          "placementType": "ScheduleSheetInstance",
+          "instanceId": 1737408,
+          "scheduleId": 1737404,
+          "name": "<Revision Schedule> 4",
+          "viewType": "Schedule",
+          "point": {
+            "u": 3.0104166773677217,
+            "v": 1.1224371739549142
+          },
+          "boundingBox": {
+            "minU": 3.003472232923277,
+            "minV": 0.6421086519900814,
+            "maxU": 3.4340139349206518,
+            "maxV": 1.1293816183993586
+          }
+        }
+      ],
+      "titleBlocks": [
+        {
+          "elementId": 1391176,
+          "typeId": 1704694,
+          "familyName": "E1 30 x 42 Horizontal_Snowdon",
+          "typeName": "E1 30 x 42 Horizontal_Snowdon",
+          "boundingBox": {
+            "minU": 8.337514706413529e-17,
+            "minV": -5.551115123125783e-17,
+            "maxU": 3.5000000000000053,
+            "maxV": 2.4999999999999996
+          }
+        }
+      ]
+    }
+  ]
+}

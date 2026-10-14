@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "viewport_projection_pose_v2.test.ts",
+    "multi_sheet_move_verification_v2.test.ts",
     "created_tag_postcondition_v2.test.ts",
     "duplicated_type_postcondition_v2.test.ts",
     "committed_duplicated_type_readback_v2.test.ts",
@@ -425,7 +427,8 @@
     "TemporaryDocumentInspectionTests",
     "SourceCircuitRequestBoundaryTests",
     "CircuitMoveCreateRequestBoundaryTests",
-    "SheetPlacementReadContractTests"
+    "SheetPlacementReadContractTests",
+    "SheetViewportPlacementTests"
   ],
   "failure_families": [
     {
@@ -3974,6 +3977,29 @@
       "coverage": [
         "backend:requested_family_scope_readback_v1.test.ts",
         "backend:requested_family_scope_dispatch_v1.test.ts"
+      ]
+    },
+    {
+      "id": "viewport_placement_frame_vs_evaluated_graphic_bounds",
+      "coverage": [
+        "dotnet:SheetViewportPlacementTests",
+        "backend:viewport_projection_pose_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_sheet_anchor_xyz_roundtrip",
+      "coverage": [
+        "dotnet:SheetPlacementReadContractTests",
+        "backend:sheet_move_postcondition_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "multi_owner_sheet_move_complete_native_readback",
+      "coverage": [
+        "backend:sheet_move_postcondition_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
       ]
     },
     {

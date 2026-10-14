@@ -60,7 +60,7 @@ import { committedCircuitReadbackPlanV2, committedTypedCircuitReadbackPlanV2 } f
 import { committedElementTypeReadbackPlanV2 } from "../verification/element_type_postcondition_v2.js";
 import { committedDuplicatedTypeReadbackPlanV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_postcondition_v2.js";
-import { committedSheetMoveReadbackPlanV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
@@ -365,26 +365,31 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
-          ?? committedSheetMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedModelPointMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;
-      if (readPlan) {
+      const readPlans=readPlan?[readPlan]:(current?.operations[lease.operation_id]
+        ? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
+      if (readPlans.length) {
         // Native dispatch has returned and canonical settlement is retained.
         // Release only this completed route's lease before the separate read
         // reacquires the ordinary guard. Otherwise same-route reads (visibility
         // and schedule settings) are mistaken for concurrent duplicate calls.
         // The new call still validates ownership, pause, admission and freshness.
         parallel.release();
-        try {
-          hostReadResponse = await handleCodexDynamicToolCall(runtime, {
-            id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}`, method: "item/tool/call",
+        for(const [index,plan] of readPlans.entries())try {
+          const response = await handleCodexDynamicToolCall(runtime, {
+            id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}:${index}`, method: "item/tool/call",
             params: { namespace: "revit_operator", tool: "revit_call_tool",
-              turnId: params.turnId, threadId: params.threadId, arguments: readPlan }
+              turnId: params.turnId, threadId: params.threadId, arguments: plan }
           }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+          if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
+          if(!response.success)break;
         } catch (error) {
-          hostReadResponse = { success:false, contentItems:[{type:"inputText",text:
+          const failure = { success:false, contentItems:[{type:"inputText" as const,text:
             `Host readback remains unverified: ${String(error).slice(0,1000)}`}] };
+          if(hostReadResponse)hostReadResponse.contentItems.push(...failure.contentItems);else hostReadResponse=failure;
+          break;
         }
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);

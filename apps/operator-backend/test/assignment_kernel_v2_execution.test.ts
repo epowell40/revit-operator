@@ -795,7 +795,13 @@ test("declared scope cannot be replaced, completed without evidence, or mutated 
   manageAssignmentWorkPlan({ binding, action: "declare", declaration });
   __testOnlyResetGoalListCache();
   assert.throws(() => manageAssignmentWorkPlan({ binding, action: "declare", declaration }), /work_plan_item_invalid/);
-  assert.throws(() => manageAssignmentWorkPlan({ binding, action: "complete", item_id: "supply", operation_ids: [] }), /work_plan_proof_missing/);
+  const beforeRefusedCompletion = getAssignmentKernelSnapshotV2(goal.id);
+  for (const operation_ids of [undefined, []]) {
+    assert.throws(() => manageAssignmentWorkPlan({ binding, action: "complete", item_id: "supply", operation_ids }), /work_plan_completion_references_required/);
+    __testOnlyResetGoalListCache();
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), beforeRefusedCompletion,
+      "strict completion without evidence must leave the durable assignment unchanged");
+  }
   assert.throws(() => manageAssignmentWorkPlan({ binding: { ...binding, generation: binding.generation + 1 }, action: "declare", declaration }), /stale/);
   assert.throws(() => manageAssignmentWorkPlan({ binding, action: "status", start: -1 }), /page_invalid/);
   assert.throws(() => manageAssignmentWorkPlan({ binding, action: "declare", declaration: { ...declaration, items: [{ item_id: "oversize", description: "測".repeat(267), source_basis: "Drawing" }] } }), /work_plan_item_invalid/);

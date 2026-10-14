@@ -316,7 +316,14 @@ namespace RevitBridge.Logic.Handlers
             if (e is PanelScheduleSheetInstance panelSchedule)
                 return SnapshotSheetAnchor(() => panelSchedule.Origin, "PanelScheduleOrigin", panelSchedule.OwnerViewId, requireKnown);
             if (e is Viewport viewport)
-                return SnapshotSheetAnchor(() => viewport.GetBoxCenter(), "ViewportBoxCenter", viewport.OwnerViewId, requireKnown);
+            {
+                try { return SheetViewportPlacement.Read(viewport); }
+                catch
+                {
+                    if (requireKnown) throw new InvalidOperationException("Native viewport placement readback is unavailable.");
+                    return new { kind = "Unknown", ownerViewId = ElementIdCompat.GetValue(viewport.OwnerViewId) };
+                }
+            }
 
             if (e is TextNote textNote)
             {
