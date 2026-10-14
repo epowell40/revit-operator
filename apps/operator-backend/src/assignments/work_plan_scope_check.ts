@@ -5,7 +5,8 @@ import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readEvidenceRef, readAuthoritativeEvidence } from '../evidence/evidence_store.js';
 import { checkTagScopeReadbackV1 } from '../verification/tag_scope_readback_v1.js';
 import { checkCategoryGraphicsScopeV1 } from '../verification/category_graphics_scope_v1.js';
-import { validCategoryGraphicsScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
+import { checkCategoryVisibilityScopeV1 } from '../verification/category_visibility_scope_v1.js';
+import { validCategoryGraphicsScopeV1,validCategoryVisibilityScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
 import type { WorkPlanScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
 
 const requestBody=(v:any)=>{try{return typeof v?.body==='string'?JSON.parse(v.body):v?.body;}catch{return null;}};
@@ -16,20 +17,22 @@ export function selectWorkPlanScopeReadIdsV1(snapshot:AssignmentSnapshotV2,scope
   const edits=Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply'&&o.persistent_effect!=='none')
     .map(o=>Date.parse(o.result?.completed_at??o.opened_at));
   if(edits.some(t=>!Number.isFinite(t)))throw Error('scope_check_edit_time_invalid');
-  const lastEdit=Math.max(0,...edits),graphics=validCategoryGraphicsScopeV1(scope);
+  const lastEdit=Math.max(0,...edits),graphics=validCategoryGraphicsScopeV1(scope)||validCategoryVisibilityScopeV1(scope);
   const reads=Object.values(snapshot.operations).filter(o=>o.requested_effect==='read'
     &&sameAssignmentBindingV2(o.binding,snapshot.current_binding)&&Date.parse(o.opened_at)>lastEdit)
     .sort((a,b)=>Date.parse(a.opened_at)-Date.parse(b.opened_at)||a.operation_id.localeCompare(b.operation_id));
   const latest=new Map<string,string>(),extras:string[]=[];
   for(const o of reads){const i=o.input as any,b=requestBody(i);if(i?.method!=='POST'||!b)continue;
     if(graphics){
-      if(i.path==='/revit/views'&&b.action==='list'&&b.includeTemplates===true
+      if(i.path==='/revit/views'&&(b.action===undefined||b.action==='list')&&b.includeTemplates===true
         &&Object.keys(b).every(k=>['action','includeTemplates','disciplines','limit','offset'].includes(k))
         &&(b.offset===undefined||b.offset===0)
         &&(b.disciplines===undefined||Array.isArray(b.disciplines)&&b.disciplines.length===scope.disciplines.length
           &&new Set(b.disciplines).size===b.disciplines.length&&b.disciplines.every((d:string)=>scope.disciplines.includes(d))))latest.set('inventory',o.operation_id);
       else if(i.path==='/revit/visibility'&&b.action==='get'&&b.categoryName===scope.category&&b.includeCategoryState===true
         &&Number.isSafeInteger(b.viewId)&&b.viewId>0)latest.set('view:'+b.viewId,o.operation_id);
+      else if(validCategoryVisibilityScopeV1(scope)&&scope.sheet_ids&&i.path==='/revit/sheets'&&b.action==='detail'
+        &&scope.sheet_ids.includes(b.sheetId))latest.set('sheet:'+b.sheetId,o.operation_id);
     }else {
       if(i.path==='/revit/find-elements'&&b.category===scope.category
         &&Object.entries(b).every(([k,v])=>['category','limit','includeGeometry'].includes(k)||v===null||v===undefined))latest.set('inventory',o.operation_id);
@@ -80,7 +83,8 @@ export function checkWorkPlanScopeV1(snapshot:AssignmentSnapshotV2, request:Work
       throw Error('scope_check_native_payload_required');
     });
     return {item_id:request.item_id,requested_at:request.requested_at,available:true as const,
-      ...(validCategoryGraphicsScopeV1(request.scope)?checkCategoryGraphicsScopeV1(request.scope,reads):checkTagScopeReadbackV1(request.scope,reads)),
+      ...(validCategoryGraphicsScopeV1(request.scope)?checkCategoryGraphicsScopeV1(request.scope,reads)
+        :validCategoryVisibilityScopeV1(request.scope)?checkCategoryVisibilityScopeV1(request.scope,reads):checkTagScopeReadbackV1(request.scope,reads)),
       readback_window:{first_completed_at:new Date(Math.min(...readTimes)).toISOString(),last_completed_at:new Date(Math.max(...readTimes)).toISOString()},
       freshness_notice:'As of the retained native readbacks. Later assignment edits invalidate this check; changes outside this assignment require new reads.'};
   } catch(error) {
@@ -89,6 +93,9 @@ export function checkWorkPlanScopeV1(snapshot:AssignmentSnapshotV2, request:Work
       declared_scope_satisfied:false,reason,
       ...(['scope_check_no_current_native_reads','scope_check_current_native_reads_required'].includes(reason)?{
         guidance:'Collect complete native scope inventory and every candidate read after the latest model edit or SaveAs, then check_scope again. Omit operationIds for host selection. This does not repeat or authorize any model edit.'
+      }:{}),
+      ...(/^category_(visibility|graphics)_scope_(one_view_inventory_required|view_inventory_incomplete)$/.test(reason)?{
+        guidance:'Read a complete unfiltered native view/template inventory AFTER the latest edit or SaveAs: /revit/views with action=list, includeTemplates=true, limit=500 and offset=0. If it is still truncated, report the incomplete scope rather than narrowing it. Then rerun check_scope with the same item and scope; new reads alone do not refresh an earlier check.'
       }:{}),
       ...(reason==='scope_check_unsettled'?{
         blocking_operation_ids:[...new Set([...snapshot.in_flight_operation_ids,...snapshot.unresolved_unknown_operation_ids])].sort(),

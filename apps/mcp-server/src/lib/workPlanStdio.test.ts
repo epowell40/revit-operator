@@ -58,6 +58,18 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   for(const scope of [{...graphicsScope,pass:true},{...graphicsScope,view_ids:[123]},{...graphicsScope,view_types:['DrawingSheet']},{...graphicsScope,halftone:'true'},{...graphicsScope,hidden_policy:'verified_unchanged'}])
     assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['view-census'],scopeCheck:scope},_meta})).isError,true);
   assert.equal(requests.length,graphicsRequests,'graphics selectors cannot claim a pass or drop census views at the MCP boundary');
+  const visibilityScope={kind:'category_visibility_v1',category:'OST_DataDevices',disciplines:['Electrical'],view_types:['FloorPlan'],hidden:true,sheet_ids:[1661139]};
+  for(const hidden of [true,false]){
+    assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'data',scopeCheck:{...visibilityScope,hidden}},_meta})).isError,true);
+    assert.deepEqual(requests.at(-1).body.scope_check,{...visibilityScope,hidden});
+    assert.equal(requests.at(-1).body.operation_ids,undefined,'Host selects fresh references without agent-supplied operation IDs');
+  }
+  const visibilityRequests=requests.length;
+  for(const scope of [{...visibilityScope,pass:true},{...visibilityScope,view_ids:[1]},{...visibilityScope,hidden:'true'},
+    {...visibilityScope,sheet_ids:[]},{...visibilityScope,sheet_ids:[0]},{...visibilityScope,view_types:['DrawingSheet']},
+    {...visibilityScope,sheet_ids:[1661139,1661139]},{...visibilityScope,category:'OST_bad token'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'data',scopeCheck:scope},_meta})).isError,true);
+  assert.equal(requests.length,visibilityRequests,'Invalid visibility claims/subset shortcuts never reach HTTP');
   requests.splice(0,requests.length);
   const items = [{ itemId: "room_a_supply", description: "Supply branch in first room", sourceBasis: "Source plan, first room" },
     { itemId: "room_b_supply", description: "Supply branch in second room", sourceBasis: "Source plan, second room" }];

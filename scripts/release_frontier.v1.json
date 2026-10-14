@@ -267,7 +267,10 @@
     "native_element_property_readback_v1.test.ts",
     "native_property_kernel_v2.test.ts",
     "allowlist.test.ts",
-    "openai_brain_redline_targeting.test.ts"
+    "openai_brain_redline_targeting.test.ts",
+    "saved_document_postcondition_v2.test.ts",
+    "committed_saved_document_readback_plan_v2.test.ts",
+    "category_visibility_scope_v1.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -305,7 +308,8 @@
     "tools/existingConditionsRegistrationHandoffTool.test.ts",
     "lib/operatorBackendClient.test.ts",
     "captureViewArguments.test.ts",
-    "lib/viewOwnedDetailingAgentProjection.test.ts"
+    "lib/viewOwnedDetailingAgentProjection.test.ts",
+    "lib/category_visibility_scope_schema.test.ts"
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
@@ -3930,6 +3934,27 @@
       "coverage": [
         "backend:openai_brain_redline_targeting.test.ts",
         "dotnet:SourceCircuitRequestBoundaryTests"
+      ]
+    },
+    {
+      "id": "saved_document_native_session_transition_readback",
+      "coverage": [
+        "backend:saved_document_postcondition_v2.test.ts",
+        "backend:committed_saved_document_readback_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "already_satisfied_category_visibility_native_sheet_scope",
+      "coverage": [
+        "backend:category_visibility_scope_v1.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "category_visibility_scope_admission",
+      "coverage": [
+        "mcp:lib/category_visibility_scope_schema.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
       ]
     }
   ],
