@@ -176,13 +176,9 @@ function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
 }
 
-function getCodexHome(workspaceRoot: string): string {
-  return path.join(workspaceRoot, ".codex");
-}
-
 function getCodexProfilePaths(workspaceRoot: string, profile: CodexThreadStartProfile): { codexHome: string; cwd: string } {
   if (profile.certified) return prepareCertifiedCodexIsolation({ workspaceRoot });
-  const codexHome = getCodexHome(workspaceRoot);
+  const codexHome = path.join(workspaceRoot, ".codex");
   ensureCodexHomeAuth({ codexHome });
   ensureCodexHomeConfig({ codexHome });
   return { codexHome, cwd: workspaceRoot };
@@ -195,10 +191,6 @@ function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
   delete env.OPERATOR_OPENAI_API_KEY;
   env.OPERATOR_WORKSPACE_ROOT = workspaceRoot;
   return env;
-}
-
-function codexTurnTimeoutMs(): number {
-  return resolveCodexTurnTimeoutMs(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS);
 }
 
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
@@ -861,7 +853,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         await c.waitForTurnCompleted({
           threadId,
           turnId,
-          timeoutMs: Math.min(codexTurnTimeoutMs(), 10_000)
+          timeoutMs: Math.min(resolveCodexTurnTimeoutMs(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS), 10_000)
         });
       } catch (error) {
         cleanupErrors.push(`interrupt drain: ${error instanceof Error ? error.message : String(error)}`);

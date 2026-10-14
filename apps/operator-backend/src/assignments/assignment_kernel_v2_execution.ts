@@ -1,3 +1,4 @@
+import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
@@ -74,47 +75,6 @@ import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecy
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 import { existingTagRepairRequestV2 } from "../verification/tag_property_readback_v2.js";
 
-function scheduleCellReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
-  const commit = applied.result, commitAt = Date.parse(commit?.completed_at ?? ""), readOpened = Date.parse(read?.opened_at ?? ""), readAt = Date.parse(result.completed_at);
-  return Boolean(commit?.status === "succeeded" && commit.authority === "native-host" && commit.persistent_effect === "applied"
-    && commit.native_transaction_state === "committed" && result.status === "succeeded" && result.authority === "native-host"
-    && result.persistent_effect === "none" && read?.requested_effect === "read" && result.request_identity?.path === "/revit/get-parameters"
-    && result.request_identity?.request_signature === read.request_identity?.request_signature
-    && sameAssignmentBindingV2(commit.binding, result.binding) && Number.isFinite(commitAt) && Number.isFinite(readOpened) && Number.isFinite(readAt)
-    && readOpened >= commitAt && readAt >= readOpened);
-}
-function parameterReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
-  const commit = applied.result, commitAt = Date.parse(commit?.completed_at ?? ""), opened = Date.parse(read?.opened_at ?? ""), completed = Date.parse(result.completed_at);
-  return Boolean(commit?.status === "succeeded" && commit.authority === "native-host" && commit.native_transaction_state === "committed"
-    && result.status === "succeeded" && result.authority === "native-host" && result.persistent_effect === "none" && read?.requested_effect === "read"
-    && (["/revit/get-parameters", "/revit/verify-parameter-on-sheet"].includes(result.request_identity?.path ?? "") || read.capability_id === "revit_get_parameters")
-    && result.request_identity?.request_signature === read.request_identity?.request_signature
-    && sameAssignmentBindingV2(commit.binding,result.binding) && Number.isFinite(commitAt) && Number.isFinite(opened) && Number.isFinite(completed)
-    && opened >= commitAt && completed >= opened);
-}
-function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
-  const commit = applied.result;
-  const commitAt = Date.parse(commit?.completed_at ?? "");
-  const readOpened = Date.parse(read?.opened_at ?? "");
-  const readAt = Date.parse(result.completed_at);
-  return Boolean(commit?.status === "succeeded" && commit.authority === "native-host"
-    && commit.persistent_effect === "applied" && commit.native_transaction_state === "committed"
-    && result.status === "succeeded" && result.authority === "native-host" && result.persistent_effect === "none"
-    && result.request_identity?.path === "/revit/native-api-ops"
-    && result.request_identity?.request_signature === read?.request_identity?.request_signature
-    && sameAssignmentBindingV2(commit.binding, result.binding)
-    && Number.isFinite(commitAt) && Number.isFinite(readOpened) && Number.isFinite(readAt)
-    && readOpened >= commitAt && readAt >= readOpened);
-}
-function circuitReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
-  const commit = applied.result, committed = Date.parse(commit?.completed_at ?? ""), opened = Date.parse(read?.opened_at ?? ""), completed = Date.parse(result.completed_at);
-  return Boolean(commit?.status === "succeeded" && commit.authority === "native-host" && commit.native_transaction_state === "committed"
-    && result.status === "succeeded" && result.authority === "native-host" && result.persistent_effect === "none" && read?.requested_effect === "read"
-    && result.native_transaction_state === "not_applicable" && result.request_identity?.path === "/revit/get-element-summary"
-    && result.request_identity?.request_signature === read.request_identity?.request_signature
-    && sameAssignmentBindingV2(commit.binding, result.binding) && Number.isFinite(committed) && Number.isFinite(opened) && Number.isFinite(completed)
-    && opened >= committed && completed >= opened);
-}
 import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
 import { duplicatedTypePostconditionSatisfiedV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { createdTagPostconditionSatisfiedV2 } from "../verification/created_tag_postcondition_v2.js";
@@ -752,42 +712,9 @@ function explicitMcpEnvelope(rawResult: unknown): AssignmentKernelMcpResultV2 {
   return structured as unknown as AssignmentKernelMcpResultV2;
 }
 
-function validateFacts(value: unknown): readonly SemanticFactV2[] {
-  if (!Array.isArray(value)) throw new Error("assignment_kernel_v2_semantic_facts_missing");
-  return value.map((candidate, index) => {
-    const fact = object(candidate);
-    if (typeof fact.fact_id !== "string" || !fact.fact_id.trim() || !("value" in fact)) {
-      throw new Error(`assignment_kernel_v2_semantic_fact_invalid:${index}`);
-    }
-    return structuredClone(candidate) as SemanticFactV2;
-  });
-}
-
 function observationCommitLimit(): number {
   const parsed = Number.parseInt(process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS ?? "", 10);
   return Number.isSafeInteger(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
-}
-
-function evidenceInput(
-  lease: AssignmentKernelOperationLeaseV2,
-  result: OperationResultV2,
-  commit: ObservationCommitInputV2
-): EvidenceStoreInput {
-  return {
-    scope: {
-      session_id: lease.binding.session_id,
-      assignment_id: lease.binding.assignment_id,
-      run_id: lease.binding.run_id,
-      generation: lease.binding.generation,
-      attempt_id: lease.operation_id
-    },
-    source: `assignment_kernel_v2:${lease.capability_id}`,
-    media_type: "application/json",
-    trust_level: result.authority === "native-host" ? "authoritative_native" : "host_observed",
-    bounded_summary: `Authoritative result for operation ${lease.operation_id}.`,
-    verification_relevance: lease.purpose === "verification" ? "authoritative" : "required",
-    raw: commit.raw_payload
-  };
 }
 
 function commitInput(

@@ -5,7 +5,7 @@ import { createAssignmentKernelForGoalV2 } from "./assignment_kernel_v2_factory.
 import { ensureAssignmentRunForTurn } from "./turn_journal.js";
 import { classifyAutoGoalRequest } from "../goals/auto_goal.js";
 import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
-import type { PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
+import { preparePdfWorkAllowance, type PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 
 /** The controller sends the user's request; the backend owns its effect contract. */
 export function normalizeExternalAssignmentRequest(input: Record<string, unknown>): Record<string, unknown> {
@@ -62,4 +62,11 @@ export function startExternalAssignmentRun(input: Readonly<{
   const legacy = ensureAssignmentRunForTurn(input.sessionId, runId, input.actor, false);
   if (!legacy) throw new Error("assignment_run_creation_failed");
   return { ...legacy, kernelVersion: 1 };
+}
+
+/** Resolve the exact source allowance before creating an external assignment. */
+export async function prepareExternalAssignmentRequest(input: Record<string,unknown>) {
+  const normalizedRequest=normalizeExternalAssignmentRequest(input);
+  const sourceAllowance=await preparePdfWorkAllowance(normalizedRequest);
+  return {normalizedRequest,sourceAllowance};
 }

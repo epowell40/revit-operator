@@ -676,3 +676,10 @@ export function postconditionSatisfiedByPayloadV2(
   // assertion from the controller until their postcondition has a typed adapter.
   return false;
 }
+
+/** Build readback comparison context from the actual pending calls. */
+export function observedReadbackCallValuesV2(payload: unknown,
+  apply: {path: string;raw_body: unknown} | null | undefined, read: {path: string;raw_body: unknown}): ReturnType<typeof observedPostconditionValuesV2> {
+  return observedPostconditionValuesV2(payload,{path:apply?.path,apply_input:{body:apply?.raw_body},
+    verification_input:{path:read.path,body:read.raw_body}});
+}

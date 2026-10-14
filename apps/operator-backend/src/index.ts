@@ -175,8 +175,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
-import { handleSidecarExecutionFailureHttp } from "./assignments/sidecar_execution_failure_http.js";
-import { handleSidecarSupportingReceiptHttp } from "./assignments/sidecar_supporting_receipt.js";
+import { handleSidecarExecutionReportHttp } from "./assignments/sidecar_execution_report_http.js";
 import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
@@ -187,8 +186,7 @@ import { requireProviderAssignmentBinding } from "./assignments/provider_binding
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
-import { preparePdfWorkAllowance } from "./assignments/pdf_work_allowance.js";
+import { prepareExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1247,8 +1245,7 @@ const server = http.createServer(async (req, res) => {
       if (!sessionId) return writeJson(res, 400, { error: "session_id is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
       try {
-        const normalizedRequest=normalizeExternalAssignmentRequest(body as Record<string,unknown>);
-        const sourceAllowance=await preparePdfWorkAllowance(normalizedRequest);
+        const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const current = getCurrentGoalForSession(sessionId);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
@@ -1294,18 +1291,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
-    if (req.method === "POST" && url.pathname === "/api/agent-goal/sidecar-receipt") {
-      return handleSidecarSupportingReceiptHttp(req, res, {
-        normalizeSessionId: value => trimText(value, 160),
-        sessionAllowed: sessionId => sessionAccessAllowed(res, sessionId, auth.principal)
-      });
-    }
-    if (req.method === "POST" && url.pathname === "/api/agent-goal/sidecar-execution-failure") {
-        return handleSidecarExecutionFailureHttp(req, res, {
-          normalizeSessionId: value => trimText(value, 160),
-          sessionAllowed: sessionId => sessionAccessAllowed(res, sessionId, auth.principal)
-        });
-      }
+      if(await handleSidecarExecutionReportHttp(req,res,url,{
+        normalizeSessionId: value => trimText(value,160),
+        sessionAllowed: sessionId => sessionAccessAllowed(res,sessionId,auth.principal)
+      }))return;
       const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete|sidecar-settle)$/);
       if (req.method === "POST" && goalAction) {
         const body = await readJson(req, 1_000_000).catch(() => ({}));
