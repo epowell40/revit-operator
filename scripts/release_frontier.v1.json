@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "read_text_attachment.test.ts",
     "schedule_cell_appearance_v2.test.ts",
     "viewport_projection_pose_v2.test.ts",
     "multi_sheet_move_verification_v2.test.ts",
@@ -4017,6 +4018,13 @@
       "coverage": [
         "dotnet:OperatorNativePresentationPropertyReadPolicyTests",
         "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "uploaded_text_specification_scoped_read_and_turn_authority",
+      "coverage": [
+        "backend:read_text_attachment.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
       ]
     },
     {
