@@ -1138,9 +1138,6 @@ namespace RevitBridge.Operator
             var propertyName = (rawProperty ?? "").Trim();
             if (string.IsNullOrWhiteSpace(propertyName) || propertyName.Length > 128 || !(char.IsLetter(propertyName[0]) || propertyName[0] == '_') || propertyName.Any(ch => !(char.IsLetterOrDigit(ch) || ch == '_')))
                 throw new InvalidOperationException($"get_property operation '{operationId}' requires a simple public property name (max 128 characters).");
-            if (IsFreezeRiskHint(propertyName, target.GetType()))
-                throw new InvalidOperationException($"get_property operation '{operationId}' is blocked by the freeze-risk policy: {propertyName}");
-
             var matches = target.GetType()
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => string.Equals(p.Name, propertyName, StringComparison.OrdinalIgnoreCase) && p.CanRead && p.GetIndexParameters().Length == 0 && p.GetMethod != null && p.GetMethod.IsPublic && !p.GetMethod.IsStatic)
@@ -1148,7 +1145,16 @@ namespace RevitBridge.Operator
                 .ThenByDescending(p => p.DeclaringType == target.GetType())
                 .ToList();
             if (matches.Count == 0) throw new InvalidOperationException($"Readable public property '{propertyName}' was not found on {target.GetType().FullName}.");
-            return matches[0];
+            var property = matches[0];
+            // Resolve metadata before classifying the name; never invoke a getter
+            // merely to discover whether it is safe. Bind the exception to the
+            // actual Revit SDK declaration, not a caller-supplied type/name.
+            var passivePresentationRead = property.DeclaringType?.Assembly == typeof(Element).Assembly
+                && RevitBridge.Common.OperatorNativePresentationPropertyReadPolicy.IsPassiveRead(
+                    property.DeclaringType?.FullName, property.Name, property.PropertyType.FullName);
+            if (IsFreezeRiskHint(propertyName, target.GetType()) && !passivePresentationRead)
+                throw new InvalidOperationException($"get_property operation '{operationId}' is blocked by the freeze-risk policy: {propertyName}");
+            return property;
         }
 
         private static NativeGraphArgument ConvertOperationArgument(JsonElement value, Type targetType,

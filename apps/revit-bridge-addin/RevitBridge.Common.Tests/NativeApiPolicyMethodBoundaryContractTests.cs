@@ -20,6 +20,26 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void PassivePropertyExceptionBindsSdkMetadataAndKeepsFreezeGuard()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway,
+                "private static PropertyInfo ResolveReadableProperty(",
+                "var matches = target.GetType()",
+                "var property = matches[0];",
+                "property.DeclaringType?.Assembly == typeof(Element).Assembly",
+                "OperatorNativePresentationPropertyReadPolicy.IsPassiveRead(",
+                "property.DeclaringType?.FullName, property.Name, property.PropertyType.FullName",
+                "IsFreezeRiskHint(propertyName, target.GetType()) && !passivePresentationRead",
+                "is blocked by the freeze-risk policy",
+                "return property;");
+            // The exception belongs only to a public-property read. Single-call
+            // and mutation-graph method risk fences still classify executable calls.
+            Assert.Contains("if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)", gateway);
+            Assert.Contains("native-api-mutation-ops blocks freeze-risk members:", gateway);
+        }
+
+        [Fact]
         public void HandlerUsesMethodTruthBeforeInspectingAnAdversarialGetBody()
         {
             var handler = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Handlers", "NativeApiHandlers.cs");

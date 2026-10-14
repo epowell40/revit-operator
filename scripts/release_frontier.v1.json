@@ -336,6 +336,7 @@
     "test/delegated_assignment_recovery.test.mjs"
   ],
   "dotnet_test_classes": [
+    "OperatorNativePresentationPropertyReadPolicyTests",
     "RenameViewPlanSettlementTests",
     "NativeApiPolicyMethodBoundaryContractTests",
     "ViewOwnedDetailingInventoryContractTests",
@@ -4007,6 +4008,13 @@
       "coverage": [
         "backend:advisory_verification_policy.test.ts",
         "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "passive_table_shading_property_load_substring_refusal",
+      "coverage": [
+        "dotnet:OperatorNativePresentationPropertyReadPolicyTests",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
       ]
     }
   ],
