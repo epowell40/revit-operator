@@ -265,7 +265,9 @@
     "visibility_category_readback_v2.test.ts",
     "work_plan_location.test.ts",
     "native_element_property_readback_v1.test.ts",
-    "native_property_kernel_v2.test.ts"
+    "native_property_kernel_v2.test.ts",
+    "allowlist.test.ts",
+    "openai_brain_redline_targeting.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -3914,6 +3916,20 @@
         "backend:native_property_kernel_v2.test.ts",
         "backend:teammate_loop_runtime.test.ts",
         "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "promoted_spatial_and_native_circuit_allowlist",
+      "coverage": [
+        "backend:allowlist.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts"
+      ]
+    },
+    {
+      "id": "legacy_circuit_bridge_requires_matching_native_source",
+      "coverage": [
+        "backend:openai_brain_redline_targeting.test.ts",
+        "dotnet:SourceCircuitRequestBoundaryTests"
       ]
     }
   ],

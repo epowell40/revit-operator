@@ -4305,7 +4305,7 @@
     },
     {
       "path": "apps/operator-backend/test/allowlist.test.ts",
-      "sha256": "sha256:bf6df1530a221eba1310ec1daa3774d7a8c56a07a492c5ff142b1201e8462de3"
+      "sha256": "sha256:a341614e6369faca296803fd13861001145eb6bd06fb1f42881b64a0b48ce71e"
     },
     {
       "path": "apps/operator-backend/test/artifact_bus.test.ts",
@@ -5881,7 +5881,7 @@
     },
     {
       "path": "apps/operator-backend/test/openai_brain_redline_targeting.test.ts",
-      "sha256": "sha256:3c51dc589bb13af71c407ec7bd0a1baac61816ab7d17f460c0498259235a342e"
+      "sha256": "sha256:0044095e16511ffe4c827005be611c688d07014bfc60a969af4eadf861d84d8e"
     },
     {
       "path": "apps/operator-backend/test/openai_brain_spatial_prompt.test.ts",
@@ -9381,7 +9381,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:da3ab7f79a2d8738e9b438a9cad77c27128f70649c09fd5d76234de2411e4079",
+  "inputs_hash": "sha256:b186843589f6a70b2801622df6ff0c631b5cdb21a3cc6c469d81ec9f6a301bdc",
   "result": {
     "passed": true,
     "checks": [
