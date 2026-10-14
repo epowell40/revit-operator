@@ -104,7 +104,7 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     semantic_outputs: ["view.identity", "view.detailing_inventory"],
     principal_target_fields: ["id", "viewId", "viewIds"]
   }],
-  ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
+  ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest", "artifact.saved_document_state"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
   ["/revit/visibility", {
     semantic_outputs: ["view.visibility_properties"],
     preferred_target_field: "viewId"
@@ -328,6 +328,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (path === "/revit/update-schedule-cell" || PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
   if (path === "/revit/visibility") return ["view.visibility_properties"];
+  if (path === '/revit/save-as') return ['artifact.file_digest','artifact.saved_document_state'];
   if (path === "/revit/export-pdf" || path === "/revit/print" || path === "/revit/export-elements-xlsx") return ["artifact.file_digest"];
   return [];
 }
@@ -337,6 +338,11 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (!contract) return [];
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
+  if(pathOf(verification)==='/revit/inspect-exported-files'){
+    const args=objectValue(verification.arguments), body=objectValue(args.body??args), paths=body.paths;
+    return Array.isArray(paths)&&paths.length===1&&typeof paths[0]==='string'&&/\.(?:rvt|rfa)$/i.test(paths[0])
+      ?contract.semantic_outputs:['artifact.file_digest'];
+  }
   if (pathOf(verification) === "/revit/native-api-ops")
     return nativeCreatedTagReadTargetsV2(verification.arguments).length ? ["tag.created_subject_association"]
       : nativeTagPropertyReadTargetsV2(verification.arguments).length ? ["tag.property_values"] : [];
@@ -395,6 +401,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if(pathOf(apply)==='/revit/save-as')return ' Verify the exact output from the native Save As receipt with one separate POST /revit/inspect-exported-files, paths=[the saved RVT/RFA path]. Only the actual active saved document is eligible. Compare stable byte size/SHA256 and saved_document path, native session/project identity and is_modified=false; unknown, changing or dirty state remains unverified. This confirms a saved artifact, not completion of all model-content or visual tasks. Do not save again solely to verify or ask the user to reopen a successfully saved model.';
   if (pathOf(apply) === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
     return " Verify the repaired existing tag with a separate POST /revit/native-api-ops read: Document.GetElement(ElementId) for repairExistingTagId, then read OwnerViewId plus every requested HasLeader, TagHeadPosition and LeaderEndCondition property from that exact IndependentTag handle. The fresh owner view and all requested values must match the admitted edit; the apply result cannot verify itself. Leader-end or elbow edits need reference-bound readback and remain unverified by this property check. Do not repeat a committed edit to verify it.";
   if (pathOf(apply) === "/revit/create-schedule") return " Inspect the created schedule using POST /revit/schedules with action=detail and scheduleId from the create result. Compare its name, category, ordered field names and hidden flags with the request. Inspect filterDefinitions and sortGroupDefinitions when requested, and page through table rows if the task requires complete contents or totals. A truncated row sample cannot establish all contents. Creation alone does not prove sheet placement; inspect the exact destination sheet separately when placement was requested. Do not create another schedule merely to verify the existing one.";

@@ -1,0 +1,2115 @@
+{
+  "provenance": {
+    "source": "Exact root69 E010 native schema/identity/census/category/template values; paths, private envelopes and unused view fields excluded. Not retrospective product proof.",
+    "source_sha256": "4a795f793fff67be950f894f2be79f897e8ce12e8e140c80e10073021fe2c032"
+  },
+  "scope": {
+    "kind": "category_visibility_v1",
+    "category": "OST_DataDevices",
+    "disciplines": [
+      "Electrical"
+    ],
+    "view_types": [
+      "FloorPlan"
+    ],
+    "sheet_ids": [
+      1661139
+    ],
+    "hidden": true
+  },
+  "reads": [
+    {
+      "operation_id": "retained-0",
+      "input": {
+        "method": "POST",
+        "path": "/revit/sheets",
+        "body": {
+          "action": "detail",
+          "sheetId": 1661139,
+          "includeViewportGeometry": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "detail",
+        "sheetElementId": 1661139,
+        "sheetId": 1661139,
+        "viewId": 1661139,
+        "sheetNumber": "E010",
+        "sheetName": "CONCEPTUAL POWER DIST.",
+        "title": "CONCEPTUAL POWER DIST.",
+        "isPlaceholder": false,
+        "requestedPlacementIds": null,
+        "viewportCount": 10,
+        "placedViewCount": 10,
+        "placedScheduleCount": 5,
+        "titleBlockCount": 1,
+        "sheetOutline": {
+          "minU": 8.337514706413529e-17,
+          "minV": -5.551115123125783e-17,
+          "maxU": 3.5000000000000053,
+          "maxV": 2.4999999999999996
+        },
+        "viewportIds": [
+          1661154,
+          1661161,
+          1661162,
+          1661163,
+          1661287,
+          1661288,
+          1661289,
+          1661290,
+          1661300,
+          1661301
+        ],
+        "viewportGeometry": [
+          {
+            "viewportId": 1661154,
+            "viewId": 1647927,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.10055433229945343,
+              "v": 1.5545779596074956
+            },
+            "box": {
+              "minU": -0.505746561097085,
+              "minV": 1.1270569868930511,
+              "maxU": 0.7068552256959919,
+              "maxV": 1.98209893232194
+            }
+          },
+          {
+            "viewportId": 1661161,
+            "viewId": 1657878,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.28081100504935297,
+              "v": 1.3004653227837297
+            },
+            "box": {
+              "minU": 0.15650535428456958,
+              "minV": 1.1300828660999376,
+              "maxU": 0.40511665581413636,
+              "maxV": 1.4708477794675219
+            }
+          },
+          {
+            "viewportId": 1661162,
+            "viewId": 1657868,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.4951760230618608,
+              "v": 1.3046878555963408
+            },
+            "box": {
+              "minU": 0.35856444894893197,
+              "minV": 1.1594444044935226,
+              "maxU": 0.6317875971747897,
+              "maxV": 1.449931306699159
+            }
+          },
+          {
+            "viewportId": 1661163,
+            "viewId": 1657850,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.6498359804455647,
+              "v": 1.3233540333145473
+            },
+            "box": {
+              "minU": 0.5831048416582378,
+              "minV": 1.1625916075723808,
+              "maxU": 0.7165671192328915,
+              "maxV": 1.4841164590567137
+            }
+          },
+          {
+            "viewportId": 1661287,
+            "viewId": 1645239,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.4555302281876391,
+              "v": 0.9426711785770892
+            },
+            "box": {
+              "minU": 0.20420523067928653,
+              "minV": 0.8063460401272035,
+              "maxU": 0.7068552256959917,
+              "maxV": 1.0789963170269747
+            }
+          },
+          {
+            "viewportId": 1661288,
+            "viewId": 1645248,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 1.0080832085843072,
+              "v": 0.9446584345765158
+            },
+            "box": {
+              "minU": 0.7552096848669422,
+              "minV": 0.8103205521260568,
+              "maxU": 1.2609567323016724,
+              "maxV": 1.0789963170269747
+            }
+          },
+          {
+            "viewportId": 1661289,
+            "viewId": 1645258,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.4849276032371295,
+              "v": 0.6201197994671315
+            },
+            "box": {
+              "minU": 0.05366929634061846,
+              "minV": 0.29761637019881126,
+              "maxU": 0.9161859101336406,
+              "maxV": 0.9426232287354518
+            }
+          },
+          {
+            "viewportId": 1661290,
+            "viewId": 1645268,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 1.0080832085843072,
+              "v": 0.6539838901978176
+            },
+            "box": {
+              "minU": 0.7552096848669422,
+              "minV": 0.5196460077473586,
+              "maxU": 1.2609567323016724,
+              "maxV": 0.7883217726482765
+            }
+          },
+          {
+            "viewportId": 1661300,
+            "viewId": 1661031,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 0.4225569389171418,
+              "v": 0.35548468349087836
+            },
+            "box": {
+              "minU": 0.1696834151997767,
+              "minV": 0.22114680104041934,
+              "maxU": 0.6754304626345069,
+              "maxV": 0.48982256594133733
+            }
+          },
+          {
+            "viewportId": 1661301,
+            "viewId": 1661041,
+            "viewportType": {
+              "id": 9835,
+              "name": "Views Typical"
+            },
+            "rotation": "None",
+            "center": {
+              "u": 1.0074141241162358,
+              "v": 0.35548468349087836
+            },
+            "box": {
+              "minU": 0.753871515930799,
+              "minV": 0.22114680104041934,
+              "maxU": 1.2609567323016724,
+              "maxV": 0.48982256594133733
+            }
+          }
+        ],
+        "placedViews": [
+          {
+            "viewId": 1645239,
+            "name": "L2 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661287
+            ]
+          },
+          {
+            "viewId": 1645248,
+            "name": "L3 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661288
+            ]
+          },
+          {
+            "viewId": 1645258,
+            "name": "L4 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661289
+            ]
+          },
+          {
+            "viewId": 1645268,
+            "name": "L5 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661290
+            ]
+          },
+          {
+            "viewId": 1647927,
+            "name": "L0 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661154
+            ]
+          },
+          {
+            "viewId": 1657850,
+            "name": "L1 - Power Distribution Design - Block 43",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661163
+            ]
+          },
+          {
+            "viewId": 1657868,
+            "name": "L1 - Power Distribution Design - Block 37",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661162
+            ]
+          },
+          {
+            "viewId": 1657878,
+            "name": "L1 - Power Distribution Design - Block 35",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661161
+            ]
+          },
+          {
+            "viewId": 1661031,
+            "name": "R1 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661300
+            ]
+          },
+          {
+            "viewId": 1661041,
+            "name": "R2 - Power Distribution Design",
+            "viewType": "FloorPlan",
+            "scale": 384,
+            "viewportIds": [
+              1661301
+            ]
+          }
+        ],
+        "placedSchedules": [
+          {
+            "placementType": "ScheduleSheetInstance",
+            "instanceId": 1661302,
+            "scheduleId": 1357222,
+            "name": "Electrical Analytical Load Schedule",
+            "viewType": "Schedule",
+            "point": {
+              "u": 1.6970976740482262,
+              "v": 2.4177929809386254
+            },
+            "boundingBox": {
+              "minU": 1.6901532296037818,
+              "minV": 1.004734718840198,
+              "maxU": 2.964414563145829,
+              "maxV": 2.4177929809386254
+            }
+          },
+          {
+            "placementType": "ScheduleSheetInstance",
+            "instanceId": 1661303,
+            "scheduleId": 1357215,
+            "name": "Electrical Analytical Bus Schedule",
+            "viewType": "Schedule",
+            "point": {
+              "u": 1.6970976740482262,
+              "v": 0.9907113375834962
+            },
+            "boundingBox": {
+              "minU": 1.6901532296037818,
+              "minV": 0.6926140080093963,
+              "maxU": 2.416173023299655,
+              "maxV": 0.9907113375834962
+            }
+          },
+          {
+            "placementType": "ScheduleSheetInstance",
+            "instanceId": 1661311,
+            "scheduleId": 1661304,
+            "name": "Meter Bank Schedule",
+            "viewType": "Schedule",
+            "point": {
+              "u": 1.6970976740482264,
+              "v": 0.640850521284799
+            },
+            "boundingBox": {
+              "minU": 1.690153229603782,
+              "minV": 0.2029924491451584,
+              "maxU": 2.257358886945261,
+              "maxV": 0.640850521284799
+            }
+          },
+          {
+            "placementType": "ScheduleSheetInstance",
+            "instanceId": 1661312,
+            "scheduleId": 1661304,
+            "name": "Meter Bank Schedule",
+            "viewType": "Schedule",
+            "point": {
+              "u": 2.2782036498542735,
+              "v": 0.640850521284799
+            },
+            "boundingBox": {
+              "minU": 2.271259205409829,
+              "minV": 0.14621998947421244,
+              "maxU": 2.838464862751308,
+              "maxV": 0.640850521284799
+            }
+          },
+          {
+            "placementType": "ScheduleSheetInstance",
+            "instanceId": 1736405,
+            "scheduleId": 1736401,
+            "name": "<Revision Schedule> 23",
+            "viewType": "Schedule",
+            "point": {
+              "u": 3.0104166773677217,
+              "v": 1.1224371739549142
+            },
+            "boundingBox": {
+              "minU": 3.003472232923277,
+              "minV": 0.6421086519900814,
+              "maxU": 3.4340139349206518,
+              "maxV": 1.1293816183993586
+            }
+          }
+        ],
+        "titleBlocks": [
+          {
+            "elementId": 1661144,
+            "typeId": 1704694,
+            "familyName": "E1 30 x 42 Horizontal_Snowdon",
+            "typeName": "E1 30 x 42 Horizontal_Snowdon",
+            "boundingBox": {
+              "minU": 8.337514706413529e-17,
+              "minV": -5.551115123125783e-17,
+              "maxU": 3.5000000000000053,
+              "maxV": 2.4999999999999996
+            }
+          }
+        ]
+      }
+    },
+    {
+      "operation_id": "retained-1",
+      "input": {
+        "method": "POST",
+        "path": "/revit/views",
+        "body": {
+          "action": "list",
+          "includeTemplates": true,
+          "disciplines": [
+            "Electrical"
+          ],
+          "limit": 500,
+          "offset": 0
+        }
+      },
+      "payload": {
+        "status": "ok",
+        "action": "list",
+        "count": 54,
+        "returned": 54,
+        "offset": 0,
+        "limit": 500,
+        "truncated": false,
+        "appliedFilters": [
+          "disciplines_exact"
+        ],
+        "views": [
+          {
+            "id": 161374,
+            "name": "Electrical Ceiling",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 161459,
+            "name": "East - Elec",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 161375,
+            "name": "Electrical Elevation",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 161433,
+            "name": "North - Elec",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 161485,
+            "name": "South - Elec",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 161407,
+            "name": "West - Elec",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 1723848,
+            "name": "WV_3D",
+            "type": "Elevation",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 1645236,
+            "name": "Conceptual Power Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 1533471,
+            "name": "Conduit Layout",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 161376,
+            "name": "Electrical Power Plan",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 1490610,
+            "name": "Power Plan - Enlarged",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 1514961,
+            "name": "Wrong Level Hosting",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 1669461,
+            "name": "Electrical Distribution Equipment",
+            "type": "Section",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 161377,
+            "name": "Electrical Section",
+            "type": "Section",
+            "isAssembly": false,
+            "isTemplate": true,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": false
+          },
+          {
+            "id": 163343,
+            "name": "3D - Just Electrical",
+            "type": "ThreeD",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 1391640,
+            "name": "3D - PV Systems - Stripped",
+            "type": "ThreeD",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 1723852,
+            "name": "Cover",
+            "type": "ThreeD",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": null,
+            "levelName": null,
+            "discipline": "Electrical",
+            "viewTemplateId": null,
+            "viewTemplateName": null,
+            "canBePrinted": true
+          },
+          {
+            "id": 1474604,
+            "name": "L1 - Lighting - Block 35",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474455,
+            "levelName": "L1 - Block 35",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1490490,
+            "name": "Enlarged Plan Power CAFE",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474455,
+            "levelName": "L1 - Block 35",
+            "discipline": "Electrical",
+            "viewTemplateId": 1490610,
+            "viewTemplateName": "Power Plan - Enlarged",
+            "canBePrinted": true
+          },
+          {
+            "id": 1474556,
+            "name": "L1 - Power - Block 35",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474455,
+            "levelName": "L1 - Block 35",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1657878,
+            "name": "L1 - Power Distribution Design - Block 35",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474455,
+            "levelName": "L1 - Block 35",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1474613,
+            "name": "L1 - Lighting - Block 37",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474365,
+            "levelName": "L1 - Block 37",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1483270,
+            "name": "L1 - Power - Block 37",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474365,
+            "levelName": "L1 - Block 37",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1657868,
+            "name": "L1 - Power Distribution Design - Block 37",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1474365,
+            "levelName": "L1 - Block 37",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 161499,
+            "name": "L1 - Lighting - Block 43",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 30,
+            "levelName": "L1 - Block 43",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 243532,
+            "name": "L1 - Power - Block 43",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 30,
+            "levelName": "L1 - Block 43",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1657850,
+            "name": "L1 - Power Distribution Design - Block 43",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 30,
+            "levelName": "L1 - Block 43",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1576242,
+            "name": "L1 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 30,
+            "levelName": "L1 - Block 43",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 161506,
+            "name": "L2 - Lighting",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 9946,
+            "levelName": "L2",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 243540,
+            "name": "L2 - Power",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 9946,
+            "levelName": "L2",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1645239,
+            "name": "L2 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 9946,
+            "levelName": "L2",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1576252,
+            "name": "L2 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 9946,
+            "levelName": "L2",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363300,
+            "name": "L3 - Lighting",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362938,
+            "levelName": "L3",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363327,
+            "name": "L3 - Power",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362938,
+            "levelName": "L3",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1645248,
+            "name": "L3 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362938,
+            "levelName": "L3",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1533473,
+            "name": "L3 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362938,
+            "levelName": "L3",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363309,
+            "name": "L4 - Lighting",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362945,
+            "levelName": "L4",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363337,
+            "name": "L4 - Power",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362945,
+            "levelName": "L4",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1645258,
+            "name": "L4 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362945,
+            "levelName": "L4",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1576262,
+            "name": "L4 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362945,
+            "levelName": "L4",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363318,
+            "name": "L5 - Lighting",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362952,
+            "levelName": "L5",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1363347,
+            "name": "L5 - Power",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362952,
+            "levelName": "L5",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1645268,
+            "name": "L5 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362952,
+            "levelName": "L5",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1576272,
+            "name": "L5 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362952,
+            "levelName": "L5",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1713837,
+            "name": "M1",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1483485,
+            "levelName": "M1",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1391071,
+            "name": "L0 - Lighting - Parking",
+            "type": "CeilingPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363065,
+            "levelName": "Parking",
+            "discipline": "Electrical",
+            "viewTemplateId": 161374,
+            "viewTemplateName": "Electrical Ceiling",
+            "canBePrinted": true
+          },
+          {
+            "id": 1626564,
+            "name": "Enlarged Plan - Electrical Room",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363065,
+            "levelName": "Parking",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1391061,
+            "name": "L0 - Power - Parking",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363065,
+            "levelName": "Parking",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1647927,
+            "name": "L0 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363065,
+            "levelName": "Parking",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1576282,
+            "name": "L0 Conduit Chase",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363065,
+            "levelName": "Parking",
+            "discipline": "Electrical",
+            "viewTemplateId": 1533471,
+            "viewTemplateName": "Conduit Layout",
+            "canBePrinted": true
+          },
+          {
+            "id": 1391738,
+            "name": "R1",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362959,
+            "levelName": "R1",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1661031,
+            "name": "R1 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1362959,
+            "levelName": "R1",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          },
+          {
+            "id": 1391749,
+            "name": "R2",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363008,
+            "levelName": "R2",
+            "discipline": "Electrical",
+            "viewTemplateId": 161376,
+            "viewTemplateName": "Electrical Power Plan",
+            "canBePrinted": true
+          },
+          {
+            "id": 1661041,
+            "name": "R2 - Power Distribution Design",
+            "type": "FloorPlan",
+            "isAssembly": false,
+            "isTemplate": false,
+            "levelId": 1363008,
+            "levelName": "R2",
+            "discipline": "Electrical",
+            "viewTemplateId": 1645236,
+            "viewTemplateName": "Conceptual Power Design",
+            "canBePrinted": true
+          }
+        ]
+      }
+    },
+    {
+      "operation_id": "retained-2",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1657878,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1657878,
+          "name": "L1 - Power Distribution Design - Block 35",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-3",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1657868,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1657868,
+          "name": "L1 - Power Distribution Design - Block 37",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-4",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1657850,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1657850,
+          "name": "L1 - Power Distribution Design - Block 43",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-5",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1645239,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1645239,
+          "name": "L2 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-6",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1645248,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1645248,
+          "name": "L3 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-7",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1645258,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1645258,
+          "name": "L4 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-8",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1645268,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1645268,
+          "name": "L5 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-9",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1647927,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1647927,
+          "name": "L0 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-10",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1661031,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1661031,
+          "name": "R1 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "retained-11",
+      "input": {
+        "method": "POST",
+        "path": "/revit/visibility",
+        "body": {
+          "action": "get",
+          "viewId": 1661041,
+          "categoryName": "OST_DataDevices",
+          "includeCategoryState": true,
+          "includeLinkedModels": true
+        }
+      },
+      "payload": {
+        "status": "Ok",
+        "action": "get",
+        "dryRun": false,
+        "view": {
+          "id": 1661041,
+          "name": "R2 - Power Distribution Design",
+          "viewType": "FloorPlan",
+          "discipline": "Electrical",
+          "isTemplate": false,
+          "viewTemplateId": 1645236,
+          "viewTemplate": "Conceptual Power Design",
+          "templateControlsModelGraphics": true,
+          "categoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          },
+          "categorySnapshot": {
+            "schema": "revit.category-visibility-snapshot.v1",
+            "complete": true,
+            "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+            "count": 777,
+            "targetCategoryId": -2008083,
+            "target": {
+              "id": -2008083,
+              "parentId": null,
+              "name": "Data Devices",
+              "canHide": false,
+              "hidden": true,
+              "overridable": false,
+              "graphics": {
+                "cutBackgroundPatternColor": null,
+                "cutBackgroundPatternId": -1,
+                "cutForegroundPatternColor": null,
+                "cutForegroundPatternId": -1,
+                "cutLineColor": null,
+                "cutLinePatternId": -1,
+                "cutLineWeight": -1,
+                "detailLevel": "Undefined",
+                "halftone": false,
+                "isCutBackgroundPatternVisible": true,
+                "isCutForegroundPatternVisible": true,
+                "isSurfaceBackgroundPatternVisible": true,
+                "isSurfaceForegroundPatternVisible": true,
+                "projectionLineColor": null,
+                "projectionLinePatternId": -1,
+                "projectionLineWeight": -1,
+                "surfaceBackgroundPatternColor": null,
+                "surfaceBackgroundPatternId": -1,
+                "surfaceForegroundPatternColor": null,
+                "surfaceForegroundPatternId": -1,
+                "transparency": 0
+              }
+            },
+            "categoryIdsSha256": "sha256:ffe89e39af82bc42a74120093a134ab1206a7dc8c3d6b874300c621592a04b44",
+            "allCategoriesSha256": "sha256:8cf4b0ded5bb8ebeb910b408e763f099cf8c790b2f8412ab15650a4a39d530fb",
+            "categoryValuesSha256": "sha256:25372cba1db7f827217292a90d21fb14501e392eb7f9c8ae8acace1baf350f42",
+            "otherCategoriesSha256": "sha256:3055e5a715da094e7c2e972b08722a115b81b0102fa88b3408a99e7631309fb0"
+          },
+          "templateCategoryOverride": {
+            "categoryId": -2008083,
+            "categoryName": "Data Devices",
+            "builtInCategory": "OST_DataDevices",
+            "hidden": true,
+            "halftone": false,
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      }
+    }
+  ]
+}

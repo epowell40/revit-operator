@@ -1,3 +1,4 @@
+import { validFamilyStaticTextScopeV1,type FamilyStaticTextScopeV1 } from './work_plan_family_scope.js';
 /** A worker-selected search domain, not a source interpretation certificate. */
 export type TagScopeRequestV1 = Readonly<{
   category: string; view_ids: readonly number[];
@@ -17,7 +18,24 @@ export type CategoryGraphicsScopeV1 = Readonly<{
   disciplines: readonly string[]; view_types: readonly string[];
   halftone: boolean; hidden_policy: 'exclude_hidden';
 }>;
-export type WorkPlanScopeV1 = TagScopeRequestV1 | CategoryGraphicsScopeV1;
+/** A declared model-view domain; native sheet placement inventories can bound it.
+ * Checking stored visibility does not establish source interpretation or appearance. */
+export type CategoryVisibilityScopeV1 = Readonly<{
+  kind: 'category_visibility_v1'; category: string;
+  disciplines: readonly string[]; view_types: readonly string[];
+  hidden: boolean; sheet_ids?: readonly number[];
+}>;
+export type WorkPlanScopeV1 = TagScopeRequestV1 | CategoryGraphicsScopeV1 | CategoryVisibilityScopeV1 | FamilyStaticTextScopeV1;
+export function validCategoryVisibilityScopeV1(value: unknown): value is CategoryVisibilityScopeV1 {
+  if (!value || typeof value!=='object' || Array.isArray(value)) return false;
+  const v=value as CategoryVisibilityScopeV1;
+  const {kind,hidden,sheet_ids,...domain}=v;
+  return Object.keys(v).every(k=>['kind','category','disciplines','view_types','hidden','sheet_ids'].includes(k))
+    &&kind==='category_visibility_v1'&&typeof hidden==='boolean'
+    &&validCategoryGraphicsScopeV1({...domain,kind:'category_graphics_v1',halftone:false,hidden_policy:'exclude_hidden'})
+    &&(sheet_ids===undefined||Array.isArray(sheet_ids)&&sheet_ids.length>0&&sheet_ids.length<=32
+      &&new Set(sheet_ids).size===sheet_ids.length&&sheet_ids.every(n=>Number.isSafeInteger(n)&&n>0));
+}
 export function validCategoryGraphicsScopeV1(value: unknown): value is CategoryGraphicsScopeV1 {
   if (!value || typeof value!=='object' || Array.isArray(value)) return false;
   const v=value as CategoryGraphicsScopeV1;
@@ -31,7 +49,7 @@ export function validCategoryGraphicsScopeV1(value: unknown): value is CategoryG
     &&typeof v.halftone==='boolean'&&v.hidden_policy==='exclude_hidden';
 }
 export function validWorkPlanScopeV1(value: unknown): value is WorkPlanScopeV1 {
-  return validTagScopeRequestV1(value)||validCategoryGraphicsScopeV1(value);
+  return validTagScopeRequestV1(value)||validCategoryGraphicsScopeV1(value)||validCategoryVisibilityScopeV1(value)||validFamilyStaticTextScopeV1(value);
 }
 export function validTagScopeRequestV1(value: unknown): value is TagScopeRequestV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

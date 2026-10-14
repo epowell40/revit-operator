@@ -60,9 +60,12 @@ import { committedCircuitReadbackPlanV2, committedTypedCircuitReadbackPlanV2 } f
 import { committedElementTypeReadbackPlanV2 } from "../verification/element_type_postcondition_v2.js";
 import { committedDuplicatedTypeReadbackPlanV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_postcondition_v2.js";
-import { committedSheetMoveReadbackPlanV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
+import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
+import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
+import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -253,11 +256,24 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (v2Snapshot && v2Binding) {
     if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
       try {
-        const result = await runtime.callTool(params.tool, boundArguments.arguments, {
+        let result = await runtime.callTool(params.tool, boundArguments.arguments, {
           turnId: params.turnId,
           sessionId,
           assignmentKernelV2Binding: v2Binding
         });
+        let hostScopeNotice:string|undefined;
+        // The actor requested a supported coverage check. Gather missing native
+        // evidence through ordinary guarded calls, not through a longer prompt.
+        if(params.tool==='operator_manage_work_plan'&&boundArguments.arguments.action==='check_scope'
+          &&validFamilyStaticTextScopeV1(boundArguments.arguments.scopeCheck)
+          &&boundArguments.arguments.operationIds===undefined&&!result?.isError){
+          parallel.release();
+          try {
+            const host=await codexRequestedScopeReadbackV1({runtime,request:boundRequest,binding:v2Binding,
+              session_id:sessionId,arguments:boundArguments.arguments,dispatch:r=>handleCodexDynamicToolCall(runtime,r)});
+            if(host){result=host.result;hostScopeNotice=host.notice;}
+          }catch(error){hostScopeNotice='Host native scope readback remains unavailable: '+String(error).slice(0,800);}
+        }
         recordTeammateMcpResult(runtime, teammateGate, result);
         const afterInteraction = getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
         if (afterInteraction && (afterInteraction.completion_proposal || afterInteraction.terminal
@@ -268,6 +284,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         const response = adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
         });
+        if(hostScopeNotice)response.contentItems.push({type:'inputText',text:hostScopeNotice});
         attachCurrentAssignmentContext(response, params.tool, v2Binding.assignment_id);
         return response;
       } catch (error) {
@@ -343,30 +360,36 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
-          ?? committedSheetMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedModelPointMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;
-      if (readPlan) {
+      const readPlans=readPlan?[readPlan]:(current?.operations[lease.operation_id]
+        ? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
+      if (readPlans.length) {
         // Native dispatch has returned and canonical settlement is retained.
         // Release only this completed route's lease before the separate read
         // reacquires the ordinary guard. Otherwise same-route reads (visibility
         // and schedule settings) are mistaken for concurrent duplicate calls.
         // The new call still validates ownership, pause, admission and freshness.
         parallel.release();
-        try {
-          hostReadResponse = await handleCodexDynamicToolCall(runtime, {
-            id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}`, method: "item/tool/call",
+        for(const [index,plan] of readPlans.entries())try {
+          const response = await handleCodexDynamicToolCall(runtime, {
+            id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}:${index}`, method: "item/tool/call",
             params: { namespace: "revit_operator", tool: "revit_call_tool",
-              turnId: params.turnId, threadId: params.threadId, arguments: readPlan }
+              turnId: params.turnId, threadId: params.threadId, arguments: plan }
           }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+          if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
+          if(!response.success)break;
         } catch (error) {
-          hostReadResponse = { success:false, contentItems:[{type:"inputText",text:
+          const failure = { success:false, contentItems:[{type:"inputText" as const,text:
             `Host readback remains unverified: ${String(error).slice(0,1000)}`}] };
+          if(hostReadResponse)hostReadResponse.contentItems.push(...failure.contentItems);else hostReadResponse=failure;
+          break;
         }
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);

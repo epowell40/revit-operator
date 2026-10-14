@@ -40,6 +40,23 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
     "the agent must be told that a native copied-view read can close a detailing inspection");
   const binding = { assignment_id: "area-assignment", run_id: "area-run", session_id: "area-session", generation: 1, principal_id: "test" };
   const _meta = { "revit-operator/assignment-kernel-binding-v2": binding };
+  const retained74=JSON.parse(fs.readFileSync(path.resolve(process.cwd(),'../operator-backend/test/fixtures/work-plan-completion-refusal-74.json'),'utf8'));
+  const completeCount=requests.length;
+  const reasonRefusal=await client.callTool({name:'operator_manage_work_plan',arguments:retained74.attempts[0].arguments,_meta});
+  assert.equal(reasonRefusal.isError,true);assert.match(JSON.stringify(reasonRefusal.content),/reason is only for defer\/resume_item/);
+  assert.equal(requests.length,completeCount,'invalid explanation remains refused before HTTP, with actionable recovery');
+  for(const args of [retained74.attempts[1].arguments,{...retained74.attempts[1].arguments,operationIds:[]}]) {
+    assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:args,_meta})).isError,true);
+    assert.equal(requests.at(-1).body.item_id,'wsp-cover');assert.equal(requests.at(-1).body.action,'complete');
+    assert.deepEqual(requests.at(-1).body.operation_ids,args.operationIds);
+    assert.equal(requests.at(-1).body.verified,undefined,'MCP forwards a claim, never manufactures proof');
+  }
+  const saveIds=['opv2_eade4da3ce6a031c9b9fceb7286a2c2cdc2cef79751622a57ce9ee4f4d6e2b97'];
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'complete',itemId:'wsp-save',operationIds:saveIds},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.operation_ids,saveIds,'exact saved-artifact apply ID survives the authenticated boundary');
+  const emptyScopeCount=requests.length;
+  assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'firm',operationIds:[],scopeCheck:{kind:'family_static_text_v1',category:'Title Blocks',expected_text:'Example firm'}},_meta})).isError,true);
+  assert.equal(requests.length,emptyScopeCount,'empty explicit scope references cannot silently become host selection');
   const scopeCheck={category:'OST_ElectricalEquipmentTags',view_ids:[123],subject_family_names:['Panelboard'],has_leader:false};
   assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['inventory','property'],scopeCheck},_meta})).isError,true);
   assert.deepEqual(requests.at(-1).body.scope_check,scopeCheck);
@@ -58,6 +75,26 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   for(const scope of [{...graphicsScope,pass:true},{...graphicsScope,view_ids:[123]},{...graphicsScope,view_types:['DrawingSheet']},{...graphicsScope,halftone:'true'},{...graphicsScope,hidden_policy:'verified_unchanged'}])
     assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'typical',operationIds:['view-census'],scopeCheck:scope},_meta})).isError,true);
   assert.equal(requests.length,graphicsRequests,'graphics selectors cannot claim a pass or drop census views at the MCP boundary');
+  const visibilityScope={kind:'category_visibility_v1',category:'OST_DataDevices',disciplines:['Electrical'],view_types:['FloorPlan'],hidden:true,sheet_ids:[1661139]};
+  for(const hidden of [true,false]){
+    assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'data',scopeCheck:{...visibilityScope,hidden}},_meta})).isError,true);
+    assert.deepEqual(requests.at(-1).body.scope_check,{...visibilityScope,hidden});
+    assert.equal(requests.at(-1).body.operation_ids,undefined,'Host selects fresh references without agent-supplied operation IDs');
+  }
+  const visibilityRequests=requests.length;
+  for(const scope of [{...visibilityScope,pass:true},{...visibilityScope,view_ids:[1]},{...visibilityScope,hidden:'true'},
+    {...visibilityScope,sheet_ids:[]},{...visibilityScope,sheet_ids:[0]},{...visibilityScope,view_types:['DrawingSheet']},
+    {...visibilityScope,sheet_ids:[1661139,1661139]},{...visibilityScope,category:'OST_bad token'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'data',scopeCheck:scope},_meta})).isError,true);
+  assert.equal(requests.length,visibilityRequests,'Invalid visibility claims/subset shortcuts never reach HTTP');
+  const familyScope={kind:'family_static_text_v1',category:'OST_TitleBlocks',expected_text:'Example firm\nExample address'};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'firm',scopeCheck:familyScope},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.scope_check,familyScope);assert.equal(requests.at(-1).body.operation_ids,undefined);
+  const familyRequests=requests.length;
+  for(const scope of [{...familyScope,verified:true},{...familyScope,type_ids:[1]},{...familyScope,instance_ids:[1]},
+    {...familyScope,expected_count:26},{...familyScope,expected_text:''},{...familyScope,expected_text:'x\0'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'check_scope',itemId:'firm',scopeCheck:scope},_meta})).isError,true);
+  assert.equal(requests.length,familyRequests,'Actor subset/pass claims never reach the family scope HTTP boundary');
   requests.splice(0,requests.length);
   const items = [{ itemId: "room_a_supply", description: "Supply branch in first room", sourceBasis: "Source plan, first room" },
     { itemId: "room_b_supply", description: "Supply branch in second room", sourceBasis: "Source plan, second room" }];
@@ -67,7 +104,7 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
     assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id, generation: 1,
     action: "declare", declaration: { items: items.map(item => ({ item_id: item.itemId, description: item.description, source_basis: item.sourceBasis })), assumptions: ["Elevation inferred from context"] }
   } });
-  for (const args of [{ action: "declare" }, { action: "complete", itemId: "room_a_supply" }, { action: "complete", itemId: "room_a_supply", operationIds: [] },
+  for (const args of [{ action: "declare" }, { action: "complete" }, { action: "complete", operationIds: [] },
     { action: "status", items }, { action: "delete", itemId: "room_b_supply" }, { action: "declare", items: [{ ...items[0], itemId: "../bad" }] }]) {
     assert.equal((await client.callTool({ name: "operator_manage_work_plan", arguments: args, _meta })).isError, true);
   }

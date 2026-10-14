@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "viewport_projection_pose_v2.test.ts",
+    "multi_sheet_move_verification_v2.test.ts",
     "created_tag_postcondition_v2.test.ts",
     "duplicated_type_postcondition_v2.test.ts",
     "committed_duplicated_type_readback_v2.test.ts",
@@ -267,7 +269,13 @@
     "native_element_property_readback_v1.test.ts",
     "native_property_kernel_v2.test.ts",
     "allowlist.test.ts",
-    "openai_brain_redline_targeting.test.ts"
+    "openai_brain_redline_targeting.test.ts",
+    "saved_document_postcondition_v2.test.ts",
+    "committed_saved_document_readback_plan_v2.test.ts",
+    "category_visibility_scope_v1.test.ts",
+    "family_static_text_scope_v1.test.ts",
+    "requested_family_scope_readback_v1.test.ts",
+    "requested_family_scope_dispatch_v1.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -305,7 +313,9 @@
     "tools/existingConditionsRegistrationHandoffTool.test.ts",
     "lib/operatorBackendClient.test.ts",
     "captureViewArguments.test.ts",
-    "lib/viewOwnedDetailingAgentProjection.test.ts"
+    "lib/viewOwnedDetailingAgentProjection.test.ts",
+    "lib/category_visibility_scope_schema.test.ts",
+    "lib/family_static_text_scope_schema.test.ts"
   ],
   "desktop_tests": [
     "test/server_smoke.test.js",
@@ -417,7 +427,8 @@
     "TemporaryDocumentInspectionTests",
     "SourceCircuitRequestBoundaryTests",
     "CircuitMoveCreateRequestBoundaryTests",
-    "SheetPlacementReadContractTests"
+    "SheetPlacementReadContractTests",
+    "SheetViewportPlacementTests"
   ],
   "failure_families": [
     {
@@ -3930,6 +3941,72 @@
       "coverage": [
         "backend:openai_brain_redline_targeting.test.ts",
         "dotnet:SourceCircuitRequestBoundaryTests"
+      ]
+    },
+    {
+      "id": "saved_document_native_session_transition_readback",
+      "coverage": [
+        "backend:saved_document_postcondition_v2.test.ts",
+        "backend:committed_saved_document_readback_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "already_satisfied_category_visibility_native_sheet_scope",
+      "coverage": [
+        "backend:category_visibility_scope_v1.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "category_visibility_scope_admission",
+      "coverage": [
+        "mcp:lib/category_visibility_scope_schema.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "shared_family_static_text_complete_native_scope",
+      "coverage": [
+        "backend:family_static_text_scope_v1.test.ts",
+        "mcp:lib/workPlanStdio.test.ts",
+        "mcp:lib/family_static_text_scope_schema.test.ts"
+      ]
+    },
+    {
+      "id": "requested_scope_filtered_stale_reads_host_collection",
+      "coverage": [
+        "backend:requested_family_scope_readback_v1.test.ts",
+        "backend:requested_family_scope_dispatch_v1.test.ts"
+      ]
+    },
+    {
+      "id": "viewport_placement_frame_vs_evaluated_graphic_bounds",
+      "coverage": [
+        "dotnet:SheetViewportPlacementTests",
+        "backend:viewport_projection_pose_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_sheet_anchor_xyz_roundtrip",
+      "coverage": [
+        "dotnet:SheetPlacementReadContractTests",
+        "backend:sheet_move_postcondition_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "multi_owner_sheet_move_complete_native_readback",
+      "coverage": [
+        "backend:sheet_move_postcondition_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts"
+      ]
+    },
+    {
+      "id": "retained_complete_without_edit_ids_advisory_mcp_backend",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
       ]
     }
   ],

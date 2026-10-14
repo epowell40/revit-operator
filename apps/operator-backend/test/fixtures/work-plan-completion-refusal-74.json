@@ -1,0 +1,19 @@
+{
+  "source": "Retained Sidecar original-binder trial74, publication v215, 2026-10-14; exact failed control arguments only, no model evidence or pass claims",
+  "attempts": [
+    {
+      "at": "2026-10-14T13:14:59.576Z",
+      "arguments": {
+        "action": "complete",
+        "itemId": "wsp-cover",
+        "reason": "Already-correct WSP name/address retained without redundant edits. Native cover family read before and after SaveAs confirms exact text; full rendered E000 and enlarged final MEP box inspected, no clipping or overlap within consultant box."
+      },
+      "first_error": "work_plan_deferral_arguments_invalid"
+    },
+    {
+      "at": "2026-10-14T13:15:12.018Z",
+      "arguments": {"action": "complete", "itemId": "wsp-cover"},
+      "first_error": "work_plan_completion_arguments_invalid"
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "provenance": {
+    "source": "Exact candidate79 Snowdon disposable native commit and UV-only reads; no retrospective verification credit",
+    "sha256": [
+      "bea52583f219deb091707f60bdf4c0eb86ce73e425fa86f1b2c36d7111d06b27",
+      "8f18a2036b22ccd17319b60ab3a45c8e1fd71ecce50480fc643e38168c0acf66"
+    ]
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1483900
+      ],
+      "mode": "vector",
+      "vectorX": 0.303555904236556,
+      "vectorY": 0,
+      "vectorZ": 0,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "moveTogether": true
+    }
+  },
+  "native_apply": {
+    "movedIds": [
+      1483900
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1391147,
+        1483900
+      ],
+      "affected_element_ids": [
+        1391147,
+        1483900
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1483900,
+        "before": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.51889534146447,
+            1.0345255861840672,
+            0.25868055555555974
+          ],
+          "ownerViewId": 1391147
+        },
+        "after": {
+          "kind": "ViewportBoxCenter",
+          "pointXyz": [
+            1.822451245701026,
+            1.0345255861840672,
+            0.25868055555555974
+          ],
+          "ownerViewId": 1391147
+        }
+      }
+    ],
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": true
+  },
+  "actual_sheets": [
+    {
+      "status": "Ok",
+      "action": "detail",
+      "sheetElementId": 1391147,
+      "sheetId": 1391147,
+      "viewId": 1391147,
+      "sheetNumber": "E102",
+      "sheetName": "POWER PLAN L2",
+      "title": "POWER PLAN L2",
+      "isPlaceholder": false,
+      "requestedPlacementIds": [
+        1483900
+      ],
+      "viewportCount": 1,
+      "placedViewCount": 1,
+      "placedScheduleCount": 1,
+      "titleBlockCount": 1,
+      "sheetOutline": {
+        "minU": 8.337514706413529e-17,
+        "minV": -5.551115123125783e-17,
+        "maxU": 3.5000000000000053,
+        "maxV": 2.4999999999999996
+      },
+      "viewportIds": [
+        1483900
+      ],
+      "viewportGeometry": [
+        {
+          "viewportId": 1483900,
+          "viewId": 243540,
+          "viewportType": {
+            "id": 9835,
+            "name": "Views Typical"
+          },
+          "rotation": "None",
+          "center": {
+            "u": 1.822451245701026,
+            "v": 1.0345255861840672
+          },
+          "box": {
+            "minU": 0.7104733034610888,
+            "minV": 0.5078286826052792,
+            "maxU": 2.934429187940963,
+            "maxV": 1.5612224897628553
+          }
+        }
+      ],
+      "placedViews": [
+        {
+          "viewId": 243540,
+          "name": "L2 - Power",
+          "viewType": "FloorPlan",
+          "scale": 96,
+          "viewportIds": [
+            1483900
+          ]
+        }
+      ],
+      "placedSchedules": [
+        {
+          "placementType": "ScheduleSheetInstance",
+          "instanceId": 1737403,
+          "scheduleId": 1737399,
+          "name": "<Revision Schedule> 3",
+          "viewType": "Schedule",
+          "point": {
+            "u": 3.0104166773677217,
+            "v": 1.1224371739549142
+          },
+          "boundingBox": {
+            "minU": 3.003472232923277,
+            "minV": 0.6421086519900814,
+            "maxU": 3.4340139349206518,
+            "maxV": 1.1293816183993586
+          }
+        }
+      ],
+      "titleBlocks": [
+        {
+          "elementId": 1391152,
+          "typeId": 1704694,
+          "familyName": "E1 30 x 42 Horizontal_Snowdon",
+          "typeName": "E1 30 x 42 Horizontal_Snowdon",
+          "boundingBox": {
+            "minU": 8.337514706413529e-17,
+            "minV": -5.551115123125783e-17,
+            "maxU": 3.5000000000000053,
+            "maxV": 2.4999999999999996
+          }
+        }
+      ]
+    }
+  ]
+}

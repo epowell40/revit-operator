@@ -1,0 +1,6 @@
+import { z } from 'zod';
+export const familyStaticTextScopeSchemaV1=z.object({
+ kind:z.literal('family_static_text_v1'),
+ category:z.string().min(1).max(256).refine(v=>v.trim()===v&&!/[\u0000-\u001f\u007f]/.test(v)&&(!/^OST_/i.test(v)||/^OST_[A-Za-z0-9_]+$/.test(v))),
+ expected_text:z.string().min(1).max(2048).refine(v=>v.trim()===v&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v))
+}).strict().describe('Check shared static family wording across the entire host category, including already-correct text. Call check_scope AFTER final edits, reloads and SaveAs. Omit operationIds for host selection: when complete current evidence is missing, the host performs one bounded read-only collection through normal ownership, pause, admission and settlement gates. It gathers a full unfiltered /revit/find-elements category census and unfiltered /revit/inspect-family-content per discovered type with maxElements:2000; no actor count or subset. Explicit references remain supported and must contain these complete fresh reads. expected_text is exact case/punctuation with whitespace normalized and must occur together in one static text object. An available wrong-text result is not automatically retried. Does not certify effective instance appearance, formatting/layout, labels, linked models or original source-comment completion.');

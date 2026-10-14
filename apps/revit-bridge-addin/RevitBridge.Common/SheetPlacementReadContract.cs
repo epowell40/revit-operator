@@ -7,6 +7,10 @@ namespace RevitBridge.Common
     // This selector annotates a complete sheet read; it never filters its inventory.
     public static class SheetPlacementReadContract
     {
+        // Preserve the native anchor's third coordinate. GetBoxCenter may
+        // carry a nonzero Z even though the placement is displayed in sheet UV.
+        public static object AnchorCoordinates(double u, double v, double z) => new { u, v, z };
+
         public static object SelectorSchema() => new Dictionary<string, object>
         {
             ["type"] = "array",

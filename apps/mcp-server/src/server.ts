@@ -3,6 +3,8 @@ import { isSupportedMcpAlias, requireSupportedToolRoute, SUPPORTED_TOOL_INVENTOR
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
+import { categoryVisibilityScopeSchemaV1 } from './lib/category_visibility_scope_schema.js';
+import { familyStaticTextScopeSchemaV1 } from './lib/family_static_text_scope_schema.js';
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
@@ -1114,7 +1116,7 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist and ch
       disciplines:z.array(z.enum(['Architectural','Structural','Mechanical','Electrical','Plumbing','Coordination'])).min(1).max(6),
       view_types:z.array(z.enum(['FloorPlan','CeilingPlan','EngineeringPlan','Section','Elevation','ThreeD'])).min(1).max(6),
       halftone:z.boolean(),hidden_policy:z.literal('exclude_hidden')
-    }).strict()]).optional().describe('check_scope + existing itemId recomputes declared coverage from native bytes, never actor counts. Omit operationIds to let the host select matching current read references; explicit references remain supported. It retains unavailable attempts and never marks an item complete. Reads must start after the latest edit, including SaveAs. Tags: one complete document /revit/find-elements category census (only limit/includeGeometry extras); fresh Document.GetElement + OwnerViewId + HasLeader for candidates selected by view_ids/family_names. subject_family_names additionally needs complete GetTaggedLocalElements and subject Family readbacks. Category graphics: kind=category_graphics_v1, declared disciplines/view_types; one complete /revit/views list with includeTemplates:true, no filters except the exact disciplines and limit/offset0. Then /revit/visibility get with categoryName + includeCategoryState:true for EVERY matching non-template view. Host derives controlling template/property and excluded hidden views. Does not prove hidden preservation, effective linked appearance, source interpretation or whole-item completion. Keep scope consistent; incomplete/changed evidence fails.'),
+    }).strict(),categoryVisibilityScopeSchemaV1,familyStaticTextScopeSchemaV1]).optional().describe('check_scope + existing itemId recomputes declared coverage from native bytes, never actor counts. Omit operationIds to let the host select matching current read references; explicit references remain supported. It retains unavailable attempts and never marks an item complete. Reads must start after the latest edit, including SaveAs. Tags: one complete document /revit/find-elements category census (only limit/includeGeometry extras); fresh Document.GetElement + OwnerViewId + HasLeader for candidates selected by view_ids/family_names. subject_family_names additionally needs complete GetTaggedLocalElements and subject Family readbacks. Category graphics: kind=category_graphics_v1, declared disciplines/view_types; one complete /revit/views list with includeTemplates:true, no filters except the exact disciplines and limit/offset0. Then /revit/visibility get with categoryName + includeCategoryState:true for EVERY matching non-template view. Category visibility: kind=category_visibility_v1 plus hidden:true/false; optional sheet_ids derives candidates from complete native sheet details with viewport geometry. Family static text: kind=family_static_text_v1 uses full host category census and fresh complete family content per discovered type. Already-correct states can be checked without edits. Host derives controlling template/property and excluded hidden views for halftone only. Does not prove hidden preservation, effective linked appearance, source interpretation or whole-item completion. Keep scope consistent; incomplete/changed evidence fails.'),
     locationHint: z.object({ status: z.enum(['unresolved','ambiguous','candidate']), reason: z.string().min(1).max(240),
       source: z.object({ attachment_id:z.string().min(1).max(160),filename:z.string().min(1).max(160),sha256:z.string().regex(/^[a-f0-9]{64}$/),
         page:z.number().int().positive().max(100000),page_count:z.number().int().positive().max(100000),sheet_label:z.string().min(1).max(120).optional(),view_label:z.string().min(1).max(120).optional(),
@@ -1133,7 +1135,7 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist and ch
     items: z.array(z.object({ itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/), description: z.string().min(1).max(800), sourceBasis: z.string().min(1).max(800), kind: z.enum(["edit", "inspection"]).optional(), dependsOn: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/)).min(1).max(128).optional() }).strict()).min(1).max(128).optional(),
     assumptions: z.array(z.string().min(1).max(800)).max(16).optional(),
     itemId: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/).optional(),
-    operationIds: z.array(z.string().min(1).max(240)).min(1).max(128).optional()
+    operationIds: z.array(z.string().min(1).max(240)).max(128).optional().describe('complete: reference the actual retained apply IDs for changes or saved artifacts. In advisory mode omit this field or use [] for already-correct work; this records an unverified claim, never native proof. Other actions require nonempty references when this field is supplied. check_scope is separate and never completes a checklist item.')
   }, async args => {
     try {
       const binding = currentAssignmentKernelV2Binding();
@@ -1150,13 +1152,14 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist and ch
           || region && (region.min_u>=region.max_u || region.min_v>=region.max_v)) throw new Error('work_plan_location_arguments_invalid');
       }
       if (["defer","resume_item"].includes(args.action) && (!args.itemId || !args.reason || args.items || args.operationIds || args.assumptions || args.completionProposal || args.followup)) throw new Error("work_plan_deferral_arguments_invalid");
-      if (!["defer","resume_item"].includes(args.action) && args.reason !== undefined) throw new Error("work_plan_deferral_arguments_invalid");
+      if (!["defer","resume_item"].includes(args.action) && args.reason !== undefined) throw new Error("work_plan_deferral_arguments_invalid: reason is only for defer/resume_item. For complete use itemId and retained operationIds; omit operationIds for an already-correct advisory claim. Put explanations in completionProposal, not reason. Do not repeat model edits.");
+      if(args.operationIds?.length===0 && args.action!=='complete')throw new Error('work_plan_operation_references_required: supplied operationIds must be nonempty except for an unverified advisory complete claim. Omit operationIds for host-selected check_scope reads.');
       if (args.action === "update_followup" && (!args.followup || args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_followup_arguments_invalid");
       if (args.action !== "update_followup" && args.followup) throw new Error("advisory_followup_arguments_invalid");
       if (args.action === "propose_completion" && (!args.completionProposal || args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("advisory_proposal_arguments_invalid");
       if (args.action !== "propose_completion" && args.completionProposal) throw new Error("advisory_proposal_arguments_invalid");
       if (args.action === "declare" && (!args.items || args.itemId || args.operationIds)) throw new Error("work_plan_declaration_arguments_invalid");
-      if (args.action === "complete" && (!args.itemId || !args.operationIds || args.items || args.assumptions)) throw new Error("work_plan_completion_arguments_invalid");
+      if (args.action === "complete" && (!args.itemId || args.items || args.assumptions)) throw new Error("work_plan_completion_arguments_invalid: complete requires an existing itemId; operationIds link retained edits/artifacts. The backend determines whether an unverified advisory claim or strict proof is permitted.");
       if (args.action === "status" && (args.items || args.itemId || args.operationIds || args.assumptions)) throw new Error("work_plan_status_arguments_invalid");
       const result = await createOperatorBackendClient().manageAssignmentWorkPlanV2({
         assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation, session_id: binding.session_id,
