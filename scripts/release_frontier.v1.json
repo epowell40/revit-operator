@@ -432,7 +432,8 @@
     "CircuitMoveCreateRequestBoundaryTests",
     "SheetPlacementReadContractTests",
     "SheetViewportPlacementTests",
-    "ScheduleCellAppearanceContractTests"
+    "ScheduleCellAppearanceContractTests",
+    "PanelScheduleReadWindowTests"
   ],
   "failure_families": [
     {
@@ -4032,6 +4033,13 @@
       "coverage": [
         "dotnet:ScheduleCellAppearanceContractTests",
         "backend:schedule_cell_appearance_v2.test.ts"
+      ]
+    },
+    {
+      "id": "panel_schedule_native_cell_circuit_identity_and_bounded_discovery",
+      "coverage": [
+        "dotnet:PanelScheduleReadWindowTests",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
       ]
     }
   ],

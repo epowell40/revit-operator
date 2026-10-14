@@ -351,6 +351,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/schedules") {
       scheduleBodies.push(JSON.parse(requestBody || "{}"));
+      if(scheduleBodies.at(-1)?.scheduleId === 9007) {
+        res.end(JSON.stringify({schema:"operator.panel_schedule_detail.v1",status:"Ok",action:"detail",read_only:true,
+          schedule:{id:9007,kind:"panel_schedule",panelElementId:8003},
+          table:{sections:[{section:"Body",rowOffset:12,columnOffset:4,returnedRows:1,returnedColumns:2,
+            hasMoreRows:true,nextRowOffset:13,hasMoreColumns:false,nextColumnOffset:null,
+            rows:[{rowIndex:12,cells:[{column:4,text:"OFFICE REC.",parameterId:-1,circuitElementId:8009},
+              {column:5,text:'3/4"C W/2#12+1#12GRD',parameterId:7002,circuitElementId:8009}]}]}]},
+          circuits:[{elementId:8009,circuitNumber:"3",wireSize:{isReadOnly:true}}]}));return;
+      }
       res.end(JSON.stringify({ items: [{ id: 4101, name: "Mechanical Equipment Schedule" }] }));
       return;
     }
@@ -667,6 +676,16 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   }), "listing schedules over stdio");
   assert.match((schedules as any).content[0].text, /Mechanical Equipment Schedule/);
   assert.deepEqual(scheduleBodies[0], { action: "list", exact: false, max: 10 });
+
+  const panelDetail = await withTimeout(client.callTool({name:"revit_list_schedules",
+    arguments:{action:"detail",scheduleId:9007,includeData:true,rowOffset:12,columnOffset:4,maxRows:1,maxColumns:2}}),"reading panel cells over stdio");
+  assert.equal(panelDetail.isError,undefined);
+  const panelRead=JSON.parse((panelDetail as any).content[0].text);
+  assert.equal(panelRead.schema,"operator.panel_schedule_detail.v1");
+  assert.equal(panelRead.table.sections[0].rows[0].cells[1].circuitElementId,8009);
+  assert.equal(panelRead.table.sections[0].nextRowOffset,13);
+  assert.equal(panelRead.circuits[0].wireSize.isReadOnly,true);
+  assert.deepEqual(scheduleBodies[1],{action:"detail",scheduleId:9007,exact:false,includeData:true,rowOffset:12,columnOffset:4,maxRows:1,maxColumns:2});
 
   const scheduleCell = await withTimeout(client.callTool({
     name: "revit_update_schedule_cell",

@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 
 namespace RevitBridge.Handlers
@@ -107,6 +108,11 @@ namespace RevitBridge.Handlers
                     message = "scheduleId must be a positive integer when provided."
                 };
             }
+
+            // Panel schedules are TableViews, not ViewSchedules. An explicit ID
+            // keeps natural-name regular schedule lookup backward compatible.
+            if (p.scheduleId.HasValue && doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.scheduleId.Value)) is PanelScheduleView panelSchedule)
+                return PanelScheduleDetail.Read(doc, panelSchedule, p);
 
             if (!p.scheduleId.HasValue && (p.requireUniqueQuery == true || p.includeSchedulableFields == true) && !string.IsNullOrWhiteSpace(q))
             {

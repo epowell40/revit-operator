@@ -1648,7 +1648,7 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells. For eligible columns not yet added, request detail with includeSchedulableFields; follow nextOffset until hasMore=false before claiming a field is absent. Names are exact native names, not aliases.",
+server.tool("revit_list_schedules", "List regular schedules or read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, cell parameter bindings, native row/circuit identities and circuit parameter editability; follow each section's row/column continuation. Panel pages allow 1..200 rows, 1..40 columns, at most 2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular schedule columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
   {
     action: z.enum(["list", "detail"]).optional().default("list"),
     scheduleId: z.number().int().optional(),
