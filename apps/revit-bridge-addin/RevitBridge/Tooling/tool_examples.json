@@ -23,6 +23,15 @@
               "fresh_output": false
             }]
           }
+        },
+        {
+          "name": "Inspect only the actual active saved model after Save As",
+          "request": { "paths": ["C:\\RevitOperator\\Workspace\\artifacts\\Model-Result.rvt"] },
+          "notes": [
+            "Use the exact native Save As output path. Arbitrary model files and mixed model/PDF requests are refused.",
+            "saved_document exposes actual native path/session/project identity, is_modified and is_modifiable.",
+            "stable_read and the matching digest verify the saved file, not all model content or engineering."
+          ]
         }
       ]
     },

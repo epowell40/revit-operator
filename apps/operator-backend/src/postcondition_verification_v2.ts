@@ -15,6 +15,7 @@ import { nativeElementBooleanReadbackV1 } from './verification/native_element_pr
 
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
+import { savedDocumentPostconditionV2 } from './verification/saved_document_postcondition_v2.js';
 import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
@@ -637,6 +638,8 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === '/revit/save-as')
+    return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")
     return elementTypeSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
   if (operationPath === "/revit/assign-electrical-circuit")

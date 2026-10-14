@@ -63,6 +63,7 @@ import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_p
 import { committedSheetMoveReadbackPlanV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
+import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -343,6 +344,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)

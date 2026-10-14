@@ -59,6 +59,14 @@ namespace RevitBridge.Common
     /// <summary>Save As owns file/document effects outside a Revit transaction. Never manufacture a commit or rollback.</summary>
     public static class OperatorNativeSaveAsExecution
     {
+        /// <summary>Separate stable file read; the caller must bind the path to the active native document.</summary>
+        public static OperatorNativeArtifactFile InspectSavedFile(string path)
+        {
+            var file = SaveFileSnapshot.Read(path);
+            return new OperatorNativeArtifactFile { Path = path, Exists = file.Exists, Readable = file.Known && file.Exists,
+                SizeBytes = file.Length, Sha256 = file.Hash, StableRead = file.Known && file.Exists, FreshOutput = false };
+        }
+
         public static OperatorNativeSaveAsResult Execute(string path, bool preview, bool overwrite,
             Func<OperatorNativeSaveDocumentIdentity> readActiveDocument, Action saveAs)
         {
