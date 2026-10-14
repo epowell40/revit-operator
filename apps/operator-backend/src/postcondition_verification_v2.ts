@@ -1,4 +1,5 @@
 import { updatedScheduleCellReadbackMatches } from "./verification/schedule_cell_postcondition_v2.js";
+import { isScheduleCellBackgroundEditV2 } from "./verification/schedule_cell_appearance_v2.js";
 import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 import { createdTemplateSatisfiedV2 } from './verification/created_template_postcondition_v2.js';
@@ -638,6 +639,9 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  // Cell appearance requires the durable native before/preservation inventory
+  // and fresh readback. Generic token matching has neither and cannot grant it.
+  if (operationPath === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(applyInput)) return false;
   if (operationPath === '/revit/save-as')
     return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")

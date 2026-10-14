@@ -104,6 +104,7 @@ namespace RevitBridge.Handlers
             public bool? filterBySheet { get; set; }
 
             public bool? dryRun { get; set; }
+            public List<RevitBridge.Common.ScheduleCellBackgroundChange>? cellStyles { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -114,6 +115,14 @@ namespace RevitBridge.Handlers
 
             var doc = app.ActiveUIDocument?.Document;
             if (doc == null) throw new InvalidOperationException("No active Revit document.");
+
+            if (p.cellStyles != null)
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCellAppearanceContract.Validate(body.RootElement, true, out var error))
+                        throw new ArgumentException(error);
+                return Task.FromResult<object>(ScheduleCellAppearanceOperations.Edit(app, doc, p.scheduleId!.Value, p.cellStyles, p.dryRun ?? false));
+            }
 
             var exact = p.exact ?? false;
             var schedule = ScheduleSelectionHelper.ResolveSchedule(doc, p.scheduleId, p.query, exact);

@@ -28,6 +28,7 @@ namespace RevitBridge.Handlers
             public int? columnOffset { get; set; }
             public int? maxRows { get; set; }
             public int? maxColumns { get; set; }
+            public List<RevitBridge.Common.ScheduleCellLocator>? cells { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -47,6 +48,13 @@ namespace RevitBridge.Handlers
             }
 
             var action = (p.action ?? "list").Trim().ToLowerInvariant();
+            if (action == "cell_styles")
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCellAppearanceContract.Validate(body.RootElement, false, out var error))
+                        throw new ArgumentException(error);
+                return Task.FromResult(ScheduleCellAppearanceOperations.Read(doc, p.scheduleId!.Value, p.cells!));
+            }
             if (action == "detail")
             {
                 return Task.FromResult<object>(BuildDetail(doc, p));

@@ -63,6 +63,7 @@ import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_p
 import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
+import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
@@ -359,6 +360,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       const readPlan = typedRead?.plan ?? (current?.operations[lease.operation_id]
         ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)

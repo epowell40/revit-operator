@@ -13,6 +13,7 @@ import { artifactTargetTokensV2 } from "./native_artifact_contract_v2.js";
 import { decodeNativeTagPropertyReadV2, nativeTagPropertyReadTargetsV2, existingTagRepairRequestV2 } from "./tag_property_readback_v2.js";
 import { createdTagRequestV2, decodeNativeCreatedTagReadV2, nativeCreatedTagReadTargetsV2 } from "./created_tag_postcondition_v2.js";
 import { nativeElementBooleanReadTargetsV1, nativeElementBooleanReadbackV1 } from './native_element_property_readback_v1.js';
+import { isScheduleCellBackgroundEditV2 } from './schedule_cell_appearance_v2.js';
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -75,6 +76,7 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/schedules", { semantic_outputs: ["schedule.cell_appearance"], principal_target_fields: ["scheduleId", "id"] }],
   ["/revit/sheets", {
     semantic_outputs: ["sheet.placement_anchors"],
     principal_target_fields: ["placementIds", "instanceId", "viewportId"],
@@ -254,6 +256,10 @@ export function operationTargetSelectorV2(input: Readonly<{
   value: unknown;
   fallback_target_tokens?: readonly string[];
 }>): OperationTargetSelectorV2 {
+  if (pathOf(input.operation) === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(input.operation.arguments)) {
+    return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
+      principal_target_tokens: tokensFromReviewedFields(input.value, ["scheduleId"]), contextual_scope_tokens: [] };
+  }
   if (pathOf(input.operation) === "/revit/tag-elements" && Number.isSafeInteger(objectValue(input.value).repairExistingTagId)) {
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
       principal_target_tokens: tokensFromReviewedFields(input.value, ["repairExistingTagId"]),
@@ -314,6 +320,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if (path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(apply.arguments)) return ["schedule.cell_appearance"];
   if (path === "/revit/assign-electrical-circuit") return ["electrical.circuit_membership"];
   if (path === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
     return ["tag.property_values"];
@@ -338,6 +345,11 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (!contract) return [];
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
+  if (pathOf(verification) === "/revit/schedules") {
+    const args=objectValue(verification.arguments), body=objectValue(args.body??args);
+    return body.action==='cell_styles' && Number.isSafeInteger(body.scheduleId) && Number(body.scheduleId)>0
+      && Array.isArray(body.cells) && body.cells.length>0 && body.cells.length<=64 ? contract.semantic_outputs : [];
+  }
   if(pathOf(verification)==='/revit/inspect-exported-files'){
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), paths=body.paths;
     return Array.isArray(paths)&&paths.length===1&&typeof paths[0]==='string'&&/\.(?:rvt|rfa)$/i.test(paths[0])

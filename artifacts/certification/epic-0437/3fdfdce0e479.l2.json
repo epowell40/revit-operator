@@ -780,7 +780,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:53bb9cfe9f816931fab9f3a8b413f97185e13931c917f8838c3b7229cd2ebcf8"
+      "sha256": "sha256:55a7ba0da5d4f815399f6c4805de25fbf2dd093d10f7191c57e9cb50c4b5d07a"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -1516,7 +1516,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:5dc0aaaf0d6eeb1c8cd0ba971a0a96152d820b4601bb8a0bcad11680ec8985ff"
+      "sha256": "sha256:150f56484d0fe951f7d51dd99b82de047485c620f71822424fe3ecadd66ead5a"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -3637,7 +3637,7 @@
     },
     {
       "path": "apps/operator-backend/src/postcondition_verification_v2.ts",
-      "sha256": "sha256:8b4f8efe4b6c498f9ef99256bf0b1961a61ef11464c3eebb16adb81cf188e3ba"
+      "sha256": "sha256:369b0cc2f57de958e4f15ad7669bc9377a95f74bc2b6c50a584cb46670bac50b"
     },
     {
       "path": "apps/operator-backend/src/provider_token_cost.ts",
@@ -4148,6 +4148,10 @@
       "sha256": "sha256:52e4792836b4f5812221f0d9d3c1b4279691bcd64162b2ef1539b513ad4d1bbe"
     },
     {
+      "path": "apps/operator-backend/src/verification/schedule_cell_appearance_v2.ts",
+      "sha256": "sha256:9a7da2202f409bcec93061661f4d466aa05c1c7611aab308bcfd19174d163b3e"
+    },
+    {
       "path": "apps/operator-backend/src/verification/schedule_cell_postcondition_v2.ts",
       "sha256": "sha256:9c5b3513ea5dcbc4a16ceecd5e78a8644209147d2a4a5032d183c7681ee7522d"
     },
@@ -4169,7 +4173,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/verification_capability_admission_v2.ts",
-      "sha256": "sha256:a5228b12d4ca6e0e71ffe505bfd8e75ee2736804ec5201591170b577fcd07f66"
+      "sha256": "sha256:719b312d926d1b7de9237ebc1734b7dac39c7fee8613228ed5b76579655ab507"
     },
     {
       "path": "apps/operator-backend/src/verification/verification_payload_boundary_v2.ts",
@@ -6320,6 +6324,10 @@
       "sha256": "sha256:94718a81cbaee2882b2c5357101b7571ae8ab7d4fa3db8ad2832ae70925fad5f"
     },
     {
+      "path": "apps/operator-backend/test/schedule_cell_appearance_v2.test.ts",
+      "sha256": "sha256:aa56e982f3c29c9c6fc694803ddaeefd4073a4a550ee2880cd41794460960349"
+    },
+    {
       "path": "apps/operator-backend/test/schedule_cell_kernel_v2.test.ts",
       "sha256": "sha256:a103000f926af2a38dc4469c184157a8bfd47c781873092c556dba4db0c602e5"
     },
@@ -7264,6 +7272,10 @@
       "sha256": "sha256:db901c025411298eb22c0ae65d7032f1c21259e823b6f1d9dc6176117ed8e87a"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleCellAppearanceContractTests.cs",
+      "sha256": "sha256:f291ea8af2df89f0f0fe1bb0c3277cf99ff038f07799aab4bcd020a3744a0e64"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleCellUpdatePolicyTests.cs",
       "sha256": "sha256:978654eba6b7642fabdbe048cfd2232b54b8f1e52003e8c54fd4fa8c2df881a6"
     },
@@ -7947,6 +7959,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/SavedDocumentInspectionPolicy.cs",
       "sha256": "sha256:fca3e2c4a28c04eca7d99bc4053b743e4f40be2d05bfaaea2bd7955143ee71ad"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleCellAppearanceContract.cs",
+      "sha256": "sha256:d8e1572d9d55511f219b2e114d18a4fbe787c287d4de07a8a8a2c042d91d05fd"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleCellUpdatePolicy.cs",
@@ -8898,7 +8914,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ConfigureScheduleHandler.cs",
-      "sha256": "sha256:bd14f477a69be3d7b85676ec9aedc81b3564c94e1c905c65df0d98129486fd15"
+      "sha256": "sha256:f0407953933ebdc451954ae27a605ed6a44b9f5529896871e466e744cab4030d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ContextHandler.cs",
@@ -9173,12 +9189,16 @@
       "sha256": "sha256:dc9b207c4c67e055a45c30dbdfc4900a53036c4533cc9b1163719b81fadb8102"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleCellAppearanceOperations.cs",
+      "sha256": "sha256:ac4d4caed92c670727fce8bb7f238c8a31cf7ddc3ddf87e7d75381a6d30fa796"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleSelectionHelper.cs",
       "sha256": "sha256:cfe36015e279fa7d93375d8972b12126e275efb081349f32e151e512d56e6535"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SchedulesHandler.cs",
-      "sha256": "sha256:3ad8cdb76a73e3f4a941b4b3dfebce566971b32974067fb6a60eefb89598ce22"
+      "sha256": "sha256:fa880da51333aecabe4479c7b3ec3f42265add473260804e4fa5aa58baaa870c"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SelectionHandlerProxies.cs",
@@ -9250,7 +9270,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionSchemaValidator.cs",
-      "sha256": "sha256:ae2c2e7de50c5a97f364798aee0f0e4f79973f9bca2d33a42d2d1c7ac8c7dbc2"
+      "sha256": "sha256:349248f70232fbe04139c0881566fd880f70722abcbf6b491d33c5b8d3239cdd"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorApprovalPolicy.cs",
@@ -9350,7 +9370,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:2b087348918568848b79de001e3f721e7ab899e65f6c03de71cc187d2506ca21"
+      "sha256": "sha256:10e220b9596b42e9c3407269ece7b55ec6d1266ebb7ae699af2a86d8725efc9e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -9533,7 +9553,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:0cdcb6beee62217bb083eb1323a4ae62f13eb733d246de82123774e07f994502",
+  "inputs_hash": "sha256:68912fe165bf0f838098dc6a61ac0e6ec58678f59e2912aa31ddfd4d3e64bd65",
   "result": {
     "passed": true,
     "checks": [

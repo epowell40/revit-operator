@@ -12,6 +12,7 @@ import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_post
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
@@ -791,6 +792,8 @@ function commitInput(
           ? createdTagPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/create-family-instance"
           ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(verificationSubject.input)
+          ? scheduleCellBackgroundPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"
           ? sheetMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements"

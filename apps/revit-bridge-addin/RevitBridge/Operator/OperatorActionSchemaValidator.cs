@@ -8245,6 +8245,9 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("action", out var cellAction) && cellAction.ValueKind == JsonValueKind.String && cellAction.GetString() == "cell_styles")
+                    return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, false, out error);
+                if (obj.Value.TryGetProperty("cells", out _)) { error = "schedules.cells requires action=cell_styles."; return false; }
                 if (!ValidateOptionalString(obj.Value, "action", maxLen: 16, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (obj.Value.TryGetProperty("scheduleId", out var scheduleId) && scheduleId.ValueKind == JsonValueKind.Number && scheduleId.GetInt64() <= 0)
@@ -8460,6 +8463,8 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("cellStyles", out _))
+                    return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, true, out error);
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "query", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;

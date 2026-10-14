@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "schedule_cell_appearance_v2.test.ts",
     "viewport_projection_pose_v2.test.ts",
     "multi_sheet_move_verification_v2.test.ts",
     "created_tag_postcondition_v2.test.ts",
@@ -429,7 +430,8 @@
     "SourceCircuitRequestBoundaryTests",
     "CircuitMoveCreateRequestBoundaryTests",
     "SheetPlacementReadContractTests",
-    "SheetViewportPlacementTests"
+    "SheetViewportPlacementTests",
+    "ScheduleCellAppearanceContractTests"
   ],
   "failure_families": [
     {
@@ -4015,6 +4017,13 @@
       "coverage": [
         "dotnet:OperatorNativePresentationPropertyReadPolicyTests",
         "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "schedule_cell_background_preservation_fresh_readback",
+      "coverage": [
+        "dotnet:ScheduleCellAppearanceContractTests",
+        "backend:schedule_cell_appearance_v2.test.ts"
       ]
     }
   ],
