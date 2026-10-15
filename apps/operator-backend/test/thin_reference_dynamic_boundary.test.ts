@@ -1,6 +1,8 @@
 import ts from "typescript";
 import { runInNewContext } from "node:vm";
 import * as thinReference from "../src/brains/thin_reference_execution.js";
+import {codexAssignmentTurnTimeLimits,createCodexAssignmentProgressTimeMonitor} from '../src/codex/assignment_timeout.js';
+import {createExecutionDeadlineV2} from '../src/brains/execution_deadline_v2.js';
 import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -107,7 +109,8 @@ function actualThinCaller(dependencies: Record<string, unknown>): (request: any,
   assert(fn);
   const emitted = ts.transpileModule(fn.getText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports: Record<string, any> = {};
-  runInNewContext(emitted, { exports, AbortController, setTimeout, clearTimeout, ...thinReference, ...dependencies });
+  runInNewContext(emitted, { exports, AbortController, setTimeout, clearTimeout, Date, process,
+    codexAssignmentTurnTimeLimits,createCodexAssignmentProgressTimeMonitor,createExecutionDeadlineV2,...thinReference,...dependencies });
   return exports.decideCodexStreaming;
 }
 
@@ -144,7 +147,7 @@ for (const freshState of ["active", "paused", "unknown", "input", "budget", "ter
     if (freshState === "terminal") { fresh.terminal = true; fresh.outcome = "failed"; fresh.terminal_reason = "Preserved terminal outcome"; }
     const deltas: string[] = [], done: string[] = [], events: any[] = [];
     const oldUsage = { schema: "revit-operator.provider-turn-usage/v1", session_id: req.session_id, message_id: req.message_id, thread_id: "thread", turn_id: "turn", disposition: "completed", raw_response_ids: ["response"] };
-    const run = actualThinCaller({ localThinReferenceLimits: () => ({ max_turns: 8, max_wall_ms: 60000 }), assignmentKernelV2ForBinding: () => ({ binding }),
+    const run = actualThinCaller({ localThinReferenceLimits: () => ({ max_turns: 8, max_wall_ms: 60000 }), assignmentKernelV2ForBinding: () => ({ binding,snapshot:original }),
       codexTurnAbortKey: () => "caller", thinReferenceAborts: new Map(), conversationWorkProfile: () => ({}),
       runThinReferenceTurns: async () => ({ response: { version: "operator.backend.v1", assistant_message: "Older summary", actions: [], assignment_snapshot_v2: prior, model_call_receipts: [{ call_id: "response" }], provider_turn_usage: oldUsage },
         turns: 4, stop_reason: "completed_turns_without_retained_work", duration_ms: 100, provider_turns: [oldUsage] }),
@@ -160,3 +163,23 @@ for (const freshState of ["active", "paused", "unknown", "input", "budget", "ter
     assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), original, "presentation neither pauses nor completes the task");
   }));
 }
+
+test('actual thin caller timer and runner receive the same native-earned deadline beyond original20minutes',t=>workspace(async()=>{
+  const epoch=Date.UTC(2026,9,15),minute=60_000;t.mock.timers.enable({apis:['setTimeout','Date'],now:epoch});
+  const {binding,req}=start(),original=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const initial=structuredClone(original)as any;initial.spec.execution_policy={mode:'local_advisory_v1',selected_by:'trusted_local_host',session_id:binding.session_id,document_fingerprint:binding.document_fingerprint,max_turns:8,max_provider_calls:64,max_operations:256,max_total_tokens:8_000_000,max_wall_clock_ms:20*minute,
+    progress_allowance:{mode:'verified_native_changes_v1',credit_unit:'distinct_verified_targets_v1',max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000,max_wall_clock_ms:120*minute}};
+  const fresh=structuredClone(initial),key='outer-earned',aborts=new Map(),priorTimeout=process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS;delete process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS;
+  try{
+    const run=actualThinCaller({localThinReferenceLimits:()=>({max_turns:8,max_wall_ms:20*minute}),assignmentKernelV2ForBinding:()=>({binding,snapshot:initial}),codexTurnAbortKey:()=>key,thinReferenceAborts:aborts,conversationWorkProfile:()=>({}),currentCodexAssignmentSnapshotV2:()=>fresh,
+      runThinReferenceTurns:async(input:any)=>{
+        assert.equal(typeof input.remainingWallMs,'function');t.mock.timers.tick(19*minute);const at=Date.now(),iso=(n:number)=>new Date(n).toISOString();
+        fresh.operations.edit={operation_id:'edit',binding,requested_effect:'apply',persistent_effect:'applied',settlement_state:'settled',opened_at:iso(at-50),settled_at:iso(at-30),request_identity:{request_signature:'distinct'},input:{body:{changes:[{elementId:1,parameterName:'Comments',value:'Checked'}]}},verification_operation_ids:['read'],result:{binding,authority:'native-host',status:'succeeded',native_transaction_state:'committed',affected_target_identities:['element_id:1']}};
+        fresh.operations.read={operation_id:'read',binding,target:{target_id:'id:1'},requested_effect:'read',purpose:'verification',persistent_effect:'none',settlement_state:'settled',opened_at:iso(at-30),settled_at:iso(at-10),verification_of_operation_id:'edit',observation_ids:['proof'],result:{binding,authority:'native-host',status:'succeeded'}};
+        fresh.observations.proof={operation_id:'read',binding,authority:'native-host',facts:[{fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true},{fact_id:'verification.deliverable_target_identities',fact_class:'verification',value:['element_id:1']}]};
+        t.mock.timers.tick(2*minute);assert.equal(input.signal.aborted,false,'Actual caller must rearm instead of aborting at original20minutes');assert.equal(input.remainingWallMs(),4*minute);
+        return{response:{version:'operator.backend.v1',assistant_message:'Partial saved.',actions:[],assignment_snapshot_v2:fresh},turns:1,stop_reason:'experiment_turn_limit',duration_ms:21*minute,provider_turns:[]};
+      },finalCodexAssignmentMessageV2:()=> 'Partial saved.',appendEvent:()=>{}});
+    const response=await run(req,{});assert.equal(response.local_execution_experiment.duration_ms,21*minute);assert.equal(aborts.size,0,'Caller cleanup removes its abort owner and timer');assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id),original,'No historical journal or budget rewrite');
+  }finally{if(priorTimeout===undefined)delete process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS;else process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS=priorTimeout;}
+}));

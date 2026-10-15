@@ -168,11 +168,16 @@ export async function runThinReferenceTurns(input: Readonly<{
   invoke: (request: ChatRequest, turn: number) => Promise<ChatResponse>;
   onContinue?: (turn: number) => void;
   now?: () => number;
+  remainingWallMs?: () => number;
 }>): Promise<ThinReferenceRunResult> {
   const key = JSON.stringify(input.binding);
   if (activeAssignments.has(key)) throw new Error("thin_reference_assignment_already_running");
   activeAssignments.add(key);
   const now = input.now ?? Date.now, started = now();
+  const wallExpired = () => {
+    if (!input.remainingWallMs) return now() - started >= input.limits.max_wall_ms;
+    try { const left=input.remainingWallMs(); return !Number.isFinite(left)||left<=0; } catch { return true; }
+  };
   let turns = 0, stopReason = "not_started", emptyCompletedTurns = 0;
   let lastTurnStart: AssignmentSnapshotV2 | null = null, lastDirections: string | null = null;
   let response: ChatResponse = { version: "operator.backend.v1", assistant_message: "Task stopped before another provider turn. Its progress is saved.", actions: [] };
@@ -181,7 +186,7 @@ export async function runThinReferenceTurns(input: Readonly<{
   try {
     while (true) {
       if (input.signal.aborted) { stopReason = input.signal.reason === "experiment_wall_limit" ? "experiment_wall_limit" : "request_interrupted"; break; }
-      if (now() - started >= input.limits.max_wall_ms) { stopReason = "experiment_wall_limit"; break; }
+      if (wallExpired()) { stopReason = "experiment_wall_limit"; break; }
       const current = input.inspect();
       response = { ...response, assignment_snapshot_v2: current.snapshot };
       if (!sameAssignmentBindingV2(current.snapshot.current_binding, input.binding)) { stopReason = "assignment_binding_changed"; break; }
@@ -224,7 +229,7 @@ export async function runThinReferenceTurns(input: Readonly<{
         response = { ...response, assignment_snapshot_v2: settled ?? undefined };
         stopReason = input.signal.aborted
           ? input.signal.reason === "experiment_wall_limit" ? "experiment_wall_limit" : "request_interrupted"
-          : now() - started >= input.limits.max_wall_ms ? "experiment_wall_limit"
+          : wallExpired() ? "experiment_wall_limit"
           : settled ? incompleteProviderStopReason(settled, input.binding, response.provider_turn_usage?.disposition)
           : "assignment_binding_changed";
         break;

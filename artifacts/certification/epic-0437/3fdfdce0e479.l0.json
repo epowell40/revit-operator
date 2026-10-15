@@ -1508,7 +1508,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:0d62061869feb2380d521cc4f0fa118667b5a228b570123eb580255c01f2df77"
+      "sha256": "sha256:166d0cb0869b704c14e7b61bb3e5fb3abb584bad596657c4d78053ceead41388"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
@@ -1583,6 +1583,10 @@
       "sha256": "sha256:98e164e6f3eed7af0c50f4d28ad1858ebb4a9beff9b96c4743df044a79a0e4d6"
     },
     {
+      "path": "apps/operator-backend/src/brains/execution_deadline_v2.ts",
+      "sha256": "sha256:cf7904f478a3082a2e75f323fd1933497d223a4d53815b883a66cd32d11101fe"
+    },
+    {
       "path": "apps/operator-backend/src/brains/external_provider_brain.ts",
       "sha256": "sha256:3b2716f07c9c4c192d3976215f8e88bab79b5f489e3c0a50bf10f2935738dc2b"
     },
@@ -1624,7 +1628,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/thin_reference_execution.ts",
-      "sha256": "sha256:f804ec86a2428d73eb2fcb31f6417622d76cacbacd6bf18f764316af14fd64a8"
+      "sha256": "sha256:b573454c515c518d7d0267c76edf521718d0662bb47876e438fb9fb50ddf6c84"
     },
     {
       "path": "apps/operator-backend/src/brains/workbench_prompt_formatter.ts",
@@ -6128,6 +6132,10 @@
       "sha256": "sha256:81e5f67060631810a0969ebbeaaf24775b82bcd912fb5a2b10075aeabfcd5e64"
     },
     {
+      "path": "apps/operator-backend/test/progress_outer_deadline_v2.test.ts",
+      "sha256": "sha256:b1e4dd60b440c26c353f8d7a405c025e91b70989fe04715ed11f0dcc691a89bb"
+    },
+    {
       "path": "apps/operator-backend/test/progressive_delivery.test.ts",
       "sha256": "sha256:46a5040b457dbf62200c22b02a217f5d0884e4fd62046ef1cbb426b437e84da5"
     },
@@ -6525,11 +6533,11 @@
     },
     {
       "path": "apps/operator-backend/test/thin_reference_dynamic_boundary.test.ts",
-      "sha256": "sha256:e180239bf549fb6113e1941ee850f2ffacad2746b1689356c37de2f5f85dfdee"
+      "sha256": "sha256:5fe91344dd9c82b1b87714bcc3c1620c6078193154977bcd3e2bca04dd2a197d"
     },
     {
       "path": "apps/operator-backend/test/thin_reference_execution.test.ts",
-      "sha256": "sha256:26ef5c56bd660aba5336e835ebc89c09f8dc43ca11e8b1003b22c7e4ee1e9647"
+      "sha256": "sha256:cac20ca49241aa8397bfbaa70607dad445691b2fcd2f77c649abb9acb9060bfd"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -9605,7 +9613,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:b096da42a5b41d78f9771609583aa00718650dba77cd30f73ad1fef178f96c7d",
+  "inputs_hash": "sha256:2a992118800b78ea9f5454b9a8cef5af3154ea0b4b7df5afb570fad4d87c36a0",
   "result": {
     "passed": true,
     "checks": [

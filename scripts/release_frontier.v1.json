@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "progress_outer_deadline_v2.test.ts",
     "verified_target_work_credit_v2.test.ts",
     "progress_execution_time_v2.test.ts",
     "native_annotation_postcondition_v2.test.ts",
@@ -4097,6 +4098,16 @@
       "coverage": [
         "backend:native_schedule_presentation_v2.test.ts",
         "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
+      "coverage": [
+        "backend:progress_outer_deadline_v2.test.ts",
+        "backend:thin_reference_execution.test.ts",
+        "backend:thin_reference_dynamic_boundary.test.ts",
+        "backend:progress_execution_time_v2.test.ts",
+        "backend:codex_assignment_timeout.test.ts"
       ]
     }
   ],

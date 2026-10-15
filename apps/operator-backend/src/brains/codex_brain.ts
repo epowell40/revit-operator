@@ -18,6 +18,7 @@ import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolat
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
 import { codexAssignmentTurnTimeLimits, createCodexAssignmentProgressTimeMonitor } from "../codex/assignment_timeout.js";
+import { createExecutionDeadlineV2 } from "./execution_deadline_v2.js";
 import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
@@ -352,10 +353,18 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const abort = () => controller.abort("request_interrupted");
   if (cb.abortSignal?.aborted) abort();
   else cb.abortSignal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort("experiment_wall_limit"), limits.max_wall_ms);
-  timer.unref();
+  let stopDeadline:()=>void=()=>{};
   try {
+    const startedAt=new Date().toISOString();
+    const timeLimits=codexAssignmentTurnTimeLimits({snapshot:assignment.snapshot,now:startedAt,
+      configuredTimeout:process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS});
+    const progressTime=timeLimits.maxWallMs>0?createCodexAssignmentProgressTimeMonitor({initial:assignment.snapshot,
+      readCurrent:()=>currentCodexAssignmentSnapshotV2(assignment.binding),startedAt}):undefined;
+    const deadline=createExecutionDeadlineV2({maxWallMs:limits.max_wall_ms,...(progressTime?{
+      remainingWorkMs:progressTime,maxWallCeilingMs:timeLimits.progressWallCeilingMs??timeLimits.maxWallMs}: {})});
+    stopDeadline=deadline.arm(controller);
     const result = await runThinReferenceTurns({ request: req, binding: assignment.binding, limits, signal: controller.signal,
+      remainingWallMs:deadline.remainingMs,
       inspect: () => advanceAssignmentKernelProgressV2({ binding: assignment.binding }),
       invoke: request => decideCodexSingleTurn(request, { onProgress: cb.onProgress, abortSignal: controller.signal }, true, workProfile),
       onContinue: () => cb.onProgress?.("Continuing the saved task.") });
@@ -375,7 +384,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     return { ...result.response, assignment_snapshot_v2: snapshot, assistant_message: message, local_execution_experiment: receipt,
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {}) };
   } finally {
-    clearTimeout(timer); cb.abortSignal?.removeEventListener("abort", abort);
+    stopDeadline(); cb.abortSignal?.removeEventListener("abort", abort);
     if (thinReferenceAborts.get(key) === controller) thinReferenceAborts.delete(key);
   }
 }
