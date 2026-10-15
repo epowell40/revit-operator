@@ -63,11 +63,7 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
     "advisory_continuation_input_pending", "Other execution-critical answers are still required.");
   kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && snapshot.execution_failure_ids.length === 0,
     "advisory_continuation_execution_blocked", "A checkpoint cannot clear execution failure or budget stops.");
-  const policy = snapshot.spec.execution_policy!;
-  const budget = defaultAssignmentWorkBudgetV2(snapshot, {
-    ...policy, max_reasoning_turns: policy.max_provider_calls, max_equivalent_operations: 0,
-    max_no_progress_epochs: 0, max_reconciliation_attempts: 0
-  });
+  const budget = advisoryWorkBudget(snapshot);
   kernelAssertV2(Object.keys(snapshot.provider_calls).length < budget.max_provider_calls
     && Object.keys(snapshot.operations).length < budget.max_operations
     && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < budget.max_total_tokens
@@ -81,6 +77,14 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
     kernelAssertV2(deriveAssignmentOutcomeV2({ ...snapshot, completion_proposal: undefined, pending_review_ids: [] }) === "active",
       "advisory_continuation_execution_blocked", "The task still has unresolved execution prerequisites.");
   }
+}
+
+function advisoryWorkBudget(snapshot: AssignmentSnapshotV2) {
+  const policy = snapshot.spec.execution_policy!;
+  return defaultAssignmentWorkBudgetV2(snapshot, {
+    ...policy, max_reasoning_turns: policy.max_provider_calls, max_equivalent_operations: 0,
+    max_no_progress_epochs: 0, max_reconciliation_attempts: 0
+  });
 }
 const PROVIDER_STATE_RANK: Readonly<Record<ProviderCallStateV2, number>> = {
   admitted: 0,
@@ -234,7 +238,8 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
   kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
   const advisory = advisoryVerificationV2(snapshot);
-  kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < snapshot.spec.execution_policy!.max_operations, "operation_budget_exhausted", "The immutable local operation budget is exhausted.");
+  kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < advisoryWorkBudget(snapshot).max_operations,
+    "operation_budget_exhausted", "The retained local operation allowance is exhausted.");
   kernelAssertV2(!snapshot.completion_proposal || Boolean(operation.parent_operation_id), "assignment_completion_proposal_pending", "A proposed checkpoint admits no new root work.");
   kernelAssertV2(advisory || operation.requested_effect !== "apply" || !snapshot.spec.work_plan_required || Boolean(snapshot.work_plan),
     "assignment_kernel_v2_declare_work_plan_before_apply", "Multi-part editing requires a declared scope before native admission.");

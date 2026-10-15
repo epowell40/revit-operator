@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { createGoal, getGoal, __testOnlyResetGoalListCache } from "../src/goals/service.js";
+import { createGoal, getGoal, mutateGoalRecord, __testOnlyResetGoalListCache } from "../src/goals/service.js";
 import { __closeForTests, appendEvent, getConversationTurn } from "../src/memory/sqlite_store.js";
 import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
@@ -642,6 +642,85 @@ test("actual dynamic work-plan proposal stops the provider and rejects late mode
     const late: any = await handleCodexDynamicToolCall(runtime as any, { id: "late", method: "item/tool/call", params: {
       namespace: "revit_operator", turnId: "turn", tool: "revit_call_tool", arguments: { method: "GET", path: "/revit/context" } } } as any);
     assert.equal(late.success, false); assert.equal(calls, 1);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
+// Synthetic native journal events isolate the admission boundary. Separate
+// native postcondition tests establish how these trusted facts are produced.
+function earnedOperationHistory(f: ReturnType<typeof setup>) {
+  const edit = open(f, "checked-edit", "apply"); settle(f, edit, "applied");
+  const read = open(f, "checked-read"); settle(f, read);
+  const events: any[] = structuredClone(getGoal(f.goal.id)!.assignment_kernel_v2!.events);
+  for (const event of events) {
+    if (event.event_type === "assignment_created") {
+      event.spec.execution_policy.max_operations = 2;
+      event.spec.execution_policy.progress_allowance = { mode: "verified_native_changes_v1",
+        max_provider_calls: 256, max_operations: 34, max_total_tokens: 32_000_000 };
+    }
+    if (event.event_type === "operation_admitted" && event.operation.operation_id === read.operation_id) {
+      Object.assign(event.operation, { purpose: "verification", fulfillment_role: "verification",
+        eligible_criterion_ids: [], verification_of_operation_id: edit.operation_id });
+    }
+    if (event.event_type === "observation_retained" && event.observation.operation_id === read.operation_id) {
+      Object.assign(event.observation, { fulfillment_role: "verification", evidence_class: "verification", eligible_criterion_ids: [],
+        facts: [{ fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }] });
+    }
+  }
+  return events as AssignmentEventV2[];
+}
+
+test("operation admission consumes earned native allowance and stops at its frozen ceiling on cold replay", () => fixture(true, f => {
+  const events = earnedOperationHistory(f), journal = new AssignmentJournalV2(events), before = journal.snapshot();
+  assert.equal(defaultAssignmentWorkBudgetV2(before, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_operations, 34);
+  const read = Object.values(before.operations).find(op => op.requested_effect === "read")!;
+  const admitted = events.find((event: any) => event.event_type === "operation_admitted"
+    && event.operation.operation_id === read.operation_id) as Extract<AssignmentEventV2, { event_type: "operation_admitted" }>;
+  for (let i = 2; i < 34; i++) journal.append({ ...events[0]!, event_id: `extra-${i}`,
+    assignment_version: journal.snapshot().assignment_version + 1, event_type: "operation_admitted",
+    operation: { ...admitted.operation, operation_id: `extra-${i}`, purpose: "discovery", fulfillment_role: "supporting_control", verification_of_operation_id: undefined }
+  } as AssignmentEventV2);
+  const full = journal.snapshot();
+  assert.equal(Object.keys(full.operations).length, 34);
+  const overflow = { ...events[0]!, event_id: "overflow", assignment_version: full.assignment_version + 1,
+    event_type: "operation_admitted", operation: { ...read, operation_id: "overflow" } } as AssignmentEventV2;
+  assert.throws(() => journal.append(overflow), { code: "operation_budget_exhausted" });
+  assert.deepEqual(journal.snapshot(), full);
+  assert.deepEqual(new AssignmentJournalV2(journal.events()).snapshot(), full);
+  assert.deepEqual(full.spec, before.spec, "earning and spending never rewrite frozen policy");
+  for (const noCredit of ["legacy", "unproved", "model"]) {
+    const denied: any[] = structuredClone(events);
+    if (noCredit === "legacy") delete denied[0].spec.execution_policy.progress_allowance;
+    for (const event of denied) if (event.event_type === "observation_retained" && event.observation.operation_id === read.operation_id) {
+      if (noCredit === "unproved") event.observation.facts[0].value = false;
+      if (noCredit === "model") { event.observation.authority = "model"; }
+    }
+    if (noCredit === "model") for (const event of denied) if (event.event_type === "operation_result_recorded" && event.result.operation_id === read.operation_id) event.result.authority = "model";
+    const fixed = new AssignmentJournalV2(denied);
+    assert.throws(() => fixed.append({ ...overflow, assignment_version: fixed.snapshot().assignment_version + 1 }), { code: "operation_budget_exhausted" });
+  }
+}));
+
+test("actual dynamic dispatcher admits the next tool after earned base operations without resetting usage", () => fixture(true, async f => {
+  const events = earnedOperationHistory(f);
+  mutateGoalRecord(f.goal.id, goal => ({ ...goal, assignment_kernel_v2: { ...goal.assignment_kernel_v2!, events } }));
+  __testOnlyResetGoalListCache();
+  const before = f.state(); let calls = 0;
+  const runtime = { assignmentKernelV2Binding: () => f.binding, queueAssignmentKernelV2TurnStop() {},
+    async callTool(_tool: string, _args: any, context: any) {
+      calls++; context.onMcpAccepted(); return { content: [{ type: "text", text: "{}" }] };
+    } };
+  const request: any = { version: "operator.backend.v1", session_id: f.binding.session_id, message_id: "earned-admission",
+    user_text: f.goal.objective, assignment_id: f.binding.assignment_id, assignment_run_id: f.binding.run_id, assignment_generation: 1 };
+  const owner = beginTeammateLoopOwner(runtime, request, { canonicalSupervisionOnly: true });
+  try {
+    await handleCodexDynamicToolCall(runtime as any, { id: "earned-next", method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "turn", tool: "revit_call_tool", arguments: { method: "GET", path: "/revit/context" }
+    } } as any);
+    assert.equal(calls, 1, "the admitted tool must reach the runtime beyond the fixed base");
+    const after = f.state();
+    assert.equal(Object.keys(after.operations).length, 3);
+    assert.deepEqual(after.spec, before.spec); assert.deepEqual(after.provider_calls, before.provider_calls);
+    for (const [id, operation] of Object.entries(before.operations)) assert.deepEqual(after.operations[id], operation);
   } finally { endTeammateLoopOwner(owner); }
 }));
 

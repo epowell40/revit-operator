@@ -4101,6 +4101,13 @@
       ]
     },
     {
+      "id": "earned_operations_at_journal_and_dynamic_dispatch_admission",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:verified_target_work_credit_v2.test.ts"
+      ]
+    },
+    {
       "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
       "coverage": [
         "backend:progress_outer_deadline_v2.test.ts",
