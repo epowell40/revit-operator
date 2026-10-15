@@ -15,6 +15,8 @@ namespace RevitBridge.Handlers
         public sealed class Params
         {
             public string? action { get; set; } // list (default) | detail
+            public string? kind { get; set; } // list: regular (default) | panel | all
+            public int? offset { get; set; }
             public long? scheduleId { get; set; }
             public string? query { get; set; }
             public bool? exact { get; set; }
@@ -68,9 +70,14 @@ namespace RevitBridge.Handlers
         {
             var q = (p.query ?? "").Trim();
             var exact = p.exact ?? false;
-            var max = p.max.HasValue && p.max.Value > 0 ? Math.Min(p.max.Value, 2000) : 200;
-
-            var schedules = CollectSchedules(doc)
+            if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate(p.kind, p.offset, p.max, out var page, out var error))
+                return new { status = "InvalidRequest", action = "list", message = error };
+            var candidates = new List<View>();
+            if (page!.Kind != "panel") candidates.AddRange(CollectSchedules(doc));
+            if (page.Kind != "regular") candidates.AddRange(new FilteredElementCollector(doc)
+                .OfClass(typeof(PanelScheduleView)).Cast<PanelScheduleView>()
+                .Where(view => !view.IsPanelScheduleTemplate()));
+            var schedules = candidates
                 .Where(s =>
                 {
                     if (string.IsNullOrWhiteSpace(q)) return true;
@@ -79,19 +86,48 @@ namespace RevitBridge.Handlers
                     return n.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
                 })
                 .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-                .Take(max)
+                .ThenBy(s => RevitBridge.Common.ElementIdCompat.GetValue(s.Id))
                 .ToList();
-
-            var items = schedules.Select(s => BuildScheduleSummary(doc, s)).ToList();
+            var items = schedules.Skip(page.Offset).Take(page.Max)
+                .Select(s => BuildInventorySummary(doc, s)).ToList();
             return new
             {
+                schema = "operator.schedule_inventory.v1",
                 status = "Ok",
                 action = "list",
+                kind = page.Kind,
+                offset = page.Offset,
+                max = page.Max,
+                matched = schedules.Count,
                 returned = items.Count,
+                complete = page.Complete(schedules.Count),
+                hasMore = page.HasMore(schedules.Count),
+                nextOffset = page.NextOffset(schedules.Count),
                 query = string.IsNullOrWhiteSpace(q) ? null : q,
                 exact,
                 items
             };
+        }
+
+        private static object BuildInventorySummary(Document doc, View view)
+        {
+            if (view is PanelScheduleView panel)
+            {
+                var ownerId = panel.GetPanel();
+                return new
+                {
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(panel.Id),
+                    uniqueId = panel.UniqueId,
+                    name = panel.Name,
+                    viewType = panel.ViewType.ToString(),
+                    kind = "panel_schedule",
+                    isTemplate = false,
+                    panelElementId = RevitBridge.Common.ElementIdCompat.GetValue(ownerId),
+                    panelUniqueId = doc.GetElement(ownerId)?.UniqueId,
+                    templateElementId = RevitBridge.Common.ElementIdCompat.GetValue(panel.GetTemplate())
+                };
+            }
+            return BuildScheduleSummary(doc, (ViewSchedule)view);
         }
 
         private static object BuildDetail(Document doc, Params p)
@@ -449,9 +485,11 @@ namespace RevitBridge.Handlers
             return new
             {
                 id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
+                uniqueId = schedule.UniqueId,
                 name = schedule.Name,
                 viewType = schedule.ViewType.ToString(),
                 kind = "schedule",
+                isTemplate = schedule.IsTemplate,
                 categoryId,
                 categoryName,
                 fieldCount

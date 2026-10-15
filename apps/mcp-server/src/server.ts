@@ -1648,9 +1648,11 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List regular schedules or read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, cell parameter bindings, native row/circuit identities and circuit parameter editability; follow each section's row/column continuation. Panel pages allow 1..200 rows, 1..40 columns, at most 2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular schedule columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
+server.tool("revit_list_schedules", "List schedules with kind=regular (default), panel, or all; list pages return native IDs/UIDs, matched/returned/complete/hasMore/nextOffset. For whole-project panel work start with kind=panel; panel templates are excluded. Only an unfiltered complete inventory establishes whole-project enumeration; the last page alone does not. Read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, actual cell parameter bindings, circuit identities and both Load Name and Schedule Circuit Notes: compact wiring can be stored in either, so description-only counts are incomplete. Follow section row/column continuation. Panel detail pages allow 1..200 rows, 1..40 columns, at most2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
   {
     action: z.enum(["list", "detail"]).optional().default("list"),
+    kind: z.enum(["regular", "panel", "all"]).optional().describe("List selector. Resolve panel detail by a scheduleId from its inventory."),
+    offset: z.number().int().min(0).max(100000).optional(),
     scheduleId: z.number().int().optional(),
     query: z.string().optional(),
     exact: z.boolean().optional().default(false),

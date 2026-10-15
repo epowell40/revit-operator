@@ -687,6 +687,19 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(panelRead.circuits[0].wireSize.isReadOnly,true);
   assert.deepEqual(scheduleBodies[1],{action:"detail",scheduleId:9007,exact:false,includeData:true,rowOffset:12,columnOffset:4,maxRows:1,maxColumns:2});
 
+  // Panel inventory is a different native class from ordinary ViewSchedule.
+  // Do not silently strip its selector and return an unrelated regular list.
+  const panelInventory=await withTimeout(client.callTool({name:"revit_list_schedules",
+    arguments:{action:"list",kind:"panel",offset:0,max:100}}),"listing native panel schedules over stdio");
+  assert.equal(panelInventory.isError,undefined);
+  assert.deepEqual(scheduleBodies[2],{action:"list",kind:"panel",offset:0,exact:false,max:100});
+  for(const invalid of [{kind:"panels"},{kind:"panel",offset:-1},{kind:"panel",offset:100001}]){
+    const denied=await client.callTool({name:"revit_list_schedules",arguments:{action:"list",...invalid}});
+    assert.equal(denied.isError,true);
+    assert.match(JSON.stringify(denied.content),/Input validation error/);
+  }
+  assert.equal(scheduleBodies.length,3,"Invalid inventory scope must not dispatch a native read");
+
   const scheduleCell = await withTimeout(client.callTool({
     name: "revit_update_schedule_cell",
     arguments: { rowKey: "AHU-1", targetField: "Supply Air", expectedValue: "10,000", value: "20,000 CFM" }

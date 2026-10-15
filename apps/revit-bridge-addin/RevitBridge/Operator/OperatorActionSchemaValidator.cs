@@ -8237,7 +8237,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
             {
-                // list:   { action?: "list", query?: string, exact?: bool, max?: int }
+                // list:   { action?: "list", kind?: regular|panel|all, offset?, query?, exact?, max? }
                 // detail: { action: "detail", scheduleId?|query?, exact?, requireUniqueQuery?, includeFields? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
@@ -8249,6 +8249,8 @@ namespace RevitBridge.Operator
                     return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, false, out error);
                 if (obj.Value.TryGetProperty("cells", out _)) { error = "schedules.cells requires action=cell_styles."; return false; }
                 if (!ValidateOptionalString(obj.Value, "action", maxLen: 16, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "kind", maxLen: 16, out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "offset", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (obj.Value.TryGetProperty("scheduleId", out var scheduleId) && scheduleId.ValueKind == JsonValueKind.Number && scheduleId.GetInt64() <= 0)
                 {
@@ -8293,6 +8295,16 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (schedulesAction == "list")
+                {
+                    var kind = obj.Value.TryGetProperty("kind", out var inventoryKind) && inventoryKind.ValueKind != JsonValueKind.Null
+                        ? inventoryKind.GetString() : null;
+                    int? offset = obj.Value.TryGetProperty("offset", out var inventoryOffset) && inventoryOffset.ValueKind != JsonValueKind.Null
+                        ? inventoryOffset.GetInt32() : (int?)null;
+                    int? max = obj.Value.TryGetProperty("max", out var inventoryMax) && inventoryMax.ValueKind != JsonValueKind.Null
+                        ? inventoryMax.GetInt32() : (int?)null;
+                    if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate(kind, offset, max, out _, out error)) return false;
+                }
                 foreach (var field in new[] { "rowOffset", "columnOffset", "schedulableFieldOffset" })
                 {
                     if (obj.Value.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null &&
