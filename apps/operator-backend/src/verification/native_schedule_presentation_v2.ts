@@ -11,7 +11,7 @@ const section=(v:unknown)=>typeof v==='string'?['Header','Body','Summary','Foote
 const GET='method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)';
 const TABLE='method:Autodesk.Revit.DB.TableData.GetSectionData(Autodesk.Revit.DB.SectionType)';
 const PANEL_SECTION='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSectionData(Autodesk.Revit.DB.SectionType)';
-const TABLE_GETS=['method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetTableData()','method:Autodesk.Revit.DB.ViewSchedule.GetTableData()','method:Autodesk.Revit.DB.TableView.GetTableData()'];
+const TABLE_GETS=['method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetTableData()','method:Autodesk.Revit.DB.ViewSchedule.GetTableData()'];
 const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int32,System.Int32,System.String)';
 const SET_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.SetRowHeight(System.Int32,System.Double)';
 const READ_TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)';
@@ -92,10 +92,22 @@ export function nativeSchedulePresentationObservedTargetsV2(payload:unknown):num
  const id=obj(obj(lookups[0]).result_preview).id,uid=obj(obj(lookups[0]).result_preview).unique_id;
  return lookups.length===1&&positive(id)&&typeof uid==='string'&&uid.length>0?[id]:[];
 }
-function readBody(g:Graph){const operations:any[]=[{id:'schedule',op:'call',target:'doc',memberId:GET,args:[g.scheduleId]}],returns:string[]=[],sections=new Map<string,string>();
+function readBody(g:Graph,appliedPayload:unknown){const operations:any[]=[{id:'schedule',op:'call',target:'doc',memberId:GET,args:[g.scheduleId]}],returns:string[]=[],sections=new Map<string,string>();
+ let tableGetter:string|undefined;
+ if(g.targets.some(t=>t.kind==='height')){
+  const receipts=obj(appliedPayload).operations;
+  if(!Array.isArray(receipts)||receipts.length!==g.operations.length)return null;
+  const types=new Set(g.operations.flatMap((s,i)=>g.handles.get(s.target)?.kind==='view'?[obj(receipts[i]).target_type]:[]));
+  if(types.size!==1)return null;
+  // GetTableData is declared on the two concrete schedule classes, not TableView.
+  // Bind the getter to the retained native receiver, never an actor type claim.
+  const type=[...types][0];
+  tableGetter=type==='Autodesk.Revit.DB.Electrical.PanelScheduleView'?TABLE_GETS[0]:type==='Autodesk.Revit.DB.ViewSchedule'?TABLE_GETS[1]:undefined;
+  if(!tableGetter)return null;
+ }
  for(const [i,t]of g.targets.entries()){
   if(t.kind==='height'&&!sections.has(t.section)){
-   if(!operations.some(o=>o.id==='table'))operations.push({id:'table',op:'call',target:'$schedule',memberId:TABLE_GETS[2],args:[]});
+   if(!operations.some(o=>o.id==='table'))operations.push({id:'table',op:'call',target:'$schedule',memberId:tableGetter,args:[]});
    const id='section'+sections.size;sections.set(t.section,'$'+id);operations.push({id,op:'call',target:'$table',memberId:TABLE,args:[t.section]});
   }
   const id='read'+i;operations.push({id,op:'call',target:t.kind==='text'?'$schedule':sections.get(t.section),
@@ -124,7 +136,7 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
  * binding, or unrequested-style preservation certification. */
 export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload:unknown,readInput:unknown,freshPayload:unknown):boolean{
  const g=nativeSchedulePresentationRequestV2(input,appliedPayload),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);
- if(!g||!freshGraph||!equal(obj(readInput).body??readInput,readBody(g)))return false;
+ if(!g||!freshGraph||!equal(obj(readInput).body??readInput,readBody(g,a)))return false;
  const tx=obj(a.transaction),wanted=obj(obj(input).body??input),declared=obj(wanted.transaction).allowedExistingElementIds;
  if(tx.mode!=='commit'||tx.status!=='committed'||tx.committed!==true||tx.dry_run!==false||tx.pending===true||tx.rolled_back===true||tx.existing_scope_matched!==true||tx.scope_discovery_only!==false
   ||tx.scope_baseline!=='complete_native_document_ids_before_transaction'||!positive(tx.scope_baseline_element_count)||!positive(tx.scope_observer_executions)
@@ -166,7 +178,7 @@ function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.resu
 export function committedNativeSchedulePresentationReadbackPlanV2(snapshot:AssignmentSnapshotV2,op:OperationV2){const c=committed(snapshot,op);
  if(!c||snapshot.terminal||snapshot.outcome!=='active'||snapshot.completion_proposal||snapshot.execution_control?.state==='paused'
   ||op.verification_operation_ids.length||appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id))return null;
- const body=readBody(c.g);return body?{method:'POST',path:'/revit/native-api-ops',body}:null;
+ const body=readBody(c.g,c.payload);return body?{method:'POST',path:'/revit/native-api-ops',body}:null;
 }
 export function nativeSchedulePresentationPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,op:OperationV2,r:OperationResultV2,payload:unknown){
  const c=committed(snapshot,op),read=snapshot.operations[r.operation_id];
