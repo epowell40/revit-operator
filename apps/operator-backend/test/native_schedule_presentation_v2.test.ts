@@ -36,7 +36,7 @@ function fixture(){const ops=[call('panel','doc',GET,[41]),call('table','$panel'
  call('legend','$footer',SET_TEXT,[2,1,'CU; 3/4"C W/2#12+1#12GRD']),call('body','$table',SECTION,['Body']),call('height','$body',SET_HEIGHT,[2,.033])];
  const input={method:'POST',path:'/revit/native-api-mutation-ops',body:{operations:ops,transaction:{mode:'commit',maxAffectedElements:4,allowCreate:false,allowedExistingElementIds:[41,42]}}};
  const applied={...native(ops,true),mutation_operation_count:2,transaction:{mode:'commit',status:'committed',committed:true,dry_run:false,existing_scope_matched:true,scope_discovery_only:false,
-  scope_baseline:'complete_native_document_ids_before_transaction',scope_baseline_element_count:100,scope_observer_executions:1,
+  scope_baseline:'complete_native_document_ids_before_transaction',scope_baseline_element_count:100,scope_observer_executions:1,allow_create:false,
   allowed_existing_element_ids:[41,42],commit_allowed_existing_element_ids:[41,42],unexpected_existing_element_ids:[] as number[],added_element_ids:[] as number[],deleted_element_ids:[] as number[],modified_element_ids:[41,42]}};
  const readOps=[call('schedule','doc',GET,[41]),call('read0','$schedule',TEXT,['Footer',2,1]),call('table','$schedule',TABLE_GET,[]),call('section0','$table',SECTION,['Body']),call('read1','$section0',HEIGHT,[2])];
  const readInput={method:'POST',path:'/revit/native-api-ops',body:{operations:readOps,returns:['$read0','$read1']}};
@@ -57,6 +57,26 @@ function regularFixture(){const f=fixture(),getter='method:Autodesk.Revit.DB.Vie
  }
  return f;
 }
+function defaultCreationFixture(variant:'omitted'|'null'){
+ const f=contextFixture();delete (f.input.body.operations[0] as any).args;
+ if(variant==='omitted')delete (f.input.body.transaction as any).allowCreate;
+ else (f.input.body.transaction as any).allowCreate=null;
+ return f;
+}
+test('native no-create default accepts optional omission/null only with authoritative false receipt',()=>{
+ for(const variant of ['omitted','null'] as const){const f=defaultCreationFixture(variant);
+  assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read),variant);
+  for(const mutate of [
+   (n:any)=>n.input.body.transaction.allowCreate=true,
+   (n:any)=>n.input.body.transaction.allowCreate='false',
+   (n:any)=>n.input.body.transaction.allowCreate=0,
+   (n:any)=>n.applied.transaction.allow_create=true,
+   (n:any)=>delete n.applied.transaction.allow_create,
+   (n:any)=>n.applied.transaction.added_element_ids=[80],
+   (n:any)=>n.applied.transaction.deleted_element_ids=[80],
+  ]){const n=structuredClone(f);mutate(n);assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false);}
+ }
+});
 test('active-view schedule identity comes only from the captured native receiver, never the allowed-ID list',()=>{
  const f=contextFixture();
  assert.equal(nativeSchedulePresentationRequestV2(f.input)?.scheduleId,0,'Unbound shape does not assert an element');
@@ -152,11 +172,11 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','native_overloads','regular','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
@@ -175,8 +195,8 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','native_overloads','regular'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
-   if(['exact','active_view','native_overloads','regular'].includes(variant)){
+   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
     assert.equal(committedNativeSchedulePresentationReadbackPlanV2(snapshot,apply),null,'One internal read only');

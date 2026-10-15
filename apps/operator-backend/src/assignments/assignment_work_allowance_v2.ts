@@ -50,7 +50,7 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
       limitations: "Not an invoice or service-tier confirmation. Excludes tax and tool fees. Missing usage or model rates remain unknown. This projection does not change the frozen budget." },
     missing_usage_calls: calls.filter(call => !call.usage).length,
     checkpoint_recommended: near.length > 0, approaching_limits: near,
-    guidance: near.length ? "Finish verification of the current bounded batch and retain completed operation IDs, remaining items and questions before starting another batch. Cached tokens count toward this limit. This is not permission to retry uncertain edits or increase the budget."
+    guidance: near.length ? "Retain completed operation IDs, remaining items and questions now. This checkpoint warning is not an instruction to stop: check the current remaining resources and continue ready independent work when the next bounded batch, its verification, final save and handoff fit. Recheck after each useful batch; only host-recognized verified progress can earn more allowance. If the remaining resources cannot support another useful batch, finish verification and save an honest handoff. Cached tokens count toward the limit. Never reset usage, exceed a hard limit or retry uncertain edits."
       : "Complete and verify useful batches; retain their operation IDs and remaining work as you go." };
 }
 

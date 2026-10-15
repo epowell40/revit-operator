@@ -79,7 +79,9 @@ function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null
 }
 
 export function nativeSchedulePresentationRequestV2(input:unknown,appliedPayload?:unknown){const g=graph(input,true,appliedPayload),w=obj(input),b=obj(w.body??input),tx=obj(b.transaction);
- return g&&tx.mode==='commit'&&tx.allowCreate===false&&Array.isArray(tx.allowedExistingElementIds)
+ // NativeApiMutationTransactionEnvelope defaults omitted/null allowCreate to false.
+ // The native receipt must separately confirm that resolved policy below.
+ return g&&tx.mode==='commit'&&(tx.allowCreate==null||tx.allowCreate===false)&&Array.isArray(tx.allowedExistingElementIds)
   &&tx.allowedExistingElementIds.length>0&&tx.allowedExistingElementIds.length<=64&&tx.allowedExistingElementIds.every(positive)
   &&new Set(tx.allowedExistingElementIds).size===tx.allowedExistingElementIds.length
   &&(positive(g.scheduleId)?tx.allowedExistingElementIds.includes(g.scheduleId):g.contextView)?g:null;
@@ -141,7 +143,7 @@ export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload
  const g=nativeSchedulePresentationRequestV2(input,appliedPayload),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);
  if(!g||!freshGraph||!equal(obj(readInput).body??readInput,readBody(g,a)))return false;
  const tx=obj(a.transaction),wanted=obj(obj(input).body??input),declared=obj(wanted.transaction).allowedExistingElementIds;
- if(tx.mode!=='commit'||tx.status!=='committed'||tx.committed!==true||tx.dry_run!==false||tx.pending===true||tx.rolled_back===true||tx.existing_scope_matched!==true||tx.scope_discovery_only!==false
+ if(tx.mode!=='commit'||tx.status!=='committed'||tx.committed!==true||tx.dry_run!==false||tx.allow_create!==false||tx.pending===true||tx.rolled_back===true||tx.existing_scope_matched!==true||tx.scope_discovery_only!==false
   ||tx.scope_baseline!=='complete_native_document_ids_before_transaction'||!positive(tx.scope_baseline_element_count)||!positive(tx.scope_observer_executions)
   ||!Array.isArray(tx.added_element_ids)||tx.added_element_ids.length||!Array.isArray(tx.deleted_element_ids)||tx.deleted_element_ids.length
   ||!Array.isArray(tx.unexpected_existing_element_ids)||tx.unexpected_existing_element_ids.length
@@ -174,7 +176,7 @@ function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.resu
  if(Object.values(snapshot.operations).some(other=>other.operation_id!==op.operation_id&&other.requested_effect==='apply'
   &&(other.dispatch_state==='dispatched'&&other.settlement_state!=='settled'||other.persistent_effect!=='none'&&other.result&&Date.parse(other.result.completed_at)>=Date.parse(r.completed_at))))return null;
  const tx=obj(payload.transaction);
- if(!nativeIdentity(g,payload,true)||!Array.isArray(tx.modified_element_ids)
+ if(tx.allow_create!==false||!nativeIdentity(g,payload,true)||!Array.isArray(tx.modified_element_ids)
   ||!equal([...tx.modified_element_ids].map(id=>'element_id:'+id).sort(),[...r.affected_target_identities].sort()))return null;
  return {g,payload};
 }
