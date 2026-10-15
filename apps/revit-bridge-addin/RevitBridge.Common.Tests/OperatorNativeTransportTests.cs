@@ -855,9 +855,20 @@ namespace RevitBridge.Common.Tests
         private static string ReadSharedSource(params string[] segments)
         {
             var root = FindRepositoryRoot();
-            var publicServerSource = Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            var publicRoot = Path.Combine(root, "apps", "revit-bridge-addin");
+            var addinRoot = File.Exists(Path.Combine(publicRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))
+                ? publicRoot
+                : Path.Combine(root, "revit-bridge-addin");
+            var serverSource = Path.Combine(addinRoot, "RevitBridge", "Server", "RevitHttpServer.cs");
+            if (segments.Length > 0 && string.Equals(segments[0], "revit-bridge-addin", StringComparison.Ordinal))
+            {
+                var addinCandidate = Path.Combine(new[] { addinRoot }.Concat(segments.Skip(1)).ToArray());
+                if (File.Exists(serverSource) && File.Exists(addinCandidate)) return File.ReadAllText(addinCandidate);
+            }
+
             var publicCandidate = Path.Combine(new[] { root, "apps" }.Concat(segments).ToArray());
-            if (File.Exists(publicServerSource) && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
+            if (File.Exists(Path.Combine(publicRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))
+                && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
 
             var privateCandidate = Path.Combine(new[] { root }.Concat(segments).ToArray());
             return File.ReadAllText(privateCandidate);
