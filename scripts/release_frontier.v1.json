@@ -4108,6 +4108,13 @@
       ]
     },
     {
+      "id": "native_schedule_scope_exact_set_order_and_internal_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
       "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
       "coverage": [
         "backend:progress_outer_deadline_v2.test.ts",

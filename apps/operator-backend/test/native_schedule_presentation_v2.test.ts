@@ -88,6 +88,32 @@ function widthFixture(){const f=fixture();
  for(const [i,value]of [.6,.61,.9,.8833333333333333,1.675].entries()){f.read.results['read'+i]=value;f.read.operations.find(r=>r.id==='read'+i)!.result_preview=value;}
  return f;
 }
+function scopeOrderFixture(){const f=widthFixture();
+ // Native transaction inventories are sets and may use their own stable order.
+ f.input.body.transaction.allowedExistingElementIds=[43,41,44,42];
+ f.applied.transaction.commit_allowed_existing_element_ids=[44,43,42,41];
+ return f;
+}
+
+test('native scope ordering is independent while exact unique positive membership remains mandatory',()=>{
+ for(const make of [fixture,batchFixture,widthFixture,contextFixture]){
+  const f=make();f.input.body.transaction.allowedExistingElementIds.reverse();
+  f.applied.transaction.commit_allowed_existing_element_ids.reverse();
+  assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+  for(const field of ['allowed_existing_element_ids','commit_allowed_existing_element_ids'])for(const invalid of [
+   [],[...f.input.body.transaction.allowedExistingElementIds,999],f.input.body.transaction.allowedExistingElementIds.slice(1),
+   [...f.input.body.transaction.allowedExistingElementIds.slice(1),999],
+   [...f.input.body.transaction.allowedExistingElementIds,f.input.body.transaction.allowedExistingElementIds[0]],
+   [0,...f.input.body.transaction.allowedExistingElementIds.slice(1)],
+   ['41',...f.input.body.transaction.allowedExistingElementIds.slice(1)],null,{},
+  ]){const n=structuredClone(f);(n.applied.transaction as any)[field]=invalid;assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false,field+':'+JSON.stringify(invalid));}
+  for(const invalid of [[41,41],[0,41],[-1,41],['41',42],Array.from({length:65},(_,i)=>i+1)]){
+   const n=structuredClone(f);(n.input.body.transaction as any).allowedExistingElementIds=invalid;
+   assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false,'Invalid declared scope remains rejected');
+  }
+ }
+});
+
 test('column widths require every column, section, schedule and identity in one complete fresh read',()=>{
  const f=widthFixture();assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
  assert.deepEqual(nativeSchedulePresentationRequestV2(f.input)!.targets.map(t=>t.kind),Array(5).fill('width'));
@@ -251,11 +277,11 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','scope_set_order','scope_wrong_member','scope_duplicate','scope_foreign_uid','scope_pending','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant.startsWith('scope_')?scopeOrderFixture():variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
@@ -266,6 +292,10 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
     if(reading&&variant==='batch_foreign_second')payload.operations[4].result_preview.unique_id='foreign';
     if(reading&&variant==='width_wrong_last'){payload.results.read4=1.6;payload.operations.find((r:any)=>r.id==='read4').result_preview=1.6;}
     if(reading&&variant==='width_foreign_second')payload.operations.find((r:any)=>r.member_id===GET&&r.result_preview.id===42).result_preview.unique_id='foreign';
+    if(reading&&variant==='scope_foreign_uid')payload.operations.find((r:any)=>r.member_id===GET&&r.result_preview.id===42).result_preview.unique_id='foreign';
+    if(!reading&&variant==='scope_wrong_member')payload.transaction.commit_allowed_existing_element_ids=[41,42,43,999];
+    if(!reading&&variant==='scope_duplicate')payload.transaction.allowed_existing_element_ids=[41,42,43,44,44];
+    if(!reading&&variant==='scope_pending')payload.transaction.pending=true;
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
     if(!reading&&['paused_after_commit','batch_paused','width_paused'].includes(variant))controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
@@ -278,8 +308,8 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
-   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch'].includes(variant)){
+   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
     assert.equal(committedNativeSchedulePresentationReadbackPlanV2(snapshot,apply),null,'One internal read only');

@@ -7,6 +7,14 @@ const obj=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray
 const positive=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>0;
 const coordinate=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=100000;
 const equal=(a:unknown,b:unknown)=>canonicalJsonV2(a)===canonicalJsonV2(b);
+// Native scope inventories may be sorted independently of the request. Compare
+// exact sets, rejecting malformed or duplicate IDs rather than normalizing them.
+function samePositiveIdSet(a:unknown,b:unknown):boolean {
+ if(!Array.isArray(a)||!Array.isArray(b)||!a.length||a.length>64||a.length!==b.length
+  ||!a.every(positive)||!b.every(positive))return false;
+ const ids=new Set(a);
+ return ids.size===a.length&&new Set(b).size===b.length&&b.every(id=>ids.has(id));
+}
 const SECTION_NAMES=['Header','Body','Summary','Footer'];
 const section=(v:unknown)=>typeof v==='string'?SECTION_NAMES.find(s=>s.toLowerCase()===v.toLowerCase()):
  typeof v==='number'&&Number.isSafeInteger(v)&&v>=0&&v<SECTION_NAMES.length?SECTION_NAMES[v]:undefined;
@@ -159,7 +167,7 @@ export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload
   ||!Array.isArray(tx.unexpected_existing_element_ids)||tx.unexpected_existing_element_ids.length
   ||!Array.isArray(tx.modified_element_ids)||!g.scheduleIds.every(id=>tx.modified_element_ids.includes(id))||tx.modified_element_ids.some((id:unknown)=>!positive(id)||!declared.includes(id))
   ||new Set(tx.modified_element_ids).size!==tx.modified_element_ids.length
-  ||!equal(tx.allowed_existing_element_ids,declared)||!equal(tx.commit_allowed_existing_element_ids,declared)
+  ||!samePositiveIdSet(tx.allowed_existing_element_ids,declared)||!samePositiveIdSet(tx.commit_allowed_existing_element_ids,declared)
   ||a.mutation_operation_count!==g.targets.length)return false;
  const uid=nativeIdentity(g,a,true);if(!uid||nativeIdentity(freshGraph,f,false)!==uid)return false;
  const results=obj(f.results);
