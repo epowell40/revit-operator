@@ -283,7 +283,7 @@ test("installation enrollment rejects nonlocal identities, unavailable profiles 
   assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"read")?.progress_allowance,undefined);
   assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"preview")?.progress_allowance,undefined);
   assert.deepEqual(selectLocalAdvisoryPolicy(binding,progressEnv,local,"apply")?.progress_allowance,
-    {mode:"verified_native_changes_v1",max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000});
+    {mode:"verified_native_changes_v1",max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000,max_wall_clock_ms:120*60_000});
   assert.equal(selectLocalAdvisoryPolicy(binding,{...progressEnv,REVIT_OPERATOR_MODE:"hosted"},local,"apply"),undefined);
   for (const changes of [
     { OPERATOR_LOCAL_EXECUTOR_PROFILE: "" }, { OPERATOR_LOCAL_EXECUTOR_PROFILE: "CODEX_V2_ADVISORY_V1" },

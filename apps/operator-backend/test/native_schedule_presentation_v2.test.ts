@@ -22,7 +22,7 @@ const digest=(v:any)=>createHash('sha256').update(canonicalJsonV2(v)).digest('he
 function native(operations:any[],editing:boolean){const handles=new Map<string,string>([['doc','Autodesk.Revit.DB.Document'],['view','Autodesk.Revit.DB.Electrical.PanelScheduleView']]);
  const receipts=operations.map(s=>{const target_type=handles.get(s.target);let result_preview:any=null;
   assert.notEqual(s.memberId,'method:Autodesk.Revit.DB.TableView.GetTableData()','The native SDK has no GetTableData member on TableView');
-  if(s.memberId===GET){handles.set('$'+s.id,'Autodesk.Revit.DB.Electrical.PanelScheduleView');result_preview={id:41,unique_id:'native-schedule-fixture-41',name:'Sample'};}
+  if(s.memberId===GET){handles.set('$'+s.id,'Autodesk.Revit.DB.Electrical.PanelScheduleView');result_preview={id:s.args[0],unique_id:'native-schedule-fixture-'+s.args[0],name:'Sample'};}
   else if(s.memberId.endsWith('.GetTableData()')){handles.set('$'+s.id,'Autodesk.Revit.DB.Electrical.PanelScheduleData');result_preview={type:'Autodesk.Revit.DB.Electrical.PanelScheduleData'};}
   else if(s.memberId===SECTION||s.memberId===SECTION_INDEX||s.memberId===PANEL_SECTION){handles.set('$'+s.id,'Autodesk.Revit.DB.TableSectionData');result_preview={type:'Autodesk.Revit.DB.TableSectionData'};}
   else if(s.memberId===TEXT)result_preview='CU; 3/4"C W/2#12+1#12GRD';
@@ -63,6 +63,34 @@ function defaultCreationFixture(variant:'omitted'|'null'){
  else (f.input.body.transaction as any).allowCreate=null;
  return f;
 }
+
+function batchFixture(){const f=fixture();
+ const ops=[call('p1','doc',GET,[41]),call('t1','$p1',TABLE_GET,[]),call('b1','$t1',SECTION,['Body']),call('h1','$b1',SET_HEIGHT,[2,.033]),
+  call('p2','doc',GET,[42]),call('t2','$p2',TABLE_GET,[]),call('b2','$t2',SECTION,['Body']),call('h2','$b2',SET_HEIGHT,[2,.04])];
+ f.input.body.operations=ops;f.input.body.transaction={mode:'commit',maxAffectedElements:4,allowCreate:false,allowedExistingElementIds:[41,42,43,44]};
+ Object.assign(f.applied,native(ops,true));Object.assign(f.applied.transaction,{allowed_existing_element_ids:[41,42,43,44],commit_allowed_existing_element_ids:[41,42,43,44],modified_element_ids:[41,42,43,44]});
+ const reads=[call('schedule0','doc',GET,[41]),call('table0','$schedule0',TABLE_GET,[]),call('section0','$table0',SECTION,['Body']),call('read0','$section0',HEIGHT,[2]),
+  call('schedule1','doc',GET,[42]),call('table1','$schedule1',TABLE_GET,[]),call('section1','$table1',SECTION,['Body']),call('read1','$section1',HEIGHT,[2])];
+ f.readInput.body={operations:reads,returns:['$read0','$read1']};f.read=native(reads,false);f.read.results.read1=.04;f.read.operations.at(-1)!.result_preview=.04;
+ return f;
+}
+
+test('batch schedule proof requires every requested schedule, UID, value and complete native transaction',()=>{
+ const f=batchFixture();assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+ assert.deepEqual(nativeSchedulePresentationRequestV2(f.input)!.scheduleIds,[41,42]);
+ assert.deepEqual(operationTargetSelectorV2({operation:{capability_id:'revit_call_tool',path:f.input.path,arguments:f.input},value:f.applied}).principal_target_tokens,['id:41','id:42']);
+ for(const mutate of [
+  (n:any)=>n.read.results.read1=.033,
+  (n:any)=>n.read.operations[4].result_preview.unique_id='wrong-second-schedule',
+  (n:any)=>n.readInput.body.operations.splice(4),
+  (n:any)=>n.applied.transaction.modified_element_ids=[41,43,44],
+  (n:any)=>n.input.body.transaction.allowedExistingElementIds=[41,43,44],
+  (n:any)=>n.applied.operations[5].target_identity={schema:'operator.native_element_receiver.v1',element_id:41,unique_id:'native-schedule-fixture-41',type_name:'Autodesk.Revit.DB.Electrical.PanelScheduleView',active_document:true},
+  (n:any)=>n.input.body.operations.push(call('unused','doc',GET,[99])),
+  (n:any)=>n.input.body.operations.push(call('duplicate','$b2',SET_HEIGHT,[2,.05])),
+  (n:any)=>n.input.body.operations.push(call('foreign','view',PANEL_SECTION,['Body'])),
+ ]){const n=structuredClone(f);mutate(n);assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false);}
+});
 test('native no-create default accepts optional omission/null only with authoritative false receipt',()=>{
  for(const variant of ['omitted','null'] as const){const f=defaultCreationFixture(variant);
   assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read),variant);
@@ -172,31 +200,33 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
-    if(reading&&variant==='read_failure')throw Error('native_read_failed');
+    if(reading&&['read_failure','batch_read_failure'].includes(variant))throw Error('native_read_failed');
     const payload:any=structuredClone(reading?f.read:f.applied);
     if(reading){if(variant==='wrong_text')payload.results.read0='wrong';if(variant==='wrong_height')payload.results.read1=.02;if(variant==='foreign_uid')payload.operations[0].result_preview.unique_id='foreign';}
+    if(reading&&variant==='batch_wrong_second')payload.results.read1=.033;
+    if(reading&&variant==='batch_foreign_second')payload.operations[4].result_preview.unique_id='foreign';
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
-    if(!reading&&variant==='paused_after_commit')controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
+    if(!reading&&['paused_after_commit','batch_paused'].includes(variant))controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
-      status:'succeeded',dispatch_state:'dispatched',persistent_effect:reading?'none':'applied',native_transaction_state:reading?'not_applicable':'committed',authority:'native-host',affected_target_identities:reading?[]:['element_id:41','element_id:42'],result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
+      status:'succeeded',dispatch_state:'dispatched',persistent_effect:reading?'none':'applied',native_transaction_state:reading?'not_applicable':'committed',authority:'native-host',affected_target_identities:reading?[]:f.applied.transaction.modified_element_ids.map(id=>'element_id:'+id),result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
       raw_payload_hash:reading&&variant==='wrong_digest'?'e'.repeat(64):digest(payload),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:lease.request_identity,completed_at:new Date().toISOString()},
      observation:{raw_payload:!reading&&variant==='unretained_apply'?{ok:true}:payload,semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'presentation-task',user_text:goal.objective,assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
   try{await handleCodexDynamicToolCall(runtime,{id:'sdk-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'presentation-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
-   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
+   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused'].includes(variant)?0:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
-   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular'].includes(variant)){
+   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
     assert.equal(committedNativeSchedulePresentationReadbackPlanV2(snapshot,apply),null,'One internal read only');

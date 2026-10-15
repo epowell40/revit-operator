@@ -57,5 +57,6 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
     max_wall_clock_ms: Math.min(120*60_000,limit("OPERATOR_ADVISORY_MAX_WALL_MS", 20 * 60_000, 120 * 60_000)*units),
     ...(requestedEffect === "apply" && env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE === "verified_native_changes_v1"
       ? { progress_allowance: { mode: "verified_native_changes_v1" as const,
-        max_provider_calls: expanded?2048:256, max_operations: expanded?8192:1024, max_total_tokens: expanded?256_000_000:32_000_000 } } : {}) };
+        max_provider_calls: expanded?2048:256, max_operations: expanded?8192:1024, max_total_tokens: expanded?256_000_000:32_000_000,
+        max_wall_clock_ms:120*60_000 } } : {}) };
 }

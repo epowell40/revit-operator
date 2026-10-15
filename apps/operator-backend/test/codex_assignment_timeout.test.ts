@@ -70,9 +70,12 @@ test('provider activity still cannot escape remaining wall, and abort still stop
 
 test('production caller anchors deadline once and does not reset it on transport retry',()=>{
  const source=fs.readFileSync('src/brains/codex_brain.ts','utf8');
- assert.match(source,/const turnDeadlineMs = Date\.now\(\) \+ turnTimeLimits\.maxWallMs/);
+ assert.match(source,/const turnDeadlineMs = Date\.parse\(timeStartedAt\) \+ turnTransportMaxWallMs/);
  assert.match(source,/maxWallMs: Math\.max\(0, turnDeadlineMs - Date\.now\(\)\)/);
  assert.doesNotMatch(source,/maxWallMs: codexTurnTimeoutMs\(\)/);
- assert.match(source,/plannedReceiptSha256, turnTimeLimits\.maxWallMs \+ 60_000/);
- assert.match(source,/ttl_ms: turnTimeLimits\.maxWallMs \+ 60_000/);
+ assert.match(source,/plannedReceiptSha256, turnTransportMaxWallMs \+ 60_000/);
+ assert.match(source,/ttl_ms: turnTransportMaxWallMs \+ 60_000/);
+ assert.equal((source.match(/const remainingWorkMs=createCodexAssignmentProgressTimeMonitor/g)??[]).length,1);
+ assert.match(source,/remainingWorkMs\?\{remainingWorkMs\}:\{\}/);
+ assert.match(source,/releaseStartedProviderTurn\(workTimeExpired\)/,'expired work must interrupt and drain before releasing native/auth leases');
 });

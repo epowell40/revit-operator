@@ -60,8 +60,10 @@ export function defaultAssignmentWorkBudgetV2(snapshot: AssignmentSnapshotV2, or
     return { ...ordinary, max_provider_calls: allowance.provider_calls, max_reasoning_turns: allowance.provider_calls,
       max_operations: ceiling ? Math.min(ceiling.max_operations, policy.max_operations + credit * 32) : policy.max_operations,
       max_total_tokens: ceiling ? Math.min(ceiling.max_total_tokens, policy.max_total_tokens + credit * 1_000_000) : policy.max_total_tokens,
-      // A progress credit does not extend this run's timer or erase elapsed time.
-      max_wall_clock_ms: policy.max_wall_clock_ms };
+      // Only new policies explicitly freeze a time ceiling. Old clocks and all
+      // cumulative receipts stay unchanged, including across restart/Resume.
+      max_wall_clock_ms: ceiling?.max_wall_clock_ms === undefined ? policy.max_wall_clock_ms
+        : Math.min(ceiling.max_wall_clock_ms,policy.max_wall_clock_ms + credit*5*60_000) };
   }
   if (!allowance.broad) return allowance.provider_calls > ordinary.max_provider_calls
     ? { ...ordinary, max_provider_calls: allowance.provider_calls,

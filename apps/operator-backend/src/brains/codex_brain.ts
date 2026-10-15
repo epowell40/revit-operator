@@ -8,6 +8,7 @@ import { recoverAssignmentVisualAttachments } from "../attachments/assignment_vi
 import { recordProviderStartFailureDiagnostic } from "../assignments/chat_execution_failure_diagnostic.js";
 import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
 import { CodexTurnFailedError } from "../codex/turn_error.js";
+import { CodexWorkTimeExpiredError } from '../codex/turn_completions.js';
 import { readCodexWorkerIdentity } from "./codex_worker_identity.js";
 import { recordCodexProviderUsageHoldV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
 import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
@@ -16,7 +17,7 @@ import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
-import { codexAssignmentTurnTimeLimits } from "../codex/assignment_timeout.js";
+import { codexAssignmentTurnTimeLimits, createCodexAssignmentProgressTimeMonitor } from "../codex/assignment_timeout.js";
 import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
@@ -569,11 +570,18 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     return [...await buildCodexTurnInput(recovered, inputContextBlocks, thinReference), ...input.slice(initialInputLength)];
   };
 
+  const timeSnapshot=assignmentKernelV2?currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding):null;
+  const timeStartedAt=new Date().toISOString();
   const turnTimeLimits = codexAssignmentTurnTimeLimits({
-    snapshot: assignmentKernelV2 ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) : null,
-    now: new Date().toISOString(), configuredTimeout: process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS
+    snapshot: timeSnapshot,
+    now: timeStartedAt, configuredTimeout: process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS
   });
-  const turnDeadlineMs = Date.now() + turnTimeLimits.maxWallMs;
+  const remainingWorkMs=createCodexAssignmentProgressTimeMonitor({initial:timeSnapshot,
+    readCurrent:()=>assignmentKernelV2?currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding):null,startedAt:timeStartedAt});
+  const turnTransportMaxWallMs=turnTimeLimits.progressWallCeilingMs??turnTimeLimits.maxWallMs;
+  // Transport/receipt leases cover the frozen ceiling; every operation still
+  // needs controller admission under the currently earned cumulative budget.
+  const turnDeadlineMs = Date.parse(timeStartedAt) + turnTransportMaxWallMs;
   if (turnTimeLimits.maxWallMs === 0) {
     return stopBeforeProvider(
       "The saved task is stopped or has no remaining execution time. Its edits and evidence are retained; no new provider work was started.",
@@ -584,7 +592,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   if (requirementsReceipt) {
     try {
       const plannedReceiptSha256 = requirementsReceipt.receipt_sha256;
-      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, turnTimeLimits.maxWallMs + 60_000);
+      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, turnTransportMaxWallMs + 60_000);
       const leasedReceipt = resolveRequirementsForChat(req);
       if (leasedReceipt.status !== "resolved" || leasedReceipt.receipt_sha256 !== plannedReceiptSha256) {
         endRequirementsPlanningLease(requirementsLease);
@@ -664,7 +672,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       courierContext = beginRevitCourierTurnContext({
         session_id: req.session_id,
         message_id: req.message_id,
-        ttl_ms: turnTimeLimits.maxWallMs + 60_000,
+        ttl_ms: turnTransportMaxWallMs + 60_000,
         ...courierTarget!
       });
       if (assignmentKernelV2 && assignmentKernelV2.snapshot.in_flight_operation_ids.length > 0) {
@@ -994,6 +1002,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
   let usageHoldError: unknown = null;
+  let workTimeExpired=false;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
     ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
@@ -1009,12 +1018,14 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         turnId,
         timeoutMs: turnTimeLimits.timeoutMs,
         maxWallMs: Math.max(0, turnDeadlineMs - Date.now()),
+        ...(remainingWorkMs?{remainingWorkMs}:{}),
         abortSignal: activeTurnAbort.signal
       });
     });
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
     providerTurnDisposition = turnCancelled ? "interrupted" : "completed";
   } catch (error) {
+    workTimeExpired=error instanceof CodexWorkTimeExpiredError;
     if (!activeTurnAbort.signal.aborted && assignmentKernelV2 && recordCodexProviderUsageHoldV2({
       binding: assignmentKernelV2.binding, attempt_id: req.message_id, thread_id: threadId, turn_id: turnId,
       error, is_current_failure: failure => c.isCurrentTurnFailure(failure),
@@ -1051,7 +1062,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     reconcileStartedProviderTurn = null;
     providerTurnUsage = modelTelemetry.finish(req.message_id, providerTurnDisposition);
     teammateReceipt = teammateContext && !thinReference ? teammateLoopReceiptForLease(teammateContext) : undefined;
-    await releaseStartedProviderTurn(false);
+    await releaseStartedProviderTurn(workTimeExpired);
   }
 
   if (providerReceiptReconciliationError) {

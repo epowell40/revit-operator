@@ -261,7 +261,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 }>): OperationTargetSelectorV2 {
   if(pathOf(input.operation)==='/revit/native-api-mutation-ops'){
     const g=nativeSchedulePresentationRequestV2(input.operation.arguments??input.value,input.value);
-    if(g)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:g.scheduleId>0?['id:'+g.scheduleId]:[],contextual_scope_tokens:[]};
+    if(g)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:g.scheduleIds.map(id=>'id:'+id),contextual_scope_tokens:[]};
     if(nativeSchedulePresentationRequestV2(input.operation.arguments??input.value))return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:[],contextual_scope_tokens:[]};
   }
   if(pathOf(input.operation)==='/revit/native-api-ops'){

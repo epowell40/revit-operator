@@ -19,9 +19,9 @@ const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int
 const SET_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.SetRowHeight(System.Int32,System.Double)';
 const READ_TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)';
 const READ_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.GetRowHeight(System.Int32)';
-type Target={kind:'text'|'height';section:string;row:number;column?:number;value?:string|number;stepId:string};
-type Handle={kind:'view'|'table'|'section';section?:string};
-type Graph={scheduleId:number;contextView:boolean;targets:Target[];operations:Record<string,any>[];handles:Map<string,Handle>};
+type Target={scheduleId:number;kind:'text'|'height';section:string;row:number;column?:number;value?:string|number;stepId:string};
+type Handle={kind:'view'|'table'|'section';scheduleId:number;section?:string};
+type Graph={scheduleId:number;scheduleIds:number[];contextView:boolean;targets:Target[];operations:Record<string,any>[];handles:Map<string,Handle>};
 
 function contextReceiver(step:unknown){const n=obj(step),identity=obj(n.target_identity);
  return identity.schema==='operator.native_element_receiver.v1'&&identity.active_document===true
@@ -35,34 +35,35 @@ function contextReceiver(step:unknown){const n=obj(step),identity=obj(n.target_i
 function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null {
  const w=obj(input),b=obj(w.body??input),steps=b.operations,handles=new Map<string,Handle>(),ids=new Set<string>(),targets:Target[]=[],keys=new Set<string>();
  if(!Array.isArray(steps)||!steps.length||steps.length>64)return null;
- let scheduleId=0,contextView=false;
+ let scheduleId=0,contextView=false;const scheduleIds:number[]=[];
  for(const candidate of steps){const s=obj(candidate),args=s.args===undefined?[]:s.args;
   if(typeof s.id!=='string'||!/^\w{1,64}$/.test(s.id)||ids.has(s.id)||s.op!=='call'||!Array.isArray(args)
    ||Object.keys(s).some(k=>!['id','op','memberId','target','args'].includes(k)))return null;
   ids.add(s.id);
   if(s.target==='view'){
-   if(!editing||scheduleId&&!contextView)return null;
-   contextView=true;handles.set('view',{kind:'view'});
+   if(!editing||scheduleIds.length)return null;
+   contextView=true;handles.set('view',{kind:'view',scheduleId:0});
   }
   const source=handles.get(s.target);
-  if(s.memberId===GET){if(scheduleId||contextView||s.target!=='doc'||args.length!==1||!positive(args[0]))return null;
-   scheduleId=args[0];handles.set('$'+s.id,{kind:'view'});continue;}
-  if(TABLE_GETS.includes(s.memberId)&&source?.kind==='view'&&args.length===0){handles.set('$'+s.id,{kind:'table'});continue;}
+  if(s.memberId===GET){if(contextView||s.target!=='doc'||args.length!==1||!positive(args[0])||scheduleIds.includes(args[0]))return null;
+   scheduleId=scheduleId||args[0];scheduleIds.push(args[0]);handles.set('$'+s.id,{kind:'view',scheduleId:args[0]});continue;}
+  if(TABLE_GETS.includes(s.memberId)&&source?.kind==='view'&&args.length===0){handles.set('$'+s.id,{kind:'table',scheduleId:source.scheduleId});continue;}
   if(((s.memberId===TABLE||s.memberId===TABLE_INDEX&&typeof args[0]==='number')&&source?.kind==='table'||s.memberId===PANEL_SECTION&&source?.kind==='view')&&args.length===1&&section(args[0])){
-   handles.set('$'+s.id,{kind:'section',section:section(args[0])});continue;}
+   handles.set('$'+s.id,{kind:'section',section:section(args[0]),scheduleId:source.scheduleId});continue;}
   let t:Target|undefined;
   if(editing&&s.memberId===SET_TEXT&&source?.kind==='section'&&args.length===3&&coordinate(args[0])&&coordinate(args[1])&&typeof args[2]==='string'&&args[2].length<=4000)
-   t={kind:'text',section:source.section!,row:args[0],column:args[1],value:args[2],stepId:s.id};
+   t={scheduleId:source.scheduleId,kind:'text',section:source.section!,row:args[0],column:args[1],value:args[2],stepId:s.id};
   if(editing&&s.memberId===SET_HEIGHT&&source?.kind==='section'&&args.length===2&&coordinate(args[0])&&typeof args[1]==='number'&&Number.isFinite(args[1])&&args[1]>0&&args[1]<=2)
-   t={kind:'height',section:source.section!,row:args[0],value:args[1],stepId:s.id};
+   t={scheduleId:source.scheduleId,kind:'height',section:source.section!,row:args[0],value:args[1],stepId:s.id};
   if(!editing&&s.memberId===READ_TEXT&&source?.kind==='view'&&args.length===3&&section(args[0])&&coordinate(args[1])&&coordinate(args[2]))
-   t={kind:'text',section:section(args[0])!,row:args[1],column:args[2],stepId:s.id};
+   t={scheduleId:source.scheduleId,kind:'text',section:section(args[0])!,row:args[1],column:args[2],stepId:s.id};
   if(!editing&&s.memberId===READ_HEIGHT&&source?.kind==='section'&&args.length===1&&coordinate(args[0]))
-   t={kind:'height',section:source.section!,row:args[0],stepId:s.id};
-  if(!t)return null;const key=JSON.stringify([t.kind,t.section,t.row,t.column]);if(keys.has(key))return null;
+   t={scheduleId:source.scheduleId,kind:'height',section:source.section!,row:args[0],stepId:s.id};
+  if(!t)return null;const key=JSON.stringify([t.scheduleId,t.kind,t.section,t.row,t.column]);if(keys.has(key))return null;
   keys.add(key);targets.push(t);
  }
  if((!scheduleId&&!contextView)||!targets.length)return null;
+ if(scheduleIds.some(id=>!targets.some(t=>t.scheduleId===id)))return null;
  if(contextView&&appliedPayload!==undefined){
   const receipts=obj(appliedPayload).operations;
   if(!Array.isArray(receipts)||receipts.length!==steps.length)return null;
@@ -73,9 +74,10 @@ function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null
    scheduleId=identity.id;uid=identity.uid;
   }
   if(!positive(scheduleId))return null;
+  scheduleIds.push(scheduleId);for(const t of targets)t.scheduleId=scheduleId;
  }
  if(!editing&&(!Array.isArray(b.returns)||!equal(b.returns,targets.map(t=>'$'+t.stepId))))return null;
- return {scheduleId,contextView,targets,operations:steps,handles};
+ return {scheduleId,scheduleIds,contextView,targets,operations:steps,handles};
 }
 
 export function nativeSchedulePresentationRequestV2(input:unknown,appliedPayload?:unknown){const g=graph(input,true,appliedPayload),w=obj(input),b=obj(w.body??input),tx=obj(b.transaction);
@@ -84,38 +86,37 @@ export function nativeSchedulePresentationRequestV2(input:unknown,appliedPayload
  return g&&tx.mode==='commit'&&(tx.allowCreate==null||tx.allowCreate===false)&&Array.isArray(tx.allowedExistingElementIds)
   &&tx.allowedExistingElementIds.length>0&&tx.allowedExistingElementIds.length<=64&&tx.allowedExistingElementIds.every(positive)
   &&new Set(tx.allowedExistingElementIds).size===tx.allowedExistingElementIds.length
-  &&(positive(g.scheduleId)?tx.allowedExistingElementIds.includes(g.scheduleId):g.contextView)?g:null;
+  &&(g.scheduleIds.length?g.scheduleIds.every(id=>tx.allowedExistingElementIds.includes(id)):g.contextView)?g:null;
 }
 export function isNativeSchedulePresentationEditV2(input:unknown):boolean {
  const w=obj(input),operations=obj(w.body??input).operations;
  return Array.isArray(operations)&&operations.some(s=>[SET_TEXT,SET_HEIGHT].includes(obj(s).memberId));
 }
-export function nativeSchedulePresentationReadTargetsV2(input:unknown):number[]{const g=graph(input,false);return g?[g.scheduleId]:[];}
+export function nativeSchedulePresentationReadTargetsV2(input:unknown):number[]{const g=graph(input,false);return g?g.scheduleIds:[];}
 export function nativeSchedulePresentationObservedTargetsV2(payload:unknown):number[]{const p=obj(payload),steps=p.operations;
  if(p.version!=='operator.native_api_ops.v2'||p.ok!==true||p.read_only!==true||!Array.isArray(steps)||steps.length>64||p.operation_count!==steps.length)return [];
  const lookups=steps.filter(s=>obj(s).op==='call'&&obj(s).member_id===GET&&obj(s).target_type==='Autodesk.Revit.DB.Document');
- const id=obj(obj(lookups[0]).result_preview).id,uid=obj(obj(lookups[0]).result_preview).unique_id;
- return lookups.length===1&&positive(id)&&typeof uid==='string'&&uid.length>0?[id]:[];
+ const identities=lookups.map(s=>obj(obj(s).result_preview));
+ return identities.length&&identities.every(v=>positive(v.id)&&typeof v.unique_id==='string'&&v.unique_id.length>0)
+  &&new Set(identities.map(v=>v.id)).size===identities.length?identities.map(v=>v.id):[];
 }
-function readBody(g:Graph,appliedPayload:unknown){const operations:any[]=[{id:'schedule',op:'call',target:'doc',memberId:GET,args:[g.scheduleId]}],returns:string[]=[],sections=new Map<string,string>();
- let tableGetter:string|undefined;
- if(g.targets.some(t=>t.kind==='height')){
-  const receipts=obj(appliedPayload).operations;
-  if(!Array.isArray(receipts)||receipts.length!==g.operations.length)return null;
-  const types=new Set(g.operations.flatMap((s,i)=>g.handles.get(s.target)?.kind==='view'?[obj(receipts[i]).target_type]:[]));
-  if(types.size!==1)return null;
-  // GetTableData is declared on the two concrete schedule classes, not TableView.
-  // Bind the getter to the retained native receiver, never an actor type claim.
-  const type=[...types][0];
-  tableGetter=type==='Autodesk.Revit.DB.Electrical.PanelScheduleView'?TABLE_GETS[0]:type==='Autodesk.Revit.DB.ViewSchedule'?TABLE_GETS[1]:undefined;
-  if(!tableGetter)return null;
- }
+function readBody(g:Graph,appliedPayload:unknown){const single=g.scheduleIds.length===1,operations:any[]=[],returns:string[]=[],sections=new Map<string,string>(),views=new Map<number,string>(),tables=new Map<number,string>();
+ const receipts=obj(appliedPayload).operations;
+ if(!Array.isArray(receipts)||receipts.length!==g.operations.length)return null;
  for(const [i,t]of g.targets.entries()){
-  if(t.kind==='height'&&!sections.has(t.section)){
-   if(!operations.some(o=>o.id==='table'))operations.push({id:'table',op:'call',target:'$schedule',memberId:tableGetter,args:[]});
-   const id='section'+sections.size;sections.set(t.section,'$'+id);operations.push({id,op:'call',target:'$table',memberId:TABLE,args:[t.section]});
+  if(!views.has(t.scheduleId)){const id=single?'schedule':'schedule'+views.size;views.set(t.scheduleId,'$'+id);operations.push({id,op:'call',target:'doc',memberId:GET,args:[t.scheduleId]});}
+  const sectionKey=t.scheduleId+'|'+t.section;
+  if(t.kind==='height'&&!sections.has(sectionKey)){
+   if(!tables.has(t.scheduleId)){
+    const types=new Set(g.operations.flatMap((s,j)=>{const h=g.handles.get(s.target);return h?.kind==='view'&&(h.scheduleId||g.scheduleId)===t.scheduleId?[obj(receipts[j]).target_type]:[];}));
+    if(types.size!==1)return null;const type=[...types][0];
+    const tableGetter=type==='Autodesk.Revit.DB.Electrical.PanelScheduleView'?TABLE_GETS[0]:type==='Autodesk.Revit.DB.ViewSchedule'?TABLE_GETS[1]:undefined;
+    if(!tableGetter)return null;const id=single?'table':'table'+tables.size;tables.set(t.scheduleId,'$'+id);
+    operations.push({id,op:'call',target:views.get(t.scheduleId),memberId:tableGetter,args:[]});
+   }
+   const id='section'+sections.size;sections.set(sectionKey,'$'+id);operations.push({id,op:'call',target:tables.get(t.scheduleId),memberId:TABLE,args:[t.section]});
   }
-  const id='read'+i;operations.push({id,op:'call',target:t.kind==='text'?'$schedule':sections.get(t.section),
+  const id='read'+i;operations.push({id,op:'call',target:t.kind==='text'?views.get(t.scheduleId):sections.get(sectionKey),
    memberId:t.kind==='text'?READ_TEXT:READ_HEIGHT,args:t.kind==='text'?[t.section,t.row,t.column]:[t.row]});returns.push('$'+id);
  }
  return operations.length<=64?{operations,returns}:null;
@@ -124,18 +125,20 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
  if(p.version!==(editing?'operator.native_api_mutation_ops.v1':'operator.native_api_ops.v2')||p.ok!==true||p.read_only!==!editing
   ||p.operation_count!==g.operations.length||!Array.isArray(p.operations)||p.operations.length!==g.operations.length
   ||!Array.isArray(p.geometry_cleanup_errors)||p.geometry_cleanup_errors.length)return null;
- let uid:string|undefined;
+ const uids=new Map<number,string>();
  for(const [i,s]of g.operations.entries()){const n=obj(p.operations[i]),h=g.handles.get(s.target);
   if(n.id!==s.id||n.op!=='call'||n.member_id!==s.memberId)return null;
-  if(s.memberId===GET){const v=obj(n.result_preview);if(n.target_type!=='Autodesk.Revit.DB.Document'||v.id!==g.scheduleId||typeof v.unique_id!=='string'||!v.unique_id)return null;uid=v.unique_id;}
+  if(s.memberId===GET){const v=obj(n.result_preview);if(n.target_type!=='Autodesk.Revit.DB.Document'||v.id!==s.args[0]||typeof v.unique_id!=='string'||!v.unique_id)return null;uids.set(v.id,v.unique_id);}
   else if(h?.kind==='view'){
    if(!['Autodesk.Revit.DB.ViewSchedule','Autodesk.Revit.DB.Electrical.PanelScheduleView'].includes(n.target_type))return null;
-   if(s.target==='view'){const identity=contextReceiver(n);if(!identity||identity.id!==g.scheduleId||uid&&uid!==identity.uid)return null;uid=identity.uid;}
+   const id=h.scheduleId||g.scheduleId;
+   if(s.target==='view'){const identity=contextReceiver(n);if(!identity||identity.id!==id||uids.has(id)&&uids.get(id)!==identity.uid)return null;uids.set(id,identity.uid);}
+   else if(n.target_identity){const identity=contextReceiver(n);if(!identity||identity.id!==id||identity.uid!==uids.get(id))return null;}
   }
   else if(h?.kind==='table'&&!['Autodesk.Revit.DB.TableData','Autodesk.Revit.DB.Electrical.PanelScheduleData'].includes(n.target_type))return null;
   else if(h?.kind==='section'&&n.target_type!=='Autodesk.Revit.DB.TableSectionData')return null;
  }
- return uid??null;
+ return g.scheduleIds.length&&g.scheduleIds.every(id=>uids.has(id))?canonicalJsonV2([...uids].sort((a,b)=>a[0]-b[0])):null;
 }
 /** Requested text/heights only. This is not a visual, electrical, template-
  * binding, or unrequested-style preservation certification. */
@@ -147,7 +150,7 @@ export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload
   ||tx.scope_baseline!=='complete_native_document_ids_before_transaction'||!positive(tx.scope_baseline_element_count)||!positive(tx.scope_observer_executions)
   ||!Array.isArray(tx.added_element_ids)||tx.added_element_ids.length||!Array.isArray(tx.deleted_element_ids)||tx.deleted_element_ids.length
   ||!Array.isArray(tx.unexpected_existing_element_ids)||tx.unexpected_existing_element_ids.length
-  ||!Array.isArray(tx.modified_element_ids)||!tx.modified_element_ids.includes(g.scheduleId)||tx.modified_element_ids.some((id:unknown)=>!positive(id)||!declared.includes(id))
+  ||!Array.isArray(tx.modified_element_ids)||!g.scheduleIds.every(id=>tx.modified_element_ids.includes(id))||tx.modified_element_ids.some((id:unknown)=>!positive(id)||!declared.includes(id))
   ||new Set(tx.modified_element_ids).size!==tx.modified_element_ids.length
   ||!equal(tx.allowed_existing_element_ids,declared)||!equal(tx.commit_allowed_existing_element_ids,declared)
   ||a.mutation_operation_count!==g.targets.length)return false;
@@ -172,11 +175,11 @@ function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.resu
   ||op.dispatch_state!=='dispatched'||op.settlement_state!=='settled'||op.persistent_effect!=='applied'
   ||!r||r.authority!=='native-host'||r.status!=='succeeded'||r.dispatch_state!=='dispatched'||r.native_transaction_state!=='committed'||r.persistent_effect!=='applied'
   ||!sameAssignmentBindingV2(r.binding,op.binding)||r.operation_id!==op.operation_id||r.request_identity?.request_signature!==op.request_identity.request_signature
-  ||!r.receipt_id||!r.native_correlation_id||!Number.isFinite(Date.parse(r.completed_at))||!r.affected_target_identities?.includes('element_id:'+g.scheduleId))return null;
+  ||!r.receipt_id||!r.native_correlation_id||!Number.isFinite(Date.parse(r.completed_at))||!g.scheduleIds.every(id=>r.affected_target_identities?.includes('element_id:'+id)))return null;
  if(Object.values(snapshot.operations).some(other=>other.operation_id!==op.operation_id&&other.requested_effect==='apply'
   &&(other.dispatch_state==='dispatched'&&other.settlement_state!=='settled'||other.persistent_effect!=='none'&&other.result&&Date.parse(other.result.completed_at)>=Date.parse(r.completed_at))))return null;
  const tx=obj(payload.transaction);
- if(tx.allow_create!==false||!nativeIdentity(g,payload,true)||!Array.isArray(tx.modified_element_ids)
+ if(tx.allow_create!==false||!nativeIdentity(g,payload,true)||!Array.isArray(tx.modified_element_ids)||!Array.isArray(r.affected_target_identities)
   ||!equal([...tx.modified_element_ids].map(id=>'element_id:'+id).sort(),[...r.affected_target_identities].sort()))return null;
  return {g,payload};
 }

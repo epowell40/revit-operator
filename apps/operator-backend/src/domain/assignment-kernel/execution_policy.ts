@@ -25,6 +25,8 @@ export interface LocalAdvisoryExecutionPolicyV1 {
     max_provider_calls: number;
     max_operations: number;
     max_total_tokens: number;
+    /** Optional creation-time ceiling; absent in historical fixed-clock policies. */
+    max_wall_clock_ms?: number;
   };
 }
 
@@ -65,7 +67,10 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
       && bounded(policy.progress_allowance.max_operations, operationCeiling)
       && policy.progress_allowance.max_operations >= policy.max_operations
       && bounded(policy.progress_allowance.max_total_tokens, tokenCeiling)
-      && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens));
+      && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens
+      && (policy.progress_allowance.max_wall_clock_ms === undefined
+        || (bounded(policy.progress_allowance.max_wall_clock_ms,120*60_000)
+          && policy.progress_allowance.max_wall_clock_ms >= policy.max_wall_clock_ms))));
 }
 
 export function validAdvisoryProposalV1(proposal: AdvisoryCompletionProposalV1): boolean {
