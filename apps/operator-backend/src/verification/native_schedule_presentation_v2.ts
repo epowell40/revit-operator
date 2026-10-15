@@ -134,7 +134,23 @@ function readBody(g:Graph,appliedPayload:unknown){const single=g.scheduleIds.len
    memberId:t.kind==='text'?READ_TEXT:t.kind==='height'?READ_HEIGHT:READ_WIDTH,
    args:t.kind==='text'?[t.section,t.row,t.column]:[t.kind==='height'?t.row:t.column]});returns.push('$'+id);
  }
- return operations.length<=64?{operations,returns}:null;
+ return operations.length<=16?{operations,returns}:null;
+}
+/** The native gateway and MCP schema both cap a read at sixteen nodes. Setup
+ * nodes also count; a legal edit can therefore require several fresh reads. */
+function readBatches(g:Graph,appliedPayload:unknown){
+ const batches:{graph:Graph;body:NonNullable<ReturnType<typeof readBody>>}[]=[],subset=(targets:Target[]):Graph=>{
+  const scheduleIds=[...new Set(targets.map(t=>t.scheduleId))];return {...g,targets,scheduleIds,scheduleId:scheduleIds[0]!};
+ };
+ let pending:Target[]=[];
+ for(const target of g.targets){const trial=subset([...pending,target]);
+  if(readBody(trial,appliedPayload)){pending.push(target);continue;}
+  if(!pending.length)return null;
+  const prior=subset(pending),body=readBody(prior,appliedPayload);if(!body)return null;batches.push({graph:prior,body});
+  pending=[target];if(!readBody(subset(pending),appliedPayload))return null;
+ }
+ if(pending.length){const part=subset(pending),body=readBody(part,appliedPayload);if(!body)return null;batches.push({graph:part,body});}
+ return batches.length&&batches.length<=16?batches:null;
 }
 function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
  if(p.version!==(editing?'operator.native_api_mutation_ops.v1':'operator.native_api_ops.v2')||p.ok!==true||p.read_only!==!editing
@@ -158,8 +174,11 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
 /** Requested text/heights/widths only. This is not a visual, electrical, template-
  * binding, or unrequested-style preservation certification. */
 export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload:unknown,readInput:unknown,freshPayload:unknown):boolean{
- const g=nativeSchedulePresentationRequestV2(input,appliedPayload),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);
- if(!g||!freshGraph||!equal(obj(readInput).body??readInput,readBody(g,a)))return false;
+ return nativeSchedulePresentationReadbacksMatchV2(input,appliedPayload,[{input:readInput,payload:freshPayload}]);
+}
+export function nativeSchedulePresentationReadbacksMatchV2(input:unknown,appliedPayload:unknown,reads:readonly {input:unknown;payload:unknown}[]):boolean{
+ const g=nativeSchedulePresentationRequestV2(input,appliedPayload),a=obj(appliedPayload);
+ if(!g)return false;const batches=readBatches(g,a);if(!batches||reads.length!==batches.length)return false;
  const tx=obj(a.transaction),wanted=obj(obj(input).body??input),declared=obj(wanted.transaction).allowedExistingElementIds;
  if(tx.mode!=='commit'||tx.status!=='committed'||tx.committed!==true||tx.dry_run!==false||tx.allow_create!==false||tx.pending===true||tx.rolled_back===true||tx.existing_scope_matched!==true||tx.scope_discovery_only!==false
   ||tx.scope_baseline!=='complete_native_document_ids_before_transaction'||!positive(tx.scope_baseline_element_count)||!positive(tx.scope_observer_executions)
@@ -169,12 +188,19 @@ export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload
   ||new Set(tx.modified_element_ids).size!==tx.modified_element_ids.length
   ||!samePositiveIdSet(tx.allowed_existing_element_ids,declared)||!samePositiveIdSet(tx.commit_allowed_existing_element_ids,declared)
   ||a.mutation_operation_count!==g.targets.length)return false;
- const uid=nativeIdentity(g,a,true);if(!uid||nativeIdentity(freshGraph,f,false)!==uid)return false;
- const results=obj(f.results);
- return g.targets.every((t,i)=>{const n=obj(f.operations.find((s:any)=>s.id==='read'+i)),v=results['read'+i];
-  return t.kind==='text'?typeof v==='string'&&v===t.value&&n.result_preview===v:
-   typeof v==='number'&&Number.isFinite(v)&&typeof t.value==='number'&&Math.abs(v-t.value)<=1e-9&&n.result_preview===v;
- });
+ const uid=nativeIdentity(g,a,true);if(!uid)return false;const expectedIdentities=new Map<number,string>(JSON.parse(uid)),seen=new Set<number>();
+ for(const read of reads){const body=obj(read.input).body??read.input,index=batches.findIndex(b=>equal(b.body,body)),freshGraph=graph(read.input,false),f=obj(read.payload);
+  if(index<0||seen.has(index)||!freshGraph)return false;seen.add(index);
+  const identity=nativeIdentity(freshGraph,f,false);if(!identity)return false;
+  const actualIdentities=new Map<number,string>(JSON.parse(identity)),batch=batches[index]!;
+  if(actualIdentities.size!==batch.graph.scheduleIds.length||batch.graph.scheduleIds.some(id=>actualIdentities.get(id)!==expectedIdentities.get(id)))return false;
+  const results=obj(f.results);
+  if(!batch.graph.targets.every((t,i)=>{const n=obj(f.operations.find((s:any)=>s.id==='read'+i)),v=results['read'+i];
+   return t.kind==='text'?typeof v==='string'&&v===t.value&&n.result_preview===v:
+    typeof v==='number'&&Number.isFinite(v)&&typeof t.value==='number'&&Math.abs(v-t.value)<=1e-9&&n.result_preview===v;
+  }))return false;
+ }
+ return seen.size===batches.length;
 }
 function retained(op:OperationV2,snapshot:AssignmentSnapshotV2){for(const id of op.observation_ids){const o=snapshot.observations[id];
  if(!o||o.authority!=='native-host'||o.operation_id!==op.operation_id||o.raw_payload_hash!==op.result?.raw_payload_hash||!sameAssignmentBindingV2(o.binding,op.binding))continue;
@@ -198,19 +224,38 @@ function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.resu
   ||!equal([...tx.modified_element_ids].map(id=>'element_id:'+id).sort(),[...r.affected_target_identities].sort()))return null;
  return {g,payload};
 }
-export function committedNativeSchedulePresentationReadbackPlanV2(snapshot:AssignmentSnapshotV2,op:OperationV2){const c=committed(snapshot,op);
+export function committedNativeSchedulePresentationReadbackPlanV2(snapshot:AssignmentSnapshotV2,op:OperationV2){
+ const plans=committedNativeSchedulePresentationReadbackPlansV2(snapshot,op);return plans?.length===1?plans[0]:null;
+}
+export function committedNativeSchedulePresentationReadbackPlansV2(snapshot:AssignmentSnapshotV2,op:OperationV2){const c=committed(snapshot,op);
  if(!c||snapshot.terminal||snapshot.outcome!=='active'||snapshot.completion_proposal||snapshot.execution_control?.state==='paused'
   ||op.verification_operation_ids.length||appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id))return null;
- const body=readBody(c.g,c.payload);return body?{method:'POST',path:'/revit/native-api-ops',body}:null;
+ const batches=readBatches(c.g,c.payload);return batches?.map(b=>({method:'POST',path:'/revit/native-api-ops',body:b.body}))??null;
 }
-export function nativeSchedulePresentationPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,op:OperationV2,r:OperationResultV2,payload:unknown){
- const c=committed(snapshot,op),read=snapshot.operations[r.operation_id];
- if(!c||!read||r.authority!=='native-host'||r.status!=='succeeded'||r.dispatch_state!=='dispatched'||r.persistent_effect!=='none'||r.native_transaction_state!=='not_applicable'
+function freshPresentationRead(snapshot:AssignmentSnapshotV2,op:OperationV2,r:OperationResultV2,payload:unknown){const read=snapshot.operations[r.operation_id];
+ if(!read||r.authority!=='native-host'||r.status!=='succeeded'||r.dispatch_state!=='dispatched'||r.persistent_effect!=='none'||r.native_transaction_state!=='not_applicable'
   ||!sameAssignmentBindingV2(r.binding,snapshot.current_binding)||!sameAssignmentBindingV2(read.binding,r.binding)||read.requested_effect!=='read'||read.admission_state!=='admitted'
   ||!['dispatching','dispatched'].includes(read.dispatch_state)||r.request_identity?.path!=='/revit/native-api-ops'||r.request_identity.method!=='POST'
   ||read.input.path!==r.request_identity.path||read.input.method!=='POST'||r.request_identity.request_signature!==read.request_identity?.request_signature
   ||!r.receipt_id||!r.native_correlation_id||!Number.isFinite(Date.parse(r.completed_at))||!Number.isFinite(Date.parse(read.opened_at))
   ||Date.parse(read.opened_at)<Date.parse(op.result!.completed_at)||Date.parse(r.completed_at)<Date.parse(read.opened_at)
-  ||payloadDigestV2(payload).digest!==r.raw_payload_hash)return false;
- return nativeSchedulePresentationMatchesV2(op.input,c.payload,read.input,payload);
+  ||read.purpose!=='verification'||read.verification_of_operation_id!==op.operation_id
+  ||snapshot.input_invalidated_operation_ids?.includes(read.operation_id)||payloadDigestV2(payload).digest!==r.raw_payload_hash)return false;
+ return true;
+}
+export function nativeSchedulePresentationPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,op:OperationV2,r:OperationResultV2,payload:unknown){
+ const c=committed(snapshot,op),current=snapshot.operations[r.operation_id];
+ if(!c||!current||!freshPresentationRead(snapshot,op,r,payload))return false;
+ const batches=readBatches(c.g,c.payload);if(!batches)return false;
+ const reads=new Map<string,{input:unknown;payload:unknown}>(),keep=(input:unknown,p:unknown)=>{
+  const key=canonicalJsonV2(obj(input).body??input);if(!batches.some(b=>canonicalJsonV2(b.body)===key))return false;
+  if(!reads.has(key))reads.set(key,{input,payload:p});return true;
+ };
+ if(!keep(current.input,payload))return false;
+ for(const id of op.verification_operation_ids){const prior=snapshot.operations[id];
+  if(!prior||id===r.operation_id||prior.settlement_state!=='settled'||!prior.result
+   ||Date.parse(prior.result.completed_at)>Date.parse(r.completed_at))continue;
+  const p=retained(prior,snapshot);if(p&&freshPresentationRead(snapshot,op,prior.result,p))keep(prior.input,p);
+ }
+ return reads.size===batches.length&&nativeSchedulePresentationReadbacksMatchV2(op.input,c.payload,[...reads.values()]);
 }

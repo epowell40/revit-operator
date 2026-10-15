@@ -4115,6 +4115,13 @@
       ]
     },
     {
+      "id": "native_schedule_bounded_read_batches_and_complete_retained_coverage",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
       "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
       "coverage": [
         "backend:progress_outer_deadline_v2.test.ts",

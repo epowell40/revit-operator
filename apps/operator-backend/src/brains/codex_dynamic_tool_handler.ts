@@ -65,7 +65,7 @@ import { committedNativeAnnotationReadbackPlanV2 } from "../verification/native_
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
 import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
-import { committedNativeSchedulePresentationReadbackPlanV2 } from "../verification/native_schedule_presentation_v2.js";
+import { committedNativeSchedulePresentationReadbackPlanV2, committedNativeSchedulePresentationReadbackPlansV2 } from "../verification/native_schedule_presentation_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
@@ -375,7 +375,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;
       const readPlans=readPlan?[readPlan]:(current?.operations[lease.operation_id]
-        ? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
+        ? committedNativeSchedulePresentationReadbackPlansV2(current,current.operations[lease.operation_id]!)
+          ?? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
       if (readPlans.length) {
         // Native dispatch has returned and canonical settlement is retained.
         // Release only this completed route's lease before the separate read

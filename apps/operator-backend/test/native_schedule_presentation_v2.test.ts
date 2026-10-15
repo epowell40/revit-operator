@@ -1,6 +1,6 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import assert from 'node:assert/strict';import test from 'node:test';
 import {createHash} from 'node:crypto';
-import {nativeSchedulePresentationRequestV2,nativeSchedulePresentationMatchesV2,committedNativeSchedulePresentationReadbackPlanV2,nativeSchedulePresentationPostconditionSatisfiedV2} from '../src/verification/native_schedule_presentation_v2.js';
+import {nativeSchedulePresentationRequestV2,nativeSchedulePresentationMatchesV2,nativeSchedulePresentationReadbacksMatchV2,committedNativeSchedulePresentationReadbackPlanV2,nativeSchedulePresentationPostconditionSatisfiedV2} from '../src/verification/native_schedule_presentation_v2.js';
 import {verificationCapabilityAdmissionV2,operationTargetSelectorV2} from '../src/verification/verification_capability_admission_v2.js';
 import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_kernel_v2_factory.js';
@@ -94,6 +94,42 @@ function scopeOrderFixture(){const f=widthFixture();
  f.applied.transaction.commit_allowed_existing_element_ids=[44,43,42,41];
  return f;
 }
+
+// Both are legal sixteen-operation edits. Resolving an explicit native view
+// and its table makes the separate fresh read larger than the edit itself.
+function wideFixture(context=false){const f=fixture(),count=context?15:14;
+ const ops=[...(context?[]:[call('panel','doc',GET,[41])]),call('body',context?'view':'$panel',PANEL_SECTION,['Body']),
+  ...Array.from({length:count},(_,i)=>call('width'+i,'$body',SET_WIDTH,[i,.6]))];
+ f.input.body.operations=ops;Object.assign(f.applied,native(ops,true));f.applied.mutation_operation_count=count;
+ const make=(offset:number,count:number)=>{const operations=[call('schedule','doc',GET,[41]),call('table','$schedule',TABLE_GET,[]),call('section0','$table',SECTION,['Body']),
+  ...Array.from({length:count},(_,i)=>call('read'+i,'$section0',WIDTH,[offset+i]))];return {method:'POST',path:'/revit/native-api-ops',body:{operations,returns:Array.from({length:count},(_,i)=>'$read'+i)}};};
+ return {...f,plans:[make(0,13),make(13,count-13)]};
+}
+function mixedWideFixture(){const f=fixture();
+ const ops=[call('p1','doc',GET,[41]),call('b1','$p1',PANEL_SECTION,['Body']),...Array.from({length:6},(_,i)=>call('w'+i,'$b1',SET_WIDTH,[i,.6])),
+  call('p2','doc',GET,[42]),call('h2','$p2',PANEL_SECTION,['Header']),...Array.from({length:6},(_,i)=>call('v'+i,'$h2',SET_WIDTH,[i,.6]))];
+ f.input.body.operations=ops;Object.assign(f.applied,native(ops,true));f.applied.mutation_operation_count=12;
+ const first=[call('schedule0','doc',GET,[41]),call('table0','$schedule0',TABLE_GET,[]),call('section0','$table0',SECTION,['Body']),...Array.from({length:6},(_,i)=>call('read'+i,'$section0',WIDTH,[i])),
+  call('schedule1','doc',GET,[42]),call('table1','$schedule1',TABLE_GET,[]),call('section1','$table1',SECTION,['Header']),...Array.from({length:4},(_,i)=>call('read'+(i+6),'$section1',WIDTH,[i]))];
+ const last=[call('schedule','doc',GET,[42]),call('table','$schedule',TABLE_GET,[]),call('section0','$table',SECTION,['Header']),call('read0','$section0',WIDTH,[4]),call('read1','$section0',WIDTH,[5])];
+ return {...f,plans:[first,last].map(operations=>({method:'POST',path:'/revit/native-api-ops',body:{operations,returns:operations.filter(s=>s.memberId===WIDTH).map(s=>'$'+s.id)}}))};
+}
+
+test('a complete pair of bounded reads proves all fourteen or fifteen requested widths, never one partial slice',()=>{
+ for(const f of [wideFixture(false),wideFixture(true),mixedWideFixture()]){const reads=f.plans.map(input=>({input,payload:native(input.body.operations,false)}));
+  assert(nativeSchedulePresentationReadbacksMatchV2(f.input,f.applied,reads));
+  assert.equal(nativeSchedulePresentationReadbacksMatchV2(f.input,f.applied,reads.slice(0,1)),false);
+  assert.equal(nativeSchedulePresentationReadbacksMatchV2(f.input,f.applied,[reads[0]!,reads[0]!]),false);
+  assert(nativeSchedulePresentationReadbacksMatchV2(f.input,f.applied,[...reads].reverse()),'Exact slices may arrive in either order');
+  for(const mutate of [
+   (r:any)=>r[1].input.body.operations.at(-1).args=[99],
+   (r:any)=>{r[1].payload.results.read0=.7;r[1].payload.operations.find((o:any)=>o.id==='read0').result_preview=.7;},
+   (r:any)=>r[1].payload.operations[0].result_preview.unique_id='foreign',
+   (r:any)=>r[1].payload.operation_count++,
+   (r:any)=>r[0].payload.geometry_cleanup_errors=['failed'],
+  ]){const altered=structuredClone(reads);mutate(altered);assert.equal(nativeSchedulePresentationReadbacksMatchV2(f.input,f.applied,altered),false);}
+ }
+});
 
 test('native scope ordering is independent while exact unique positive membership remains mandatory',()=>{
  for(const make of [fixture,batchFixture,widthFixture,contextFixture]){
@@ -277,16 +313,20 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','scope_set_order','scope_wrong_member','scope_duplicate','scope_foreign_uid','scope_pending','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['wide','wide_context','wide_mixed','wide_wrong_last','wide_foreign_uid','wide_read_failure','wide_pause_between','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','scope_set_order','scope_wrong_member','scope_duplicate','scope_foreign_uid','scope_pending','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant.startsWith('scope_')?scopeOrderFixture():variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant==='wide_mixed'?mixedWideFixture():variant.startsWith('wide')?wideFixture(variant==='wide_context'):variant.startsWith('scope_')?scopeOrderFixture():variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
-  const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
+  let readIndex=0;const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops'){assert(args.body.operations.length<=16,'Native/MCP operation cap stays sixteen');assert.deepEqual(args,'plans' in f?(f.plans as any[])[readIndex]:f.readInput);}},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
     if(reading&&['read_failure','batch_read_failure','width_read_failure'].includes(variant))throw Error('native_read_failed');
-    const payload:any=structuredClone(reading?f.read:f.applied);
+    const index=reading?readIndex++:-1;if(reading&&variant==='wide_read_failure'&&index===1)throw Error('second_native_read_failed');
+    const payload:any=structuredClone(reading?('plans' in f?native((f.plans as any[])[index].body.operations,false):f.read):f.applied);
+    if(reading&&index===1&&variant==='wide_wrong_last'){payload.results.read0=.7;payload.operations.find((n:any)=>n.id==='read0').result_preview=.7;}
+    if(reading&&index===1&&variant==='wide_foreign_uid')payload.operations[0].result_preview.unique_id='foreign';
+    if(reading&&index===0&&variant==='wide_pause_between')controlAssignmentExecutionV2({binding,command_id:'pause-between-native-reads',expected_command_id:null,action:'pause'});
     if(reading){if(variant==='wrong_text')payload.results.read0='wrong';if(variant==='wrong_height')payload.results.read1=.02;if(variant==='foreign_uid')payload.operations[0].result_preview.unique_id='foreign';}
     if(reading&&variant==='batch_wrong_second')payload.results.read1=.033;
     if(reading&&variant==='batch_foreign_second')payload.operations[4].result_preview.unique_id='foreign';
@@ -306,9 +346,27 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'presentation-task',user_text:goal.objective,assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
   try{await handleCodexDynamicToolCall(runtime,{id:'sdk-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'presentation-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
-   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:1);
+   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:variant.startsWith('wide')&&variant!=='wide_pause_between'?2:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   assert.equal(checked,['wide','wide_context','wide_mixed','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(variant.startsWith('wide')){const reads=apply.verification_operation_ids.map(id=>snapshot.operations[id]!).sort((a,b)=>(a.input.body as any).operations.length>(b.input.body as any).operations.length?-1:1);assert(reads.length>=1);assert(reads[0]!.observation_ids.every(id=>!snapshot.observations[id]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)),'First partial slice never certifies the complete edit');
+    if(['wide','wide_context','wide_mixed'].includes(variant)){
+     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
+     const payload=native((f as ReturnType<typeof wideFixture>).plans[1]!.body.operations,false);
+     for(const mutate of [
+      (s:any,a:any,first:any,last:any)=>a.verification_operation_ids=[last.operation_id],
+      (s:any,a:any,first:any,last:any)=>first.result.raw_payload_hash='e'.repeat(64),
+      (s:any,a:any,first:any,last:any)=>first.result.binding.run_id='foreign',
+      (s:any,a:any,first:any,last:any)=>first.opened_at='2020-01-01T00:00:00Z',
+      (s:any,a:any,first:any,last:any)=>first.result.request_identity.request_signature='foreign',
+      (s:any,a:any,first:any,last:any)=>first.result.status='failed',
+      (s:any,a:any,first:any,last:any)=>first.observation_ids=[],
+      (s:any,a:any,first:any,last:any)=>s.input_invalidated_operation_ids=[first.operation_id],
+      (s:any,a:any,first:any,last:any)=>s.unresolved_unknown_operation_ids=['old-unknown'],
+      (s:any,a:any,first:any,last:any)=>s.operations.later={...a,operation_id:'later'},
+     ]){const s=structuredClone(snapshot),a=s.operations[apply.operation_id]!,first=s.operations[reads[0]!.operation_id]!,last=s.operations[reads[1]!.operation_id]!;mutate(s,a,first,last);assert.equal(nativeSchedulePresentationPostconditionSatisfiedV2(s,a,last.result!,payload),false);}
+    }
+   }
    if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
@@ -327,7 +385,7 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
       assert.equal(nativeSchedulePresentationPostconditionSatisfiedV2(s,a,r.result!,f.read),false);
     }
    }
-   else if(variant!=='unretained_apply')assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),true);
+   else if(!['unretained_apply','wide','wide_context','wide_mixed'].includes(variant))assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),true);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
