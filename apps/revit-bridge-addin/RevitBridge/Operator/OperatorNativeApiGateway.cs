@@ -808,6 +808,9 @@ namespace RevitBridge.Operator
                 if (mutationEnvelopeRequired && descriptor?.MutatingHint == true && !descriptor.DetachedGeometryFactory)
                     ValidateMutationOwnership(descriptor, operationOwners, transactionDocument!, id);
 
+                // Capture the actual receiver before invocation; allowed IDs
+                // and the caller's current-view claim cannot establish identity.
+                var targetIdentity = CaptureElementReceiverIdentity(targetObject, app.ActiveUIDocument?.Document);
                 var step = Stopwatch.StartNew();
                 object? raw;
                 try
@@ -841,6 +844,7 @@ namespace RevitBridge.Operator
                     property = propertyInfo?.Name,
                     signature = descriptor?.Signature ?? PropertySignature(propertyInfo!),
                     target_type = targetObject?.GetType().FullName,
+                    target_identity = targetIdentity,
                     duration_ms = step.ElapsedMilliseconds,
                     result_preview = OperationPreview(raw)
                 });
@@ -1176,6 +1180,19 @@ namespace RevitBridge.Operator
         }
 
         private static string PropertySignature(PropertyInfo property) => $"{FriendlyType(property.PropertyType)} {property.DeclaringType?.Name}.{property.Name} {{ get; }}";
+
+        private static object? CaptureElementReceiverIdentity(object? target, Document? activeDocument)
+        {
+            if (!(target is Element element) || !element.IsValidObject) return null;
+            return new
+            {
+                schema = "operator.native_element_receiver.v1",
+                element_id = ElementIdCompat.GetValue(element.Id),
+                unique_id = element.UniqueId,
+                type_name = element.GetType().FullName,
+                active_document = activeDocument != null && element.Document.Equals(activeDocument)
+            };
+        }
 
         private static object? OperationPreview(object? value)
         {

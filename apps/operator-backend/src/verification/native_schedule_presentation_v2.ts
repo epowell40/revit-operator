@@ -18,19 +18,31 @@ const READ_TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.D
 const READ_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.GetRowHeight(System.Int32)';
 type Target={kind:'text'|'height';section:string;row:number;column?:number;value?:string|number;stepId:string};
 type Handle={kind:'view'|'table'|'section';section?:string};
-type Graph={scheduleId:number;targets:Target[];operations:Record<string,any>[];handles:Map<string,Handle>};
+type Graph={scheduleId:number;contextView:boolean;targets:Target[];operations:Record<string,any>[];handles:Map<string,Handle>};
+
+function contextReceiver(step:unknown){const n=obj(step),identity=obj(n.target_identity);
+ return identity.schema==='operator.native_element_receiver.v1'&&identity.active_document===true
+  &&positive(identity.element_id)&&typeof identity.unique_id==='string'&&identity.unique_id.length>0
+  &&identity.type_name===n.target_type&&['Autodesk.Revit.DB.ViewSchedule','Autodesk.Revit.DB.Electrical.PanelScheduleView'].includes(n.target_type)
+  ?{id:identity.element_id,uid:identity.unique_id}:null;
+}
 
 /** Complete, declarative SDK graphs only. Never interpret C#, reports, getters
  * of unrelated objects, arbitrary mutations, or a partially recognized graph. */
-function graph(input:unknown,editing:boolean):Graph|null {
+function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null {
  const w=obj(input),b=obj(w.body??input),steps=b.operations,handles=new Map<string,Handle>(),ids=new Set<string>(),targets:Target[]=[],keys=new Set<string>();
  if(!Array.isArray(steps)||!steps.length||steps.length>64)return null;
- let scheduleId=0;
+ let scheduleId=0,contextView=false;
  for(const candidate of steps){const s=obj(candidate),args=s.args;
   if(typeof s.id!=='string'||!/^\w{1,64}$/.test(s.id)||ids.has(s.id)||s.op!=='call'||!Array.isArray(args)
    ||Object.keys(s).some(k=>!['id','op','memberId','target','args'].includes(k)))return null;
-  ids.add(s.id);const source=handles.get(s.target);
-  if(s.memberId===GET){if(scheduleId||s.target!=='doc'||args.length!==1||!positive(args[0]))return null;
+  ids.add(s.id);
+  if(s.target==='view'){
+   if(!editing||scheduleId&&!contextView)return null;
+   contextView=true;handles.set('view',{kind:'view'});
+  }
+  const source=handles.get(s.target);
+  if(s.memberId===GET){if(scheduleId||contextView||s.target!=='doc'||args.length!==1||!positive(args[0]))return null;
    scheduleId=args[0];handles.set('$'+s.id,{kind:'view'});continue;}
   if(TABLE_GETS.includes(s.memberId)&&source?.kind==='view'&&args.length===0){handles.set('$'+s.id,{kind:'table'});continue;}
   if((s.memberId===TABLE&&source?.kind==='table'||s.memberId===PANEL_SECTION&&source?.kind==='view')&&args.length===1&&section(args[0])){
@@ -47,15 +59,27 @@ function graph(input:unknown,editing:boolean):Graph|null {
   if(!t)return null;const key=JSON.stringify([t.kind,t.section,t.row,t.column]);if(keys.has(key))return null;
   keys.add(key);targets.push(t);
  }
- if(!scheduleId||!targets.length)return null;
+ if((!scheduleId&&!contextView)||!targets.length)return null;
+ if(contextView&&appliedPayload!==undefined){
+  const receipts=obj(appliedPayload).operations;
+  if(!Array.isArray(receipts)||receipts.length!==steps.length)return null;
+  let uid:string|undefined;
+  for(const [i,s]of steps.entries())if(s.target==='view'){
+   const n=obj(receipts[i]),identity=contextReceiver(n);
+   if(!identity||n.id!==s.id||n.member_id!==s.memberId||scheduleId&&scheduleId!==identity.id||uid&&uid!==identity.uid)return null;
+   scheduleId=identity.id;uid=identity.uid;
+  }
+  if(!positive(scheduleId))return null;
+ }
  if(!editing&&(!Array.isArray(b.returns)||!equal(b.returns,targets.map(t=>'$'+t.stepId))))return null;
- return {scheduleId,targets,operations:steps,handles};
+ return {scheduleId,contextView,targets,operations:steps,handles};
 }
 
-export function nativeSchedulePresentationRequestV2(input:unknown){const g=graph(input,true),w=obj(input),b=obj(w.body??input),tx=obj(b.transaction);
+export function nativeSchedulePresentationRequestV2(input:unknown,appliedPayload?:unknown){const g=graph(input,true,appliedPayload),w=obj(input),b=obj(w.body??input),tx=obj(b.transaction);
  return g&&tx.mode==='commit'&&tx.allowCreate===false&&Array.isArray(tx.allowedExistingElementIds)
   &&tx.allowedExistingElementIds.length>0&&tx.allowedExistingElementIds.length<=64&&tx.allowedExistingElementIds.every(positive)
-  &&new Set(tx.allowedExistingElementIds).size===tx.allowedExistingElementIds.length&&tx.allowedExistingElementIds.includes(g.scheduleId)?g:null;
+  &&new Set(tx.allowedExistingElementIds).size===tx.allowedExistingElementIds.length
+  &&(positive(g.scheduleId)?tx.allowedExistingElementIds.includes(g.scheduleId):g.contextView)?g:null;
 }
 export function isNativeSchedulePresentationEditV2(input:unknown):boolean {
  const w=obj(input),operations=obj(w.body??input).operations;
@@ -87,7 +111,10 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
  for(const [i,s]of g.operations.entries()){const n=obj(p.operations[i]),h=g.handles.get(s.target);
   if(n.id!==s.id||n.op!=='call'||n.member_id!==s.memberId)return null;
   if(s.memberId===GET){const v=obj(n.result_preview);if(n.target_type!=='Autodesk.Revit.DB.Document'||v.id!==g.scheduleId||typeof v.unique_id!=='string'||!v.unique_id)return null;uid=v.unique_id;}
-  else if(h?.kind==='view'&&!['Autodesk.Revit.DB.ViewSchedule','Autodesk.Revit.DB.Electrical.PanelScheduleView'].includes(n.target_type))return null;
+  else if(h?.kind==='view'){
+   if(!['Autodesk.Revit.DB.ViewSchedule','Autodesk.Revit.DB.Electrical.PanelScheduleView'].includes(n.target_type))return null;
+   if(s.target==='view'){const identity=contextReceiver(n);if(!identity||identity.id!==g.scheduleId||uid&&uid!==identity.uid)return null;uid=identity.uid;}
+  }
   else if(h?.kind==='table'&&!['Autodesk.Revit.DB.TableData','Autodesk.Revit.DB.Electrical.PanelScheduleData'].includes(n.target_type))return null;
   else if(h?.kind==='section'&&n.target_type!=='Autodesk.Revit.DB.TableSectionData')return null;
  }
@@ -96,7 +123,7 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
 /** Requested text/heights only. This is not a visual, electrical, template-
  * binding, or unrequested-style preservation certification. */
 export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload:unknown,readInput:unknown,freshPayload:unknown):boolean{
- const g=nativeSchedulePresentationRequestV2(input),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);
+ const g=nativeSchedulePresentationRequestV2(input,appliedPayload),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);
  if(!g||!freshGraph||!equal(obj(readInput).body??readInput,readBody(g)))return false;
  const tx=obj(a.transaction),wanted=obj(obj(input).body??input),declared=obj(wanted.transaction).allowedExistingElementIds;
  if(tx.mode!=='commit'||tx.status!=='committed'||tx.committed!==true||tx.dry_run!==false||tx.pending===true||tx.rolled_back===true||tx.existing_scope_matched!==true||tx.scope_discovery_only!==false
@@ -121,7 +148,7 @@ function retained(op:OperationV2,snapshot:AssignmentSnapshotV2){for(const id of 
   if(payloadDigestV2(payload).digest===op.result?.raw_payload_hash)return payload;
  }catch{/* Missing or corrupt receipt stays unverified, never replay its write. */}
  }return null;}
-function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.result,g=nativeSchedulePresentationRequestV2(op.input);
+function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.result,payload=obj(retained(op,snapshot)),g=nativeSchedulePresentationRequestV2(op.input,payload);
  if(!g||snapshot.unresolved_unknown_operation_ids.length||snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
   ||!sameAssignmentBindingV2(op.binding,snapshot.current_binding)||op.request_identity?.path!=='/revit/native-api-mutation-ops'
   ||op.input.path!==op.request_identity.path||op.input.method!=='POST'||op.requested_effect!=='apply'||op.admission_state!=='admitted'
@@ -131,7 +158,7 @@ function committed(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.resu
   ||!r.receipt_id||!r.native_correlation_id||!Number.isFinite(Date.parse(r.completed_at))||!r.affected_target_identities?.includes('element_id:'+g.scheduleId))return null;
  if(Object.values(snapshot.operations).some(other=>other.operation_id!==op.operation_id&&other.requested_effect==='apply'
   &&(other.dispatch_state==='dispatched'&&other.settlement_state!=='settled'||other.persistent_effect!=='none'&&other.result&&Date.parse(other.result.completed_at)>=Date.parse(r.completed_at))))return null;
- const payload=obj(retained(op,snapshot)),tx=obj(payload.transaction);
+ const tx=obj(payload.transaction);
  if(!nativeIdentity(g,payload,true)||!Array.isArray(tx.modified_element_ids)
   ||!equal([...tx.modified_element_ids].map(id=>'element_id:'+id).sort(),[...r.affected_target_identities].sort()))return null;
  return {g,payload};

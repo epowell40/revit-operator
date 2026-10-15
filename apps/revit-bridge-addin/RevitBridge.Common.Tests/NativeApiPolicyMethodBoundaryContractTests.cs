@@ -40,6 +40,22 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void GraphReceiptsCaptureActualElementReceiverBeforeInvocation()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway,
+                "targetObject = ResolveOperationTarget(operation.target, descriptor.DeclaringType, app, values, id);",
+                "var targetIdentity = CaptureElementReceiverIdentity(targetObject, app.ActiveUIDocument?.Document);",
+                "raw = propertyInfo != null ? propertyInfo.GetValue(targetObject, null) : InvokeReflectedMember(descriptor!, targetObject, args);",
+                "target_identity = targetIdentity");
+            Assert.Contains("schema = \"operator.native_element_receiver.v1\"", gateway);
+            Assert.Contains("element_id = ElementIdCompat.GetValue(element.Id)", gateway);
+            Assert.Contains("unique_id = element.UniqueId", gateway);
+            Assert.Contains("type_name = element.GetType().FullName", gateway);
+            Assert.Contains("active_document = activeDocument != null && element.Document.Equals(activeDocument)", gateway);
+        }
+
+        [Fact]
         public void HandlerUsesMethodTruthBeforeInspectingAnAdversarialGetBody()
         {
             var handler = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Handlers", "NativeApiHandlers.cs");
@@ -91,6 +107,11 @@ namespace RevitBridge.Common.Tests
             {
                 var candidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments).ToArray());
                 if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                if (relativeSegments.Length > 1 && relativeSegments[0] == "apps")
+                {
+                    var integrationCandidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments.Skip(1)).ToArray());
+                    if (File.Exists(integrationCandidate)) return File.ReadAllText(integrationCandidate);
+                }
                 cursor = cursor.Parent;
             }
 

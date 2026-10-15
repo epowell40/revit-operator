@@ -4056,6 +4056,14 @@
         "backend:advisory_verification_policy.test.ts",
         "backend:assignment_work_allowance_v2.test.ts"
       ]
+    },
+    {
+      "id": "active_view_sdk_receiver_identity_and_typed_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
