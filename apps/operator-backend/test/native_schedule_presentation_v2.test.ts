@@ -17,6 +17,7 @@ const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int
 const TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)',HEIGHT='method:Autodesk.Revit.DB.TableSectionData.GetRowHeight(System.Int32)';
 const PANEL_SECTION='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSectionData(Autodesk.Revit.DB.SectionType)';
 const SECTION_INDEX='method:Autodesk.Revit.DB.TableData.GetSectionData(System.Int32)';
+const SET_WIDTH='method:Autodesk.Revit.DB.TableSectionData.SetColumnWidth(System.Int32,System.Double)',WIDTH='method:Autodesk.Revit.DB.TableSectionData.GetColumnWidth(System.Int32)';
 const call=(id:string,target:string,memberId:string,args:any[])=>({id,op:'call',target,memberId,args});
 const digest=(v:any)=>createHash('sha256').update(canonicalJsonV2(v)).digest('hex');
 function native(operations:any[],editing:boolean){const handles=new Map<string,string>([['doc','Autodesk.Revit.DB.Document'],['view','Autodesk.Revit.DB.Electrical.PanelScheduleView']]);
@@ -27,10 +28,11 @@ function native(operations:any[],editing:boolean){const handles=new Map<string,s
   else if(s.memberId===SECTION||s.memberId===SECTION_INDEX||s.memberId===PANEL_SECTION){handles.set('$'+s.id,'Autodesk.Revit.DB.TableSectionData');result_preview={type:'Autodesk.Revit.DB.TableSectionData'};}
   else if(s.memberId===TEXT)result_preview='CU; 3/4"C W/2#12+1#12GRD';
   else if(s.memberId===HEIGHT)result_preview=.033;
+  else if(s.memberId===WIDTH)result_preview=.6;
   return {id:s.id,op:s.op,member_id:s.memberId,target_type,result_preview,
    ...(s.target==='view'?{target_identity:{schema:'operator.native_element_receiver.v1',element_id:41,unique_id:'native-schedule-fixture-41',type_name:target_type,active_document:true}}:{})};});
  return {version:editing?'operator.native_api_mutation_ops.v1':'operator.native_api_ops.v2',ok:true,read_only:!editing,operation_count:operations.length,
-  geometry_cleanup_errors:[] as any[],operations:receipts,results:Object.fromEntries(receipts.filter(s=>s.member_id===TEXT||s.member_id===HEIGHT).map(s=>[s.id,s.result_preview]))};
+  geometry_cleanup_errors:[] as any[],operations:receipts,results:Object.fromEntries(receipts.filter(s=>[TEXT,HEIGHT,WIDTH].includes(s.member_id)).map(s=>[s.id,s.result_preview]))};
 }
 function fixture(){const ops=[call('panel','doc',GET,[41]),call('table','$panel',TABLE_GET,[]),call('footer','$table',SECTION,['Footer']),
  call('legend','$footer',SET_TEXT,[2,1,'CU; 3/4"C W/2#12+1#12GRD']),call('body','$table',SECTION,['Body']),call('height','$body',SET_HEIGHT,[2,.033])];
@@ -74,6 +76,55 @@ function batchFixture(){const f=fixture();
  f.readInput.body={operations:reads,returns:['$read0','$read1']};f.read=native(reads,false);f.read.results.read1=.04;f.read.operations.at(-1)!.result_preview=.04;
  return f;
 }
+
+function widthFixture(){const f=fixture();
+ const ops=[call('p1','doc',GET,[41]),call('t1','$p1',TABLE_GET,[]),call('b1','$t1',SECTION,['Body']),call('w1','$b1',SET_WIDTH,[2,.6]),call('w2','$b1',SET_WIDTH,[13,.61]),call('h1','$t1',SECTION,['Header']),call('w3','$h1',SET_WIDTH,[6,.9]),
+  call('p2','doc',GET,[42]),call('t2','$p2',TABLE_GET,[]),call('s2','$t2',SECTION,['Summary']),call('w4','$s2',SET_WIDTH,[6,.8833333333333333]),call('f2','$t2',SECTION,['Footer']),call('w5','$f2',SET_WIDTH,[1,1.675])];
+ f.input.body.operations=ops;f.input.body.transaction={mode:'commit',maxAffectedElements:4,allowCreate:false,allowedExistingElementIds:[41,42,43,44]};
+ Object.assign(f.applied,native(ops,true));Object.assign(f.applied,{mutation_operation_count:5});Object.assign(f.applied.transaction,{allowed_existing_element_ids:[41,42,43,44],commit_allowed_existing_element_ids:[41,42,43,44],modified_element_ids:[41,42,43,44]});
+ const reads=[call('schedule0','doc',GET,[41]),call('table0','$schedule0',TABLE_GET,[]),call('section0','$table0',SECTION,['Body']),call('read0','$section0',WIDTH,[2]),call('read1','$section0',WIDTH,[13]),call('section1','$table0',SECTION,['Header']),call('read2','$section1',WIDTH,[6]),
+  call('schedule1','doc',GET,[42]),call('table1','$schedule1',TABLE_GET,[]),call('section2','$table1',SECTION,['Summary']),call('read3','$section2',WIDTH,[6]),call('section3','$table1',SECTION,['Footer']),call('read4','$section3',WIDTH,[1])];
+ f.readInput.body={operations:reads,returns:Array.from({length:5},(_,i)=>'$read'+i)};f.read=native(reads,false);
+ for(const [i,value]of [.6,.61,.9,.8833333333333333,1.675].entries()){f.read.results['read'+i]=value;f.read.operations.find(r=>r.id==='read'+i)!.result_preview=value;}
+ return f;
+}
+test('column widths require every column, section, schedule and identity in one complete fresh read',()=>{
+ const f=widthFixture();assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+ assert.deepEqual(nativeSchedulePresentationRequestV2(f.input)!.targets.map(t=>t.kind),Array(5).fill('width'));
+ assert.deepEqual(operationTargetSelectorV2({operation:{capability_id:'revit_call_tool',path:f.input.path,arguments:f.input},value:f.applied}).principal_target_tokens,['id:41','id:42']);
+ for(const mutate of [
+  (n:any)=>{n.read.results.read4=1.6;n.read.operations.find((r:any)=>r.id==='read4').result_preview=1.6;},
+  (n:any)=>n.read.operations.find((r:any)=>r.member_id===GET&&r.result_preview.id===42).result_preview.unique_id='foreign',
+  (n:any)=>n.readInput.body.operations.find((r:any)=>r.id==='section3').args=['Header'],
+  (n:any)=>n.readInput.body.operations.find((r:any)=>r.id==='read4').args=[2],
+  (n:any)=>n.applied.transaction.modified_element_ids=[41,43,44],
+  (n:any)=>n.input.body.operations.push(call('duplicate','$b1',SET_WIDTH,[2,.6])),
+  (n:any)=>n.input.body.operations[3].args=[-1,.6],
+  (n:any)=>n.input.body.operations[3].args=[2,0],
+  (n:any)=>n.input.body.operations[3].args=[2,Infinity],
+  (n:any)=>n.input.body.operations[3].args=[2,2.01],
+  (n:any)=>n.input.body.operations.push(call('unrecognized','$b1','method:Unrelated.SetSize()',[])),
+ ]){const n=structuredClone(f);mutate(n);assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false);}
+});
+test('width and height at the same numeric index are distinct checked coordinates',()=>{
+ const f=fixture();f.input.body.operations.push(call('width','$body',SET_WIDTH,[2,.6]));Object.assign(f.applied,native(f.input.body.operations,true));f.applied.mutation_operation_count=3;
+ f.readInput.body.operations.push(call('read2','$section0',WIDTH,[2]));f.readInput.body.returns.push('$read2');f.read=native(f.readInput.body.operations,false);
+ assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+});
+test('column-width readback supports regular schedules and native active-view receivers',()=>{
+ const f=widthFixture(),getter='method:Autodesk.Revit.DB.ViewSchedule.GetTableData()';
+ for(const request of [f.input,f.readInput])for(const op of request.body.operations)if(op.memberId===TABLE_GET)op.memberId=getter;
+ for(const payload of [f.applied,f.read])for(const op of payload.operations){
+  if(op.member_id===TABLE_GET)op.member_id=getter;
+  if(op.target_type==='Autodesk.Revit.DB.Electrical.PanelScheduleView')op.target_type='Autodesk.Revit.DB.ViewSchedule';
+  if(op.target_type==='Autodesk.Revit.DB.Electrical.PanelScheduleData')op.target_type='Autodesk.Revit.DB.TableData';
+ }
+ assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+ const c=contextFixture();c.input.body.operations.push(call('width','$body',SET_WIDTH,[2,.6]));Object.assign(c.applied,native(c.input.body.operations,true));c.applied.mutation_operation_count=3;
+ c.readInput.body.operations.push(call('read2','$section0',WIDTH,[2]));c.readInput.body.returns.push('$read2');c.read=native(c.readInput.body.operations,false);
+ assert(nativeSchedulePresentationMatchesV2(c.input,c.applied,c.readInput,c.read));
+ const foreign=structuredClone(c);foreign.applied.operations[0]!.target_identity!.active_document=false;assert.equal(nativeSchedulePresentationMatchesV2(foreign.input,foreign.applied,foreign.readInput,foreign.read),false);
+});
 
 test('batch schedule proof requires every requested schedule, UID, value and complete native transaction',()=>{
  const f=batchFixture();assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
@@ -200,21 +251,23 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
-    if(reading&&['read_failure','batch_read_failure'].includes(variant))throw Error('native_read_failed');
+    if(reading&&['read_failure','batch_read_failure','width_read_failure'].includes(variant))throw Error('native_read_failed');
     const payload:any=structuredClone(reading?f.read:f.applied);
     if(reading){if(variant==='wrong_text')payload.results.read0='wrong';if(variant==='wrong_height')payload.results.read1=.02;if(variant==='foreign_uid')payload.operations[0].result_preview.unique_id='foreign';}
     if(reading&&variant==='batch_wrong_second')payload.results.read1=.033;
     if(reading&&variant==='batch_foreign_second')payload.operations[4].result_preview.unique_id='foreign';
+    if(reading&&variant==='width_wrong_last'){payload.results.read4=1.6;payload.operations.find((r:any)=>r.id==='read4').result_preview=1.6;}
+    if(reading&&variant==='width_foreign_second')payload.operations.find((r:any)=>r.member_id===GET&&r.result_preview.id===42).result_preview.unique_id='foreign';
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
-    if(!reading&&['paused_after_commit','batch_paused'].includes(variant))controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
+    if(!reading&&['paused_after_commit','batch_paused','width_paused'].includes(variant))controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:reading?'none':'applied',native_transaction_state:reading?'not_applicable':'committed',authority:'native-host',affected_target_identities:reading?[]:f.applied.transaction.modified_element_ids.map(id=>'element_id:'+id),result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
       raw_payload_hash:reading&&variant==='wrong_digest'?'e'.repeat(64):digest(payload),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:lease.request_identity,completed_at:new Date().toISOString()},
@@ -223,10 +276,10 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'presentation-task',user_text:goal.objective,assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
   try{await handleCodexDynamicToolCall(runtime,{id:'sdk-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'presentation-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
-   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused'].includes(variant)?0:1);
+   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
-   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch'].includes(variant)){
+   assert.equal(checked,['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(['exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
     assert.equal(committedNativeSchedulePresentationReadbackPlanV2(snapshot,apply),null,'One internal read only');

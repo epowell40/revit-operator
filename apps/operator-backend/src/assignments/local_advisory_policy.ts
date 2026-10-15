@@ -58,5 +58,5 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
     ...(requestedEffect === "apply" && env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE === "verified_native_changes_v1"
       ? { progress_allowance: { mode: "verified_native_changes_v1" as const,
         max_provider_calls: expanded?2048:256, max_operations: expanded?8192:1024, max_total_tokens: expanded?256_000_000:32_000_000,
-        max_wall_clock_ms:120*60_000 } } : {}) };
+        max_wall_clock_ms:120*60_000, credit_unit:'distinct_verified_targets_v1' as const } } : {}) };
 }

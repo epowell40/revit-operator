@@ -36,8 +36,13 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
   return { resources, cached_input_tokens: cached,
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,
       verified_distinct_changes: allowance.verified_changes,
+      ...(allowance.verified_targets === undefined ? {} : {
+        verified_distinct_targets: allowance.verified_targets,
+        earned_credit_unit: 'distinct_verified_targets_v1' }),
       progress_extension_enabled: Boolean(snapshot.spec.execution_policy?.progress_allowance),
-      basis: "Creation-time source workload plus distinct committed native edits with recognized readback; no agent completion claims." },
+      basis: allowance.verified_targets === undefined
+        ? "Creation-time source workload plus distinct committed native edits with recognized readback; no agent completion claims."
+        : "Creation-time source workload plus distinct principal targets checked after native commit; repeated targets and collateral earn no credit. No agent completion claims." },
     token_breakdown: { input_tokens: input, cached_input_tokens: cachedInput, cache_write_input_tokens: cacheWriteInput,
       uncached_input_tokens: uncachedInput, output_tokens: output,
       input_includes_cached: true, input_includes_cache_write: true, cost_estimate_available: costComplete },

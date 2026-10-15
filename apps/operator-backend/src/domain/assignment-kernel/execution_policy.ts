@@ -27,6 +27,8 @@ export interface LocalAdvisoryExecutionPolicyV1 {
     max_total_tokens: number;
     /** Optional creation-time ceiling; absent in historical fixed-clock policies. */
     max_wall_clock_ms?: number;
+    /** Absent means historical operation-batch credits. Frozen for new tasks only. */
+    credit_unit?: 'distinct_verified_targets_v1';
   };
 }
 
@@ -68,6 +70,8 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
       && policy.progress_allowance.max_operations >= policy.max_operations
       && bounded(policy.progress_allowance.max_total_tokens, tokenCeiling)
       && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens
+      && (policy.progress_allowance.credit_unit === undefined
+        || policy.progress_allowance.credit_unit === 'distinct_verified_targets_v1')
       && (policy.progress_allowance.max_wall_clock_ms === undefined
         || (bounded(policy.progress_allowance.max_wall_clock_ms,120*60_000)
           && policy.progress_allowance.max_wall_clock_ms >= policy.max_wall_clock_ms))));

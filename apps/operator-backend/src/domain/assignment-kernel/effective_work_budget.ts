@@ -10,8 +10,9 @@ import { readyNativeRollbackPreviewV2 } from "./progress/ready_native_preview.js
 // Frozen policy and durable usage remain immutable; only checked work earns credit.
 /** A retained plan permits one bounded planning window. Only independently
  * verified, distinct native changes earn more work. Usage is never reset. */
-export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; provider_calls: number } {
+export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; verified_targets?: number; provider_calls: number } {
   const policy = advisoryVerificationV2(snapshot) ? snapshot.spec.execution_policy : undefined;
+  const targetCredits = policy?.progress_allowance?.credit_unit === 'distinct_verified_targets_v1';
   if (policy && (!policy.progress_allowance || snapshot.spec.requested_effect !== "apply"))
     return { broad: true, verified_changes: 0, provider_calls: policy.max_provider_calls };
   const plan = snapshot.work_plan;
@@ -39,16 +40,21 @@ export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { bro
     // outcome, but it cannot erase the native transaction and independent
     // physical verification already performed. Count that bounded work once;
     // completion still uses the stricter current-input freshness rule.
-    if (!signature || signatures.has(signature) || !affected?.length || affected.some(id => targets.has(id))
+    if (!signature || signatures.has(signature) || !affected?.length || (!targetCredits && affected.some(id => targets.has(id)))
         || !Number.isFinite(Date.parse(op.opened_at)) || Date.parse(op.opened_at) < declared || !Number.isFinite(declared)
         || !sameAssignmentBindingV2(op.binding, snapshot.current_binding)
         || !result || !sameAssignmentBindingV2(result.binding, snapshot.current_binding)
         || result.authority !== "native-host" || result.status !== "succeeded" || result.native_transaction_state !== "committed"
         || !appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id)) continue;
-    signatures.add(signature); affected.forEach(id => targets.add(id)); verified++;
+    signatures.add(signature);
+    // A fully verified mixed batch earns only its new principal targets. Repeated
+    // values/targets, containing sheets and incidental native changes add none.
+    if (!affected.some(id => !targets.has(id))) continue;
+    affected.forEach(id => targets.add(id)); verified++;
   }
-  return { broad: true, verified_changes: verified, provider_calls: policy
-    ? Math.min(policy.progress_allowance!.max_provider_calls, policy.max_provider_calls + verified * 8)
+  const units = targetCredits ? Math.min(24, targets.size) : verified;
+  return { broad: true, verified_changes: verified, ...(targetCredits ? {verified_targets: targets.size} : {}), provider_calls: policy
+    ? Math.min(policy.progress_allowance!.max_provider_calls, policy.max_provider_calls + units * 8)
     : Math.min(256, 64 + verified * 8) };
 }
 
@@ -56,7 +62,7 @@ export function defaultAssignmentWorkBudgetV2(snapshot: AssignmentSnapshotV2, or
   const policy = snapshot.spec.execution_policy;
   const allowance = assignmentWorkAllowanceV2(snapshot);
   if (advisoryVerificationV2(snapshot) && policy) {
-    const credit = Math.min(24, allowance.verified_changes), ceiling = policy.progress_allowance;
+    const credit = Math.min(24, allowance.verified_targets ?? allowance.verified_changes), ceiling = policy.progress_allowance;
     return { ...ordinary, max_provider_calls: allowance.provider_calls, max_reasoning_turns: allowance.provider_calls,
       max_operations: ceiling ? Math.min(ceiling.max_operations, policy.max_operations + credit * 32) : policy.max_operations,
       max_total_tokens: ceiling ? Math.min(ceiling.max_total_tokens, policy.max_total_tokens + credit * 1_000_000) : policy.max_total_tokens,

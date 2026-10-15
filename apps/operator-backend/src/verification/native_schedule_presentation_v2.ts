@@ -17,9 +17,11 @@ const PANEL_SECTION='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSe
 const TABLE_GETS=['method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetTableData()','method:Autodesk.Revit.DB.ViewSchedule.GetTableData()'];
 const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int32,System.Int32,System.String)';
 const SET_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.SetRowHeight(System.Int32,System.Double)';
+const SET_WIDTH='method:Autodesk.Revit.DB.TableSectionData.SetColumnWidth(System.Int32,System.Double)';
 const READ_TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)';
 const READ_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.GetRowHeight(System.Int32)';
-type Target={scheduleId:number;kind:'text'|'height';section:string;row:number;column?:number;value?:string|number;stepId:string};
+const READ_WIDTH='method:Autodesk.Revit.DB.TableSectionData.GetColumnWidth(System.Int32)';
+type Target={scheduleId:number;kind:'text'|'height'|'width';section:string;row?:number;column?:number;value?:string|number;stepId:string};
 type Handle={kind:'view'|'table'|'section';scheduleId:number;section?:string};
 type Graph={scheduleId:number;scheduleIds:number[];contextView:boolean;targets:Target[];operations:Record<string,any>[];handles:Map<string,Handle>};
 
@@ -55,10 +57,14 @@ function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null
    t={scheduleId:source.scheduleId,kind:'text',section:source.section!,row:args[0],column:args[1],value:args[2],stepId:s.id};
   if(editing&&s.memberId===SET_HEIGHT&&source?.kind==='section'&&args.length===2&&coordinate(args[0])&&typeof args[1]==='number'&&Number.isFinite(args[1])&&args[1]>0&&args[1]<=2)
    t={scheduleId:source.scheduleId,kind:'height',section:source.section!,row:args[0],value:args[1],stepId:s.id};
+  if(editing&&s.memberId===SET_WIDTH&&source?.kind==='section'&&args.length===2&&coordinate(args[0])&&typeof args[1]==='number'&&Number.isFinite(args[1])&&args[1]>0&&args[1]<=2)
+   t={scheduleId:source.scheduleId,kind:'width',section:source.section!,column:args[0],value:args[1],stepId:s.id};
   if(!editing&&s.memberId===READ_TEXT&&source?.kind==='view'&&args.length===3&&section(args[0])&&coordinate(args[1])&&coordinate(args[2]))
    t={scheduleId:source.scheduleId,kind:'text',section:section(args[0])!,row:args[1],column:args[2],stepId:s.id};
   if(!editing&&s.memberId===READ_HEIGHT&&source?.kind==='section'&&args.length===1&&coordinate(args[0]))
    t={scheduleId:source.scheduleId,kind:'height',section:source.section!,row:args[0],stepId:s.id};
+  if(!editing&&s.memberId===READ_WIDTH&&source?.kind==='section'&&args.length===1&&coordinate(args[0]))
+   t={scheduleId:source.scheduleId,kind:'width',section:source.section!,column:args[0],stepId:s.id};
   if(!t)return null;const key=JSON.stringify([t.scheduleId,t.kind,t.section,t.row,t.column]);if(keys.has(key))return null;
   keys.add(key);targets.push(t);
  }
@@ -90,7 +96,7 @@ export function nativeSchedulePresentationRequestV2(input:unknown,appliedPayload
 }
 export function isNativeSchedulePresentationEditV2(input:unknown):boolean {
  const w=obj(input),operations=obj(w.body??input).operations;
- return Array.isArray(operations)&&operations.some(s=>[SET_TEXT,SET_HEIGHT].includes(obj(s).memberId));
+ return Array.isArray(operations)&&operations.some(s=>[SET_TEXT,SET_HEIGHT,SET_WIDTH].includes(obj(s).memberId));
 }
 export function nativeSchedulePresentationReadTargetsV2(input:unknown):number[]{const g=graph(input,false);return g?g.scheduleIds:[];}
 export function nativeSchedulePresentationObservedTargetsV2(payload:unknown):number[]{const p=obj(payload),steps=p.operations;
@@ -106,7 +112,7 @@ function readBody(g:Graph,appliedPayload:unknown){const single=g.scheduleIds.len
  for(const [i,t]of g.targets.entries()){
   if(!views.has(t.scheduleId)){const id=single?'schedule':'schedule'+views.size;views.set(t.scheduleId,'$'+id);operations.push({id,op:'call',target:'doc',memberId:GET,args:[t.scheduleId]});}
   const sectionKey=t.scheduleId+'|'+t.section;
-  if(t.kind==='height'&&!sections.has(sectionKey)){
+  if(t.kind!=='text'&&!sections.has(sectionKey)){
    if(!tables.has(t.scheduleId)){
     const types=new Set(g.operations.flatMap((s,j)=>{const h=g.handles.get(s.target);return h?.kind==='view'&&(h.scheduleId||g.scheduleId)===t.scheduleId?[obj(receipts[j]).target_type]:[];}));
     if(types.size!==1)return null;const type=[...types][0];
@@ -117,7 +123,8 @@ function readBody(g:Graph,appliedPayload:unknown){const single=g.scheduleIds.len
    const id='section'+sections.size;sections.set(sectionKey,'$'+id);operations.push({id,op:'call',target:tables.get(t.scheduleId),memberId:TABLE,args:[t.section]});
   }
   const id='read'+i;operations.push({id,op:'call',target:t.kind==='text'?views.get(t.scheduleId):sections.get(sectionKey),
-   memberId:t.kind==='text'?READ_TEXT:READ_HEIGHT,args:t.kind==='text'?[t.section,t.row,t.column]:[t.row]});returns.push('$'+id);
+   memberId:t.kind==='text'?READ_TEXT:t.kind==='height'?READ_HEIGHT:READ_WIDTH,
+   args:t.kind==='text'?[t.section,t.row,t.column]:[t.kind==='height'?t.row:t.column]});returns.push('$'+id);
  }
  return operations.length<=64?{operations,returns}:null;
 }
@@ -140,7 +147,7 @@ function nativeIdentity(g:Graph,p:Record<string,any>,editing:boolean){
  }
  return g.scheduleIds.length&&g.scheduleIds.every(id=>uids.has(id))?canonicalJsonV2([...uids].sort((a,b)=>a[0]-b[0])):null;
 }
-/** Requested text/heights only. This is not a visual, electrical, template-
+/** Requested text/heights/widths only. This is not a visual, electrical, template-
  * binding, or unrequested-style preservation certification. */
 export function nativeSchedulePresentationMatchesV2(input:unknown,appliedPayload:unknown,readInput:unknown,freshPayload:unknown):boolean{
  const g=nativeSchedulePresentationRequestV2(input,appliedPayload),freshGraph=graph(readInput,false),a=obj(appliedPayload),f=obj(freshPayload);

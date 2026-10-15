@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "verified_target_work_credit_v2.test.ts",
     "progress_execution_time_v2.test.ts",
     "native_annotation_postcondition_v2.test.ts",
     "read_text_attachment.test.ts",
@@ -4081,6 +4082,21 @@
         "backend:native_schedule_presentation_v2.test.ts",
         "backend:verification_capability_admission_v2.test.ts",
         "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "verified_principal_target_progress_credit_and_legacy_budget_replay",
+      "coverage": [
+        "backend:verified_target_work_credit_v2.test.ts",
+        "backend:codex_assignment_timeout.test.ts",
+        "backend:assignment_kernel_v2_provider_usage_hold.test.ts"
+      ]
+    },
+    {
+      "id": "native_schedule_column_width_complete_batch_integral_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
       ]
     }
   ],
