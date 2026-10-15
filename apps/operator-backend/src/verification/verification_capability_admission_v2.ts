@@ -77,6 +77,8 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/place-view", {semantic_outputs: [], principal_target_fields: ["id"], contextual_scope_fields: ["sheetId", "viewId"]}],
+  ["/revit/create-text", {semantic_outputs: [], principal_target_fields: ["textNoteId"], contextual_scope_fields: ["viewId"]}],
   ["/revit/schedules", { semantic_outputs: ["schedule.cell_appearance"], principal_target_fields: ["scheduleId", "id"] }],
   ["/revit/sheets", {
     semantic_outputs: ["sheet.placement_anchors"],
@@ -113,7 +115,7 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     preferred_target_field: "viewId"
   }],
   ["/revit/find-text-notes", {
-    semantic_outputs: ["text_note.value"],
+    semantic_outputs: ["text_note.value", "text_note.created_attributes"],
     principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId", "ownerViewId"],
     preferred_target_field: "elementId"
@@ -331,6 +333,8 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if (path === '/revit/place-view') return ['sheet.placement_anchors'];
+  if (path === '/revit/create-text') return ['text_note.created_attributes'];
   if(path==='/revit/native-api-mutation-ops'&&nativeSchedulePresentationRequestV2(apply.arguments))return ['schedule.presentation_values'];
   if (path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(apply.arguments)) return ["schedule.cell_appearance"];
   if (path === "/revit/assign-electrical-circuit") return ["electrical.circuit_membership"];
@@ -357,6 +361,12 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (!contract) return [];
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
+  if (pathOf(verification) === '/revit/find-text-notes') {
+    const args=objectValue(verification.arguments), body=objectValue(args.body??args), ids=body.elementIds;
+    return Array.isArray(ids) && ids.length===1 && Number.isSafeInteger(ids[0]) && Number(ids[0])>0
+      && body.docId==null && body.familyDocumentId==null ? contract.semantic_outputs
+      : contract.semantic_outputs.filter(output=>output!=='text_note.created_attributes');
+  }
   if (pathOf(verification) === "/revit/schedules") {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args);
     return body.action==='cell_styles' && Number.isSafeInteger(body.scheduleId) && Number(body.scheduleId)>0

@@ -12,6 +12,7 @@ import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_post
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { nativeAnnotationPostconditionSatisfiedV2 } from "../verification/native_annotation_postcondition_v2.js";
 import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
@@ -799,6 +800,8 @@ function commitInput(
           ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"
           ? sheetMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")
+          ? nativeAnnotationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements"
           ? modelPointMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/connect-existing-mep-branch"
@@ -840,6 +843,17 @@ function commitInput(
     // The native sheet comparator checked every requested placement. The
     // read's containing sheet is not itself the edited deliverable. Keep
     // this platform mapping here; the generic domain consumes only the fact.
+    if (verificationSubject && ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")) {
+      // Matching succeeded against retained authoritative commit evidence, not
+      // this read's contextual sheet/view identity. A single created/moved
+      // annotation is the deliverable; its owner is never continuation credit.
+      const ids = verificationSubject.result?.affected_target_identities ?? [];
+      const requested = verificationSubject.input.body as Record<string, unknown>;
+      const contextual = new Set([`element_id:${requested?.sheetId}`, `element_id:${requested?.viewId}`]);
+      const deliverables = ids.filter(id => !contextual.has(id));
+      if (deliverables.length !== 1) throw new Error("verified_deliverable_targets_invalid");
+      semanticFacts.push({fact_id: VERIFIED_DELIVERABLE_TARGETS_FACT_V2, fact_class: "verification", value: deliverables, cardinality: "many"});
+    }
     if (verificationSubject?.request_identity?.path === "/revit/move-elements"
         && result.request_identity?.path === "/revit/sheets") {
       const body = verificationSubject.input?.body as Record<string, unknown> | undefined;

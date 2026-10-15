@@ -61,6 +61,7 @@ import { committedElementTypeReadbackPlanV2 } from "../verification/element_type
 import { committedDuplicatedTypeReadbackPlanV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_postcondition_v2.js";
 import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { committedNativeAnnotationReadbackPlanV2 } from "../verification/native_annotation_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
 import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
@@ -369,6 +370,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedNativeAnnotationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedModelPointMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;

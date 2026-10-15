@@ -60,6 +60,29 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.deepEqual(capable.provided_semantic_outputs, ["text_note.value"]);
 });
 
+test('annotation postconditions require capable exact reads and keep owning sheet/view contextual',()=>{
+  const create={capability_id:'revit_call_tool',path:'/revit/create-text'};
+  const placement={capability_id:'revit_call_tool',path:'/revit/place-view'};
+  for(const verification of [
+    {capability_id:'revit_call_tool',path:'/revit/get-element-summary'},
+    {capability_id:'revit_call_tool',path:'/revit/create-text'},
+    {capability_id:'revit_call_tool',path:'/revit/find-text-notes'},
+    {capability_id:'revit_call_tool',path:'/revit/find-text-notes',arguments:{body:{elementIds:[800],familyDocumentId:'other-family'}}},
+  ])assert.equal(verificationCapabilityAdmissionV2({apply:create,verification}).admissible,false);
+  assert.equal(verificationCapabilityAdmissionV2({apply:create,verification:{capability_id:'revit_call_tool',path:'/revit/find-text-notes',arguments:{body:{elementIds:[800]}}}}).admissible,true);
+  assert.equal(verificationCapabilityAdmissionV2({apply:placement,verification:{capability_id:'revit_call_tool',path:'/revit/get-element-summary'}}).admissible,false);
+  assert.equal(verificationCapabilityAdmissionV2({apply:placement,verification:{capability_id:'revit_call_tool',path:'/revit/sheets'}}).admissible,true);
+  for(const [path,value] of [
+    ['/revit/create-text',{textNoteId:800,viewId:100}],
+    ['/revit/place-view',{id:800,sheetId:100,viewId:200}],
+  ] as const){
+    const selector=operationTargetSelectorV2({operation:{path},value});
+    assert(selector.principal_target_tokens.includes('id:800'));
+    assert(!selector.principal_target_tokens.includes('id:100'));
+    assert(!selector.principal_target_tokens.includes('id:200'));
+  }
+});
+
 test("duplicate-view keeps the source contextual and verifies only the new view identity", () => {
   const apply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/duplicate-view" };
   const source = operationTargetSelectorV2({ operation: apply,

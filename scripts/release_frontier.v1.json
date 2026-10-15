@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "native_annotation_postcondition_v2.test.ts",
     "read_text_attachment.test.ts",
     "schedule_cell_appearance_v2.test.ts",
     "viewport_projection_pose_v2.test.ts",
@@ -4055,6 +4056,13 @@
       "coverage": [
         "backend:advisory_verification_policy.test.ts",
         "backend:assignment_work_allowance_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_annotation_placement_and_text_fresh_postconditions",
+      "coverage": [
+        "backend:native_annotation_postcondition_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
       ]
     },
     {
