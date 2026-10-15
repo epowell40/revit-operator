@@ -1520,7 +1520,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:fa0c2a6fb7f15ac9f882bfd8b20de227bcfe3181492a5bc93732d040f190b8d5"
+      "sha256": "sha256:709b46be8e9ed77bc7186ab7fa36573de45ed5d1ebde75c3c6736c7a51a6d0a8"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -4121,7 +4121,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/native_schedule_presentation_v2.ts",
-      "sha256": "sha256:16bde6643f33c3be906be01b38fc36b8c2f2356b26db283e637437279e3eb895"
+      "sha256": "sha256:ffd43bc88a03fcf49c44e20e0aba106cb6ef59ebacc8f91c74997b89ee647d4e"
     },
     {
       "path": "apps/operator-backend/src/verification/native_sheet_scope_v1.ts",
@@ -5985,7 +5985,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_schedule_presentation_v2.test.ts",
-      "sha256": "sha256:47afeecacd409c70b92dd7fb991c6528e9fee7551497458a75d1e523c3f5a2bb"
+      "sha256": "sha256:7bfed39ac1bde99db717f337868a255c0cc3efe8debdbadf2b2b6bd11ef200bc"
     },
     {
       "path": "apps/operator-backend/test/native_tag_repair_settlement.test.ts",
@@ -9613,7 +9613,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:7f27a5b2fa13b76a6177247462f2fde7f1010ba1ade7455973dcd8bca078a8d1",
+  "inputs_hash": "sha256:cd1fc911d5690dc28b9eb44185adb810426d691860e9b231e611ebbba0fca1e4",
   "result": {
     "passed": true,
     "checks": [
