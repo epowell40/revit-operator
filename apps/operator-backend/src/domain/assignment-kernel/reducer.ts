@@ -1,3 +1,4 @@
+import { defaultAssignmentWorkBudgetV2 } from "./effective_work_budget.js";
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { recordWorkPlanLocationV2 } from './work_plan_location.js';
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
@@ -63,10 +64,14 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
   kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && snapshot.execution_failure_ids.length === 0,
     "advisory_continuation_execution_blocked", "A checkpoint cannot clear execution failure or budget stops.");
   const policy = snapshot.spec.execution_policy!;
-  kernelAssertV2(Object.keys(snapshot.provider_calls).length < policy.max_provider_calls
-    && Object.keys(snapshot.operations).length < policy.max_operations
-    && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < policy.max_total_tokens
-    && assignmentActiveExecutionTimeMsV2(snapshot, now) < policy.max_wall_clock_ms,
+  const budget = defaultAssignmentWorkBudgetV2(snapshot, {
+    ...policy, max_reasoning_turns: policy.max_provider_calls, max_equivalent_operations: 0,
+    max_no_progress_epochs: 0, max_reconciliation_attempts: 0
+  });
+  kernelAssertV2(Object.keys(snapshot.provider_calls).length < budget.max_provider_calls
+    && Object.keys(snapshot.operations).length < budget.max_operations
+    && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < budget.max_total_tokens
+    && assignmentActiveExecutionTimeMsV2(snapshot, now) < budget.max_wall_clock_ms,
     "advisory_continuation_budget_exhausted", "Continuation retains the original usage limits.");
   if (!preparingDirection) {
     const input = snapshot.clarifications[continuation.command_id];

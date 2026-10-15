@@ -409,6 +409,59 @@ test("checkpoint continuation guards failure, unknown, unsettled work, remaining
   rejects(s=>{s.current_binding.document_fingerprint="other";},/document/);
 }));
 
+test("checkpoint continuation honors the same earned allowance as execution without resetting history", () => fixture(true, f => {
+  manageAssignmentWorkPlan({binding:f.binding,action:"propose_completion",completion_proposal:proposal});
+  const state:any=structuredClone(f.state()), command=checkpointCommand(f);
+  const policy=state.spec.execution_policy!;
+  policy.progress_allowance={mode:"verified_native_changes_v1",max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000};
+  const now=new Date().toISOString(), binding=state.current_binding;
+  // Retained91: 72 requests exceed the base64 but fit earned progress.
+  // Separate exact native edits/readbacks supply credit, never model claims.
+  state.provider_calls=Object.fromEntries(Array.from({length:72},(_,i)=>[`call${i}`,{
+    admitted_at:now,completed_at:now,usage:{total_tokens:100_000}
+  }])) as any;
+  state.operations={};state.observations={};
+  for(let i=0;i<2;i++) {
+    state.operations[`edit${i}`]={operation_id:`edit${i}`,binding,requested_effect:"apply",persistent_effect:"applied",settlement_state:"settled",
+      opened_at:now,settled_at:now,request_identity:{request_signature:`request${i}`},verification_operation_ids:[`read${i}`],
+      result:{binding,authority:"native-host",status:"succeeded",native_transaction_state:"committed"}} as any;
+    state.operations[`read${i}`]={operation_id:`read${i}`,binding,target:{target_id:`id:${i+1}`},requested_effect:"read",purpose:"verification",
+      persistent_effect:"none",settlement_state:"settled",opened_at:now,settled_at:now,verification_of_operation_id:`edit${i}`,observation_ids:[`observation${i}`],
+      result:{binding,authority:"native-host",status:"succeeded"}} as any;
+    state.observations[`observation${i}`]={operation_id:`read${i}`,binding,authority:"native-host",
+      facts:[{fact_id:"verification.postcondition_satisfied",fact_class:"verification",value:true}]} as any;
+  }
+  const continuation={command_id:command.command_id,expected_control_command_id:null,document_fingerprint:command.checkpoint.document_fingerprint,
+    direction_variable_id:"user_direction_"+"a".repeat(32),direction_text:command.text};
+  const check=(s:AssignmentSnapshotV2)=>assertAdvisoryCheckpointContinuationV1(s,command.checkpoint.review_id,continuation,now,true);
+  const before=JSON.stringify(state),budget=defaultAssignmentWorkBudgetV2(state,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+  assert.equal(budget.max_provider_calls,80);
+  assert.equal(budget.max_total_tokens,10_000_000);
+  assert.doesNotThrow(()=>check(state));
+  assert.doesNotThrow(()=>check(JSON.parse(before)),"cold replay derives the same earned limits");
+  assert.equal(JSON.stringify(state),before,"preflight preserves original policy, receipts, usage and checkpoint");
+  for(const change of [
+    (s:any)=>delete s.spec.execution_policy.progress_allowance,
+    (s:any)=>s.operations.edit1.request_identity.request_signature="request0",
+    (s:any)=>s.operations.read1.target.target_id="id:1",
+    (s:any)=>s.observations.observation1.authority="model",
+    (s:any)=>s.operations.edit1.result.binding={...binding,generation:2},
+    (s:any)=>s.operations.edit1.persistent_effect="unknown",
+    (s:any)=>s.spec.execution_policy.progress_allowance.max_provider_calls=72,
+    (s:any)=>s.spec.execution_policy.progress_allowance.max_total_tokens=7_200_000,
+    (s:any)=>s.spec.execution_policy.progress_allowance.max_operations=4
+  ]) { const n=structuredClone(state);change(n);assert.throws(()=>check(n),/usage limits/); }
+  for(const change of [
+    (s:any)=>s.unresolved_unknown_operation_ids=["old-unknown"],
+    (s:any)=>s.provider_budget_exhausted={reason:"retained-stop"},
+    (s:any)=>s.in_flight_provider_call_ids=["running"]
+  ]) { const n=structuredClone(state);change(n);assert.throws(()=>check(n)); }
+  const timed=structuredClone(state);timed.provider_calls.call0.admitted_at=state.spec.created_at;
+  timed.provider_calls.call0.completed_at=new Date(Date.parse(state.spec.created_at)+policy.max_wall_clock_ms).toISOString();
+  assert.throws(()=>assertAdvisoryCheckpointContinuationV1(timed,command.checkpoint.review_id,continuation,timed.provider_calls.call0.completed_at,true),/usage limits/,
+    "earned progress never extends the active execution timer");
+}));
+
 test("request/goal fields cannot enable policy and strict multi-part apply still requires a plan", () => fixture(false, f => {
   assert.equal(f.state().spec.execution_policy, undefined);
   const fake = assignmentSpecFromGoalV2({ goal: { ...f.goal, work_budget: { ...f.goal.work_budget, execution_policy: { mode: "local_advisory_v1" } } }, run_id: "other" });

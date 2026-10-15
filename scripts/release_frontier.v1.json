@@ -4049,6 +4049,13 @@
         "backend:native_schedule_presentation_v2.test.ts",
         "backend:verification_capability_admission_v2.test.ts"
       ]
+    },
+    {
+      "id": "checkpoint_continuation_verified_progress_budget_parity",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:assignment_work_allowance_v2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
