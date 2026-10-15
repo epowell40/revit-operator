@@ -16,6 +16,7 @@ const GET='method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.Elemen
 const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int32,System.Int32,System.String)',SET_HEIGHT='method:Autodesk.Revit.DB.TableSectionData.SetRowHeight(System.Int32,System.Double)';
 const TEXT='method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)',HEIGHT='method:Autodesk.Revit.DB.TableSectionData.GetRowHeight(System.Int32)';
 const PANEL_SECTION='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSectionData(Autodesk.Revit.DB.SectionType)';
+const SECTION_INDEX='method:Autodesk.Revit.DB.TableData.GetSectionData(System.Int32)';
 const call=(id:string,target:string,memberId:string,args:any[])=>({id,op:'call',target,memberId,args});
 const digest=(v:any)=>createHash('sha256').update(canonicalJsonV2(v)).digest('hex');
 function native(operations:any[],editing:boolean){const handles=new Map<string,string>([['doc','Autodesk.Revit.DB.Document'],['view','Autodesk.Revit.DB.Electrical.PanelScheduleView']]);
@@ -23,7 +24,7 @@ function native(operations:any[],editing:boolean){const handles=new Map<string,s
   assert.notEqual(s.memberId,'method:Autodesk.Revit.DB.TableView.GetTableData()','The native SDK has no GetTableData member on TableView');
   if(s.memberId===GET){handles.set('$'+s.id,'Autodesk.Revit.DB.Electrical.PanelScheduleView');result_preview={id:41,unique_id:'native-schedule-fixture-41',name:'Sample'};}
   else if(s.memberId.endsWith('.GetTableData()')){handles.set('$'+s.id,'Autodesk.Revit.DB.Electrical.PanelScheduleData');result_preview={type:'Autodesk.Revit.DB.Electrical.PanelScheduleData'};}
-  else if(s.memberId===SECTION||s.memberId===PANEL_SECTION){handles.set('$'+s.id,'Autodesk.Revit.DB.TableSectionData');result_preview={type:'Autodesk.Revit.DB.TableSectionData'};}
+  else if(s.memberId===SECTION||s.memberId===SECTION_INDEX||s.memberId===PANEL_SECTION){handles.set('$'+s.id,'Autodesk.Revit.DB.TableSectionData');result_preview={type:'Autodesk.Revit.DB.TableSectionData'};}
   else if(s.memberId===TEXT)result_preview='CU; 3/4"C W/2#12+1#12GRD';
   else if(s.memberId===HEIGHT)result_preview=.033;
   return {id:s.id,op:s.op,member_id:s.memberId,target_type,result_preview,
@@ -43,6 +44,10 @@ function fixture(){const ops=[call('panel','doc',GET,[41]),call('table','$panel'
 }
 function contextFixture(){const f=fixture();f.input.body.operations.shift();f.input.body.operations[0]!.target='view';
  const actual=native(f.input.body.operations,true);Object.assign(f.applied,actual);return f;}
+function nativeOverloadFixture(){const f=contextFixture();delete (f.input.body.operations[0] as any).args;
+ for(const s of f.input.body.operations)if(s.memberId===SECTION){s.memberId=SECTION_INDEX;s.args=[['Header','Body','Summary','Footer'].indexOf(s.args[0])];}
+ Object.assign(f.applied,native(f.input.body.operations,true));return f;
+}
 function regularFixture(){const f=fixture(),getter='method:Autodesk.Revit.DB.ViewSchedule.GetTableData()';
  f.input.body.operations[1]!.memberId=getter;f.applied.operations[1]!.member_id=getter;
  f.readInput.body.operations[2]!.memberId=getter;f.read.operations[2]!.member_id=getter;
@@ -71,6 +76,18 @@ test('active-view schedule identity comes only from the captured native receiver
   (n:any)=>n.input.body.transaction.allowedExistingElementIds=[42],
   (n:any)=>n.input.body.operations.unshift(call('guessed','doc',GET,[41]))
  ]){const n=structuredClone(f);change(n);assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false);}
+});
+test('native optional zero arguments and integral section-index overload retain exact identity and values',()=>{
+ const f=nativeOverloadFixture();assert(nativeSchedulePresentationMatchesV2(f.input,f.applied,f.readInput,f.read));
+ for(const mutate of [
+  (n:any)=>n.input.body.operations[0].args=null,
+  (n:any)=>n.input.body.operations[0].args=[1],
+  (n:any)=>n.input.body.operations[1].args=[-1],
+  (n:any)=>n.input.body.operations[1].args=[4],
+  (n:any)=>n.input.body.operations[1].args=[1.5],
+  (n:any)=>n.input.body.operations[1].args=['Footer'],
+  (n:any)=>delete n.input.body.operations[1].args,
+ ]){const n=structuredClone(f);mutate(n);assert.equal(nativeSchedulePresentationMatchesV2(n.input,n.applied,n.readInput,n.read),false);}
 });
 test('retained91 direct active panel-section four-row graph binds exact native identity and separate getters',()=>{
  const f=fixture(),rows=[2,3,4,8];
@@ -135,11 +152,11 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['exact','active_view','regular','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
+for(const variant of ['exact','active_view','native_overloads','regular','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
 test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=variant==='active_view'?contextFixture():variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
+  const f=variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops')assert.deepEqual(args,f.readInput);},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
@@ -158,8 +175,8 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['exact','active_view','regular'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
-   if(['exact','active_view','regular'].includes(variant)){
+   assert.equal(checked,['exact','active_view','native_overloads','regular'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(['exact','active_view','native_overloads','regular'].includes(variant)){
     assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
     const read=Object.values(snapshot.operations).find(o=>o.requested_effect==='read')!;
     assert.equal(committedNativeSchedulePresentationReadbackPlanV2(snapshot,apply),null,'One internal read only');

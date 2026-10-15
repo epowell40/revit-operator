@@ -7,9 +7,12 @@ const obj=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray
 const positive=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>0;
 const coordinate=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=100000;
 const equal=(a:unknown,b:unknown)=>canonicalJsonV2(a)===canonicalJsonV2(b);
-const section=(v:unknown)=>typeof v==='string'?['Header','Body','Summary','Footer'].find(s=>s.toLowerCase()===v.toLowerCase()):undefined;
+const SECTION_NAMES=['Header','Body','Summary','Footer'];
+const section=(v:unknown)=>typeof v==='string'?SECTION_NAMES.find(s=>s.toLowerCase()===v.toLowerCase()):
+ typeof v==='number'&&Number.isSafeInteger(v)&&v>=0&&v<SECTION_NAMES.length?SECTION_NAMES[v]:undefined;
 const GET='method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)';
 const TABLE='method:Autodesk.Revit.DB.TableData.GetSectionData(Autodesk.Revit.DB.SectionType)';
+const TABLE_INDEX='method:Autodesk.Revit.DB.TableData.GetSectionData(System.Int32)';
 const PANEL_SECTION='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSectionData(Autodesk.Revit.DB.SectionType)';
 const TABLE_GETS=['method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetTableData()','method:Autodesk.Revit.DB.ViewSchedule.GetTableData()'];
 const SET_TEXT='method:Autodesk.Revit.DB.TableSectionData.SetCellText(System.Int32,System.Int32,System.String)';
@@ -33,7 +36,7 @@ function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null
  const w=obj(input),b=obj(w.body??input),steps=b.operations,handles=new Map<string,Handle>(),ids=new Set<string>(),targets:Target[]=[],keys=new Set<string>();
  if(!Array.isArray(steps)||!steps.length||steps.length>64)return null;
  let scheduleId=0,contextView=false;
- for(const candidate of steps){const s=obj(candidate),args=s.args;
+ for(const candidate of steps){const s=obj(candidate),args=s.args===undefined?[]:s.args;
   if(typeof s.id!=='string'||!/^\w{1,64}$/.test(s.id)||ids.has(s.id)||s.op!=='call'||!Array.isArray(args)
    ||Object.keys(s).some(k=>!['id','op','memberId','target','args'].includes(k)))return null;
   ids.add(s.id);
@@ -45,7 +48,7 @@ function graph(input:unknown,editing:boolean,appliedPayload?:unknown):Graph|null
   if(s.memberId===GET){if(scheduleId||contextView||s.target!=='doc'||args.length!==1||!positive(args[0]))return null;
    scheduleId=args[0];handles.set('$'+s.id,{kind:'view'});continue;}
   if(TABLE_GETS.includes(s.memberId)&&source?.kind==='view'&&args.length===0){handles.set('$'+s.id,{kind:'table'});continue;}
-  if((s.memberId===TABLE&&source?.kind==='table'||s.memberId===PANEL_SECTION&&source?.kind==='view')&&args.length===1&&section(args[0])){
+  if(((s.memberId===TABLE||s.memberId===TABLE_INDEX&&typeof args[0]==='number')&&source?.kind==='table'||s.memberId===PANEL_SECTION&&source?.kind==='view')&&args.length===1&&section(args[0])){
    handles.set('$'+s.id,{kind:'section',section:section(args[0])});continue;}
   let t:Target|undefined;
   if(editing&&s.memberId===SET_TEXT&&source?.kind==='section'&&args.length===3&&coordinate(args[0])&&coordinate(args[1])&&typeof args[2]==='string'&&args[2].length<=4000)
