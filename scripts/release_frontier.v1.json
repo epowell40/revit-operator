@@ -277,7 +277,8 @@
     "category_visibility_scope_v1.test.ts",
     "family_static_text_scope_v1.test.ts",
     "requested_family_scope_readback_v1.test.ts",
-    "requested_family_scope_dispatch_v1.test.ts"
+    "requested_family_scope_dispatch_v1.test.ts",
+    "native_schedule_presentation_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4040,6 +4041,13 @@
       "coverage": [
         "dotnet:PanelScheduleReadWindowTests",
         "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "native_sdk_schedule_text_height_host_readback_and_proof_binding",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
       ]
     }
   ],

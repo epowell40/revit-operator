@@ -13,6 +13,7 @@ import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/e
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
+import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
@@ -794,6 +795,8 @@ function commitInput(
           ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(verificationSubject.input)
           ? scheduleCellBackgroundPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
+          ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"
           ? sheetMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements"

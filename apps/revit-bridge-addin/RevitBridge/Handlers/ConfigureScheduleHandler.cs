@@ -128,7 +128,16 @@ namespace RevitBridge.Handlers
             var schedule = ScheduleSelectionHelper.ResolveSchedule(doc, p.scheduleId, p.query, exact);
             if (schedule == null)
             {
-                throw new InvalidOperationException("Schedule not found. Provide scheduleId or query.");
+                // Resolution happens before BuildPlan/ApplyOperations and before any transaction.
+                // A panel schedule is a TableView, not a ViewSchedule. Return authoritative
+                // no-effect truth so a valid alternate tool can be used without replaying a write.
+                return Task.FromResult<object>(new
+                {
+                    status = "Failed",
+                    errorCode = "regular_schedule_required",
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
+                    message = "No regular ViewSchedule matched. Advanced configuration (including rowHeights) requires a regular schedule. For a PanelScheduleView, use the supported native API operations to read and set TableSectionData row heights or text; cellStyles is a separate supported panel-schedule operation. Resolve the current schedule before continuing."
+                });
             }
 
             var hasAddFields = p.addFields != null && p.addFields.Any(x => !string.IsNullOrWhiteSpace(x));

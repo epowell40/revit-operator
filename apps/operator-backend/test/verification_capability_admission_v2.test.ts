@@ -10,6 +10,18 @@ import {
   verificationCapabilityGuidanceV2
 } from "../src/verification/verification_capability_admission_v2.js";
 
+test('SDK schedule getter target binding survives the path-call classifier boundary without argument duplication',()=>{
+ const lookup={id:'schedule',op:'call',target:'doc',memberId:'method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)',args:[41]};
+ const read={operations:[lookup,{id:'read0',op:'call',target:'$schedule',memberId:'method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)',args:['Footer',2,1]}],returns:['$read0']};
+ const operation={capability_id:'revit_call_tool',method:'POST',path:'/revit/native-api-ops'};
+ assert.deepEqual(operationTargetSelectorV2({operation,value:read,fallback_target_tokens:['id:2','id:1']}).principal_target_tokens,['id:41']);
+ const payload={version:'operator.native_api_ops.v2',ok:true,read_only:true,operation_count:2,operations:[{id:'schedule',op:'call',member_id:lookup.memberId,target_type:'Autodesk.Revit.DB.Document',result_preview:{id:41,unique_id:'native41'}},{}]};
+ assert.deepEqual(operationTargetSelectorV2({operation:{...operation,arguments:{body:read}},value:payload}).principal_target_tokens,['id:41']);
+ assert.deepEqual(operationTargetSelectorV2({operation:{...operation,arguments:{body:read}},value:{report:{id:41}}}).principal_target_tokens,[]);
+ const broken=structuredClone(read);broken.operations[1]!.target='$unknown';
+ assert.notDeepEqual(operationTargetSelectorV2({operation,value:broken}).principal_target_tokens,['id:41']);
+});
+
 test("whole-area HRU replay binds summary ids alias to committed native identities without binding view scope", () => {
   const committed = { target: {}, result: { affected_target_identities: ["element_id:1542933"] } } as any;
   for (const operation of [{ capability_id: "revit_get_element_summary" },

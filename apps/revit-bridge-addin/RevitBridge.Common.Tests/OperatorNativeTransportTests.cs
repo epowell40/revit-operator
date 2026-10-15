@@ -772,6 +772,11 @@ namespace RevitBridge.Common.Tests
             Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(", handler, StringComparison.Ordinal);
             Assert.DoesNotContain("TryClearFilters(", handler, StringComparison.Ordinal);
             Assert.Contains("definition.SetFilters(combined);", handler, StringComparison.Ordinal);
+            var missingTarget = handler.Substring(handler.IndexOf("if (schedule == null)", StringComparison.Ordinal));
+            missingTarget = missingTarget.Substring(0, missingTarget.IndexOf("var hasAddFields", StringComparison.Ordinal));
+            Assert.Contains("regular_schedule_required", missingTarget, StringComparison.Ordinal);
+            Assert.Contains("OperatorNativeTransactionReceipt.NotStarted()", missingTarget, StringComparison.Ordinal);
+            Assert.DoesNotContain("throw new", missingTarget, StringComparison.Ordinal);
         }
 
         [Fact]

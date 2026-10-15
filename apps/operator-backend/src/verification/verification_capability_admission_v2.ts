@@ -14,6 +14,7 @@ import { decodeNativeTagPropertyReadV2, nativeTagPropertyReadTargetsV2, existing
 import { createdTagRequestV2, decodeNativeCreatedTagReadV2, nativeCreatedTagReadTargetsV2 } from "./created_tag_postcondition_v2.js";
 import { nativeElementBooleanReadTargetsV1, nativeElementBooleanReadbackV1 } from './native_element_property_readback_v1.js';
 import { isScheduleCellBackgroundEditV2 } from './schedule_cell_appearance_v2.js';
+import {nativeSchedulePresentationRequestV2,nativeSchedulePresentationReadTargetsV2,nativeSchedulePresentationObservedTargetsV2} from './native_schedule_presentation_v2.js';
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -83,7 +84,7 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     contextual_scope_fields: ["sheetId", "sheetElementId"]
   }],
   ["/revit/update-schedule-cell", { semantic_outputs: [], principal_target_fields: ["sourceElementId", "affectedElementIds"], contextual_scope_fields: ["scheduleId"] }],
-  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association"] }],
+  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association", "schedule.presentation_values"] }],
   ["/revit/connect-existing-mep-branch", {
     semantic_outputs: [], principal_target_fields: ["mainElementId", "branchElementId", "terminalElementId", "createdFittingId"]
   }],
@@ -256,6 +257,15 @@ export function operationTargetSelectorV2(input: Readonly<{
   value: unknown;
   fallback_target_tokens?: readonly string[];
 }>): OperationTargetSelectorV2 {
+  if(pathOf(input.operation)==='/revit/native-api-mutation-ops'){
+    const g=nativeSchedulePresentationRequestV2(input.operation.arguments??input.value);
+    if(g)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:['id:'+g.scheduleId],contextual_scope_tokens:[]};
+  }
+  if(pathOf(input.operation)==='/revit/native-api-ops'){
+    const ids=nativeSchedulePresentationReadTargetsV2(input.operation.arguments??input.value);
+    if(ids.length)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',
+      principal_target_tokens:(nativeSchedulePresentationObservedTargetsV2(input.value).length?nativeSchedulePresentationObservedTargetsV2(input.value):nativeSchedulePresentationReadTargetsV2(input.value)).map(id=>'id:'+id),contextual_scope_tokens:[]};
+  }
   if (pathOf(input.operation) === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(input.operation.arguments)) {
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
       principal_target_tokens: tokensFromReviewedFields(input.value, ["scheduleId"]), contextual_scope_tokens: [] };
@@ -320,6 +330,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if(path==='/revit/native-api-mutation-ops'&&nativeSchedulePresentationRequestV2(apply.arguments))return ['schedule.presentation_values'];
   if (path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(apply.arguments)) return ["schedule.cell_appearance"];
   if (path === "/revit/assign-electrical-circuit") return ["electrical.circuit_membership"];
   if (path === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
@@ -356,7 +367,8 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
       ?contract.semantic_outputs:['artifact.file_digest'];
   }
   if (pathOf(verification) === "/revit/native-api-ops")
-    return nativeCreatedTagReadTargetsV2(verification.arguments).length ? ["tag.created_subject_association"]
+    return nativeSchedulePresentationReadTargetsV2(verification.arguments).length ? ['schedule.presentation_values']
+      : nativeCreatedTagReadTargetsV2(verification.arguments).length ? ["tag.created_subject_association"]
       : nativeTagPropertyReadTargetsV2(verification.arguments).length ? ["tag.property_values"] : [];
   if (pathOf(verification) === "/revit/get-element-summary") {
     const args = objectValue(verification.arguments), body = objectValue(args.body ?? args);

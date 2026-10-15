@@ -1106,6 +1106,26 @@ test("schedule-cell no-match preflight retains no effect without claiming an exe
     f.fact_id === "task.preview_valid" && f.value === true), false);
 });
 
+test("panel row-height request rejected before a transaction stays failed with no effect", async () => {
+  const body = {scheduleId:1420628,rowHeights:[2,3,4,8].map(rowNumber=>({section:"Body",rowNumber,heightFeet:0.03125})),dryRun:false};
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", {
+    method:"POST",path:"/revit/configure-schedule",body
+  }), async()=>{
+    const request=await beginAssignmentKernelNativeRequestV2("POST","/revit/configure-schedule",body,{classified_effect:"apply"});
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST","/revit/configure-schedule",{
+      status:"Failed",errorCode:"regular_schedule_required",transaction:{status:"not_started",affectedElementIds:[]},
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",attempt_id:"panel-height-preflight",
+        requested_effect:"apply",effect_state:"none",effect_authority:"native_transaction",effect_reason:"native_transaction_not_started",request_dispatched:true}
+    },request);
+    return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool") as any;
+  });
+  const result=decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status,"failed_after_dispatch");assert.equal(result.persistent_effect,"none");
+  assert.equal(result.native_transaction_state,"not_started");assert.deepEqual(result.affected_target_identities??[],[]);
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_class==="verification"&&f.value===true),false);
+});
+
 test("configure-schedule apply needs confirmed native commit to settle persistence", async () => {
   const body = { scheduleId: 1488968, addFields: ["Supply Air Pressure Drop"], dryRun: false };
   for (const confirmed of [false, true]) {
