@@ -58,7 +58,7 @@ test('the retained116 wider native inventory stays unverified without its missin
 test('actual native GetDependentElements self entry is identity only, never a generated child',()=>{
   const native=JSON.parse(fs.readFileSync('test/fixtures/regular-schedule-native-self-dependency.json','utf8')).native_read;
   const target=native.schedule, old=native.scope.unrequestedSchedules[0].scheduleId;
-  const apply={transaction:{added_element_ids:[],deleted_element_ids:[],modified_element_ids:[target.id,old]},presentationScopeBefore:structuredClone(native.scope),presentationScopeAfter:structuredClone(native.scope)};
+  const apply={transaction:{added_element_ids:[] as number[],deleted_element_ids:[] as number[],modified_element_ids:[target.id,old]},presentationScopeBefore:structuredClone(native.scope),presentationScopeAfter:structuredClone(native.scope)};
   assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,apply,native),true);
   for(const field of ['uniqueId','className'] as const){
     for(const where of ['before','after','fresh']){
