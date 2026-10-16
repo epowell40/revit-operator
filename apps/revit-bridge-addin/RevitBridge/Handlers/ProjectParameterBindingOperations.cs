@@ -106,7 +106,7 @@ namespace RevitBridge.Handlers
             return row;
         }
         internal static object Create(UIApplication app, Document doc, string name, List<Category> categories, bool instance,
-            ForgeTypeId dataType, ForgeTypeId group, bool visible, bool userModifiable, bool dryRun, Func<ExternalDefinition> prepareDefinition,
+            ForgeTypeId dataType, ForgeTypeId group, bool visible, bool userModifiable, bool dryRun, Func<OperatorNativeOwnedValue<ExternalDefinition>> prepareDefinition,
             Func<object> externalEffect)
         {
             object[] before; Element[] owners;
@@ -123,10 +123,14 @@ namespace RevitBridge.Handlers
             if (dryRun) return new { status = "Dry Run", action = "create", dryRun = true, previewExecuted = false,
                 plan = new { name, categoryIds = categories.Select(c => ElementIdCompat.GetValue(c.Id)), instance, dataTypeId = dataType.TypeId, groupTypeId = group.TypeId, visible, userModifiable },
                 transaction = OperatorNativeTransactionReceipt.NotStarted() };
-            ExternalDefinition definition; object[] beforeValues; long? existingId; JsonElement preservationBefore;
+            OperatorNativeOwnedValue<ExternalDefinition> definitionOwner;
+            try { definitionOwner = prepareDefinition(); }
+            catch (Exception ex) { return new { status = "Blocked", error = ex.Message, transaction = OperatorNativeTransactionReceipt.NotStarted(), externalDefinitionEffect = externalEffect() }; }
+            return definitionOwner.Use<object>(definition =>
+            {
+            object[] beforeValues; long? existingId; JsonElement preservationBefore;
             try
             {
-                definition = prepareDefinition();
                 if (definition.GetDataType() != dataType || definition.Visible != visible || definition.UserModifiable != userModifiable)
                     throw new InvalidOperationException("Existing external definition differs in type or visibility/editability; no model transaction started.");
                 existingId = SharedParameterElement.Lookup(doc, definition.GUID) is SharedParameterElement existing ? ElementIdCompat.GetValue(existing.Id) : (long?)null;
@@ -207,6 +211,7 @@ namespace RevitBridge.Handlers
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success"); result["action"] = "create"; result["mode"] = "create_new";
             result["dryRun"] = false; result["externalDefinitionEffect"] = externalEffect();
             return result;
+            });
         }
         private static bool IsEmptyDefault(JsonElement owner)
         {

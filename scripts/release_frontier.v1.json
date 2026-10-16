@@ -448,7 +448,8 @@
     "PanelScheduleReadWindowTests",
     "ScheduleInventoryWindowTests",
     "ProjectParameterBindingContractTests",
-    "OperatorNativeFailureDiagnosticTests"
+    "OperatorNativeFailureDiagnosticTests",
+    "OperatorNativeOwnedValueTests"
   ],
   "failure_families": [
     {
@@ -4263,6 +4264,14 @@
       "coverage": [
         "backend:project_parameter_binding_v2.test.ts",
         "dotnet:OperatorNativeFailureDiagnosticTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "new_external_definition_native_owner_lifetime",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "dotnet:OperatorNativeOwnedValueTests",
         "dotnet:ProjectParameterBindingContractTests"
       ]
     }

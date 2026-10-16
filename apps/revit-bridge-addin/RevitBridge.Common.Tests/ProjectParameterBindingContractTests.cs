@@ -11,6 +11,20 @@ namespace RevitBridge.Common.Tests
     public sealed class ProjectParameterBindingContractTests
     {
         [Fact]
+        public void DefinitionNativeOwnersStayRootedThroughPreservationAndTransactionSettlement()
+        {
+            var source = ReadRepoFile("Handlers", "ProjectParameterBindingOperations.cs");
+            var use = source.IndexOf("return definitionOwner.Use<object>(definition =>", StringComparison.Ordinal);
+            var before = source.IndexOf("preservationBefore = Complete(ProjectParameterBindingPreservation.Capture", StringComparison.Ordinal);
+            var transaction = source.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal);
+            var result = source.LastIndexOf("return result;", StringComparison.Ordinal);
+            Assert.True(use >= 0 && before > use && transaction > before && result > transaction);
+            var handler = ReadRepoFile("Handlers", "ProjectParametersHandler.cs");
+            Assert.Contains("new OperatorNativeOwnedValue<ExternalDefinition>(definition, file, group, definitions, options)", handler);
+            Assert.Contains("app.SharedParametersFilename = originalPath;", handler);
+        }
+
+        [Fact]
         public void NativeCreateRetainsStageDiagnosticsWithoutReplacingTransactionAuthority()
         {
             var source = ReadRepoFile("Handlers", "ProjectParameterBindingOperations.cs");

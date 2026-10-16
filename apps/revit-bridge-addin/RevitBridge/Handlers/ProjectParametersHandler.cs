@@ -165,8 +165,7 @@ namespace RevitBridge.Handlers
                     requested, id = ElementIdCompat.GetValue(ResolveCategory(doc, requested)!.Id) }).ToArray() };
             var result = ProjectParameterBindingOperations.Create(uiapp, doc, name, categories, isInstance, dataType, parameterGroup,
                 visible, userModifiable, dryRun,
-                () => EnsureSharedParameterDefinition(uiapp.Application, name, dataType, visible, userModifiable, out _) as ExternalDefinition
-                    ?? throw new InvalidOperationException("Expected one shared external definition."), ExternalEffect);
+                () => EnsureSharedParameterDefinition(uiapp.Application, name, dataType, visible, userModifiable, out _), ExternalEffect);
             if (result is Dictionary<string, object?> receipt) receipt["requestResolution"] = resolution;
             return result;
 
@@ -331,7 +330,7 @@ namespace RevitBridge.Handlers
             return null;
         }
 
-        private static Definition EnsureSharedParameterDefinition(
+        private static OperatorNativeOwnedValue<ExternalDefinition> EnsureSharedParameterDefinition(
             Application app,
             string name,
             ForgeTypeId dataType,
@@ -352,7 +351,9 @@ namespace RevitBridge.Handlers
                     throw new InvalidOperationException("Unable to open shared parameter file for project-parameter creation.");
 
                 var existing = FindDefinitionByName(file, name);
-                if (existing != null) return existing;
+                if (existing != null)
+                    return new OperatorNativeOwnedValue<ExternalDefinition>(existing as ExternalDefinition
+                        ?? throw new InvalidOperationException("Expected one shared external definition."), file);
 
                 var group = file.Groups.get_Item(OperatorSharedParamGroupName) ?? file.Groups.Create(OperatorSharedParamGroupName);
                 var options = new ExternalDefinitionCreationOptions(name, dataType)
@@ -362,7 +363,12 @@ namespace RevitBridge.Handlers
                     Description = "Created by RevitOperator /revit/project-parameters."
                 };
 
-                return group.Definitions.Create(options);
+                var definitions = group.Definitions;
+                var definition = definitions.Create(options) as ExternalDefinition
+                    ?? throw new InvalidOperationException("Expected one shared external definition.");
+                // The definition's native ExternalParam pointer borrows its owner.
+                // Preserve the entire creation chain through census and insertion.
+                return new OperatorNativeOwnedValue<ExternalDefinition>(definition, file, group, definitions, options);
             }
             finally
             {
