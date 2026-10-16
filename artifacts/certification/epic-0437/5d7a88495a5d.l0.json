@@ -7308,6 +7308,10 @@
       "sha256": "sha256:8e4ddd754055790c6a83a0acb59a0a6ffb31c93e1ccbefa762a1d36a64cd6928"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeOwnedValueTests.cs",
+      "sha256": "sha256:44799671c00b8c3de1d4f37c84d4a20ad7b0689cb65e1c5308f18bc7a6dce09e"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativePresentationPropertyReadPolicyTests.cs",
       "sha256": "sha256:a1e31bf97ec6bd3f466635319e6fe899624a86e3fad8187769341b7e1b007cdf"
     },
@@ -7449,7 +7453,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ProjectParameterBindingContractTests.cs",
-      "sha256": "sha256:f3d127511c88e06cba0cebc5ce545e4f575d78faa69438d84b3b2d68b4c48632"
+      "sha256": "sha256:a8679318ed98b6307fd0d3d5d949d00e6f31be82ab0d775afdc61988afc0c712"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/QuantifyIntentResolverTests.cs",
@@ -8058,6 +8062,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeMutationScopePolicy.cs",
       "sha256": "sha256:ecb02433b994cb9f477c33d0f9cf257967a2fb807f0d4950d2b071be00c5fb2b"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeOwnedValue.cs",
+      "sha256": "sha256:0675ec96cc2e79745ca176d1f7e955bfc7aa922612230ff0364d53dd254d77a7"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativePresentationPropertyReadPolicy.cs",
@@ -9418,7 +9426,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ProjectParameterBindingOperations.cs",
-      "sha256": "sha256:9ead699cbf6de86c157a2caafd80012351def3181991b677fd06b3aaf67bfc81"
+      "sha256": "sha256:ff8228ab316aa8a926af70f34d7b2c519d41311218cb8f2c3d7d0f841d764320"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ProjectParameterBindingPreservation.cs",
@@ -9426,7 +9434,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ProjectParametersHandler.cs",
-      "sha256": "sha256:1ce914c358206971dcd86b34dab64476f8ef793ac2c17f9ef15db7e760cd6ec5"
+      "sha256": "sha256:0464101d34c941ffec498c3d8af9b44d70d78e1b5dec0a3dfbf1227a6853bf7b"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PurgeUnusedHandler.cs",
@@ -9845,7 +9853,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:3191923a2c775bc37d7edf26554a74b1a51d0ee5ac7a5a1e5c09d35619ed83fa",
+  "inputs_hash": "sha256:f3aa735a4428e322aed9a22bae2864e4a2a0f281039a85ca847821d3d31512e1",
   "result": {
     "passed": true,
     "checks": [
