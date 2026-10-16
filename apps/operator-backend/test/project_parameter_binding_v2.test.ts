@@ -113,7 +113,7 @@ test(`ordinary binding ${variant} uses one guarded read and never replays the co
      (v:any)=>v.unresolved_unknown_operation_ids.push('prior-unknown'),
      (v:any)=>(v.input_invalidated_operation_ids??=[]).push(apply.operation_id),
      (v:any)=>v.operations[read.operation_id].input.body.parameterId++,
-     (v:any)=>{const later=structuredClone(apply);later.operation_id='later';later.result.completed_at=new Date(Date.parse(apply.result!.completed_at)+1).toISOString();v.operations.later=later;}
+     (v:any)=>{const later=structuredClone(apply);later.operation_id='later';later.result!.completed_at=new Date(Date.parse(apply.result!.completed_at)+1).toISOString();v.operations.later=later;}
     ]){const changed=structuredClone(s);change(changed);assert.equal(projectParameterBindingPostconditionSatisfiedV2(changed,changed.operations[apply.operation_id]!,result,f.read),false);}
     assert.equal(projectParameterBindingPostconditionSatisfiedV2(s,apply,{...result,binding:{...result.binding,generation:result.binding.generation+1}},f.read),false);
     assert.equal(projectParameterBindingPostconditionSatisfiedV2(s,apply,{...result,completed_at:apply.result!.completed_at},f.read),false);
