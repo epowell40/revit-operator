@@ -4299,6 +4299,13 @@
       ]
     },
     {
+      "id": "cad_capability_probe_is_not_an_executed_preview_and_has_no_transaction",
+      "coverage": [
+        "dotnet:CadLinkPreflightCapabilityTests",
+        "dotnet:OperatorAttemptSettlementTests"
+      ]
+    },
+    {
       "id": "new_external_definition_native_owner_lifetime",
       "coverage": [
         "backend:project_parameter_binding_v2.test.ts",

@@ -5,6 +5,8 @@ namespace RevitBridge.Common
         public string status { get; set; } = "Dry Run";
         public bool dryRun { get; set; } = true;
         public bool preflightOnly { get; set; } = true;
+        public bool previewExecuted { get; set; } = false;
+        public OperatorNativeTransactionReceipt transaction { get; set; } = OperatorNativeTransactionReceipt.NotStarted();
         public string targetMode { get; set; } = "view_then_sheet";
         public bool supportsOwnerViewSheetPlacement { get; set; } = true;
         public bool supportsDirectSheetImport { get; set; } = true;
