@@ -1,8 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acknowledgeAssignmentMutationV2 as mutate,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge,savedAssignmentNavigationTargetV2 as navigation} from './assignment_mutation.mjs';
+import {acknowledgeAssignmentMutationV2 as mutate,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge,savedAssignmentNavigationTargetV2 as navigation,readSavedAssignmentHistoryV2 as history} from './assignment_mutation.mjs';
 const binding={assignment_id:'task',session_id:'session',run_id:'run',generation:1};
 const view=(version=8)=>({id:'goal:task',_sourceKind:'assignment_kernel_v2',_bindingV2:binding,_assignmentVersion:version,_canResume:true,_pendingInputs:[]});
+
+test('saved task navigation keeps siblings and an exact target outside the bounded history page without execution',async()=>{
+ const target={...view(4),_sourceRecordId:'task'},sibling={...view(17),id:'goal:other',_sourceRecordId:'other',_bindingV2:{...binding,assignment_id:'other'}};
+ const calls=[],read=async path=>{calls.push(path);return path.includes('/task?')?{assignment:target}:{session_id:'session',assignments:[sibling]};};
+ const result=await history(read,'session','task');assert.deepEqual(result.assignments,[target,sibling]);assert.equal(calls.length,2);
+ assert.ok(calls.every(path=>path.startsWith('/api/assignment-workspace/v2')));
+ const newer={...target,_assignmentVersion:5};
+ const merged=await history(async path=>path.includes('/task?')?{assignment:target}:{session_id:'session',assignments:[newer,sibling]},'session','task');
+ assert.deepEqual(merged.assignments,[newer,sibling]);assert.equal(target._assignmentVersion,4);
+});
+
+test('saved task history rejects foreign sessions, invalid views, generation races and missing exact targets',async()=>{
+ const target={...view(4),_sourceRecordId:'task'};
+ for(const [exact,rows,session] of [[target,[target],'foreign'],[target,[{...target,_sourceKind:'goal'}],'session'],[target,[{...target,_bindingV2:{...binding,generation:2}}],'session'],[null,[],'session'],[target,Array(31).fill(target),'session']])
+  await assert.rejects(history(async path=>path.includes('/task?')?{assignment:exact}:{session_id:session,assignments:rows},'session','task'));
+ let called=false;await assert.rejects(history(async()=>{called=true;},'','task'));assert.equal(called,false);
+ await assert.rejects(history(async()=>{throw Error('History unavailable');},'session','task'));
+});
 
 test('an explicitly selected saved assignment opens its exact canonical target without authority or execution',()=>{
  const older={...view(3),_sourceRecordId:'task',_canResume:false,_pendingInputs:[{question:'An unanswered question'}]};
