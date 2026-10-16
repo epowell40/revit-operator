@@ -40,6 +40,9 @@ export function resolveOperatorMcpServerSpec(backendCwd: string): { serverJs: st
 
 export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_runtime_probe",
+  // Native result projections name this bounded, scope-checked expansion edge.
+  // It must remain callable even when deferred capability search is unavailable.
+  "operator_retrieve_evidence",
   "operator_discover_capabilities",
   "operator_record_execution_strategy",
   "operator_request_clarification",

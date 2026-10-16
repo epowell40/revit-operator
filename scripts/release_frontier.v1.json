@@ -4150,6 +4150,13 @@
       ]
     },
     {
+      "id": "projected_evidence_expansion_callable_without_deferred_tool_discovery",
+      "coverage": [
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:lib/evidenceRetrievalSelectorContract.test.ts"
+      ]
+    },
+    {
       "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
       "coverage": [
         "backend:progress_outer_deadline_v2.test.ts",

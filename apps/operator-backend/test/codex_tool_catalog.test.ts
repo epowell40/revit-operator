@@ -14,6 +14,40 @@ import { codexTelemetryThreadKey } from "../src/brains/codex_turn_model_telemetr
 import { codexToolCatalogHash, withCodexCapabilityHandoff } from "../src/brains/codex_tool_catalog.js";
 import { appendEvent, setCodexThreadId, getCodexThreadId, getCodexThreadCapabilities } from "../src/memory/sqlite_store.js";
 
+test("retained evidence can be retrieved before deferred native capability discovery", async () => {
+  // Every projected native result points to this read-only expansion edge.
+  const schema = { type: "object", additionalProperties: false,
+    properties: { evidenceId: { type: "string" }, purpose: { type: "string" },
+      itemRange: { type: "object", properties: { path: { type: "string" }, start: { type: "integer" },
+        count: { type: "integer" }, fields: { type: "array", items: { type: "string" } } } } },
+    required: ["evidenceId", "purpose", "itemRange"] };
+  const tools = [
+    { name: "operator_retrieve_evidence", description: "Bounded retained evidence, never a fresh native observation", inputSchema: schema },
+    { name: "revit_delete_elements", description: "Unrelated mutation", inputSchema: { type: "object" } }
+  ];
+  for (const v2 of ["1", "0"]) {
+    const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: process.cwd(),
+      codexHome: process.cwd(), spawnEnv: { OPERATOR_ASSIGNMENT_KERNEL_V2: v2 } });
+    (runtime as any).ensureStarted = async () => {};
+    (runtime as any).client = { listTools: async () => ({ tools }), close: async () => {} };
+    try {
+      const catalog = await runtime.getDynamicToolNamespace();
+      const retrieval = catalog.tools.find((tool: any) => tool.name === "operator_retrieve_evidence");
+      assert.equal(retrieval.deferLoading, false, "The evidence projection needs a directly callable expansion tool");
+      assert.deepEqual(retrieval.inputSchema, schema);
+      assert.equal(retrieval.description, tools[0].description);
+      assert.equal(catalog.tools.find((tool: any) => tool.name === "revit_delete_elements").deferLoading, true);
+      await runtime.validateToolArguments("operator_retrieve_evidence", {
+        evidenceId: "ev1_example", purpose: "Review this panel's load and rating",
+        itemRange: { path: "payload.items", start: 0, count: 16, fields: ["id", "uniqueId", "panelName", "ratingAmps"] }
+      });
+      await assert.rejects(runtime.validateToolArguments("operator_retrieve_evidence", { evidenceId: "ev1_example" }));
+      assert.notEqual(codexToolCatalogHash([catalog]), codexToolCatalogHash([{ ...catalog,
+        tools: catalog.tools.map((tool: any) => tool.name === "operator_retrieve_evidence" ? { ...tool, deferLoading: true } : tool) }]));
+    } finally { runtime.stop(); }
+  }
+});
+
 test("C54 V2 runtime catalog exposes canonical completion and excludes incompatible legacy completion tools",async()=>{
   const names=["operator_submit_read_completion","operator_submit_noop_completion","operator_evaluate_assignment_criteria","revit_list_sheets"];
   const tools=names.map(name=>({name,description:name,inputSchema:{type:"object",additionalProperties:false,properties:{}}}));
