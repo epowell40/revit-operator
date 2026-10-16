@@ -2705,7 +2705,7 @@
     },
     {
       "path": "apps/operator-backend/src/conversation_intake.ts",
-      "sha256": "sha256:81f4cc4a43b356ecd893faddcc2c450909191aa972880453cf80f09b32d9c558"
+      "sha256": "sha256:fb3f126b123c513b915131198af3e5c372b21a049ad0d4467992e5ce4967876b"
     },
     {
       "path": "apps/operator-backend/src/conversation_intake_http.ts",
@@ -6417,7 +6417,7 @@
     },
     {
       "path": "apps/operator-backend/test/semantic_operation_scope.test.ts",
-      "sha256": "sha256:4d9eaa51e2f3707f6007f28cb903caf286631899159a8c369b83f0ba05277956"
+      "sha256": "sha256:e202802f146fb495dd40aec78469fe30d84a40ea389dab3fb32c8c3c720b8994"
     },
     {
       "path": "apps/operator-backend/test/semantic_route_endpoint.test.ts",
@@ -9653,7 +9653,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:a4498f1ce063bc3bc355181c33f32e93022eabc6a953c5e02d8fdfe29b931fa7",
+  "inputs_hash": "sha256:6d0429a8299aed1c90eda0018278b55cd4deb5ca20d70084f79ad8812ab4f43a",
   "result": {
     "passed": true,
     "checks": [
