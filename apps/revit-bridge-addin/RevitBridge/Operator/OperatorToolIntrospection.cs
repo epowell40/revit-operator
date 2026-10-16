@@ -882,31 +882,7 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
-                // Schedule reads have two conditional shapes. Listing needs no
-                // selector; detail requires either scheduleId or query. Do not use
-                // reflection here because nullable-reference metadata is not
-                // available in the net48 build and would make action/query appear
-                // universally required.
-                if (string.Equals(p, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
-                {
-                    return Obj(
-                        props: new Dictionary<string, object>
-                        {
-                            { "action", Str(new[] { "list", "detail" }) },
-                            { "scheduleId", Int(1) },
-                            { "query", Str() },
-                            { "exact", Bool() },
-                            { "max", Int(1, 2000) },
-                            { "includeFields", Bool() },
-                            { "includeData", Bool() },
-                            { "rowOffset", Int(0, 1000000) },
-                            { "columnOffset", Int(0, 1000000) },
-                            { "maxRows", Int(1, 500) },
-                            { "maxColumns", Int(1, 100) }
-                        },
-                        required: Array.Empty<string>(),
-                        additionalProps: false);
-                }
+                // Schedule read modes use the embedded conditional contract above.
 
                 // Schedule-backed writes are intentionally fail-closed and have
                 // conditional selectors. Reflection cannot recover nullable

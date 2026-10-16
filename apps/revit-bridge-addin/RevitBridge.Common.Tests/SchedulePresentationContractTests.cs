@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -7,6 +8,27 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class SchedulePresentationContractTests
     {
+        [Fact]
+        public void PublishedPresentationReadUsesTheSameExactShapeAsNativeAdmission()
+        {
+            Assert.True(OperatorConditionalRequestContracts.TryGet("/revit/schedules", out var schema));
+            var found = false;
+            foreach (var branch in schema.GetProperty("oneOf").EnumerateArray())
+            {
+                var action = branch.GetProperty("properties").GetProperty("action").GetProperty("enum")[0].GetString();
+                if (action != "presentation") continue;
+                found = true;
+                Assert.False(branch.GetProperty("additionalProperties").GetBoolean());
+                Assert.Equal(2, branch.GetProperty("properties").EnumerateObject().Count());
+                Assert.Equal("action", branch.GetProperty("required")[0].GetString());
+                Assert.Equal("scheduleId", branch.GetProperty("required")[1].GetString());
+                Assert.Equal(1, branch.GetProperty("properties").GetProperty("scheduleId").GetProperty("minimum").GetInt32());
+                using var body = JsonDocument.Parse("{\"action\":\"presentation\",\"scheduleId\":1542917}");
+                Assert.True(SchedulePresentationContract.ValidateRead(body.RootElement, out _));
+            }
+            Assert.True(found, "Native tool registry must publish the presentation action, not only list/detail.");
+        }
+
         [Theory]
         [InlineData("{\"fieldOrder\":[20,0,3,14],\"appearance\":{\"titleTextTypeId\":41,\"headerTextTypeId\":42,\"bodyTextTypeId\":43}}")]
         [InlineData("{\"appearance\":{\"showTitle\":true}}")]

@@ -568,3 +568,26 @@ test('C44 nullable inventory body reports the actual limit while retaining paren
  const numeric=preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{oneOf:[{type:'null'},{type:'number',maximum:2}]}},3)!;
  assert(numeric.validation_issues?.some(i=>i.expected_constraint.maximum===2));
 });
+
+
+test("native published schedule modes admit the exact retained presentation read through real MCP preflight",()=>{
+ const contracts=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json",import.meta.url),"utf8"));
+ const retained=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/schedule-presentation-predispatch118.json",import.meta.url),"utf8"));
+ const schema=contracts['/revit/schedules'],contract={method:'POST',path:'/revit/schedules',required_fields:[],request_schema:schema};
+ assert.equal(retained.failure.request_dispatched,false);assert.equal(retained.failure.outcome_unknown,false);
+ assert.deepEqual(retained.failure.validation_issues[0].expected_constraint.allowed_values,['list','detail']);
+ assert.equal(preflightKnownGenericToolBody(contract,retained.request.body),null);
+ for(const invalid of [
+  {action:'presentation'}, {action:'presentation',query:'air'},
+  ...[0,-1,1.5,true,'1542917'].map(scheduleId=>({action:'presentation',scheduleId})),
+  ...[{query:'air'},{includeFields:true},{cells:[]},{max:10},{dryRun:false},{fieldOrder:[11]}].map(extra=>({...retained.request.body,...extra})),
+  {action:'unknown',scheduleId:1542917},{action:'detail'},
+  {action:'circuits',kind:'panel'}, {action:'circuits',max:501},
+  {action:'cell_styles',scheduleId:1542917,cells:[]},
+  {action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:-1,column:0}]}
+ ]){
+  const failure=preflightKnownGenericToolBody(contract,invalid);
+  assert.equal(failure?.request_dispatched,false,JSON.stringify(invalid));assert.equal(failure?.outcome_unknown,false);
+ }
+ for(const valid of [{},{action:'list',query:''},{action:'list',kind:'all',offset:0,max:100},{action:'detail',scheduleId:1542917,includeSchedulableFields:true,maxSchedulableFields:200},{action:'detail',query:'AIR DEVICE SCHEDULE',includeData:true,maxRows:500,maxColumns:100},{action:'circuits',offset:0,max:500},{action:'circuits',scheduleId:41},{action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:0,column:0}]}])assert.equal(preflightKnownGenericToolBody(contract,valid),null,JSON.stringify(valid));
+});
