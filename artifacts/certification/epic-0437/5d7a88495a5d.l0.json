@@ -2861,7 +2861,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/document_checkpoint.ts",
-      "sha256": "sha256:5f3cf843a76d0090af7e12b28198e8f9813d2cb1123d74fd6e4a9e9855a542a0"
+      "sha256": "sha256:cdb9e200961342ca169bd3c804ccb1512fbae824135242ee347d5bfe8f52c954"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/effective_work_budget.ts",
@@ -4437,7 +4437,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_document_checkpoint.test.ts",
-      "sha256": "sha256:9cb21f1e006d9493481fa819fd9ab96b9a11eb42598e143d073e03c23b41c997"
+      "sha256": "sha256:5970adec81f05b0bc7c16327406fa0fb3da4bd14a405b8d615bfaf8114d2ce7a"
     },
     {
       "path": "apps/operator-backend/test/assignment_endpoint.test.ts",
@@ -9657,7 +9657,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:b866a73b009e3980e80c8dbdab05e489ceea1ca550b706d93d964178c48c857a",
+  "inputs_hash": "sha256:f3393c94bc53090c6ac51046a372db8d00e25eb1a1232923385cb8e6e7e9c5f9",
   "result": {
     "passed": true,
     "checks": [
