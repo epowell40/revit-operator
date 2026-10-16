@@ -2,6 +2,122 @@
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
     {
+      "id": "c121_parameter_list",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {},
+      "expected_effect": "read"
+    },
+    {
+      "id": "c121_parameter_detail",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 42
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "c121_parameter_detail_string_id",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": "42"
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_detail_zero_id",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 0
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_detail_mixed",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 42,
+        "instanceBinding": true
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_list_mixed",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "list",
+        "name": "Note"
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_list_null_action",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": null
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_invalid_body",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": null,
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_instance",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "instanceBinding": true
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_type",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "instanceBinding": false
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_plan",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "dryRun": true
+      },
+      "expected_effect": "preview"
+    },
+    {
       "id": "c103_registered_stage_explicit_rollback",
       "method": "POST",
       "path": "/revit/existing-conditions-mep-draft-workflow",

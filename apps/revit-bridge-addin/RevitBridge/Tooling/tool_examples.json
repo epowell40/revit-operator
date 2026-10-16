@@ -1116,6 +1116,26 @@
       "path": "/revit/project-parameters",
       "examples": [
         {
+          "name": "Inspect exact shared instance binding and complete owner values",
+          "request": {
+            "action": "detail",
+            "parameterId": 1544000
+          },
+          "expected_response_shape": {
+            "status": "Ok",
+            "action": "detail",
+            "read_only": true,
+            "schema": "operator.project_parameter_binding.v1",
+            "complete": true,
+            "parameter": {
+              "id": 1544000,
+              "isInstance": true,
+              "guid": "00000000-0000-0000-0000-000000000001"
+            },
+            "owners": []
+          }
+        },
+        {
           "name": "List project parameters",
           "request": {
             "action": "list",

@@ -1,4 +1,5 @@
 import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
+import { projectParameterBindingReadIdV2 } from './project_parameter_binding_v2.js';
 /**
  * Versioned application contract for post-apply verification capabilities.
  *
@@ -78,6 +79,7 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ['/revit/project-parameters', {semantic_outputs:['project_parameter.binding'],principal_target_fields:['parameterId']}],
   ["/revit/place-view", {semantic_outputs: [], principal_target_fields: ["id"], contextual_scope_fields: ["sheetId", "viewId"]}],
   ["/revit/create-text", {semantic_outputs: [], principal_target_fields: ["textNoteId"], contextual_scope_fields: ["viewId"]}],
   ["/revit/schedules", { semantic_outputs: ["schedule.cell_appearance"], principal_target_fields: ["scheduleId", "id"] }],
@@ -260,6 +262,11 @@ export function operationTargetSelectorV2(input: Readonly<{
   value: unknown;
   fallback_target_tokens?: readonly string[];
 }>): OperationTargetSelectorV2 {
+  if(pathOf(input.operation)==='/revit/project-parameters'){
+    const v=objectValue(input.value),b=objectValue(v.body??v),p=objectValue(v.parameter),id=b.parameterId??p.id;
+    return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',
+      principal_target_tokens:Number.isSafeInteger(id)&&Number(id)>0?['id:'+id,'parameterid:'+id]:[],contextual_scope_tokens:[]};
+  }
   if(pathOf(input.operation)==='/revit/native-api-mutation-ops'){
     const g=nativeSchedulePresentationRequestV2(input.operation.arguments??input.value,input.value);
     if(g)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:g.scheduleIds.map(id=>'id:'+id),contextual_scope_tokens:[]};
@@ -339,6 +346,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if(path==='/revit/project-parameters')return ['project_parameter.binding'];
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
   if(path==='/revit/native-api-mutation-ops'&&nativeSchedulePresentationRequestV2(apply.arguments))return ['schedule.presentation_values'];
@@ -368,6 +376,7 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (!contract) return [];
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
+  if(pathOf(verification)==='/revit/project-parameters')return projectParameterBindingReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if (pathOf(verification) === '/revit/find-text-notes') {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), ids=body.elementIds;
     return Array.isArray(ids) && ids.length===1 && Number.isSafeInteger(ids[0]) && Number(ids[0])>0

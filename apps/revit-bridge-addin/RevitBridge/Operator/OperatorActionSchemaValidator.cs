@@ -823,6 +823,11 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/project-parameters", StringComparison.OrdinalIgnoreCase))
             {
+                if (body.HasValue && body.Value.ValueKind == JsonValueKind.Object && body.Value.TryGetProperty("action", out var bindingAction) && bindingAction.ValueKind == JsonValueKind.String)
+                {
+                    if (bindingAction.GetString() == "detail") return ProjectParameterBindingContract.ValidateDetail(body.Value, out error);
+                    if (bindingAction.GetString() == "create") return ProjectParameterBindingContract.ValidateCreate(body.Value, out error);
+                }
                 // { action?: "list"|"create"|"validate_required", name?, categoryNames?, instanceBinding?, parameterGroup?, dataType?, visible?, userModifiable?, rebindIfExists?, query?, max?, dryRun?, requiredParameters?, requiredParameterNames? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {

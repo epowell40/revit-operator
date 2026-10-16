@@ -843,5 +843,279 @@
         "additionalProperties": false
       }
     ]
+  },
+  "/revit/project-parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "detail",
+          "create",
+          "validate_required"
+        ]
+      },
+      "query": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "max": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5000
+      },
+      "parameterId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "name": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "categoryNames": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      },
+      "instanceBinding": {
+        "type": "boolean"
+      },
+      "visible": {
+        "type": "boolean"
+      },
+      "userModifiable": {
+        "type": "boolean"
+      },
+      "rebindIfExists": {
+        "type": "boolean"
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "dataType": {
+        "type": "string",
+        "enum": [
+          "text",
+          "url",
+          "multiline_text",
+          "multiline",
+          "multilinetext",
+          "yesno",
+          "yes_no",
+          "yes/no",
+          "integer",
+          "number"
+        ]
+      },
+      "parameterGroup": {
+        "type": "string",
+        "enum": [
+          "identity_data",
+          "identity",
+          "data",
+          "text",
+          "constraints",
+          "geometry",
+          "materials",
+          "graphics",
+          "phasing"
+        ]
+      },
+      "requiredParameters": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      },
+      "requiredParameterNames": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detail"
+            ]
+          },
+          "parameterId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "action",
+          "parameterId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "categoryNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "instanceBinding": {
+            "type": "boolean"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "userModifiable": {
+            "type": "boolean"
+          },
+          "rebindIfExists": {
+            "type": "boolean"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "dataType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "url",
+              "multiline_text",
+              "multiline",
+              "multilinetext",
+              "yesno",
+              "yes_no",
+              "yes/no",
+              "integer",
+              "number"
+            ]
+          },
+          "parameterGroup": {
+            "type": "string",
+            "enum": [
+              "identity_data",
+              "identity",
+              "data",
+              "text",
+              "constraints",
+              "geometry",
+              "materials",
+              "graphics",
+              "phasing"
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "name",
+          "categoryNames"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "validate_required"
+            ]
+          },
+          "categoryNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "requiredParameters": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "requiredParameterNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    ]
   }
 }

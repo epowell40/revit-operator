@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.ApplicationServices;
@@ -17,7 +18,7 @@ namespace RevitBridge.Handlers
 
         public sealed class Params
         {
-            public string? action { get; set; } // list (default) | create | validate_required
+            public string? action { get; set; } // list (default) | detail | create | validate_required
             public string? name { get; set; } // create
             public string[]? categoryNames { get; set; } // create
             public bool? instanceBinding { get; set; } // create (default true)
@@ -29,6 +30,7 @@ namespace RevitBridge.Handlers
             public string? query { get; set; } // list
             public int? max { get; set; } // list
             public bool? dryRun { get; set; } // create
+            public long? parameterId { get; set; } // exact detail read
             public string[]? requiredParameters { get; set; } // validate_required
             public string[]? requiredParameterNames { get; set; } // validate_required alias
         }
@@ -44,12 +46,21 @@ namespace RevitBridge.Handlers
             if (doc.IsFamilyDocument) throw new InvalidOperationException("project-parameters is only supported in project documents.");
 
             var action = NormalizeAction(p.action);
+            if (action == "detail" || action == "create")
+            {
+                using var body = JsonDocument.Parse(jsonData);
+                string error;
+                var valid = action == "detail" ? ProjectParameterBindingContract.ValidateDetail(body.RootElement, out error)
+                    : ProjectParameterBindingContract.ValidateCreate(body.RootElement, out error);
+                if (!valid) throw new ArgumentException(error);
+            }
             return action switch
             {
+                "detail" => Task.FromResult<object>(ProjectParameterBindingOperations.Detail(doc, p.parameterId!.Value)),
                 "list" => Task.FromResult<object>(ListProjectParameters(doc, p)),
                 "create" => Task.FromResult<object>(CreateProjectParameter(app, doc, p)),
                 "validate_required" => Task.FromResult<object>(ValidateRequiredParameters(doc, p)),
-                _ => throw new InvalidOperationException("project-parameters.action must be list, create, or validate_required.")
+                _ => throw new InvalidOperationException("project-parameters.action must be list, detail, create, or validate_required.")
             };
         }
 
@@ -61,6 +72,7 @@ namespace RevitBridge.Handlers
             if (max > 5000) max = 5000;
 
             var items = new List<object>();
+            var truncated = false;
             var iterator = doc.ParameterBindings.ForwardIterator();
             iterator.Reset();
             while (iterator.MoveNext())
@@ -71,6 +83,7 @@ namespace RevitBridge.Handlers
                 var name = (def.Name ?? "").Trim();
                 if (name.Length == 0) continue;
                 if (query.Length > 0 && name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (items.Count >= max) { truncated = true; break; }
 
                 var binding = iterator.Current as ElementBinding;
                 var categories = EnumerateCategoryNames(binding)
@@ -78,16 +91,21 @@ namespace RevitBridge.Handlers
                     .ToList();
 
                 var isInstance = iterator.Current is InstanceBinding;
+                var parameter = def is InternalDefinition native ? doc.GetElement(native.Id) as ParameterElement : null;
                 items.Add(new
                 {
+                    id = parameter == null ? (long?)null : ElementIdCompat.GetValue(parameter.Id),
+                    uniqueId = parameter?.UniqueId,
+                    guid = (parameter as SharedParameterElement)?.GuidValue.ToString("D"),
                     name,
                     isInstance,
+                    dataTypeId = def.GetDataType().TypeId,
+                    groupTypeId = def.GetGroupTypeId().TypeId,
                     parameterGroup = GetParameterGroupLabel(def),
                     categories,
                     categoryCount = categories.Count
                 });
 
-                if (items.Count >= max) break;
             }
 
             return new
@@ -95,6 +113,7 @@ namespace RevitBridge.Handlers
                 status = "Ok",
                 action = "list",
                 count = items.Count,
+                truncated,
                 max,
                 query = query.Length == 0 ? null : query,
                 items
@@ -128,6 +147,28 @@ namespace RevitBridge.Handlers
                     ? "No requested categories were resolved."
                     : "Resolved categories do not allow bound parameters.";
                 throw new InvalidOperationException(reason);
+            }
+
+            if (!rebindIfExists)
+            {
+                if (unresolved.Count > 0 || unsupported.Count > 0)
+                    return new { status = "Blocked", error = "Every requested category must resolve and support bound parameters; no partial binding was created.",
+                        unresolvedCategories = unresolved, unsupportedCategories = unsupported, transaction = OperatorNativeTransactionReceipt.NotStarted() };
+                var ownFile = Path.Combine(WorkspacePaths.GetWorkspaceRoot(), "config", "operator_shared_parameters.txt");
+                var originalSelection = uiapp.Application.SharedParametersFilename ?? "";
+                var beforeFileHash = FileHash(ownFile);
+                object ExternalEffect() => new { path = ownFile, sha256Before = beforeFileHash, sha256After = FileHash(ownFile),
+                    selectionRestored = (uiapp.Application.SharedParametersFilename ?? "") == originalSelection,
+                    scope = "operator_owned_shared_definition_file", rollbackScope = "Definition-file changes are outside the model transaction and may persist after model rollback." };
+                var resolution = new { dataTypeToken = dataTypeLabel, groupToken = (p.parameterGroup ?? "identity_data").Trim().ToLowerInvariant(),
+                    categoryRequests = categoryNames.OrderBy(n => n, StringComparer.Ordinal).Select(requested => new {
+                        requested, id = ElementIdCompat.GetValue(ResolveCategory(doc, requested)!.Id) }).ToArray() };
+                var result = ProjectParameterBindingOperations.Create(uiapp, doc, name, categories, isInstance, dataType, parameterGroup,
+                    visible, userModifiable, dryRun,
+                    () => EnsureSharedParameterDefinition(uiapp.Application, name, dataType, visible, userModifiable, out _) as ExternalDefinition
+                        ?? throw new InvalidOperationException("Expected one shared external definition."), ExternalEffect);
+                if (result is Dictionary<string, object?> receipt) receipt["requestResolution"] = resolution;
+                return result;
             }
 
             if (TryFindBindingByName(doc, name, out var existingDefinition, out _))
@@ -482,15 +523,10 @@ namespace RevitBridge.Handlers
             out string sharedParameterFile)
         {
             var originalPath = app.SharedParametersFilename ?? "";
-            var usingTemporaryPath = false;
-            sharedParameterFile = originalPath;
-
-            if (string.IsNullOrWhiteSpace(sharedParameterFile) || !File.Exists(sharedParameterFile))
-            {
-                sharedParameterFile = EnsureOperatorSharedParameterFile();
-                app.SharedParametersFilename = sharedParameterFile;
-                usingTemporaryPath = true;
-            }
+            // Never append an Operator-created definition to the user's selected
+            // office standards file. The temporary selection is always restored.
+            sharedParameterFile = EnsureOperatorSharedParameterFile();
+            app.SharedParametersFilename = sharedParameterFile;
 
             try
             {
@@ -513,11 +549,15 @@ namespace RevitBridge.Handlers
             }
             finally
             {
-                if (usingTemporaryPath)
-                {
-                    app.SharedParametersFilename = originalPath;
-                }
+                app.SharedParametersFilename = originalPath;
             }
+        }
+
+        private static string? FileHash(string path)
+        {
+            if (!File.Exists(path)) return null;
+            using var stream = File.OpenRead(path); using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
         }
 
         private static string EnsureOperatorSharedParameterFile()

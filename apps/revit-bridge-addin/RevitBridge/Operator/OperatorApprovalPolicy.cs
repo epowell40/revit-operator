@@ -416,6 +416,9 @@ namespace RevitBridge.Operator
             var m = (method ?? "").Trim().ToUpperInvariant();
             var p = CanonicalPath(path);
 
+            if (m == "POST" && p == "/revit/project-parameters" && TryParseBodyObject(body, out var bindingBody)
+                && RevitBridge.Common.ProjectParameterBindingContract.IsReadOnly(bindingBody)) return OperatorActionRisk.Low;
+
             if (m == "POST" && HasMutatingBody(p, body))
             {
                 return OperatorActionRisk.High;
@@ -449,6 +452,8 @@ namespace RevitBridge.Operator
             }
 
             var hasObjectBody = TryParseBodyObject(body, out var root);
+            if (hasObjectBody && p == "/revit/project-parameters" && RevitBridge.Common.ProjectParameterBindingContract.IsReadOnly(root))
+                return OperatorActionEffect.Read;
             if (hasObjectBody &&
                 (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(p, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase)))

@@ -1,0 +1,219 @@
+{
+  "synthetic": true,
+  "input": {
+    "method": "POST",
+    "path": "/revit/project-parameters",
+    "body": {
+      "action": "create",
+      "name": "Office Instance Note",
+      "categoryNames": [
+        "Air Terminals"
+      ],
+      "instanceBinding": true,
+      "dataType": "text"
+    }
+  },
+  "applied": {
+    "status": "Success",
+    "action": "create",
+    "mode": "create_new",
+    "dryRun": false,
+    "parameter": {
+      "id": 41,
+      "uniqueId": "parameter:41",
+      "name": "Office Instance Note",
+      "guid": "00000000-0000-0000-0000-000000000041",
+      "dataTypeId": "autodesk.spec.aec:string.text-2.0.0",
+      "groupTypeId": "autodesk.parameter.group:identityData-1.0.0",
+      "visible": true,
+      "isInstance": true,
+      "categories": [
+        {
+          "id": -2008013,
+          "name": "Air Terminals"
+        }
+      ]
+    },
+    "bindingReadback": {
+      "status": "Ok",
+      "action": "detail",
+      "read_only": true,
+      "schema": "operator.project_parameter_binding.v1",
+      "complete": true,
+      "parameter": {
+        "id": 41,
+        "uniqueId": "parameter:41",
+        "name": "Office Instance Note",
+        "guid": "00000000-0000-0000-0000-000000000041",
+        "dataTypeId": "autodesk.spec.aec:string.text-2.0.0",
+        "groupTypeId": "autodesk.parameter.group:identityData-1.0.0",
+        "visible": true,
+        "isInstance": true,
+        "categories": [
+          {
+            "id": -2008013,
+            "name": "Air Terminals"
+          }
+        ]
+      },
+      "owners": [
+        {
+          "id": 1001,
+          "uniqueId": "element:1001",
+          "categoryId": -2008013,
+          "typeId": 321,
+          "hasParameter": true,
+          "parameterId": 41,
+          "storage": "String",
+          "hasValue": false,
+          "value": null,
+          "userModifiable": true,
+          "isReadOnly": false
+        },
+        {
+          "id": 1002,
+          "uniqueId": "element:1002",
+          "categoryId": -2008013,
+          "typeId": 321,
+          "hasParameter": true,
+          "parameterId": 41,
+          "storage": "String",
+          "hasValue": false,
+          "value": null,
+          "userModifiable": true,
+          "isReadOnly": false
+        }
+      ],
+      "otherBindingsHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "coverage": "native_shared_binding_and_complete_owner_values_v1"
+    },
+    "requestedDefinition": {
+      "name": "Office Instance Note",
+      "guid": "00000000-0000-0000-0000-000000000041",
+      "dataTypeId": "autodesk.spec.aec:string.text-2.0.0",
+      "groupTypeId": "autodesk.parameter.group:identityData-1.0.0",
+      "visible": true,
+      "isInstance": true,
+      "categories": [
+        {
+          "id": -2008013,
+          "name": "Air Terminals"
+        }
+      ],
+      "userModifiable": true
+    },
+    "requestResolution": {
+      "dataTypeToken": "text",
+      "groupToken": "identity_data",
+      "categoryRequests": [
+        {
+          "requested": "Air Terminals",
+          "id": -2008013
+        }
+      ]
+    },
+    "otherBindingsHashBefore": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ownerValuesBefore": [
+      {
+        "id": 1001,
+        "uniqueId": "element:1001",
+        "categoryId": -2008013,
+        "typeId": 321,
+        "hasParameter": false,
+        "parameterId": null,
+        "storage": null,
+        "hasValue": false,
+        "value": null,
+        "userModifiable": null,
+        "isReadOnly": null
+      },
+      {
+        "id": 1002,
+        "uniqueId": "element:1002",
+        "categoryId": -2008013,
+        "typeId": 321,
+        "hasParameter": false,
+        "parameterId": null,
+        "storage": null,
+        "hasValue": false,
+        "value": null,
+        "userModifiable": null,
+        "isReadOnly": null
+      }
+    ],
+    "existingParameterElementIdBefore": null,
+    "externalDefinitionEffect": {
+      "selectionRestored": true,
+      "scope": "operator_owned_shared_definition_file"
+    },
+    "transaction": {
+      "committed": true,
+      "pending": false,
+      "rolledBack": false,
+      "added_element_ids": [
+        41
+      ],
+      "modified_element_ids": [
+        1001,
+        1002
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "exhaustiveChangeInventory": true
+    }
+  },
+  "read": {
+    "status": "Ok",
+    "action": "detail",
+    "read_only": true,
+    "schema": "operator.project_parameter_binding.v1",
+    "complete": true,
+    "parameter": {
+      "id": 41,
+      "uniqueId": "parameter:41",
+      "name": "Office Instance Note",
+      "guid": "00000000-0000-0000-0000-000000000041",
+      "dataTypeId": "autodesk.spec.aec:string.text-2.0.0",
+      "groupTypeId": "autodesk.parameter.group:identityData-1.0.0",
+      "visible": true,
+      "isInstance": true,
+      "categories": [
+        {
+          "id": -2008013,
+          "name": "Air Terminals"
+        }
+      ]
+    },
+    "owners": [
+      {
+        "id": 1001,
+        "uniqueId": "element:1001",
+        "categoryId": -2008013,
+        "typeId": 321,
+        "hasParameter": true,
+        "parameterId": 41,
+        "storage": "String",
+        "hasValue": false,
+        "value": null,
+        "userModifiable": true,
+        "isReadOnly": false
+      },
+      {
+        "id": 1002,
+        "uniqueId": "element:1002",
+        "categoryId": -2008013,
+        "typeId": 321,
+        "hasParameter": true,
+        "parameterId": 41,
+        "storage": "String",
+        "hasValue": false,
+        "value": null,
+        "userModifiable": true,
+        "isReadOnly": false
+      }
+    ],
+    "otherBindingsHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coverage": "native_shared_binding_and_complete_owner_values_v1"
+  }
+}

@@ -614,3 +614,15 @@ test('uniqueItems uses bounded JSON equality without confusing object order or s
  let deep:any=0;for(let i=0;i<30;i++)deep=[deep];assert.equal(check([deep])?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
  assert.equal(check(Array(100_001).fill(1).map((v,i)=>i))?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
 });
+
+test('project-parameter discovery publishes separate bounded instance creation and exact identity reads',()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/project-parameters',request_schema:contracts['/revit/project-parameters']},body);
+ const create={action:'create',name:'Office Instance Note',categoryNames:['Air Terminals'],instanceBinding:true,dataType:'text'};
+ for(const good of [{},{action:'list',query:'Office',max:5000},{action:'detail',parameterId:42},create,{...create,instanceBinding:false}])
+  assert.equal(check(good),null,JSON.stringify(good));
+ for(const bad of [{action:'detail'}, {action:'detail',parameterId:'42'}, {action:'detail',parameterId:0},
+  {action:'detail',parameterId:42,instanceBinding:true}, {...create,parameterId:42}, {...create,instanceBinding:null},
+  {...create,categoryNames:[]}, {...create,dataType:'airflow'}, {action:'list',max:5001}, {action:'list',name:'Note'}])
+  assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
