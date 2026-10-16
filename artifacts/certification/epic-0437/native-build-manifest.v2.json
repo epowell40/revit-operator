@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:ac81bc2bab796b9979b581639d1bb28bce5be22b50700788e489593302f549ff",
-  "source_inputs_hash": "sha256:bd2f2c6477584db2e838cea6d41b1436d134b83d6f9c32e56e39b1dbce49637c",
+  "policy_hash": "sha256:0621677b6b073cc7699e928f250b2475fa919c99ea36283ec31804ff109009c2",
+  "source_inputs_hash": "sha256:8b5e3138db004b6d25cc698ed270594e6e23868a5a6e83db46c78be1e151ee2f",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -779,7 +779,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:509d6ba23b0e7f4e1b523f68416a58581cbb523aa71eeda996666dd30c0f9456"
+      "sha256": "sha256:5d26f07f6e8b4db46e58a5c93f79966dc0f00409a1b44ac3324a96676b631079"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -2944,7 +2944,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/operation.ts",
-      "sha256": "sha256:86b57ebaf159a1ad9019eb19f18ff9b7564de2939a0403fa9c6d5e633d7b2d0a"
+      "sha256": "sha256:f4c022db12dbee81c9938ccbcba7125aac38490ade8a34a927141f1ae943a826"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/operation_scope.ts",
@@ -3008,11 +3008,15 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/reducer.ts",
-      "sha256": "sha256:0507b6134f3870126287acaa2226cee5e79e320594e5b6f5f909245838aec614"
+      "sha256": "sha256:dcd73dd1f9c9e461ac13707c6e0e26cd32edbd2ef16615d9d5d9a8f2f2033b58"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/result_delivery.ts",
       "sha256": "sha256:7c5d741f159476b845fa6be8107b2de2bcfbfb78966960512a71d79467e2534f"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/schedule_filter_restoration.ts",
+      "sha256": "sha256:f00c149c68b6077404d763fccfb6f04a20e5b30a270dafa71ee707716c3b70dd"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/semantic_admissibility.ts",
@@ -4516,7 +4520,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:ca1d524bde987b870159627519dc8d45c783f9f95df474da58cd9b79fe5f3dd5"
+      "sha256": "sha256:9046576bed303581ad48e362376002ddf82fceb60b6f0b7e481f856d92fb5fe2"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -4621,6 +4625,10 @@
     {
       "path": "apps/operator-backend/test/assignment_read_completion.test.ts",
       "sha256": "sha256:8423c33611e02d748ded854b3cbdb369aac315596f12522aeb30d4a84b5b93f3"
+    },
+    {
+      "path": "apps/operator-backend/test/assignment_schedule_filter_restoration.test.ts",
+      "sha256": "sha256:d0160c87fc396ea83b5dd7439481a5899a094d17bc7f9a434acc15b821e88717"
     },
     {
       "path": "apps/operator-backend/test/assignment_status_projection.test.ts",
@@ -9745,11 +9753,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.d.ts",
-      "sha256": "sha256:eaac6ae91226d8ca6fec945f5cc625e0c7e60f0edc5b798f8d7ec7bc460ae11c"
+      "sha256": "sha256:99b4a70c8ae8dd229425ccec7be083519a304a8cd2edc61b2265ffcbc17d1e69"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:8972dd115e34be88f7eeeb8be1ae9c9a65d3989e0b5b2a780a9de36debed4b1e"
+      "sha256": "sha256:ab61052ada1f6086173dd2bc3887d6a5bc2d4d092c03c69f98ada3bc3ec32c08"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/input-schema-gap.d.ts",
@@ -9801,7 +9809,7 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/package.json",
-      "sha256": "sha256:aa40b3b2acef25ba595c267cf36e44f32bcbf77670df141283771bbe2936d59c"
+      "sha256": "sha256:60ca99c9339e23556caa1eb950355b45eb03468c3ccbe9f9deaf4dceda6a536c"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/print-restoration.test.mjs",
@@ -9830,6 +9838,18 @@
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
       "sha256": "sha256:8e046d591121875531a646cfb7d9319a05d09532effd37eca0edacbf3693684b"
+    },
+    {
+      "path": "packages/assignment-kernel-v2-contracts/schedule-filter-state.d.ts",
+      "sha256": "sha256:549c295012ab664d55ebd69915e019f77db1473e5086b99ae298e6d164363785"
+    },
+    {
+      "path": "packages/assignment-kernel-v2-contracts/schedule-filter-state.js",
+      "sha256": "sha256:0f4bf6b0326c8563a9538a2e46ff9267cf1e03bb4c4c58fd2c01eb9f084601da"
+    },
+    {
+      "path": "packages/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
+      "sha256": "sha256:13d81e6f2a867cb5d03f5efc717e8add01f5c02e6a9f505c3171f4e1df46b5d6"
     },
     {
       "path": "packages/payload-digest-v2/golden-vectors.json",
@@ -9885,15 +9905,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:6ed966cbf8792f6f1b9422ec4aafbe4167b056e404779ae3878d59f303dc15d0"
+      "sha256": "sha256:a886f5a15de03b66cbdef223599065b3aca46acf57ead0195f5065df6542cb3d"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:5f1e84d540c3c38ac4730cc440a2d24207ebce58f37eea924afd2a4950e31715"
+      "sha256": "sha256:b0de09808227097e86913c3d1b4aa8f701a09e6e0202d341901a2fca3f3a3c2b"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:3ad5e5f65ceeed0107ecdfab9c524a0aa7dd5c9703560debb8336cea1af38edb"
+      "sha256": "sha256:1f6ed586558445e4745656bb67b639ed0a05ede0829d9f3279f2cf82a8dd6d3c"
     }
   },
   "runtime_dependencies": [
@@ -9940,19 +9960,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:6ed966cbf8792f6f1b9422ec4aafbe4167b056e404779ae3878d59f303dc15d0",
+      "sha256": "sha256:a886f5a15de03b66cbdef223599065b3aca46acf57ead0195f5065df6542cb3d",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:3ad5e5f65ceeed0107ecdfab9c524a0aa7dd5c9703560debb8336cea1af38edb",
+      "sha256": "sha256:1f6ed586558445e4745656bb67b639ed0a05ede0829d9f3279f2cf82a8dd6d3c",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:5f1e84d540c3c38ac4730cc440a2d24207ebce58f37eea924afd2a4950e31715",
+      "sha256": "sha256:b0de09808227097e86913c3d1b4aa8f701a09e6e0202d341901a2fca3f3a3c2b",
       "host": null
     },
     {
@@ -10040,6 +10060,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:2e7224cdb3124a58e256ac3506d87ebfe61e22f9732e6bb4a090f1f10e200cbc",
-  "built_at_utc": "2026-10-16T22:21:19.162Z"
+  "runtime_dependencies_hash": "sha256:da38f9867d973619798a632c8e6c13adcf401db56b6b1bab08f585ddb158d3a7",
+  "built_at_utc": "2026-10-16T22:50:07.625Z"
 }

@@ -45,6 +45,15 @@ export function circuitReadIsFreshNativeV2(applied: OperationV2, read: Operation
     && opened >= committed && completed >= opened);
 }
 
+export function scheduleFilterReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
+  const commit=applied.result, committed=Date.parse(commit?.completed_at??''), opened=Date.parse(read?.opened_at??''), completed=Date.parse(result.completed_at);
+  return Boolean(commit?.status==='succeeded'&&commit.authority==='native-host'&&commit.native_transaction_state==='committed'
+    && commit.persistent_effect==='applied'&&result.status==='succeeded'&&result.authority==='native-host'&&result.persistent_effect==='none'
+    && read?.requested_effect==='read'&&result.native_transaction_state==='not_applicable'&&result.request_identity?.path==='/revit/schedules'
+    && result.request_identity.request_signature===read.request_identity?.request_signature&&sameAssignmentBindingV2(commit.binding,result.binding)
+    && Number.isFinite(committed)&&Number.isFinite(opened)&&Number.isFinite(completed)&&opened>=committed&&completed>=opened);
+}
+
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

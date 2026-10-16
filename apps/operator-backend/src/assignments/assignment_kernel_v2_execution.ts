@@ -2,7 +2,7 @@ import { operationNeedsReadbackV2 } from '../verification/regular_schedule_reche
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
 import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
-import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
+import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,scheduleFilterReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
@@ -757,6 +757,8 @@ function commitInput(
       && (verificationSubject.request_identity?.path !== "/revit/set-parameter" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/change-element-type" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/assign-electrical-circuit" || circuitReadIsFreshNativeV2(verificationSubject, operation, result))
+      && (verificationSubject.request_identity?.path !== '/revit/configure-schedule' || !Object.hasOwn(object(verificationSubject.input.body),'filters')
+        || scheduleFilterReadIsFreshNativeV2(verificationSubject,operation,result))
       && (verificationSubject.request_identity?.path !== "/revit/configure-schedule" || result.request_identity?.path !== "/revit/native-api-ops"
         || nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/tag-elements" || !existingTagRepairRequestV2(verificationSubject.input)

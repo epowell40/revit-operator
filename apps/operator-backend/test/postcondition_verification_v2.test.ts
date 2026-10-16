@@ -406,8 +406,10 @@ test("schedule filter verification requires the actual filter definition, not ro
     table: { body: { rows: [{ cells: ["OPERATOR-SMOKE-001"] }] } }
   }, { path: "/revit/configure-schedule" }), false);
   assert.equal(postconditionSatisfiedByPayloadV2(input, {
-    schedule: { id: 1543072 },
-    filterDefinitions: [{ field: "mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
+    status: 'Ok', action: 'detail',
+    schedule: { id: 1543072, fieldCount:1 },
+    fields: [{fieldId:0,name:'Mark'}],
+    filterDefinitions: [{ index:0, fieldId:0, readable:true, field: "mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
     filterDefinitionsComplete: true
   }, { path: "/revit/configure-schedule" }), true);
   assert.equal(postconditionSatisfiedByPayloadV2(input, {

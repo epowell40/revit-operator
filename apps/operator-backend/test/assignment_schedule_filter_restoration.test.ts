@@ -14,6 +14,8 @@ import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchS
   settleAssignmentKernelOperationV2 } from '../src/assignments/assignment_kernel_v2_execution.js';
 import { AssignmentJournalV2, canonicalJsonV2, type AssignmentEventV2 } from '../src/domain/assignment-kernel/index.js';
 import { scheduleFilterRestorationV1 } from '../src/domain/assignment-kernel/schedule_filter_restoration.js';
+import { checkedEditIsCurrentV2 } from '../src/verification/current_postcondition_v2.js';
+import { operationNeedsReadbackV2 } from '../src/verification/regular_schedule_recheck_v2.js';
 
 async function workspace(fn: () => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operator-filter-restoration-'));
@@ -156,3 +158,42 @@ test('repeated user iterations need a distinct later committed counter-state eac
   assert.equal(f.state().operations[restoredAgain.operation_id]!.filter_restoration_of_operation_id,restored.operation_id);
   assert.equal(f.state().operations[restoredAgain.operation_id]!.filter_restoration_after_operation_id,removedAgain.operation_id);
 }));
+
+for(const variant of ['exact','extra_rule','wrong_field','unreadable','backend','old_read'] as const){
+  test(`ordinary runtime filter verification ${variant} survives journal replay without trusting a caller flag`,()=>workspace(()=>{
+    const f=setup(),edit=assign(f,'change');settle(f,edit);
+    const read=openAssignmentKernelOperationV2({snapshot:f.state(),provider_turn_id:'read-turn',controller_request_id:'read',
+      capability_id:'revit_call_tool',classified_effect:'read',target_tokens:['id:11'],arguments:{method:'POST',path:'/revit/schedules',body:{action:'detail',scheduleId:11}}});
+    assert.equal(f.state().operations[read.operation_id]!.verification_of_operation_id,edit.operation_id);
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const payload:any={status:'Ok',action:'detail',schedule:{id:11,fieldCount:2},fields:[{fieldId:0,name:'Mark'},{fieldId:2,name:'Comments'}],filterDefinitionsComplete:true,
+      filterDefinitions:withPrefix.map((x,index)=>({...x,index,field:x.fieldId===0?'Mark':'Comments',readable:true}))};
+    if(variant==='extra_rule')payload.filterDefinitions.push({...payload.filterDefinitions[0],index:2});
+    if(variant==='wrong_field')payload.filterDefinitions[1].fieldId=7;
+    if(variant==='unreadable')payload.filterDefinitions[1].readable=false;
+    const result:any={schema:'revit-operator.operation-result/v2',result_id:`result:${read.operation_id}`,operation_id:read.operation_id,binding:read.binding,
+      status:'succeeded',dispatch_state:'dispatched',persistent_effect:'none',native_transaction_state:'not_applicable',authority:variant==='backend'?'backend':'native-host',
+      result_schema_id:'operator-native/POST:/revit/schedules/v2',observation_required:true,affected_target_identities:['element_id:11'],
+      receipt_id:`receipt:${read.operation_id}`,native_correlation_id:`native:${read.operation_id}`,request_identity:read.request_identity,
+      completed_at:variant==='old_read'?'2020-01-01T00:00:00Z':new Date().toISOString(),raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex')};
+    const finish=()=>settleAssignmentKernelOperationV2(read,{content:[],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:result,
+      observation:{raw_payload:payload,semantic_facts:[{fact_id:'verification.result_available',fact_class:'verification',value:true}],verification_relevance:['task_result']}}});
+    if(variant==='backend'){
+      assert.throws(finish,/operation_result_affected_targets_invalid/,'non-native producer cannot supply native affected identities');
+      assert.equal(checkedEditIsCurrentV2(f.state(),edit.operation_id),false);
+      assert.deepEqual(new AssignmentJournalV2(f.journal().events()).snapshot(),f.state());return;
+    }
+    finish();
+    const state=f.state(),op=state.operations[edit.operation_id]!;
+    const admitted=state.operations[read.operation_id]!.observation_ids.some(id=>state.observations[id]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true));
+    assert.equal(admitted,variant==='exact');
+    assert.equal(checkedEditIsCurrentV2(state,edit.operation_id),variant==='exact');
+    assert.deepEqual(new AssignmentJournalV2(f.journal().events()).snapshot(),state);
+    if(variant==='exact'){
+      assert.equal(operationNeedsReadbackV2(state,op),false);
+      const counter=assign(f,'subsequent-change',base);settle(f,counter);
+      assert.equal(checkedEditIsCurrentV2(f.state(),edit.operation_id),false);
+      assert.equal(operationNeedsReadbackV2(f.state(),f.state().operations[edit.operation_id]!),true,'later changed filters require a fresh read');
+    }
+  }));
+}
