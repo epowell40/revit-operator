@@ -168,6 +168,7 @@
     "read_attachment_redline.test.ts",
     "pdf_source_annotations.test.ts",
     "goals_service.test.ts",
+    "goal_listing_resources.test.ts",
     "pdf_source_landmarks.test.ts",
     "pdf_source_landmarks_pdfjs.test.ts",
     "assignment_mutation_acknowledgment.test.ts",
@@ -3669,6 +3670,15 @@
       "coverage": [
         "backend:assignment_document_checkpoint.test.ts",
         "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "saved-history-discovery-bounds-record-retention-and-validates-journals-off-request-thread",
+      "coverage": [
+        "backend:goal_listing_resources.test.ts",
+        "backend:goals_service.test.ts",
+        "backend:task_navigation.test.ts",
+        "backend:content_verified_projection.test.ts"
       ]
     },
     {

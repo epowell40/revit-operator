@@ -1,9 +1,9 @@
 import { getGoalStoragePath, listGoalCandidatesForSessions } from "../goals/service.js";
-import { createContentVerifiedProjection } from "../goals/content_verified_projection.js";
 import { getSessionOwner, listConversationNavigation } from "../memory/sqlite_store.js";
 import { getRequestAssignmentPrincipalId, getRequestContext, isSessionIdBoundToPrincipal, requestMatchesAssignmentPrincipalId } from "../request_context.js";
-import { reduceAssignmentEventsV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
+import { readNavigationProjection, type NavigationProjection } from "./task_navigation_projection.js";
+import { readNavigationProjectionAsync } from "./task_navigation_reader.js";
 
 export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "ready" | "complete" | "failed" | "unknown" | "loading" | "stopping_after_usage_limit" | "waiting_for_usage";
 export type TaskNavigationEntry = {
@@ -11,38 +11,8 @@ export type TaskNavigationEntry = {
   state: TaskNavigationState; updated_at: string; summary: string;
 };
 
-function taskState(snapshot: AssignmentSnapshotV2): TaskNavigationState {
-  if (snapshot.unresolved_unknown_operation_ids.length) return "unknown";
-  if (snapshot.execution_control?.state === "paused") return snapshot.quiescent ? "paused" : "pausing";
-  if (!snapshot.terminal && snapshot.provider_usage_hold && snapshot.quiescent
-      && (["blocked", "failed"].includes(snapshot.outcome) || snapshot.progress_blocker
-        || snapshot.provider_budget_exhausted || snapshot.execution_failure_ids.length)) return "failed";
-  if (!snapshot.terminal && snapshot.provider_usage_hold) return snapshot.quiescent ? "waiting_for_usage" : "stopping_after_usage_limit";
-  if (!snapshot.quiescent) return "working";
-  if (["awaiting_user_input", "awaiting_user_review"].includes(snapshot.outcome)) return "needs_input";
-  if (["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome)) return "complete";
-  if (["failed", "blocked"].includes(snapshot.outcome)) return "failed";
-  return "ready";
-}
-
 const rank = (state: TaskNavigationState) => ["working", "pausing", "stopping_after_usage_limit"].includes(state) ? 0
   : ["paused", "needs_input", "ready", "unknown", "waiting_for_usage"].includes(state) ? 1 : 2;
-
-type NavigationProjection = { invalid: true } | { invalid: false; binding: AssignmentSnapshotV2["current_binding"];
-  state: TaskNavigationState; title: string; updated_at: string };
-// Keep only the small, validated navigation projection. Re-reading and hashing
-// canonical bytes still detects same-size and timestamp-preserving rewrites.
-const navigationProjection = createContentVerifiedProjection<NavigationProjection | null>(value => {
-  const record = value as any, journal = record?.assignment_kernel_v2;
-  if (!journal || journal.schema !== "revit-operator.assignment-kernel-journal/v2" || !Array.isArray(journal.events) || !journal.events.length) return null;
-  try {
-    const snapshot = reduceAssignmentEventsV2(journal.events);
-    return { invalid: false, binding: snapshot.current_binding, state: taskState(snapshot),
-      title: snapshot.spec.source_user_request.replace(/\s+/g," ").trim().slice(0,180) || "Task",
-      updated_at: [snapshot.finished_at, snapshot.execution_control?.changed_at, snapshot.provider_usage_hold?.recorded_at, record.updated_at, snapshot.spec.created_at]
-        .filter((value): value is string => typeof value === "string").sort().at(-1)! };
-  } catch { return { invalid: true }; }
-}, { maxEntries: 2048, maxProjectionBytes: 4 * 1024 * 1024 });
 
 export function ownedNavigationSession(sessionId: string): boolean {
   const context = getRequestContext();
@@ -58,7 +28,8 @@ export function ownedNavigationSession(sessionId: string): boolean {
 /** The list navigates conversations; all controls must reread the exact binding.
  * A cached Goal or index can discover a journal but cannot declare its status. */
 type NavigationPage = { schema: "revit-operator.task-navigation/v1"; tasks: TaskNavigationEntry[]; loading: boolean };
-function* navigationSteps(limit = 100): Generator<NavigationPage | undefined, NavigationPage> {
+type ProjectionRequest = { projection_path: string };
+function* navigationSteps(limit = 100): Generator<NavigationPage | ProjectionRequest | undefined, NavigationPage, NavigationProjection | null | undefined> {
   if (!getRequestAssignmentPrincipalId()) throw new Error("Task navigation requires an authenticated principal.");
   const allowed = new Map<string, boolean>();
   const owns = (id: string) => {
@@ -82,7 +53,7 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | undefined, Na
   for (const goal of listGoalCandidatesForSessions(owns)) {
     yield ++processed % 10 === 0 ? page(true) : undefined;
     const filePath = getGoalStoragePath(goal.id);
-    const projection = filePath ? navigationProjection.read(filePath) : null;
+    const projection = filePath ? yield { projection_path: filePath } : null;
     if (!projection) continue;
     if (!projection.invalid && (!owns(projection.binding.session_id)
       || !requestMatchesAssignmentPrincipalId(projection.binding.principal_id, undefined, projection.binding.session_id))) continue;
@@ -112,12 +83,16 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | undefined, Na
 
 export function listTaskNavigation(limit = 100) {
   const steps = navigationSteps(limit); let next = steps.next();
-  while (!next.done) next = steps.next();
+  while (!next.done) next = steps.next(next.value && "projection_path" in next.value ? readNavigationProjection(next.value.projection_path) : undefined);
   return next.value;
 }
 export async function listTaskNavigationAsync(limit = 100, onProgress?: (page: NavigationPage) => boolean) {
   const steps = navigationSteps(limit); let next = steps.next();
   while (!next.done) {
+    if (next.value && "projection_path" in next.value) {
+      next = steps.next(await readNavigationProjectionAsync(next.value.projection_path));
+      continue;
+    }
     if (next.value && onProgress?.(next.value) === false) return next.value;
     await new Promise<void>(resolve => setImmediate(resolve)); next = steps.next();
   }

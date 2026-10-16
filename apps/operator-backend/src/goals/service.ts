@@ -756,7 +756,7 @@ function saveGoal(goal: GoalRecord): GoalRecord {
     if (persisted && persistedRevision !== expectedRevision) throw new Error(`Goal ${goal.id} changed concurrently; reload and retry.`);
     const next = { ...goal, revision: persistedRevision + 1, updated_at: nowIso() };
     writeJson(goalPath(next.id), next);
-    observeListedGoal(goalsRoot(), next);
+    observeListedGoal(goalsRoot(), goalListing(next));
     return next;
   });
 }
@@ -785,7 +785,7 @@ export function mutateGoalRecord(goalId: string, mutator: (goal: GoalRecord) => 
     const persistedRevision = Number.isInteger(persisted.revision) ? Number(persisted.revision) : 0;
     const next = { ...candidate, revision: persistedRevision + 1, updated_at: nowIso() };
     writeJson(goalPath(id), next);
-    observeListedGoal(goalsRoot(), next);
+    observeListedGoal(goalsRoot(), goalListing(next));
     return next;
   });
 }
@@ -835,7 +835,7 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
     assignment_control_plane: emptyAssignmentControlPlane()
   };
   writeJson(goalPath(goal.id), goal);
-  observeListedGoal(goalsRoot(), goal);
+  observeListedGoal(goalsRoot(), goalListing(goal));
   return goal;
 }
 
@@ -857,27 +857,41 @@ export function getGoal(goalId: string): GoalRecord | null {
   return normalizeLoadedGoal(goal);
 }
 
-function readAllGoals(): GoalRecord[] {
+type GoalListing = Pick<GoalRecord, "id" | "updated_at" | "related_session_id">;
+
+/** Discovery cache only. Never retain every historical journal just to find IDs.
+ * Selected records and all control/verification callers still read actual bytes. */
+function goalListing(goal: GoalRecord): GoalListing {
+  return { id: goal.id, updated_at: goal.updated_at, related_session_id: goal.related_session_id };
+}
+
+function readGoalListings(): GoalListing[] {
   const root = goalsRoot();
   return listCachedGoals(root, id => {
     const goal = readJson<GoalRecord>(path.join(root, id, "goal.json"));
-    return goal ? normalizeLoadedGoal(goal) : null;
+    return goal ? goalListing(goal) : null;
   });
 }
 
+function readListedGoals(listings: readonly GoalListing[]): GoalRecord[] {
+  return listings.map(row => getGoal(row.id)).filter((goal): goal is GoalRecord => goal !== null);
+}
+
 export function listGoals(limit = 50): GoalRecord[] {
-  return readAllGoals().slice(0, Math.max(1, Math.min(200, limit)));
+  return readListedGoals(readGoalListings().slice(0, Math.max(1, Math.min(200, limit))));
 }
 
 /** Durable session discovery must filter before applying a presentation limit. */
 export function listGoalsForSession(sessionId: string): GoalRecord[] {
-  return readAllGoals().filter(goal => goal.related_session_id === sessionId);
+  return readListedGoals(readGoalListings().filter(goal => goal.related_session_id === sessionId))
+    .filter(goal => goal.related_session_id === sessionId);
 }
 
 /** Internal discovery filters owned sessions before any presentation limit.
  * Callers must still derive task identity/status from the canonical journal. */
-export function listGoalCandidatesForSessions(allowed: (sessionId: string) => boolean): GoalRecord[] {
-  return readAllGoals().filter(goal => Boolean(goal.related_session_id && allowed(goal.related_session_id)));
+export function listGoalCandidatesForSessions(allowed: (sessionId: string) => boolean): GoalListing[] {
+  return readGoalListings().filter(goal => Boolean(goal.related_session_id && allowed(goal.related_session_id)))
+    .map(goal => ({ ...goal }));
 }
 
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
@@ -1068,17 +1082,18 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
 
 export function getActiveGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
-  const goals = readAllGoals();
-  const candidates = goals.filter(g => g.status === "active" && (!sid || g.related_session_id === sid));
-  return candidates[0] ?? null;
+  for (const row of readGoalListings()) {
+    if (sid && row.related_session_id !== sid) continue;
+    const goal = getGoal(row.id);
+    if (goal?.status === "active" && (!sid || goal.related_session_id === sid)) return goal;
+  }
+  return null;
 }
 
 export function getCurrentGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
   if (!sid) return null;
-  const candidates = readAllGoals().filter(goal =>
-    goal.related_session_id === sid && ["active", "paused", "blocked"].includes(goal.status)
-  );
+  const candidates = listGoalsForSession(sid).filter(goal => ["active", "paused", "blocked"].includes(goal.status));
   return candidates.find(goal => goal.status === "active") ?? candidates[0] ?? null;
 }
 
@@ -1115,13 +1130,13 @@ export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalR
 
 export function clearAgentGoal(sessionId: string, reason?: unknown): GoalRecord | null {
   const sid = clip(sessionId, 180);
-  const goals = readAllGoals();
-  const goal = goals.find(g =>
-    (g.status === "active" || g.status === "blocked" || g.status === "paused") &&
-    (!sid || g.related_session_id === sid)
-  ) ?? null;
-  if (!goal) return null;
-  return transitionGoal(goal.id, "canceled", reason ?? "Goal cleared.");
+  for (const row of readGoalListings()) {
+    if (sid && row.related_session_id !== sid) continue;
+    const goal = getGoal(row.id);
+    if (goal && ["active", "blocked", "paused"].includes(goal.status) && (!sid || goal.related_session_id === sid))
+      return transitionGoal(goal.id, "canceled", reason ?? "Goal cleared.");
+  }
+  return null;
 }
 
 export function appendGoalProgress(sessionId: string, entry: unknown): GoalRecord {
