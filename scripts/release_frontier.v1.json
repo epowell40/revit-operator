@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "attachment_upload_store.test.ts",
+    "attachments_extract.test.ts",
     "native_inventory_work_budget_v2.test.ts",
     "progress_outer_deadline_v2.test.ts",
     "verified_target_work_credit_v2.test.ts",
@@ -331,6 +333,7 @@
     "lib/family_static_text_scope_schema.test.ts"
   ],
   "desktop_tests": [
+    "test/cad_attachment.test.js",
     "test/server_smoke.test.js",
     "test/sidecar_supporting_receipt.test.js",
     "test/benchmark_verified_ui_close.test.js",
@@ -349,6 +352,9 @@
     "test/delegated_assignment_recovery.test.mjs"
   ],
   "dotnet_test_classes": [
+    "CadLinkOptionPolicyTests",
+    "CadLinkNativeContractTests",
+    "CadLinkPreflightCapabilityTests",
     "OperatorNativePresentationPropertyReadPolicyTests",
     "RenameViewPlanSettlementTests",
     "NativeApiPolicyMethodBoundaryContractTests",
@@ -452,6 +458,23 @@
     "OperatorNativeOwnedValueTests"
   ],
   "failure_families": [
+    {
+      "id": "cad_requested_link_never_silently_imports_and_preserves_explicit_color",
+      "coverage": [
+        "dotnet:CadLinkOptionPolicyTests",
+        "dotnet:CadLinkNativeContractTests",
+        "dotnet:CadLinkPreflightCapabilityTests"
+      ]
+    },
+    {
+      "id": "cad_upload_retains_binary_source_not_visual_image",
+      "coverage": [
+        "backend:attachment_upload_store.test.ts",
+        "backend:attachments_extract.test.ts",
+        "desktop:test/cad_attachment.test.js",
+        "dotnet:CadLinkNativeContractTests"
+      ]
+    },
     {
       "id": "sidecar-v2-stopped-execution-preserves-native-unknown",
       "coverage": [

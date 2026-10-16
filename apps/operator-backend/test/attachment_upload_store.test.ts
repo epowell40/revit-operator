@@ -6,6 +6,18 @@ import path from "node:path";
 import { storeAttachmentUpload } from "../src/attachments/upload_store.js";
 import { readLatestUploadIndexRecords } from "../src/attachments/upload_index.js";
 
+test("DWG upload retains exact binary bytes and is never classified as a vision image", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_cad_"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const bytes = Buffer.from("AC1027\u0000binary-CAD-fixture\ufffd", "utf8");
+  const rec = storeAttachmentUpload({ filename: "LAYERS.DWG", mime: "image/vnd.dwg", session_id: "cad-session", data_base64: bytes.toString("base64") });
+  assert.equal(rec.filename, "LAYERS.DWG");
+  assert.equal(rec.mime, "application/acad");
+  assert.equal(rec.session_id, "cad-session");
+  assert.deepEqual(fs.readFileSync(path.join(root, rec.relative_path)), bytes);
+  assert.equal(path.extname(rec.relative_path), ".dwg");
+});
+
 test("attachment upload store: persists upload + index record", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_ws_"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;

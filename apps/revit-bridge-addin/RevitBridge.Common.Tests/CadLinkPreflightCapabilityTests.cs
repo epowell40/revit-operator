@@ -19,6 +19,9 @@ namespace RevitBridge.Common.Tests
             Assert.True(response.supportsCadCategories);
             Assert.True(response.supportsCustomScale);
             Assert.True(response.supportsImportUnit);
+            Assert.Equal("preserve", response.defaultColorMode);
+            Assert.Equal(new[] { "preserve", "black_and_white", "invert" }, response.colorModes);
+            Assert.False(response.fallsBackFromLinkToImport);
         }
 
         [Fact]
@@ -27,6 +30,10 @@ namespace RevitBridge.Common.Tests
             var evidence = CadLinkPreflightCapability.CreateResponse().requiredApplyEvidence;
 
             Assert.Contains("elementId", evidence);
+            Assert.Contains("elementUniqueId", evidence);
+            Assert.Contains("isLinked", evidence);
+            Assert.Contains("colorMode", evidence);
+            Assert.Contains("totalTransformScale", evidence);
             Assert.Contains("ownerViewId", evidence);
             Assert.Contains("sheetViewId", evidence);
             Assert.Contains("viewportId", evidence);

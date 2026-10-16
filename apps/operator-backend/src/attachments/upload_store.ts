@@ -29,7 +29,7 @@ export type StoredAttachment = {
 const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const REQUEST_OVERHEAD_FACTOR = 2.2;
 
-const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".xls", ".txt", ".csv", ".jpg", ".jpeg", ".png", ".json"]);
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".xls", ".txt", ".csv", ".jpg", ".jpeg", ".png", ".json", ".dwg"]);
 
 function maxFileBytes(): number {
   const raw = (process.env.OPERATOR_ATTACHMENT_UPLOAD_MAX_FILE_BYTES ?? "").trim();
@@ -76,6 +76,7 @@ function mimeFromExtension(ext: string): string | undefined {
   if (e === ".jpg" || e === ".jpeg") return "image/jpeg";
   if (e === ".png") return "image/png";
   if (e === ".json") return "application/json";
+  if (e === ".dwg") return "application/acad";
   return undefined;
 }
 
@@ -200,7 +201,9 @@ export function storeAttachmentUpload(input: AttachmentUploadInput): StoredAttac
   const rawName = sanitizeFileName(input.filename || relativeHintName || "upload");
   const ext = ensureAllowedExtension(rawName, input.mime);
   const finalName = path.extname(rawName) ? rawName : `${path.basename(rawName)}${ext}`;
-  const mime = (input.mime ?? "").trim() || mimeFromExtension(ext);
+  // Some systems label DWG image/vnd.dwg. Keep it a binary CAD reference,
+  // never a raster image sent to the visual model.
+  const mime = ext === ".dwg" ? "application/acad" : (input.mime ?? "").trim() || mimeFromExtension(ext);
   const sha = sha256Hex(bytes);
 
   const expectedSha = (input.sha256 ?? "").trim().toLowerCase();

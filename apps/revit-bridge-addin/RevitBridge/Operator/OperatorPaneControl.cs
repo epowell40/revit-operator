@@ -2031,6 +2031,7 @@ namespace RevitBridge.Operator
 
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
+                ".dwg",
                 ".pdf",
                 ".docx",
                 ".xlsx",
@@ -2124,6 +2125,7 @@ namespace RevitBridge.Operator
         private static string? GuessMimeFromExtension(string ext)
         {
             var e = (ext ?? "").Trim().ToLowerInvariant();
+            if (e == ".dwg") return "application/acad";
             if (e == ".pdf") return "application/pdf";
             if (e == ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             if (e == ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

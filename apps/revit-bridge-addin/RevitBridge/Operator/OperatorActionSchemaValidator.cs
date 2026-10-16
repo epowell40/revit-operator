@@ -5891,6 +5891,12 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "sheetNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "sheetViewId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "placement", maxLen: 24, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "colorMode", maxLen: 32, out error)) return false;
+                try
+                {
+                    CadLinkOptionPolicy.ResolveColorMode(obj.Value.TryGetProperty("colorMode", out var cadColor) && cadColor.ValueKind == JsonValueKind.String ? cadColor.GetString() : null);
+                }
+                catch (ArgumentException ex) { error = ex.Message; return false; }
                 if (!ValidateOptionalBool(obj.Value, "link", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
 

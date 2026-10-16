@@ -1513,7 +1513,11 @@ namespace RevitBridge.Operator
                 if (p == "/revit/link-cad")
                 {
                     enumMap["placement"] = new[] { "origin", "center" };
+                    enumMap["colorMode"] = new[] { "preserve", "black_and_white", "invert" };
                     notes.Add("sourcePath can be Workspace-relative OR an external path under OPERATOR_ALLOWED_EXTERNAL_ROOTS.");
+                    notes.Add("Colors default to preserve. link defaults true and never silently falls back to an embedded import; link:false explicitly requests import.");
+                    notes.Add("Use a drafting view at viewScale:1 for paper-size CAD details. importUnit controls source geometry units. customScale overrides importUnit; customScale:1 alone is not proof of one-to-one printed size. Verify actual native transform and sheet output.");
+                    notes.Add("cadCategories returns native imported layer identities for scoped view graphics overrides. A whole-link lineweight override is not a substitute for changing only the requested new-work layers.");
                 }
 
                 if (p == "/revit/link-revit")
