@@ -59,4 +59,3 @@ export function checkedEditIsCurrentV2(snapshot: AssignmentSnapshotV2, id: strin
     });
   });
 }
-
