@@ -19,7 +19,7 @@ import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { assignmentSpecFromGoalV2, createAssignmentKernelForGoalV2, assignmentKernelV2ForBinding } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2, settleAssignmentKernelOperationV2, failAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
-import { selectLocalAdvisoryPolicy } from "../src/assignments/local_advisory_policy.js";
+import { selectLocalAdvisoryPolicy,nativeScopePlanningIntentV1 } from "../src/assignments/local_advisory_policy.js";
 import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
 import { advanceAssignmentKernelProgressV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2, recordCompletedAssignmentProviderReceiptV2, recordAssignmentProgressEpochV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_work_allowance_v2.js";
@@ -280,6 +280,15 @@ test("installation enrollment rejects nonlocal identities, unavailable profiles 
   const binding = { ...f.binding, session_id: "ordinary-unlisted" };
   assert.equal(selectLocalAdvisoryPolicy(binding, enabled, local)?.mode, "local_advisory_v1");
   const progressEnv={...enabled,OPERATOR_LOCAL_PROGRESS_ALLOWANCE:"verified_native_changes_v1"};
+  const sourceRequest='Review every branch-circuit and feeder breaker throughout this project.';
+  const inventoryEnv={...progressEnv,OPERATOR_LOCAL_MODEL_WORK_ALLOWANCE:'native_inventory_planning_v1'};
+  assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,'apply',undefined,sourceRequest)?.native_scope_planning,undefined);
+  const selected=selectLocalAdvisoryPolicy(binding,inventoryEnv,local,'apply',undefined,sourceRequest)!;
+  assert.equal(selected.native_scope_planning?.mode,'native_inventory_planning_v1');assert.equal(selected.max_provider_calls,64,'Census must be observed before planning allocation');
+  for(const effect of ['read','preview'])assert.equal(selectLocalAdvisoryPolicy(binding,inventoryEnv,local,effect,undefined,sourceRequest)?.native_scope_planning,undefined);
+  assert.equal(selectLocalAdvisoryPolicy(binding,inventoryEnv,local,'apply',undefined,'Update one panel schedule.')?.native_scope_planning,undefined);
+  assert.equal(nativeScopePlanningIntentV1('Finish compact wiring throughout this project’s panel schedules.'),true);
+  assert.equal(nativeScopePlanningIntentV1('Update one panel schedule; leave all other panels unchanged.'),false);
   assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"read")?.progress_allowance,undefined);
   assert.equal(selectLocalAdvisoryPolicy(binding,progressEnv,local,"preview")?.progress_allowance,undefined);
   assert.deepEqual(selectLocalAdvisoryPolicy(binding,progressEnv,local,"apply")?.progress_allowance,

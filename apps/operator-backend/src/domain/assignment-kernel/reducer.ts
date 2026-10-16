@@ -5,6 +5,7 @@ import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advi
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
 import { deriveNativeFailureContextV1 } from "./native_failure_context.js";
+import {deriveNativeInventoryWorkloadV1} from './native_inventory_workload.js';
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "./document_checkpoint.js";
 import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "./template_reassignment.js";
@@ -236,6 +237,7 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
   assertProviderUsageOperationAdmissionV1(snapshot, operation);
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_inventory_workload === undefined,'operation_native_inventory_workload_forbidden','Source workload is derived only from retained native evidence.');
   kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
   const advisory = advisoryVerificationV2(snapshot);
   kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < advisoryWorkBudget(snapshot).max_operations,
@@ -924,6 +926,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const nativeFailureContext = deriveNativeFailureContextV1(operation, nativeFailureDependencyLinksV1(
           operation.observation_commit?.raw_payload, [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]));
         const nativeTemplateState = deriveNativeTemplateStateV1(operation);
+        const nativeInventoryWorkload=deriveNativeInventoryWorkloadV1(operation);
         const settledOperation = {
           ...operation,
           settlement_state: "settled" as const,
@@ -932,6 +935,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           observation_retention_error: undefined,
           ...(nativeFailureContext ? { native_failure_context: nativeFailureContext } : {}),
           ...(nativeTemplateState ? { native_template_state: nativeTemplateState } : {}),
+          ...(nativeInventoryWorkload?{native_inventory_workload:nativeInventoryWorkload}:{}),
           // The exact payload remains in the immutable result event and the
           // authoritative evidence store. Only pending retention needs another
           // in-memory copy; settled duplicate delivery rehydrates the evidence.

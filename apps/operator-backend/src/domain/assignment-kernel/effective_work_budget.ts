@@ -5,12 +5,13 @@ import type { AssignmentProgressBudgetV2 } from "./progress/contracts.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
 import { readyNativeRollbackPreviewV2 } from "./progress/ready_native_preview.js";
+import {nativeInventoryPlanningV1} from './native_inventory_workload.js';
 
 // One pure derivation for execution, telemetry and checkpoint admission.
 // Frozen policy and durable usage remain immutable; only checked work earns credit.
 /** A retained plan permits one bounded planning window. Only independently
  * verified, distinct native changes earn more work. Usage is never reset. */
-export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; verified_targets?: number; provider_calls: number } {
+export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; verified_targets?: number; source_planning_units?:number;source_planning_items?:number; provider_calls: number } {
   const policy = advisoryVerificationV2(snapshot) ? snapshot.spec.execution_policy : undefined;
   const targetCredits = policy?.progress_allowance?.credit_unit === 'distinct_verified_targets_v1';
   if (policy && (!policy.progress_allowance || snapshot.spec.requested_effect !== "apply"))
@@ -53,8 +54,10 @@ export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { bro
     affected.forEach(id => targets.add(id)); verified++;
   }
   const units = targetCredits ? Math.min(24, targets.size) : verified;
-  return { broad: true, verified_changes: verified, ...(targetCredits ? {verified_targets: targets.size} : {}), provider_calls: policy
-    ? Math.min(policy.progress_allowance!.max_provider_calls, policy.max_provider_calls + units * 8)
+  const planning=nativeInventoryPlanningV1(snapshot);
+  return { broad: true, verified_changes: verified, ...(targetCredits ? {verified_targets: targets.size} : {}),
+    ...(planning?{source_planning_units:planning.units,source_planning_items:planning.items}:{}),provider_calls: policy
+    ? Math.min(policy.progress_allowance!.max_provider_calls, policy.max_provider_calls*(planning?.units??1) + units * 8)
     : Math.min(256, 64 + verified * 8) };
 }
 
@@ -63,13 +66,14 @@ export function defaultAssignmentWorkBudgetV2(snapshot: AssignmentSnapshotV2, or
   const allowance = assignmentWorkAllowanceV2(snapshot);
   if (advisoryVerificationV2(snapshot) && policy) {
     const credit = Math.min(24, allowance.verified_targets ?? allowance.verified_changes), ceiling = policy.progress_allowance;
+    const sourceUnits=allowance.source_planning_units??1;
     return { ...ordinary, max_provider_calls: allowance.provider_calls, max_reasoning_turns: allowance.provider_calls,
-      max_operations: ceiling ? Math.min(ceiling.max_operations, policy.max_operations + credit * 32) : policy.max_operations,
-      max_total_tokens: ceiling ? Math.min(ceiling.max_total_tokens, policy.max_total_tokens + credit * 1_000_000) : policy.max_total_tokens,
+      max_operations: ceiling ? Math.min(ceiling.max_operations, policy.max_operations*sourceUnits + credit * 32) : policy.max_operations,
+      max_total_tokens: ceiling ? Math.min(ceiling.max_total_tokens, policy.max_total_tokens*sourceUnits + credit * 1_000_000) : policy.max_total_tokens,
       // Only new policies explicitly freeze a time ceiling. Old clocks and all
       // cumulative receipts stay unchanged, including across restart/Resume.
       max_wall_clock_ms: ceiling?.max_wall_clock_ms === undefined ? policy.max_wall_clock_ms
-        : Math.min(ceiling.max_wall_clock_ms,policy.max_wall_clock_ms + credit*5*60_000) };
+        : Math.min(ceiling.max_wall_clock_ms,policy.max_wall_clock_ms*sourceUnits + credit*5*60_000) };
   }
   if (!allowance.broad) return allowance.provider_calls > ordinary.max_provider_calls
     ? { ...ordinary, max_provider_calls: allowance.provider_calls,

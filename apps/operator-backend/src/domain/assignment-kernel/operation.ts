@@ -69,6 +69,8 @@ export interface OperationV2 {
   native_completion_reconciliation?: import("@revitoperator/assignment-kernel-v2-contracts").NativeCompletionReconciliationV1;
   /** Derived only from retained native diagnostics; never accepted at admission. */
   native_failure_context?: import("./native_failure_context.js").NativeFailureContextV1;
+  /** Reducer-derived complete native source census; not verified model work. */
+  native_inventory_workload?: import('./native_inventory_workload.js').NativeInventoryWorkloadV1;
   observation_commit?: ObservationCommitInputV2;
   observation_commit_attempts?: number;
   observation_ids: readonly ObservationIdV2[];

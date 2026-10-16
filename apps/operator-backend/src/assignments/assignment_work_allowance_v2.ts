@@ -35,6 +35,9 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
   const allowance=assignmentWorkAllowanceV2(snapshot);
   return { resources, cached_input_tokens: cached,
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,
+      ...(allowance.source_planning_units===undefined?{}:{native_source_planning:{
+        mode:'native_inventory_planning_v1',units:allowance.source_planning_units,items:allowance.source_planning_items,
+        basis:'Largest complete exact-bound retained native source census; bounded planning only, not checked work or completion'}}),
       verified_distinct_changes: allowance.verified_changes,
       ...(allowance.verified_targets === undefined ? {} : {
         verified_distinct_targets: allowance.verified_targets,
@@ -55,7 +58,7 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
       limitations: "Not an invoice or service-tier confirmation. Excludes tax and tool fees. Missing usage or model rates remain unknown. This projection does not change the frozen budget." },
     missing_usage_calls: calls.filter(call => !call.usage).length,
     checkpoint_recommended: near.length > 0, approaching_limits: near,
-    guidance: near.length ? "Retain completed operation IDs, remaining items and questions now. This checkpoint warning is not an instruction to stop: check the current remaining resources and continue ready independent work when the next bounded batch, its verification, final save and handoff fit. Recheck after each useful batch; only host-recognized verified progress can earn more allowance. If the remaining resources cannot support another useful batch, finish verification and save an honest handoff. Cached tokens count toward the limit. Never reset usage, exceed a hard limit or retry uncertain edits."
+    guidance: near.length ? "Retain completed operation IDs, remaining items and questions now. This checkpoint warning is not an instruction to stop: check the current remaining resources and continue ready independent work when the next bounded batch, its verification, final save and handoff fit. Recheck after each useful batch; complete native source inventory may unlock a frozen bounded planning allocation, while only host-recognized verified edits earn progress credit. If the remaining resources cannot support another useful batch, finish verification and save an honest handoff. Cached tokens count toward the limit. Never reset usage, exceed a hard limit or retry uncertain edits."
       : "Complete and verify useful batches; retain their operation IDs and remaining work as you go." };
 }
 

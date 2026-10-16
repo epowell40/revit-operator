@@ -5,6 +5,16 @@ import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/feature_f
 import { getSidecarAgentProfileState } from "../capabilities/sidecar_agent_profile.js";
 import { isHostedRuntime } from "../runtime_mode.js";
 import type { PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
+import {utf8TextSha256V2} from '../domain/assignment-kernel/canonical.js';
+
+/** A resource hint from the exact human request, never interpreted write authority.
+ * The native complete census must still establish source size before any increase. */
+export function nativeScopePlanningIntentV1(value:string):boolean {
+ const text=value.replace(/\s+/g,' ');
+ if(!/\b(?:schedules?|panels?|panelboards?|circuits?|breakers?)\b/i.test(text))return false;
+ return /\b(?:whole|entire)\s+(?:project|model|building)\b|\bthroughout\b[^.!?]{0,80}\b(?:project|model|building)\b/i.test(text)
+   ||/\b(?:review|check|update|finish|size|populate|fill|correct)\b[^.!?]{0,80}\b(?:all|every|each)\s+(?!other\b)[^.!?]{0,50}\b(?:schedules?|panels?|panelboards?|circuits?|breakers?)\b/i.test(text);
+}
 
 export function trustedLocalExperimentHost(env: NodeJS.ProcessEnv = process.env, context = getRequestContext()): boolean {
   if (!["local", "development"].includes(env.REVIT_OPERATOR_MODE ?? "")
@@ -36,7 +46,7 @@ export function localExecutorCapability(env: NodeJS.ProcessEnv = process.env,
 /** Called only by the trusted assignment factory, never from request arguments. */
 export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
   env: NodeJS.ProcessEnv = process.env, context = getRequestContext(), requestedEffect?: string,
-  sourceAllowance?: PdfWorkAllowanceV1): LocalAdvisoryExecutionPolicyV1 | undefined {
+  sourceAllowance?: PdfWorkAllowanceV1, sourceRequest?:string): LocalAdvisoryExecutionPolicyV1 | undefined {
   if (!trustedLocalExperimentHost(env, context) || !binding.document_fingerprint
       || (!localExecutorCapability(env, context)
         && !(env.OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS ?? "").split(",").map(id => id.trim()).includes(binding.session_id))) return undefined;
@@ -51,6 +61,10 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
     document_fingerprint: binding.document_fingerprint,
     max_turns: limit("OPERATOR_ADVISORY_MAX_TURNS", 8, 16),
     ...(source?{source_work_allowance:structuredClone(source)}:{}),
+    ...(!source&&requestedEffect==='apply'&&env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE==='verified_native_changes_v1'
+      &&env.OPERATOR_LOCAL_MODEL_WORK_ALLOWANCE==='native_inventory_planning_v1'&&sourceRequest&&nativeScopePlanningIntentV1(sourceRequest)
+      ?{native_scope_planning:{mode:'native_inventory_planning_v1' as const,scope_kind:'schedules' as const,
+        source_request_sha256:utf8TextSha256V2(sourceRequest),items_per_unit:5 as const,max_units:4 as const}}:{}),
     max_provider_calls: Math.min(expanded?2048:256,limit("OPERATOR_ADVISORY_MAX_PROVIDER_CALLS", 64, 256)*units),
     max_operations: Math.min(expanded?8192:1024,limit("OPERATOR_ADVISORY_MAX_OPERATIONS", 256, 1024)*units),
     max_total_tokens: Math.min(expanded?256_000_000:32_000_000,limit("OPERATOR_ADVISORY_MAX_TOTAL_TOKENS", 8_000_000, 32_000_000)*units),

@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "native_inventory_work_budget_v2.test.ts",
     "progress_outer_deadline_v2.test.ts",
     "verified_target_work_credit_v2.test.ts",
     "progress_execution_time_v2.test.ts",
@@ -4039,6 +4040,15 @@
       "coverage": [
         "dotnet:ScheduleCellAppearanceContractTests",
         "backend:schedule_cell_appearance_v2.test.ts"
+      ]
+    },
+    {
+      "id": "complete_native_inventory_planning_allowance_without_completion_credit",
+      "coverage": [
+        "backend:native_inventory_work_budget_v2.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:advisory_verification_policy.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
       ]
     },
     {

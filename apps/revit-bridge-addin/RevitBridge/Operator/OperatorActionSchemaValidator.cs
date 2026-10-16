@@ -8274,9 +8274,9 @@ namespace RevitBridge.Operator
                 if (obj.Value.TryGetProperty("action", out var actionEl) && actionEl.ValueKind != JsonValueKind.Null)
                 {
                     schedulesAction = (actionEl.GetString() ?? "").Trim().ToLowerInvariant();
-                    if (!(schedulesAction == "list" || schedulesAction == "detail"))
+                    if (!(schedulesAction == "list" || schedulesAction == "detail" || schedulesAction == "circuits"))
                     {
-                        error = "schedules.action must be 'list' or 'detail'.";
+                        error = "schedules.action must be 'list', 'detail' or 'circuits'.";
                         return false;
                     }
                 }
@@ -8304,6 +8304,16 @@ namespace RevitBridge.Operator
                     int? max = obj.Value.TryGetProperty("max", out var inventoryMax) && inventoryMax.ValueKind != JsonValueKind.Null
                         ? inventoryMax.GetInt32() : (int?)null;
                     if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate(kind, offset, max, out _, out error)) return false;
+                }
+                if (schedulesAction == "circuits")
+                {
+                    if (obj.Value.TryGetProperty("kind", out var circuitKind) && circuitKind.ValueKind != JsonValueKind.Null || obj.Value.TryGetProperty("query", out var circuitQuery)
+                        && circuitQuery.ValueKind != JsonValueKind.Null && !string.IsNullOrWhiteSpace(circuitQuery.GetString()))
+                    { error = "Circuit inventory uses scheduleId for a panel, not query/kind."; return false; }
+                    int? offset = obj.Value.TryGetProperty("offset", out var start) && start.ValueKind != JsonValueKind.Null ? start.GetInt32() : (int?)null;
+                    int? max = obj.Value.TryGetProperty("max", out var size) && size.ValueKind != JsonValueKind.Null ? size.GetInt32() : (int?)null;
+                    if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate("panel", offset, max, out var window, out error)) return false;
+                    if (window!.Max > 500) { error = "Circuit inventory max must be 1..500."; return false; }
                 }
                 foreach (var field in new[] { "rowOffset", "columnOffset", "schedulableFieldOffset" })
                 {

@@ -271,6 +271,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const connectorInspectionBodies: any[] = [];
   const sheetBodies: any[] = [];
   const scheduleBodies: any[] = [];
+  const circuitInventoryBodies:any[]=[];
   const scheduleCellBodies: any[] = [];
   const scheduleReplacementBodies: any[] = [];
   const setParameterBodies: any[] = [];
@@ -351,6 +352,12 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/schedules") {
       scheduleBodies.push(JSON.parse(requestBody || "{}"));
+      if(scheduleBodies.at(-1)?.action==='circuits'){
+        circuitInventoryBodies.push(scheduleBodies.at(-1));
+        res.end(JSON.stringify({schema:'operator.electrical_circuit_inventory.v1',status:'Ok',read_only:true,
+          items:[{id:101,loadName:'OFFICE REC. (3/4"C W/2#12+1#12GRD)',scheduleCircuitNotes:''},
+            {id:102,loadName:'OFFICE REC.',scheduleCircuitNotes:'3/4"C W/2#12+1#12GRD'}]}));return;
+      }
       if(scheduleBodies.at(-1)?.scheduleId === 9007) {
         res.end(JSON.stringify({schema:"operator.panel_schedule_detail.v1",status:"Ok",action:"detail",read_only:true,
           schedule:{id:9007,kind:"panel_schedule",panelElementId:8003},
@@ -699,6 +706,17 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     assert.match(JSON.stringify(denied.content),/Input validation error/);
   }
   assert.equal(scheduleBodies.length,3,"Invalid inventory scope must not dispatch a native read");
+  const circuitInventory=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits',max:500,offset:0}});
+  assert.equal(circuitInventory.isError,undefined,JSON.stringify(circuitInventory.content));
+  const circuitRows=JSON.parse((circuitInventory.content as any)[0].text).items;
+  assert.match(circuitRows[0].loadName,/W\//);assert.match(circuitRows[1].scheduleCircuitNotes,/W\//);
+  assert.deepEqual(circuitInventoryBodies[0],{action:'circuits',exact:false,offset:0,max:500});
+  const defaultCircuitInventory=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits'}});
+  assert.equal(defaultCircuitInventory.isError,undefined);assert.deepEqual(circuitInventoryBodies[1],{action:'circuits',exact:false});
+  for(const invalid of [{kind:'panel'}, {max:501}, {query:'P1'}, {scheduleId:-1}, {offset:-1}]){
+    const denied=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits',...invalid}});assert.equal(denied.isError,true);
+  }
+  assert.equal(circuitInventoryBodies.length,2,'Invalid inventory/evaluator combinations do not reach native host');
 
   const scheduleCell = await withTimeout(client.callTool({
     name: "revit_update_schedule_cell",

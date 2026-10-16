@@ -14,7 +14,7 @@ namespace RevitBridge.Handlers
     {
         public sealed class Params
         {
-            public string? action { get; set; } // list (default) | detail
+            public string? action { get; set; } // list (default) | detail | circuits
             public string? kind { get; set; } // list: regular (default) | panel | all
             public int? offset { get; set; }
             public long? scheduleId { get; set; }
@@ -61,6 +61,12 @@ namespace RevitBridge.Handlers
             if (action == "detail")
             {
                 return Task.FromResult<object>(BuildDetail(doc, p));
+            }
+            if (action == "circuits")
+            {
+                if (!string.IsNullOrWhiteSpace(p.query) || p.kind != null)
+                    throw new ArgumentException("Circuit inventory uses optional scheduleId for a panel; query/kind are list selectors.");
+                return Task.FromResult(RevitBridge.Logic.Handlers.ProjectElectricalCircuitInventory.Read(doc, p.offset ?? 0, p.max, p.scheduleId));
             }
 
             return Task.FromResult<object>(BuildList(doc, p));

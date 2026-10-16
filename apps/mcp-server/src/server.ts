@@ -1648,12 +1648,12 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List schedules with kind=regular (default), panel, or all; list pages return native IDs/UIDs, matched/returned/complete/hasMore/nextOffset. For whole-project panel work start with kind=panel; panel templates are excluded. Only an unfiltered complete inventory establishes whole-project enumeration; the last page alone does not. Read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, actual cell parameter bindings, circuit identities and both Load Name and Schedule Circuit Notes: compact wiring can be stored in either, so description-only counts are incomplete. Follow section row/column continuation. Panel detail pages allow 1..200 rows, 1..40 columns, at most2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
+server.tool("revit_list_schedules", "List schedules with kind=regular (default), panel, or all; list pages return native IDs/UIDs, matched/returned/complete/hasMore/nextOffset. For whole-project panel work start with kind=panel; panel templates are excluded. For compact electrical discovery use action=circuits, max=1..500 (default200), offset and optional native panel scheduleId. Without scheduleId it enumerates all project power circuits, including explicit Spare/Space types, and returns both Load Name and Schedule Circuit Notes, native rating/voltage/VA/phase currents, conductor counts, member IDs and model wire profiles. Follow nextOffset for pages; completeness is enumeration, not suitability or verified work. Load classifications do not establish continuous duty; inspect equipment/use and applicable rules. Read panel detail separately for actual visible cell bindings. Only an unfiltered complete inventory establishes whole-project enumeration; the last page alone does not. Read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, actual cell parameter bindings, circuit identities and both Load Name and Schedule Circuit Notes: compact wiring can be stored in either, so description-only counts are incomplete. Follow section row/column continuation. Panel detail pages allow 1..200 rows, 1..40 columns, at most2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
   {
-    action: z.enum(["list", "detail"]).optional().default("list"),
+    action: z.enum(["list", "detail", "circuits"]).optional().default("list"),
     kind: z.enum(["regular", "panel", "all"]).optional().describe("List selector. Resolve panel detail by a scheduleId from its inventory."),
     offset: z.number().int().min(0).max(100000).optional(),
-    scheduleId: z.number().int().optional(),
+    scheduleId: z.number().int().positive().optional(),
     query: z.string().optional(),
     exact: z.boolean().optional().default(false),
     max: z.number().int().min(1).max(500).optional(),
@@ -1672,6 +1672,7 @@ server.tool("revit_list_schedules", "List schedules with kind=regular (default),
       if (args.action === "detail" && args.scheduleId === undefined && !String(args.query ?? "").trim()) {
         throw new Error("revit_list_schedules detail requires scheduleId or query.");
       }
+      if(args.action==='circuits'&&(args.kind!==undefined||args.query?.trim()))throw Error('Circuit inventory uses optional scheduleId, not query/kind.');
       const data = await callRevit("/revit/schedules", "POST", args, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
