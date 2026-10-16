@@ -171,7 +171,11 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "native_inventory_workload.ts") {
+        assert.match(source, /import\s*\{\s*nativeSourceInventoryRequestV1\s*,\s*nativeSourceInventoryWorkloadV1\s*\}\s*from ['"]@revitoperator\/assignment-kernel-v2-contracts['"]/);
+        assert.doesNotMatch(source, /\/revit\//i, "native inventory wire interpretation belongs in the shared pure decoder");
+      }
       if (path.basename(file) === "family_capacity_retry.ts") {
         assert.match(source, /import \{ nativeFamilySessionRequestV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
         assert.doesNotMatch(source, /\/revit\//i);
@@ -275,7 +279,11 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
   }
   assert.doesNotMatch(brain, /(?:activeClient|c)\.startTurn\(/, "neither provider start may bypass instruction binding");
   const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
-  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
+  // The ordinary exit also owns an earned-work deadline: expiry must interrupt
+  // and drain the started turn, while receipts still reconcile before release.
+  assert.match(brain, /let workTimeExpired\s*=\s*false/);
+  assert.match(brain, /workTimeExpired\s*=\s*error instanceof CodexWorkTimeExpiredError/);
+  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(workTimeExpired)", reconcileAt);
   assert.ok(reconcileAt >= 0 && normalReleaseAt > reconcileAt,
     "completed provider receipts must reconcile before the immutable terminal barrier is released");
   const setupBindAt = brain.indexOf("bindBackendAuthLeaseTurn(backendAuthLease, turnId)", providerStartAt);

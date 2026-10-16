@@ -1,5 +1,4 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
-import path from "node:path";
 import type { ChatRequest, ChatResponse } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -14,7 +13,7 @@ import { recordCodexProviderUsageHoldV2 } from "../assignments/assignment_kernel
 import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 import { buildCodexTurnInput } from "./codex_turn_input.js";
 import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
-import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
+import {getCodexProfilePaths,buildCodexSpawnEnv} from "../codex/profile_environment.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
 import { codexAssignmentTurnTimeLimits, createCodexAssignmentProgressTimeMonitor } from "../codex/assignment_timeout.js";
@@ -176,23 +175,6 @@ export function __testOnlyTrackCodexBrainTurnAbort(
 
 function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
-}
-
-function getCodexProfilePaths(workspaceRoot: string, profile: CodexThreadStartProfile): { codexHome: string; cwd: string } {
-  if (profile.certified) return prepareCertifiedCodexIsolation({ workspaceRoot });
-  const codexHome = path.join(workspaceRoot, ".codex");
-  ensureCodexHomeAuth({ codexHome });
-  ensureCodexHomeConfig({ codexHome });
-  return { codexHome, cwd: workspaceRoot };
-}
-
-function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // Do not leak OpenAI keys into child Codex processes; prefer login-backed auth.
-  delete env.OPENAI_API_KEY;
-  delete env.OPERATOR_OPENAI_API_KEY;
-  env.OPERATOR_WORKSPACE_ROOT = workspaceRoot;
-  return env;
 }
 
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {

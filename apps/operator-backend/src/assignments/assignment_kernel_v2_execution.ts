@@ -1,3 +1,4 @@
+import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
 import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
@@ -159,39 +160,6 @@ function boundedDeadline(openedAt: string): string {
   const parsed = Number.parseInt(process.env.OPERATOR_MCP_TOOL_TIMEOUT_MS ?? "", 10);
   const timeout = Number.isFinite(parsed) ? Math.max(1_000, Math.min(30 * 60_000, parsed)) : 240_000;
   return new Date(Date.parse(openedAt) + timeout).toISOString();
-}
-
-function operationEffect(effect: string): RequestedEffectV2 {
-  if (effect === "preview" || effect === "apply") return effect;
-  return "read";
-}
-
-function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): OperationPurposeV2 {
-  if (snapshot.unresolved_unknown_operation_ids.length > 0 && effect === "read") {
-    return "reconciliation";
-  }
-  if (effect === "evidence_read") return "evidence_read";
-  if (effect === "discovery" || effect === "navigation") return "discovery";
-  if (effect === "read" && snapshot.spec.requested_effect === "apply"
-      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply"
-        && operation.persistent_effect === "applied"
-        && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
-    return "verification";
-  }
-  if (effect === "read" && snapshot.spec.requested_effect !== "read") return "discovery";
-  return "work";
-}
-
-function admittedWorkUnit(snapshot: AssignmentSnapshotV2, suggestedEffect: RequestedEffectV2, purpose: OperationPurposeV2): AssignmentSnapshotV2["spec"]["work_units"][number] {
-  const preferred = purpose === "evidence_read" ? "work-evidence"
-    : purpose === "verification" ? "work-verification"
-      : purpose === "discovery" && snapshot.spec.requested_effect !== "read" ? "work-discovery"
-        : suggestedEffect === "preview" && snapshot.spec.requested_effect === "apply" ? "work-preview"
-          : "work-primary";
-  const unit = snapshot.spec.work_units.find(candidate => candidate.work_unit_id === preferred && candidate.requested_effect === suggestedEffect)
-    ?? snapshot.spec.work_units.find(candidate => candidate.requested_effect === suggestedEffect);
-  if (!unit) throw new Error("assignment_kernel_v2_work_unit_not_admitted");
-  return unit;
 }
 
 function canonicalInput(value: unknown): Record<string, unknown> {
