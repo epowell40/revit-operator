@@ -4196,8 +4196,12 @@
       "sha256": "sha256:83c2cceb7d10cea6c6915b25749ed51ed607e645ad775b9e78f026fddca03df1"
     },
     {
+      "path": "apps/operator-backend/src/verification/regular_schedule_presentation_scope_v2.ts",
+      "sha256": "sha256:201bb81818075b53ba33971a061f89523c1f85992dbefda415b6799ceba6b8f7"
+    },
+    {
       "path": "apps/operator-backend/src/verification/regular_schedule_presentation_v2.ts",
-      "sha256": "sha256:ee2334ab1b255fbad6932f3df9fcadfad1439e8d02e92d2491e7e69e4feba678"
+      "sha256": "sha256:3800b7b1cf68150dc629c630605c83b13555999ef37ebab5f9fc30482c063cc9"
     },
     {
       "path": "apps/operator-backend/src/verification/requested_family_scope_readback_v1.ts",
@@ -4241,7 +4245,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/verification_capability_admission_v2.ts",
-      "sha256": "sha256:c0f2f09e7803e247c9a066370d0ed3416c145ea109b07cc41d1280bf42f1775d"
+      "sha256": "sha256:f415bf5e7004027957d669a136c311bea1b3df91fb3afb4615e2e7bcaa3cadbe"
     },
     {
       "path": "apps/operator-backend/src/verification/verification_payload_boundary_v2.ts",
@@ -5736,6 +5740,10 @@
       "sha256": "sha256:0220c6b0a5afe0fef09b04b91b3229667eb7bd2542a9a23d7225da8e75e8d34f"
     },
     {
+      "path": "apps/operator-backend/test/fixtures/regular-schedule-wide-native-inventory.json",
+      "sha256": "sha256:ab28d5dfa283352c902aefc39e2d53779cb84507e1a97a249ae448f0671d7d63"
+    },
+    {
       "path": "apps/operator-backend/test/fixtures/retained-native-failure-dependency.json",
       "sha256": "sha256:fd2c481e2e20ae42ac1dc44ecf1ade7dcbb02884330e952e883b95642a498db3"
     },
@@ -6308,8 +6316,12 @@
       "sha256": "sha256:56f1531d438a356c330e9fc26c6579e8a1d75dfd418a90430d602e8fe2d4765b"
     },
     {
+      "path": "apps/operator-backend/test/regular_schedule_presentation_scope_v2.test.ts",
+      "sha256": "sha256:31fcf109f0df2412ec71e4ea4b394c480b92d470f4699a1dcf008f1e5b61ac08"
+    },
+    {
       "path": "apps/operator-backend/test/regular_schedule_presentation_v2.test.ts",
-      "sha256": "sha256:3a00cf35bcea06241c4c2885f5cd193d96e52e73df1d992fac938d2a92f29335"
+      "sha256": "sha256:2c5c7deb2478af07aa6432b893a1857bc274ee4e75a62cd20f15255f1a8dee55"
     },
     {
       "path": "apps/operator-backend/test/rename_view_plan_receipt.test.ts",
@@ -7413,7 +7425,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/SchedulePresentationContractTests.cs",
-      "sha256": "sha256:1e08b4de6827837d52a27c1db9a0becb04b2acbff6aafc53c43db9c1ade136f8"
+      "sha256": "sha256:6774106fe43ef82a189c55a7cd170ffc9976656d6ea74b17758286e4da2b7946"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleSettlementTests.cs",
@@ -8114,7 +8126,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/SchedulePresentationContract.cs",
-      "sha256": "sha256:b480f3da9ad58ce170a2a318e1d3c7290e18c01cd66487554cbc5a7a7d92a426"
+      "sha256": "sha256:07d7f361888698b751c2b9ffb4b3384b2e1aa8648e98dddaa77ba0a6612c4c81"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleValueReplacementPolicy.cs",
@@ -9062,7 +9074,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ConfigureScheduleHandler.cs",
-      "sha256": "sha256:224d64816e036a8c6e1f8ed2100629e136533a2dbfaf8d6e39adc76496db3895"
+      "sha256": "sha256:f297bb2a7d5e2adfefc2d3b624c8518760725483f9136edbd42ee26354d92baa"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ContextHandler.cs",
@@ -9317,6 +9329,10 @@
       "sha256": "sha256:0c0c5d03000e64cb19a3ec35ee36f124cd13d44c371499307244373303ac1b34"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RegularSchedulePresentationScope.cs",
+      "sha256": "sha256:2e5d1faa4ad9cafcd3ce2c3f7b9892b5ebeb16d47dd00aab75d6325338c6f049"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RenumberRoomsHandler.cs",
       "sha256": "sha256:5297480e32a32c67058dffe6f481d5416c72338e7a8afadd90c51305120cd6e2"
     },
@@ -9346,7 +9362,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleCellAppearanceOperations.cs",
-      "sha256": "sha256:ac4d4caed92c670727fce8bb7f238c8a31cf7ddc3ddf87e7d75381a6d30fa796"
+      "sha256": "sha256:8a6afa7347fa79a072ce7a2efc254132570e0136fcba4b920d1c8fe1c74cb42e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleSelectionHelper.cs",
@@ -9354,7 +9370,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SchedulesHandler.cs",
-      "sha256": "sha256:8304f4984a53ec9657f37692bab879bf8171de6e9fb2eec0fcd7a5c2a5a80a4b"
+      "sha256": "sha256:161729f4e3bff759991e364deed1576dab52ee98909f750fae08ef4ceb287921"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SelectionHandlerProxies.cs",
@@ -9426,7 +9442,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionSchemaValidator.cs",
-      "sha256": "sha256:7dd916c1fa21b3903c7ba71ee7896269269a18c64c016faa3d083693bdb9f314"
+      "sha256": "sha256:4e4df8447249af0ad43dd69d88ec811404acd1ff0806d2f568ca26b8702f18e4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorApprovalPolicy.cs",
@@ -9526,7 +9542,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:c1af4476ac29611896230701586586cd8b9be0c8589d2e79df331c18c0350cbd"
+      "sha256": "sha256:0ed5ed1bb30762a1690bdd8903ee7f563607e84377f48434ec1d4200c206a29d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -9709,7 +9725,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:eba9179629caad625604b4e57f9d1e0bfd4012334a81eba05ddefed27bdbf08b",
+  "inputs_hash": "sha256:efbafad8bcb21639c9b19afb98b1cab939b8834ecda4205bdc48741f450d9abd",
   "result": {
     "passed": true,
     "checks": [

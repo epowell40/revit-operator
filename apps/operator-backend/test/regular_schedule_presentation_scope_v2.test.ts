@@ -53,3 +53,37 @@ test('the retained116 wider native inventory stays unverified without its missin
   assert.equal(regularSchedulePresentationReadbackMatchesV2(f.input,a,fresh),false);
   assert.equal(regularSchedulePresentationScopeMatchesV2(a.schedule.id,a.schedule.uniqueId,a,fresh),false);
 });
+
+
+test('actual native GetDependentElements self entry is identity only, never a generated child',()=>{
+  const native=JSON.parse(fs.readFileSync('test/fixtures/regular-schedule-native-self-dependency.json','utf8')).native_read;
+  const target=native.schedule, old=native.scope.unrequestedSchedules[0].scheduleId;
+  const apply={transaction:{added_element_ids:[],deleted_element_ids:[],modified_element_ids:[target.id,old]},presentationScopeBefore:structuredClone(native.scope),presentationScopeAfter:structuredClone(native.scope)};
+  assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,apply,native),true);
+  for(const field of ['uniqueId','className'] as const){
+    for(const where of ['before','after','fresh']){
+      const a=structuredClone(apply),r=structuredClone(native);
+      const scope=where==='before'?a.presentationScopeBefore:where==='after'?a.presentationScopeAfter:r.scope;
+      scope.dependencies.find((d:any)=>d.id===target.id)[field]='foreign';
+      assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,a,r),false);
+    }
+  }
+  for(const where of ['before','after','fresh']){
+    const a=structuredClone(apply),r=structuredClone(native);
+    const scope=where==='before'?a.presentationScopeBefore:where==='after'?a.presentationScopeAfter:r.scope;
+    scope.dependencies.push(structuredClone(scope.dependencies.find((d:any)=>d.id===target.id)));
+    assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,a,r),false);
+  }
+  const forged=structuredClone(apply);forged.transaction.added_element_ids.push(target.id);
+  assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,forged,native),false);
+  const missing=structuredClone(apply);missing.transaction.modified_element_ids.push(999999);
+  assert.equal(regularSchedulePresentationScopeMatchesV2(target.id,target.uniqueId,missing,native),false);
+});
+
+test('self entries do not relax preserved schedules or generated dependency checks',()=>{
+  const f=fixture(),self={id:41,uniqueId:'view:41',className:'Autodesk.Revit.DB.ViewSchedule',ownerViewId:-1};
+  for(const s of [f.apply.presentationScopeBefore,f.apply.presentationScopeAfter,f.read.scope])s.dependencies.unshift({...self});
+  assert.equal(regularSchedulePresentationScopeMatchesV2(41,'view:41',f.apply,f.read),true);
+  f.read.scope.dependencies.find(d=>d.id===900)!.className='Autodesk.Revit.DB.TextNote';
+  assert.equal(regularSchedulePresentationScopeMatchesV2(41,'view:41',f.apply,f.read),false);
+});

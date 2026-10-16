@@ -56,7 +56,7 @@ test('mixed edits, partial orders and unsafe IDs cannot fall into generic verifi
  assert.deepEqual(operationTargetSelectorV2({operation:apply,value:f.applied}).principal_target_tokens,['id:41','scheduleid:41']);
 });
 // Ordinary dynamic-tool pipeline with durable evidence, not an external grader.
-for(const variant of ['exact','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_changed','wide_unowned'] as const)
+for(const variant of ['exact','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
 test(`ordinary native presentation edit ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-presentation-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
@@ -77,6 +77,7 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
     if(variant.startsWith('wide_')){
       const before={schema:'operator.regular_schedule_presentation_scope.v1',complete:true,coverage:'configuration_cell_text_style_geometry_v1',targetId:41,targetUniqueId:'view:41',totalUnrequestedCells:400,
         unrequestedSchedules:[{scheduleId:42,uniqueId:'view:42',semanticHash:'a'.repeat(64)}],dependencies:[] as any[]};
+      if(variant==='wide_self')before.dependencies.push({id:41,uniqueId:'view:41',className:'Autodesk.Revit.DB.ViewSchedule',ownerViewId:-1});
       const after=structuredClone(before);after.dependencies.push({id:900,uniqueId:'generated:900',className:'Autodesk.Revit.DB.Element',ownerViewId:-1});
       if(read){payload.scope=after;if(variant==='wide_changed')payload.scope.unrequestedSchedules[0].semanticHash='b'.repeat(64);if(variant==='wide_unowned')payload.scope.dependencies=[];}
       else{payload.presentationScopeBefore=before;payload.presentationScopeAfter=after;payload.transaction.added_element_ids=[900];payload.transaction.modified_element_ids=[41,42];}
@@ -111,8 +112,8 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/schedules').length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    assert.equal(calls.filter(c=>c.path==='/revit/schedules').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,['exact','wide_exact'].includes(variant));
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','wide_exact','unretained_apply'].includes(variant));
+   assert.equal(verified,['exact','wide_exact','wide_self'].includes(variant));
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','wide_exact','wide_self','unretained_apply'].includes(variant));
    assert.equal(Object.values(s.operations).filter(o=>o.requested_effect==='apply').length,1);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}

@@ -23,10 +23,18 @@ function scope(value: unknown, id: number, uid: string) {
     if (!positive(row.scheduleId) || row.scheduleId === id || !identity(row.uniqueId) || !hash(row.semanticHash) || schedules.has(row.scheduleId)) return null;
     schedules.set(row.scheduleId, row);
   }
+  const seenDependencies = new Set<number>();
   for (const raw of v.dependencies) {
     const row = object(raw);
-    if (!positive(row.id) || row.id === id || !identity(row.uniqueId) || !Number.isSafeInteger(row.ownerViewId)
-        || typeof row.className !== 'string' || !row.className.startsWith('Autodesk.Revit.DB.') || dependencies.has(row.id)) return null;
+    if (!positive(row.id) || !identity(row.uniqueId) || !Number.isSafeInteger(row.ownerViewId)
+        || typeof row.className !== 'string' || !row.className.startsWith('Autodesk.Revit.DB.') || seenDependencies.has(row.id)) return null;
+    seenDependencies.add(row.id);
+    // Revit GetDependentElements may include the owner itself. It is identity
+    // evidence only; never treat the target as a generated child.
+    if (row.id === id) {
+      if (row.uniqueId !== uid || row.className !== 'Autodesk.Revit.DB.ViewSchedule') return null;
+      continue;
+    }
     dependencies.set(row.id, row);
   }
   return {schedules, dependencies, cells: v.totalUnrequestedCells};
