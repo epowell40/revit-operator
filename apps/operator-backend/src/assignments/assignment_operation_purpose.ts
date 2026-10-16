@@ -1,5 +1,5 @@
+import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import type {AssignmentSnapshotV2,OperationPurposeV2,RequestedEffectV2} from '../domain/assignment-kernel/index.js';
-import {appliedOperationHasVerifiedPostconditionV2} from '../domain/assignment-kernel/outcome.js';
 
 export function operationEffect(effect: string): RequestedEffectV2 {
   if (effect === "preview" || effect === "apply") return effect;
@@ -15,7 +15,7 @@ export function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2)
   if (effect === "read" && snapshot.spec.requested_effect === "apply"
       && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply"
         && operation.persistent_effect === "applied"
-        && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
+        && operationNeedsReadbackV2(snapshot,operation))) {
     return "verification";
   }
   if (effect === "read" && snapshot.spec.requested_effect !== "read") return "discovery";

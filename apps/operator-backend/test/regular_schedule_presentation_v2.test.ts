@@ -124,7 +124,7 @@ test('native presentation read planning rejects stale bindings, unknowns, pendin
  const op:any={operation_id:'opv2_'+'a'.repeat(64),binding,input:f.input,request_identity:{path:f.input.path,request_signature:'b'.repeat(64)},
   admission_state:'admitted',dispatch_state:'dispatched',settlement_state:'settled',requested_effect:'apply',persistent_effect:'applied',verification_operation_ids:[],observation_ids:[],
   result:{operation_id:'opv2_'+'a'.repeat(64),binding,status:'succeeded',dispatch_state:'dispatched',authority:'native-host',native_transaction_state:'committed',persistent_effect:'applied',completed_at:'2026-10-14T10:00:01Z',request_identity:{request_signature:'b'.repeat(64)},affected_target_identities:['element_id:41'],receipt_id:'receipt:one',native_correlation_id:'native:one'}};
- const snapshot:any={terminal:false,outcome:'active',current_binding:binding,unresolved_unknown_operation_ids:[],operations:{[op.operation_id]:op},observations:{}};
+ const snapshot:any={in_flight_operation_ids:[],terminal:false,outcome:'active',current_binding:binding,unresolved_unknown_operation_ids:[],operations:{[op.operation_id]:op},observations:{}};
  assert.deepEqual(committedRegularSchedulePresentationReadbackPlanV2(snapshot,op),{method:'POST',path:'/revit/schedules',body:{action:'presentation',scheduleId:41}});
  for(const mutate of [(s:any,o:any)=>o.requested_effect='preview',(s:any,o:any)=>o.input.body.dryRun=true,
   (s:any,o:any)=>o.input.body.dryRun='false',(s:any)=>s.unresolved_unknown_operation_ids=['old'],
@@ -135,9 +135,10 @@ test('native presentation read planning rejects stale bindings, unknowns, pendin
   (s:any,o:any)=>o.verification_operation_ids=['already'],
   (s:any)=>s.execution_control={state:'paused'},(s:any)=>s.completion_proposal={},(s:any)=>s.terminal=true,
   (s:any,o:any)=>s.input_invalidated_operation_ids=[o.operation_id],
-  (s:any,o:any)=>s.operations.later={...o,operation_id:'later',result:{...o.result}},
   (s:any,o:any)=>s.operations.pending={...o,operation_id:'pending',settlement_state:'pending',persistent_effect:'none',result:undefined}]){
   const s=structuredClone(snapshot),o=s.operations[op.operation_id];mutate(s,o);assert.equal(committedRegularSchedulePresentationReadbackPlanV2(s,o),null);
  }
+ const later=structuredClone(snapshot);later.operations.later={...op,operation_id:'later',result:{...op.result}};
+ assert(committedRegularSchedulePresentationReadbackPlanV2(later,later.operations[op.operation_id]),'Later settled edits allow a new read, never a proof from the old receipt.');
 });
 

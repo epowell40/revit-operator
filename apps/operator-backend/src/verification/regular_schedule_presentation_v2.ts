@@ -1,3 +1,4 @@
+import { regularScheduleCheckNeedsRefreshV2 } from './regular_schedule_recheck_v2.js';
 import { regularScheduleFieldDefinitionV2 as definition } from './regular_schedule_field_definition_v2.js';
 import { regularSchedulePresentationScopeMatchesV2, regularSchedulePresentationInventoryMatchesV2 } from './regular_schedule_presentation_scope_v2.js';
 import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
@@ -87,10 +88,11 @@ function settledApply(snapshot: AssignmentSnapshotV2, op: OperationV2) {
       || r.request_identity?.request_signature !== op.request_identity.request_signature || !r.native_correlation_id || !r.receipt_id
       || !Number.isFinite(Date.parse(r.completed_at)) || !Array.isArray(r.affected_target_identities)
       || !r.affected_target_identities.includes('element_id:'+wanted.scheduleId)) return null;
-  // A later edit anywhere may affect a dependent cell; reacquire current state after the latest mutation.
-  if (Object.values(snapshot.operations).some(other => other.operation_id !== op.operation_id && other.requested_effect === 'apply'
-      && ((other.dispatch_state === 'dispatched' && other.settlement_state !== 'settled')
-        || (other.persistent_effect !== 'none' && other.result && Date.parse(other.result.completed_at) >= Date.parse(r.completed_at))))) return null;
+  // Rechecks may follow other settled edits. Never inspect across an active
+  // mutation; the separate read must start after every known commit below.
+  if (snapshot.in_flight_operation_ids.some(id=>snapshot.operations[id]?.requested_effect==='apply')
+      || Object.values(snapshot.operations).some(other=>other.requested_effect==='apply'
+        && other.dispatch_state==='dispatched' && other.settlement_state!=='settled')) return null;
   return wanted;
 }
 
@@ -111,7 +113,8 @@ function retainedApply(snapshot: AssignmentSnapshotV2, op: OperationV2) {
 export function committedRegularSchedulePresentationReadbackPlanV2(snapshot: AssignmentSnapshotV2, op: OperationV2) {
   const wanted = settledApply(snapshot,op);
   if (!wanted || snapshot.terminal || snapshot.outcome !== 'active' || snapshot.completion_proposal || snapshot.execution_control?.state === 'paused'
-      || op.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)) return null;
+      || ((op.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id))
+        && !regularScheduleCheckNeedsRefreshV2(snapshot,op))) return null;
   return {method:'POST',path:'/revit/schedules',body:{action:'presentation',scheduleId:wanted.scheduleId}};
 }
 
@@ -136,6 +139,15 @@ export function regularSchedulePresentationPostconditionSatisfiedV2(snapshot: As
       || Date.parse(read.completed_at) < Date.parse(readOp.opened_at)
       || !sameAssignmentBindingV2(readOp.binding,read.binding) || readOp.request_identity?.request_signature !== read.request_identity.request_signature
       || !equal(b,{action:'presentation',scheduleId:wanted.scheduleId})) return false;
+  // A late read result that began before a later edit is not final evidence.
+  if(Object.values(snapshot.operations).some(other=>other.requested_effect==='apply'
+    && other.persistent_effect!=='none' && (!other.result
+      || !sameAssignmentBindingV2(other.binding,snapshot.current_binding)
+      || !Number.isFinite(Date.parse(other.result.completed_at))
+      || Date.parse(other.result.completed_at)>Date.parse(readOp.opened_at)
+      || Date.parse(other.result.completed_at)===Date.parse(readOp.opened_at)
+        && !(Number.isSafeInteger(other.settled_assignment_version) && Number.isSafeInteger(readOp.admitted_assignment_version)
+          && readOp.admitted_assignment_version!>other.settled_assignment_version!))))return false;
   const applied=retainedApply(snapshot,op);
   return regularSchedulePresentationInventoryMatchesV2(applied,op.result!.affected_target_identities)
     && regularSchedulePresentationReadbackMatchesV2(op.input,applied,payload);

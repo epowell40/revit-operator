@@ -4228,6 +4228,15 @@
         "backend:regular_schedule_presentation_v2.test.ts",
         "dotnet:SchedulePresentationContractTests"
       ]
+    },
+    {
+      "id": "schedule_final_readback_after_later_commits",
+      "coverage": [
+        "backend:regular_schedule_column_width_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:work_review_handoff.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

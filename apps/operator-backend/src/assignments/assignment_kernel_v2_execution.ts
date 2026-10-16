@@ -1,3 +1,4 @@
+import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
 import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
@@ -257,7 +258,7 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
       && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
-      && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
+      && operationNeedsReadbackV2(snapshot,operation)
       && verificationReadTargetsCovered(operation, targetTokens, identity)
       && verificationCapabilityAdmissionV2({
         apply: { capability_id: operation.capability_id, method: operation.request_identity?.method,
