@@ -572,7 +572,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:d3171636a8e884e937ff9fa858d634808a45f8114c3e5d004123efc7b6186698"
+      "sha256": "sha256:520b4b416a6d4fc946ed14fa05a9b0e53b4df79fba1572c986a235386eb31585"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -848,7 +848,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_work_plan.ts",
-      "sha256": "sha256:e7b2c82770637cecffbc2cb88c955fe1b902ce5969c1164e0db4adffdc16140a"
+      "sha256": "sha256:69c8eb842cccea287a33a8fbe24d5b0e9867682bdb862424917bfc64fe216975"
     },
     {
       "path": "apps/operator-backend/src/assignments/async_tool_settlement.ts",
@@ -904,7 +904,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/local_advisory_policy.ts",
-      "sha256": "sha256:a20f42061910fc6b1c80d6af82e2efc2d1ea9c5fab24357f8f5e768db59afeda"
+      "sha256": "sha256:37524cc2303e44b30d3a4ba456cd34f1837496fdd7cc7486871d87dcd4b8821d"
     },
     {
       "path": "apps/operator-backend/src/assignments/mcp_result_disposition.ts",
@@ -1504,7 +1504,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
-      "sha256": "sha256:39a572c23178dbbce0ed191bbf2696bd3915cf32e94c5cb99c21be2b466b4d27"
+      "sha256": "sha256:2eae7c9643f783462ecbca8d3cc03c63af0c5fb324ac4c4dafcf711ae54521ad"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
@@ -1560,7 +1560,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_profile.ts",
-      "sha256": "sha256:42a1afa6b35a20b5a84c576735bb218a396bea6362107fff6951ccefdd919876"
+      "sha256": "sha256:5a9ade5e43efbca379a42fdbad2540c1ab308b7e20a83a2dafdf5e1fad7c9542"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_visual_input.ts",
@@ -1629,6 +1629,10 @@
     {
       "path": "apps/operator-backend/src/brains/thin_reference_execution.ts",
       "sha256": "sha256:b573454c515c518d7d0267c76edf521718d0662bb47876e438fb9fb50ddf6c84"
+    },
+    {
+      "path": "apps/operator-backend/src/brains/work_continuation_guidance.ts",
+      "sha256": "sha256:fa45cc423f2d90ab8046202a3828ff280bb7803aa6c6f96dd0049c9c9ac48575"
     },
     {
       "path": "apps/operator-backend/src/brains/workbench_prompt_formatter.ts",
@@ -2873,7 +2877,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/execution_policy.ts",
-      "sha256": "sha256:ba8d161067c594c7ec360aed6503668f33caf619f6050af1ce739bc313d6615e"
+      "sha256": "sha256:2324f646cec98e85a46da0c077fbb1f5b3fa3135fbf0f70f60c9d19298bc6401"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/family_capacity_retry.ts",
@@ -4333,7 +4337,7 @@
     },
     {
       "path": "apps/operator-backend/test/advisory_verification_policy.test.ts",
-      "sha256": "sha256:68187158f2a13d94cbee4bf81e3c5234e879c97244a806804c9f9fd7c466896f"
+      "sha256": "sha256:7ed3dac64e74b820ea39f1decc35a7321fc850856e0d93bffd5050767064567c"
     },
     {
       "path": "apps/operator-backend/test/aec_intent_evidence.test.ts",
@@ -9653,7 +9657,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:6d0429a8299aed1c90eda0018278b55cd4deb5ca20d70084f79ad8812ab4f43a",
+  "inputs_hash": "sha256:b866a73b009e3980e80c8dbdab05e489ceea1ca550b706d93d964178c48c857a",
   "result": {
     "passed": true,
     "checks": [
