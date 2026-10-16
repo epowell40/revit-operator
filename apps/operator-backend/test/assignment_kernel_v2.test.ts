@@ -322,6 +322,40 @@ function result(rawPayload: unknown, effect: "read" | "preview" | "apply" = "rea
   };
 }
 
+test("large native affected sets survive transport, durable kernel replay and still require verification", () => {
+  for (const count of [257, 400, 4096]) {
+    const identities = Array.from({ length: count }, (_, i) => `element_id:${1000000 + i}`).sort();
+    const nativeResult = { ...result({}, "apply"), affected_target_identities: identities };
+    const decoded = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: nativeResult } });
+    const journal = createJournal(spec("apply"));
+    journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+    journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+    const saved = journal.append(event(journal, { event_type: "operation_result_recorded", result: decoded }));
+    assert.deepEqual(saved.operations["operation-1"]!.result!.affected_target_identities, identities);
+    assert.deepEqual(reduceAssignmentEventsV2(JSON.parse(JSON.stringify(journal.events()))), saved);
+    assert.notEqual(saved.outcome, "complete");
+    assert.equal(saved.operations["operation-1"]!.verification_operation_ids.length, 0);
+  }
+});
+
+test("large-set admission retains malformed, duplicate, unsorted and non-native authority guards", () => {
+  const ids = Array.from({ length: 400 }, (_, i) => `element_id:${1000000 + i}`).sort();
+  for (const identities of [[...ids, ids[0]!], [...ids].reverse(), [...ids, " bad"], [...ids, "bad\u0000id"],
+    Array.from({ length: 4097 }, (_, i) => `element_id:${1000000 + i}`).sort()]) {
+    const nativeResult = { ...result({}, "apply"), affected_target_identities: identities };
+    assert.throws(() => unwrapOperationResultV2({ transport: "direct_native", operation_result_v2: nativeResult }), /affected targets/);
+    const direct = createJournal(spec("apply"));
+    direct.append(event(direct, { event_type: "operation_admitted", operation: operation("apply") }));
+    direct.append(event(direct, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+    assert.throws(() => direct.append(event(direct, { event_type: "operation_result_recorded", result: nativeResult })), /Affected targets/);
+  }
+  const journal = createJournal(spec("apply"));
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+  assert.throws(() => journal.append(event(journal, { event_type: "operation_result_recorded",
+    result: { ...result({}, "apply"), authority: "model" as any, affected_target_identities: ids } })));
+});
+
 function registry(): ObservationDecoderRegistryV2 {
   const output = new ObservationDecoderRegistryV2();
   output.register("inventory-result/v1", (raw) => {

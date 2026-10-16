@@ -4077,6 +4077,15 @@
       ]
     },
     {
+      "id": "native_dependent_change_receipts_above_256_without_verification_credit",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:native_change_inventory_v2.test.ts",
+        "dotnet:OperatorNativeChangeInventoryTests"
+      ]
+    },
+    {
       "id": "uploaded_text_specification_scoped_read_and_turn_authority",
       "coverage": [
         "backend:read_text_attachment.test.ts",
@@ -4330,6 +4339,7 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/assignment-kernel-v2-contracts/native-affected-targets.test.mjs",
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
     "package/operator-assistant-ui/session_start.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",

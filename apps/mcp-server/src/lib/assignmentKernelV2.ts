@@ -8,6 +8,8 @@ import {
 } from "@revitoperator/payload-digest-v2";
 import {
   OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+  MAX_NATIVE_AFFECTED_TARGETS_V2,
+  isNativeAffectedTargetIdentityV2,
   nativeArtifactReceiptEffectV1,
   nativeArtifactResultEffectV2,
   assignmentKernelControlEvidenceFactsV2,
@@ -219,12 +221,11 @@ function text(value: unknown, max = 500): string {
 function affectedTargetIdentities(settlement: Record<string, unknown>): string[] {
   const source = settlement.affected_target_identities;
   if (source === undefined) return [];
-  if (!Array.isArray(source) || source.length > 256) {
+  if (!Array.isArray(source) || source.length > MAX_NATIVE_AFFECTED_TARGETS_V2) {
     throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
   }
   const identities = source.map(value => {
-    if (typeof value !== "string" || value !== value.trim() || value.length === 0 || value.length > 500
-        || /[\u0000-\u001f\u007f]/.test(value)) {
+    if (!isNativeAffectedTargetIdentityV2(value)) {
       throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
     }
     return value;

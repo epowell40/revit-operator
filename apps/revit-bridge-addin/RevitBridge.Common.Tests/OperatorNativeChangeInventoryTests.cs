@@ -8,6 +8,21 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorNativeChangeInventoryTests
     {
+        [Fact]
+        public void DependentCadAndFamilyChangesRemainCompleteAbove256Identities()
+        {
+            var doc = new object();
+            var inventory = new OperatorNativeChangeInventory(doc);
+            var added = Enumerable.Range(1000000, 400).Select(i => (long)i).ToArray();
+            inventory.Observe(() => doc, () => added, () => new long[] { 9946 }, () => Array.Empty<long>());
+            var receipt = inventory.CommittedReceipt();
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new { transaction = receipt }, "apply", "POST", "/revit/link-cad");
+            Assert.True(inventory.Exhaustive);
+            Assert.Equal(401, receipt.AffectedElementIds.Count);
+            Assert.Equal(401, settlement.AffectedTargetIdentities.Count);
+            Assert.All(added, id => Assert.Contains("element_id:" + id, settlement.AffectedTargetIdentities));
+            Assert.Equal("applied", settlement.EffectState);
+        }
         // Models Revit Document.Equals: same open native document, different managed wrappers.
         private sealed class DocumentWrapper
         {

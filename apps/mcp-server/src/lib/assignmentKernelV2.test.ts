@@ -4,6 +4,42 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+
+test("native commits retain complete large affected sets rather than losing CAD and family change receipts", async () => {
+  for (const count of [257, 400, 4096]) {
+    const identities = Array.from({ length: count }, (_, i) => `element_id:${1000000 + i}`).sort();
+    const route = "/revit/link-cad", body = { sourcePath: "fixture.dwg", viewName: "Layers", dryRun: false };
+    // Synthetic cardinality vectors: the retained live133 rejection lost its raw
+    // receipt, so these do not pretend to be its exact native changed-ID census.
+    const payload = { status: "Linked", transaction: { status: "committed", committed: true },
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        request_dispatched: true, effect_state: "applied", effect_authority: "native_transaction",
+        effect_reason: "native_transaction_committed", affected_target_identities: identities } };
+    const decorated: any = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool");
+    });
+    assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "applied");
+    assert.deepEqual(decorated.structuredContent.operation_result_v2.affected_target_identities, identities);
+    assert.deepEqual(decorated.structuredContent.observation.raw_payload.transaction, payload.transaction);
+  }
+});
+
+test("large native affected sets still reject malformed identities and overbound receipts", async () => {
+  const ids = Array.from({ length: 400 }, (_, i) => `element_id:${1000000 + i}`);
+  for (const bad of [[...ids, " invalid"], [...ids, "bad\u0000id"], Array.from({ length: 4097 }, (_, i) => `element_id:${i + 1}`)]) {
+    await assert.rejects(runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/link-cad", body: {} }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/link-cad", {}, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/link-cad", { transaction: { status: "committed", committed: true },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply", request_dispatched: true,
+          effect_state: "applied", effect_authority: "native_transaction", affected_target_identities: bad } }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool");
+    }), /assignment_kernel_v2_native_affected_targets_invalid/);
+  }
+});
 test("retained HTTP200 incompatible-host parameter failure stays failed with separately proven effect", async () => {
   const fixture=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/parameter-incompatible-host-preview.json",import.meta.url),"utf8"));
   for(const requested of ["preview","apply"] as const)

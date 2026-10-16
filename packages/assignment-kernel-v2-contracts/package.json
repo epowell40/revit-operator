@@ -18,6 +18,8 @@
     }
   },
   "files": [
+    "native-affected-targets.js",
+    "native-affected-targets.d.ts",
     "native-continuation.js",
     "native-continuation.d.ts",
     "input-schema-gap.js",

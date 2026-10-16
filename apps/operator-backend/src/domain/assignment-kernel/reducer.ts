@@ -1,4 +1,5 @@
 import {mergeEvaluation,projectWorkUnitCriteria} from './criterion_projection.js';
+import { isCanonicalNativeAffectedTargetSetV2 } from '@revitoperator/assignment-kernel-v2-contracts';
 import { defaultAssignmentWorkBudgetV2 } from "./effective_work_budget.js";
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { preDispatchReadRetryV2 } from './pre_dispatch_read_retry.js';
@@ -487,13 +488,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
     if (error) kernelAssertV2(false, error.code, error.message);
   }
   if (result.affected_target_identities !== undefined) {
-    kernelAssertV2(Array.isArray(result.affected_target_identities)
-      && result.affected_target_identities.length <= 256
-      && result.affected_target_identities.every(identity => typeof identity === "string"
-        && identity === identity.trim() && identity.length > 0 && identity.length <= 500
-        && !/[\u0000-\u001f\u007f]/.test(identity))
-      && new Set(result.affected_target_identities).size === result.affected_target_identities.length
-      && result.affected_target_identities.every((identity, index, identities) => index === 0 || identities[index - 1]! < identity)
+    kernelAssertV2(isCanonicalNativeAffectedTargetSetV2(result.affected_target_identities)
       && (result.affected_target_identities.length === 0
         || (result.dispatch_state === "dispatched" && ["native-host", "dynamic-runtime"].includes(result.authority))),
     "operation_result_affected_targets_invalid", "Affected targets require a bounded, unique, ordinal native settlement identity set.");
