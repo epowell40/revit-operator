@@ -2653,7 +2653,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
-      "sha256": "sha256:bbde719687649e565dc6be919c111dcfab8083f3b97d3783ddbfc91b20ec03e9"
+      "sha256": "sha256:1cb59b7811cb3388f2302bc77c44374f9cfbe43f25e010de7d5ab1066b87287c"
     },
     {
       "path": "apps/operator-backend/src/codex/operator_backend_auth_lease.ts",
@@ -4769,7 +4769,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_tool_catalog.test.ts",
-      "sha256": "sha256:476fcb2f64985db554088ca25c4be39e5347d1c382e8b9e0c7cbd6b36fc262db"
+      "sha256": "sha256:8990f29980214009e39d5946b7a26381bdb368ef0d4a1a97efaa98e74bf3c2a1"
     },
     {
       "path": "apps/operator-backend/test/codex_transport_ownership.test.ts",
@@ -9653,7 +9653,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:c96469c1ddedf77bbf3c390854fa7a2c18f5a1ddeb575ee5820019d8792eff17",
+  "inputs_hash": "sha256:a4498f1ce063bc3bc355181c33f32e93022eabc6a953c5e02d8fdfe29b931fa7",
   "result": {
     "passed": true,
     "checks": [
