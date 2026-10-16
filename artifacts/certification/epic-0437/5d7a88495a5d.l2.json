@@ -780,7 +780,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:79e83d5bce038e630126cdb538a52a29b35408c34b0cbebe966618d061cdcdbb"
+      "sha256": "sha256:f105fcc6f6f7d080d7c7e4e4eb02d77a584dad3fbfa3a2886cbe924cac1a7b70"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -841,6 +841,10 @@
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_usage_hold.ts",
       "sha256": "sha256:af45630ee47eb8ec822153059eeb83da4203dadaae62a60aa8c1f0fafcfa7ad8"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/assignment_operation_purpose.ts",
+      "sha256": "sha256:134e25fc6affa2c33f3c2919c2502d99fc4f401455f6c42201efa9fdccf31482"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_work_allowance_v2.ts",
@@ -1524,7 +1528,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:166d0cb0869b704c14e7b61bb3e5fb3abb584bad596657c4d78053ceead41388"
+      "sha256": "sha256:2f360ddc44461d50b993700493470e1b0e57370dd950106610a8ca949de76013"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
@@ -2680,6 +2684,10 @@
       "sha256": "sha256:67f78a99211df5c3652363330967ed3abf7e463ae9ac4be6a173101273dd2e9e"
     },
     {
+      "path": "apps/operator-backend/src/codex/profile_environment.ts",
+      "sha256": "sha256:3e6e9d1f3e67b33fbe0d756dc2427de90c9cfe706dda503c27bef7fdf090477d"
+    },
+    {
       "path": "apps/operator-backend/src/codex/research_config.ts",
       "sha256": "sha256:172ed2ed3dea2bc934da66f9923c0858a8760b6d3eac1d113f51baab8e0f47db"
     },
@@ -2876,6 +2884,10 @@
       "sha256": "sha256:d8a990371214fd789c5dcc7d1dfbcbf22fc96b9d851494539d579f52c95da4ed"
     },
     {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/criterion_projection.ts",
+      "sha256": "sha256:2dca2d06c55ec09d102a5fd2ee246a04d13c6bb917dbefd23770b569757eb2b9"
+    },
+    {
       "path": "apps/operator-backend/src/domain/assignment-kernel/document_checkpoint.ts",
       "sha256": "sha256:cdb9e200961342ca169bd3c804ccb1512fbae824135242ee347d5bfe8f52c954"
     },
@@ -2997,7 +3009,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/reducer.ts",
-      "sha256": "sha256:aa91ca85728b958a8d7a1e1071f5036ef7fcffaa2af84847a5cb760cc2f6ef56"
+      "sha256": "sha256:fc836f2fb0440ae608b5d6c44625bdf64549daad04890653e4508bd6a82de02e"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/result_delivery.ts",
@@ -9677,7 +9689,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:7c02001d92c62d6bb353d2acc0661f0b7e45fcef08bdb59d3c6beebb8d09472b",
+  "inputs_hash": "sha256:963c05165436dd73d76184fc4622d6fe34bb29b9da7189a873876ad769c3f22c",
   "result": {
     "passed": true,
     "checks": [

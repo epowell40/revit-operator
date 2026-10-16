@@ -72,7 +72,7 @@ namespace RevitBridge.Logic.Handlers
                     var id = ElementIdCompat.GetValue(wireType.Id); wireTypeId = id;
                     if (!profiles.ContainsKey(id))
                     {
-                        profiles.Add(id, WireProfile(wireType, out var profileComplete));
+                        profiles.Add(id, WireProfile(doc, wireType, out var profileComplete));
                         if (!profileComplete) incompleteProfiles++;
                     }
                 }
@@ -112,14 +112,14 @@ namespace RevitBridge.Logic.Handlers
             return converted;
         }
 #if !NET10_0_OR_GREATER
-        private static object WireProfile(WireType type, out bool complete)
+        private static object WireProfile(Document doc, WireType type, out bool complete)
         {
             var errors = new List<object>();
             object? Read(string field, Func<object?> getter)
             { try { return getter(); } catch (Exception ex) { errors.Add(new { field, errorType = ex.GetType().FullName, message = ex.Message }); return null; } }
-            var material = Read("material", () => Describe(type.WireMaterial));
-            var temperature = Read("temperature", () => Describe(type.TemperatureRating));
-            var insulation = Read("insulation", () => Describe(type.Insulation));
+            var material = Read("material", () => Describe(doc, type.WireMaterial));
+            var temperature = Read("temperature", () => Describe(doc, type.TemperatureRating));
+            var insulation = Read("insulation", () => Describe(doc, type.Insulation));
             var neutralRequired = Read("neutralRequired", () => type.NeutralRequired);
             var neutralMultiplier = Read("neutralMultiplier", () => type.NeutralMultiplier);
             var neutralSize = Read("neutralSize", () => type.NeutralSize.ToString());
@@ -128,7 +128,11 @@ namespace RevitBridge.Logic.Handlers
                 material, temperature, insulation, neutralRequired, neutralMultiplier, neutralSize,
                 dataComplete = errors.Count == 0, fieldErrors = errors };
         }
-        private static object? Describe(Element? element) => element == null ? null : new {
+        // Revit 2026 returns IDs for these properties; earlier APIs return elements.
+        // Resolve in the same document and let Read retain any unresolved-reference error.
+        private static object? Describe(Document doc, ElementId? id) => id == null || id == ElementId.InvalidElementId
+            ? null : Describe(doc, doc.GetElement(id) ?? throw new InvalidOperationException("Wire profile reference did not resolve: " + ElementIdCompat.GetValue(id)));
+        private static object? Describe(Document doc, Element? element) => element == null ? null : new {
             id = ElementIdCompat.GetValue(element.Id), uniqueId = element.UniqueId, name = element.Name };
 #endif
     }
