@@ -11,6 +11,19 @@ namespace RevitBridge.Common.Tests
     public sealed class ProjectParameterBindingContractTests
     {
         [Fact]
+        public void NativeCreateRetainsStageDiagnosticsWithoutReplacingTransactionAuthority()
+        {
+            var source = ReadRepoFile("Handlers", "ProjectParameterBindingOperations.cs");
+            Assert.Contains("stage = \"insert_binding\"", source);
+            Assert.Contains("stage = \"lookup_parameter\"", source);
+            Assert.Contains("stage = \"read_complete_binding_detail\"", source);
+            Assert.Contains("stage = \"compare_old_parameter_values\"", source);
+            Assert.Contains("OperatorNativeFailureDiagnostic.Capture(error, stage);", source);
+            Assert.Contains("if (failureDiagnostic != null) result[\"failureDiagnostic\"] = failureDiagnostic;", source);
+            Assert.Contains("result[\"status\"] = OperatorNativeTransactionExecution.OutcomeStatus", source);
+        }
+
+        [Fact]
         public void CompleteCategoryInstanceAndTypeStateIsComparedInsideTheNativeTransaction()
         {
             var scope = ReadRepoFile("Handlers", "ProjectParameterBindingPreservation.cs");

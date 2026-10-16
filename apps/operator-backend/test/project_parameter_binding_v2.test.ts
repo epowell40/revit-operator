@@ -17,6 +17,16 @@ const local=new URL('./fixtures/project-parameter-binding-preservation-v2.json',
 const file=fs.existsSync(local)?local:new URL('../../test/fixtures/project-parameter-binding-preservation-v2.json',import.meta.url);
 const fixture=()=>JSON.parse(fs.readFileSync(file,'utf8'));
 
+test('bounded failure diagnostics cannot certify the retained rolled-back binding failure',()=>{
+ const f=fixture();
+ f.applied.status='Blocked';f.applied.success=false;
+ f.applied.transaction={status:'rolled_back',committed:false,modified_element_ids:[],affected_element_ids:[],added_element_ids:[],deleted_element_ids:[]};
+ f.applied.error='The referenced object is not valid, possibly because it has been deleted from the database, or its creation was undone.';
+ f.applied.failureDiagnostic={schema:'operator.native_failure_diagnostic.v1',stage:'lookup_parameter',exceptionType:'Autodesk.Revit.Exceptions.InvalidObjectException',hResult:-2146233088,stackMethods:[],authority:'diagnostic_only'};
+ assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),false);
+ assert.equal(postconditionSatisfiedByPayloadV2(f.input,f.applied,{path:f.input.path}),false);
+});
+
 test('legacy binding proof without complete old instance/type preservation stays unverified',()=>{
  const old=new URL('./project-parameter-binding.json',file);
  const f=JSON.parse(fs.readFileSync(old,'utf8'));

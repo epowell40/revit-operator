@@ -447,7 +447,8 @@
     "ScheduleCellAppearanceContractTests",
     "PanelScheduleReadWindowTests",
     "ScheduleInventoryWindowTests",
-    "ProjectParameterBindingContractTests"
+    "ProjectParameterBindingContractTests",
+    "OperatorNativeFailureDiagnosticTests"
   ],
   "failure_families": [
     {
@@ -4254,6 +4255,14 @@
         "backend:project_parameter_binding_v2.test.ts",
         "backend:postcondition_verification_v2.test.ts",
         "dotnet:ParameterValuePreservationDigestTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "native_binding_invalid_object_failure_context",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "dotnet:OperatorNativeFailureDiagnosticTests",
         "dotnet:ProjectParameterBindingContractTests"
       ]
     }

@@ -135,14 +135,27 @@ namespace RevitBridge.Handlers
                     categories.Select(c => ElementIdCompat.GetValue(c.Id)), existingId));
             }
             catch (Exception ex) { return new { status = "Blocked", error = ex.Message, transaction = OperatorNativeTransactionReceipt.NotStarted(), externalDefinitionEffect = externalEffect() }; }
+            object? failureDiagnostic = null;
+            var stage = "start_transaction";
             var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Create project parameter binding", created =>
             {
+              try
+              {
+                stage = "create_category_set";
                 using var set = app.Application.Create.NewCategorySet(); foreach (var category in categories) set.Insert(category);
+                stage = "create_binding";
                 using ElementBinding binding = instance ? (ElementBinding)app.Application.Create.NewInstanceBinding(set) : app.Application.Create.NewTypeBinding(set);
+                stage = "insert_binding";
                 if (!doc.ParameterBindings.Insert(definition, binding, group)) throw new InvalidOperationException("Native binding insertion failed; roll back.");
-                doc.Regenerate(); var parameter = SharedParameterElement.Lookup(doc, definition.GUID) ?? throw new InvalidOperationException("Bound parameter identity missing; roll back.");
+                stage = "regenerate";
+                doc.Regenerate();
+                stage = "lookup_parameter";
+                var parameter = SharedParameterElement.Lookup(doc, definition.GUID) ?? throw new InvalidOperationException("Bound parameter identity missing; roll back.");
+                stage = "resolve_parameter_identity";
                 var id = ElementIdCompat.GetValue(parameter.Id); if (!existingId.HasValue) created.Add(id);
+                stage = "read_complete_binding_detail";
                 var after = Complete(Detail(doc, id));
+                stage = "compare_requested_definition";
                 var descriptor = after.GetProperty("parameter");
                 var expectedCategories = categories.Select(c => ElementIdCompat.GetValue(c.Id)).OrderBy(c => c).ToArray();
                 if (descriptor.GetProperty("name").GetString() != name || descriptor.GetProperty("guid").GetString() != definition.GUID.ToString("D")
@@ -150,12 +163,15 @@ namespace RevitBridge.Handlers
                     || descriptor.GetProperty("groupTypeId").GetString() != group.TypeId || descriptor.GetProperty("visible").GetBoolean() != visible
                     || !descriptor.GetProperty("categories").EnumerateArray().Select(c => c.GetProperty("id").GetInt64()).SequenceEqual(expectedCategories))
                     throw new InvalidOperationException("Requested parameter definition or instance/type/category binding did not read back; roll back.");
+                stage = "compare_other_bindings";
                 if (after.GetProperty("otherBindingsHash").GetString() != Hash(before)) throw new InvalidOperationException("Unrequested binding definition changed; roll back.");
+                stage = "compare_old_parameter_values";
                 var preserved = after.GetProperty("preservation");
                 if (Hash(preserved.GetProperty("elements")) != Hash(preservationBefore.GetProperty("elements"))
                     || preserved.GetProperty("totalParameters").GetInt32() != preservationBefore.GetProperty("totalParameters").GetInt32()
                     || preserved.GetProperty("elementCount").GetInt32() != preservationBefore.GetProperty("elementCount").GetInt32())
                     throw new InvalidOperationException("Existing category instance/type identities or raw parameter values changed; roll back.");
+                stage = "compare_owner_values";
                 var values = after.GetProperty("owners").EnumerateArray().ToArray();
                 if (values.Length != beforeValues.Length) throw new InvalidOperationException("Native bound-owner coverage changed; roll back.");
                 for (var i = 0; i < values.Length; i++)
@@ -173,12 +189,21 @@ namespace RevitBridge.Handlers
                     if (!old.GetProperty("hasParameter").GetBoolean() && !IsEmptyDefault(current))
                         throw new InvalidOperationException("A new parameter contains an unexpected default value; roll back.");
                 }
+                stage = "build_receipt";
                 return new Dictionary<string, object?> { ["parameter"] = after.GetProperty("parameter"), ["bindingReadback"] = after,
                     ["otherBindingsHashBefore"] = Hash(before), ["ownerValuesBefore"] = beforeValues, ["preservationBefore"] = preservationBefore,
                     ["requestedDefinition"] = new { name, guid = definition.GUID.ToString("D"), isInstance = instance, dataTypeId = dataType.TypeId,
                         groupTypeId = group.TypeId, visible, userModifiable, categories = categories.Select(c => new { id = ElementIdCompat.GetValue(c.Id), name = c.Name }).OrderBy(c => c.id).ToArray() },
                     ["existingParameterElementIdBefore"] = existingId };
+              }
+              catch (Exception error)
+              {
+                try { failureDiagnostic = OperatorNativeFailureDiagnostic.Capture(error, stage); }
+                catch { /* Diagnostic failure must not replace the original native error or rollback. */ }
+                throw;
+              }
             });
+            if (failureDiagnostic != null) result["failureDiagnostic"] = failureDiagnostic;
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success"); result["action"] = "create"; result["mode"] = "create_new";
             result["dryRun"] = false; result["externalDefinitionEffect"] = externalEffect();
             return result;
