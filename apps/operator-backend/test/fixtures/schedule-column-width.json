@@ -1,0 +1,417 @@
+{
+  "input": {
+    "method": "POST",
+    "path": "/revit/configure-schedule",
+    "body": {
+      "scheduleId": 41,
+      "columnWidths": [
+        {
+          "field": "Manufacturer",
+          "widthFeet": 0.12
+        },
+        {
+          "field": "Remarks",
+          "widthFeet": 0.38
+        }
+      ],
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "status": "Success",
+    "dryRun": false,
+    "schedule": {
+      "id": 41,
+      "uniqueId": "view:41"
+    },
+    "definitionBefore": {
+      "schema": "operator.regular_schedule_field_definition.v1",
+      "complete": true,
+      "scheduleId": 41,
+      "uniqueId": "view:41",
+      "categoryId": -2008013,
+      "fieldOrder": [
+        11,
+        12,
+        18
+      ],
+      "fields": [
+        {
+          "fieldId": 11,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 11,
+            "parameterId": -101,
+            "parameterUniqueId": null,
+            "name": "Manufacturer",
+            "heading": "Manufacturer",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.08,
+            "sheetWidthFeet": 0.08,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "fieldId": 12,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 12,
+            "parameterId": -102,
+            "parameterUniqueId": null,
+            "name": "Model",
+            "heading": "Model",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.08,
+            "sheetWidthFeet": 0.08,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "fieldId": 18,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 18,
+            "parameterId": -103,
+            "parameterUniqueId": null,
+            "name": "Remarks",
+            "heading": "Remarks",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.08,
+            "sheetWidthFeet": 0.08,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "configurationHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "coverage": "native_field_binding_captured_attributes_filters_sort_defaults_parameters_v1"
+    },
+    "definitionAfter": {
+      "schema": "operator.regular_schedule_field_definition.v1",
+      "complete": true,
+      "scheduleId": 41,
+      "uniqueId": "view:41",
+      "categoryId": -2008013,
+      "fieldOrder": [
+        11,
+        12,
+        18
+      ],
+      "fields": [
+        {
+          "fieldId": 11,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 11,
+            "parameterId": -101,
+            "parameterUniqueId": null,
+            "name": "Manufacturer",
+            "heading": "Manufacturer",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.12,
+            "sheetWidthFeet": 0.12,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "04ab2d45b2036cf57713bcc633fe0ae7a930d628554dd51c1d352dc98bb11cc0"
+        },
+        {
+          "fieldId": 12,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 12,
+            "parameterId": -102,
+            "parameterUniqueId": null,
+            "name": "Model",
+            "heading": "Model",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.08,
+            "sheetWidthFeet": 0.08,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "fieldId": 18,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 18,
+            "parameterId": -103,
+            "parameterUniqueId": null,
+            "name": "Remarks",
+            "heading": "Remarks",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.38,
+            "sheetWidthFeet": 0.38,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "71269ec8d7d57baeb87d2a591b133a6a9233782077b3abe9e9da79899b828e44"
+        }
+      ],
+      "configurationHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "coverage": "native_field_binding_captured_attributes_filters_sort_defaults_parameters_v1"
+    },
+    "transaction": {
+      "committed": true,
+      "pending": false,
+      "rolledBack": false,
+      "added_element_ids": [
+        900
+      ],
+      "deleted_element_ids": [],
+      "modified_element_ids": [
+        41,
+        42
+      ]
+    },
+    "changeTracking": {
+      "exhaustiveChangeInventory": true
+    },
+    "presentationScopeBefore": {
+      "schema": "operator.regular_schedule_presentation_scope.v1",
+      "complete": true,
+      "coverage": "configuration_cell_text_style_geometry_v1",
+      "targetId": 41,
+      "targetUniqueId": "view:41",
+      "totalUnrequestedCells": 10,
+      "unrequestedSchedules": [
+        {
+          "scheduleId": 42,
+          "uniqueId": "view:42",
+          "semanticHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "dependencies": []
+    },
+    "presentationScopeAfter": {
+      "schema": "operator.regular_schedule_presentation_scope.v1",
+      "complete": true,
+      "coverage": "configuration_cell_text_style_geometry_v1",
+      "targetId": 41,
+      "targetUniqueId": "view:41",
+      "totalUnrequestedCells": 10,
+      "unrequestedSchedules": [
+        {
+          "scheduleId": 42,
+          "uniqueId": "view:42",
+          "semanticHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": 900,
+          "uniqueId": "generated:900",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        }
+      ]
+    },
+    "presentationReadback": {
+      "schema": "operator.regular_schedule_presentation.v1",
+      "complete": true,
+      "fieldOrder": [
+        11,
+        12,
+        18
+      ],
+      "showTitle": true,
+      "showHeaders": true,
+      "title": {
+        "id": 70,
+        "uniqueId": "style:70"
+      },
+      "header": {
+        "id": 71,
+        "uniqueId": "style:71"
+      },
+      "body": {
+        "id": 72,
+        "uniqueId": "style:72"
+      }
+    }
+  },
+  "read": {
+    "status": "Ok",
+    "action": "presentation",
+    "read_only": true,
+    "schedule": {
+      "id": 41,
+      "uniqueId": "view:41",
+      "kind": "schedule"
+    },
+    "definition": {
+      "schema": "operator.regular_schedule_field_definition.v1",
+      "complete": true,
+      "scheduleId": 41,
+      "uniqueId": "view:41",
+      "categoryId": -2008013,
+      "fieldOrder": [
+        11,
+        12,
+        18
+      ],
+      "fields": [
+        {
+          "fieldId": 11,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 11,
+            "parameterId": -101,
+            "parameterUniqueId": null,
+            "name": "Manufacturer",
+            "heading": "Manufacturer",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.12,
+            "sheetWidthFeet": 0.12,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "04ab2d45b2036cf57713bcc633fe0ae7a930d628554dd51c1d352dc98bb11cc0"
+        },
+        {
+          "fieldId": 12,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 12,
+            "parameterId": -102,
+            "parameterUniqueId": null,
+            "name": "Model",
+            "heading": "Model",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.08,
+            "sheetWidthFeet": 0.08,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "fieldId": 18,
+          "isHidden": false,
+          "attributes": {
+            "fieldId": 18,
+            "parameterId": -103,
+            "parameterUniqueId": null,
+            "name": "Remarks",
+            "heading": "Remarks",
+            "fieldType": "Instance",
+            "isCalculated": false,
+            "isCombined": false,
+            "gridWidthFeet": 0.38,
+            "sheetWidthFeet": 0.38,
+            "headingOrientation": "Horizontal",
+            "horizontalAlignment": "Left",
+            "style": {
+              "preservedStyleHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "parts": []
+          },
+          "semanticHash": "71269ec8d7d57baeb87d2a591b133a6a9233782077b3abe9e9da79899b828e44"
+        }
+      ],
+      "configurationHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "coverage": "native_field_binding_captured_attributes_filters_sort_defaults_parameters_v1"
+    },
+    "scope": {
+      "schema": "operator.regular_schedule_presentation_scope.v1",
+      "complete": true,
+      "coverage": "configuration_cell_text_style_geometry_v1",
+      "targetId": 41,
+      "targetUniqueId": "view:41",
+      "totalUnrequestedCells": 10,
+      "unrequestedSchedules": [
+        {
+          "scheduleId": 42,
+          "uniqueId": "view:42",
+          "semanticHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": 900,
+          "uniqueId": "generated:900",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        }
+      ]
+    },
+    "presentation": {
+      "schema": "operator.regular_schedule_presentation.v1",
+      "complete": true,
+      "fieldOrder": [
+        11,
+        12,
+        18
+      ],
+      "showTitle": true,
+      "showHeaders": true,
+      "title": {
+        "id": 70,
+        "uniqueId": "style:70"
+      },
+      "header": {
+        "id": 71,
+        "uniqueId": "style:71"
+      },
+      "body": {
+        "id": 72,
+        "uniqueId": "style:72"
+      }
+    }
+  }
+}

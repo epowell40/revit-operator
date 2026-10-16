@@ -287,7 +287,8 @@
     "native_schedule_presentation_v2.test.ts",
     "safe_committed_read_retry_v2.test.ts",
     "circuit_wiring_feedback.test.ts",
-    "project_parameter_binding_v2.test.ts"
+    "project_parameter_binding_v2.test.ts",
+    "regular_schedule_column_width_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4218,6 +4219,14 @@
         "mcp:lib/genericToolPreflight.test.ts",
         "dotnet:OperatorSupportedToolInventoryTests",
         "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "regular_schedule_column_width_preservation_and_bound_native_read",
+      "coverage": [
+        "backend:regular_schedule_column_width_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "dotnet:SchedulePresentationContractTests"
       ]
     }
   ],

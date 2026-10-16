@@ -91,6 +91,18 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(expected, SchedulePresentationContract.IsBoundedPresentationEdit(doc.RootElement));
         }
 
+        [Theory]
+        [InlineData("{\"scheduleId\":41,\"columnWidths\":[{\"field\":\"Remarks\",\"widthFeet\":0.38}]}", true)]
+        [InlineData("{\"scheduleId\":41,\"columnWidths\":[{\"field\":\"Remarks\",\"widthFeet\":0.38}],\"fieldOrder\":[1,2]}", true)]
+        [InlineData("{\"scheduleId\":41,\"columnWidths\":[{\"field\":\"Remarks\",\"widthFeet\":0}]}", false)]
+        [InlineData("{\"scheduleId\":41,\"columnWidths\":[{\"field\":\"Remarks\",\"widthFeet\":0.38},{\"field\":\"remarks\",\"widthFeet\":0.2}]}", false)]
+        [InlineData("{\"scheduleId\":41,\"columnWidths\":[{\"field\":\"Remarks\",\"widthFeet\":0.38,\"invented\":true}]}", false)]
+        public void WidthEditsHaveBoundedNativePreservationScope(string json, bool expected)
+        {
+            using var doc = JsonDocument.Parse(json);
+            Assert.Equal(expected, SchedulePresentationContract.IsBoundedPresentationEdit(doc.RootElement));
+        }
+
         [Fact]
         public void LargeRequestsAreBoundedBeforeNativeWork()
         {

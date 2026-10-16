@@ -64,6 +64,25 @@ namespace RevitBridge.Handlers
                 hasParameter = p != null, parameterId = p == null ? (long?)null : ElementIdCompat.GetValue(p.Id),
                 storage = p?.StorageType.ToString(), hasValue = p?.HasValue ?? false, value, userModifiable = p?.UserModifiable, isReadOnly = p?.IsReadOnly };
         }
+        private static object Dependencies(Document doc, long id)
+        {
+            try
+            {
+                var parameter = doc.GetElement(ElementIdCompat.Create(id)) as SharedParameterElement
+                    ?? throw new InvalidOperationException("Exact shared parameter identity unavailable.");
+                var ids = parameter.GetDependentElements(null);
+                if (ids.Count > 6000) throw new InvalidOperationException("Shared parameter dependency census exceeds6000elements.");
+                var rows = ids.OrderBy(ElementIdCompat.GetValue).Select(key =>
+                {
+                    var element = doc.GetElement(key) ?? throw new InvalidOperationException("Native dependency no longer resolves.");
+                    return new { id = ElementIdCompat.GetValue(key), uniqueId = element.UniqueId,
+                        className = element.GetType().FullName, categoryId = element.Category == null ? (long?)null : ElementIdCompat.GetValue(element.Category.Id),
+                        ownerViewId = ElementIdCompat.GetValue(element.OwnerViewId) };
+                }).ToArray();
+                return new { complete = true, rootId = id, rootUniqueId = parameter.UniqueId, relation = "native_GetDependentElements", elements = rows };
+            }
+            catch (Exception ex) { return new { complete = false, rootId = id, error = ex.Message }; }
+        }
         internal static object Detail(Document doc, long id)
         {
             try
@@ -73,7 +92,7 @@ namespace RevitBridge.Handlers
                 var categoryIds = row.GetProperty("categories").EnumerateArray().Select(c => c.GetProperty("id").GetInt64()).ToArray();
                 var owners = Owners(doc, categoryIds, row.GetProperty("isInstance").GetBoolean()).Select(e => Owner(e, guid)).ToArray();
                 return new { status = "Ok", action = "detail", read_only = true, schema = "operator.project_parameter_binding.v1", complete = true,
-                    parameter = row, owners, otherBindingsHash = Hash(bindings.Where(b => JsonSerializer.SerializeToElement(b).GetProperty("id").GetInt64() != id).ToArray()),
+                    parameter = row, owners, dependencies = Dependencies(doc, id), otherBindingsHash = Hash(bindings.Where(b => JsonSerializer.SerializeToElement(b).GetProperty("id").GetInt64() != id).ToArray()),
                     coverage = "native_shared_binding_and_complete_owner_values_v1" };
             }
             catch (Exception ex) { return new { status = "Error", action = "detail", read_only = true, schema = "operator.project_parameter_binding.v1", complete = false, error = ex.Message }; }

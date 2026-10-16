@@ -36,14 +36,30 @@ namespace RevitBridge.Common
                     if (appearance.TryGetProperty(name, out var id) && id.ValueKind != JsonValueKind.Null
                         && (id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0))
                     { error = name + " must be a positive existing TextNoteType element ID."; return false; }
+            if (body.TryGetProperty("columnWidths", out var widths) && widths.ValueKind != JsonValueKind.Null)
+            {
+                if (widths.ValueKind != JsonValueKind.Array || widths.GetArrayLength() < 1 || widths.GetArrayLength() > 200)
+                { error = "columnWidths requires 1..200 uniquely named fields."; return false; }
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var width in widths.EnumerateArray())
+                {
+                    if (width.ValueKind != JsonValueKind.Object || width.EnumerateObject().Any(p => p.Name != "field" && p.Name != "widthFeet")
+                        || !width.TryGetProperty("field", out var field) || field.ValueKind != JsonValueKind.String
+                        || string.IsNullOrWhiteSpace(field.GetString()) || field.GetString()!.Length > 256 || !names.Add(field.GetString()!.Trim())
+                        || !width.TryGetProperty("widthFeet", out var value) || value.ValueKind != JsonValueKind.Number
+                        || !value.TryGetDouble(out var feet) || double.IsNaN(feet) || double.IsInfinity(feet) || feet <= 0 || feet > 100)
+                    { error = "columnWidths requires distinct nonblank field names and finite widths >0 and <=100 feet; unknown keys are not allowed."; return false; }
+                }
+            }
             return true;
         }
 
         public static bool IsBoundedPresentationEdit(JsonElement body)
         {
             if (!Validate(body, out _) || !body.TryGetProperty("scheduleId", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0) return false;
-            if (body.EnumerateObject().Any(p => !new[] { "scheduleId", "fieldOrder", "appearance", "dryRun" }.Contains(p.Name))) return false;
-            var changed = body.TryGetProperty("fieldOrder", out var order) && order.ValueKind == JsonValueKind.Array;
+            if (body.EnumerateObject().Any(p => !new[] { "scheduleId", "fieldOrder", "appearance", "columnWidths", "dryRun" }.Contains(p.Name))) return false;
+            var changed = (body.TryGetProperty("fieldOrder", out var order) && order.ValueKind == JsonValueKind.Array)
+                || (body.TryGetProperty("columnWidths", out var widths) && widths.ValueKind == JsonValueKind.Array);
             if (body.TryGetProperty("appearance", out var appearance) && appearance.ValueKind == JsonValueKind.Object)
             {
                 foreach (var property in appearance.EnumerateObject())

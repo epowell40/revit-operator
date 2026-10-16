@@ -1,3 +1,4 @@
+import { regularScheduleFieldDefinitionV2 as definition } from './regular_schedule_field_definition_v2.js';
 import { regularSchedulePresentationScopeMatchesV2, regularSchedulePresentationInventoryMatchesV2 } from './regular_schedule_presentation_scope_v2.js';
 import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
@@ -11,21 +12,26 @@ const equal = (a: unknown, b: unknown) => canonicalJsonV2(a) === canonicalJsonV2
 const styleKeys = ['titleTextTypeId','headerTextTypeId','bodyTextTypeId'];
 export function isRegularSchedulePresentationEditV2(input: unknown): boolean {
   const w=object(input), b=object(w.body??input), a=object(b.appearance);
-  return Object.hasOwn(b,'combinedField') || Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
+  return Object.hasOwn(b,'columnWidths') || Object.hasOwn(b,'combinedField') || Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
 }
-/** Deliberately covers only explicit existing-field order/default-style edits, never mixed changes or visual appearance. */
+/** Existing-field order/styles or width-preserving edits. Structural and unsupported mixed changes stay unverified. */
 export function regularSchedulePresentationRequestV2(input: unknown) {
   const w=object(input), b=object(w.body??input), a=object(b.appearance);
   if (!isRegularSchedulePresentationEditV2(input) || !positive(b.scheduleId) || (b.dryRun!==undefined&&b.dryRun!==false)
-      || Object.keys(b).some(k=>!['scheduleId','fieldOrder','appearance','dryRun'].includes(k))
+      || Object.keys(b).some(k=>!['scheduleId','fieldOrder','appearance','columnWidths','dryRun'].includes(k))
       || (b.appearance!==undefined && (b.appearance===null||typeof b.appearance!=='object'||Array.isArray(b.appearance)))
       || Object.keys(a).some(k=>![...styleKeys,'showTitle','showHeaders'].includes(k))
       || styleKeys.some(k=>a[k]!==undefined&&!positive(a[k]))
       || ['showTitle','showHeaders'].some(k=>a[k]!==undefined&&typeof a[k]!=='boolean')) return null;
+  const widths=b.columnWidths;
+  if(widths!==undefined && (!Array.isArray(widths)||!widths.length||widths.length>200||Object.keys(a).length
+      ||widths.some((v:unknown)=>{const x=object(v);return Object.keys(x).some(k=>!['field','widthFeet'].includes(k))
+        ||typeof x.field!=='string'||!x.field.trim()||x.field.length>256||typeof x.widthFeet!=='number'||!Number.isFinite(x.widthFeet)||x.widthFeet<=0||x.widthFeet>100;})
+      ||new Set(widths.map((v:any)=>v.field.trim().toLowerCase())).size!==widths.length))return null;
   const order=b.fieldOrder;
   if (order!==undefined && (!Array.isArray(order)||!order.length||order.length>200
       || order.some(n=>!Number.isSafeInteger(n)||n<0)||new Set(order).size!==order.length)) return null;
-  return {scheduleId:b.scheduleId,fieldOrder:order as number[]|undefined,appearance:a};
+  return {scheduleId:b.scheduleId,fieldOrder:order as number[]|undefined,appearance:a,columnWidths:widths as Array<{field:string;widthFeet:number}>|undefined};
 }
 function matches(wanted:NonNullable<ReturnType<typeof regularSchedulePresentationRequestV2>>, value:unknown) {
   const p=object(value);
@@ -36,6 +42,28 @@ function matches(wanted:NonNullable<ReturnType<typeof regularSchedulePresentatio
       || typeof object(p[part!]).uniqueId!=='string'||!object(p[part!]).uniqueId))return false;
   return ['showTitle','showHeaders'].every(k=>wanted.appearance[k]===undefined||p[k]===wanted.appearance[k]);
 }
+function widthsMatch(w:NonNullable<ReturnType<typeof regularSchedulePresentationRequestV2>>, applied:Record<string,any>, fresh:Record<string,any>, uid:string) {
+  if(!w.columnWidths)return true;
+  const b=definition(applied.definitionBefore,w.scheduleId,uid),p=definition(applied.definitionAfter,w.scheduleId,uid),n=definition(fresh.definition,w.scheduleId,uid);
+  if(!b||!p||!n||!equal(p.value,n.value)||p.value.configurationHash!==b.value.configurationHash||p.value.categoryId!==b.value.categoryId
+      ||b.fields.size!==p.fields.size||!equal(p.value.fieldOrder,w.fieldOrder??b.value.fieldOrder))return false;
+  const targets=new Map<number,number>();
+  for(const width of w.columnWidths){
+    const matches=[...b.fields.values()].filter(f=>f.attributes.name.trim().toLowerCase()===width.field.trim().toLowerCase());
+    if(matches.length!==1||targets.has(matches[0]!.fieldId))return false;
+    targets.set(matches[0]!.fieldId,width.widthFeet);
+  }
+  for(const [id,old] of b.fields){
+    const post=p.fields.get(id);if(!post||post.isHidden!==old.isHidden)return false;
+    if(!targets.has(id)){if(!equal(post,old))return false;continue;}
+    const {gridWidthFeet:oldGrid,sheetWidthFeet:oldSheet,...oldAttributes}=old.attributes;
+    const {gridWidthFeet:grid,sheetWidthFeet:sheet,...attributes}=post.attributes;
+    const width=targets.get(id)!;
+    if(!equal(oldAttributes,attributes)||Math.abs(grid-width)>1e-8||Math.abs(sheet-width)>1e-8)return false;
+  }
+  return true;
+}
+
 export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appliedPayload:unknown,freshPayload:unknown):boolean {
   if(Object.hasOwn(object(object(input).body??input),'combinedField'))return scheduleCombinedFieldReadbackMatchesV2(input,appliedPayload,freshPayload);
   const w=regularSchedulePresentationRequestV2(input),a=object(appliedPayload),r=object(freshPayload),s=object(a.schedule),rs=object(r.schedule),tx=object(a.transaction);
@@ -43,7 +71,7 @@ export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appli
     ||typeof s.uniqueId!=='string'||!s.uniqueId||rs.uniqueId!==s.uniqueId||rs.kind!=='schedule'
     ||tx.committed!==true||tx.rolledBack===true||tx.pending===true||object(a.changeTracking).exhaustiveChangeInventory!==true
     || !regularSchedulePresentationScopeMatchesV2(w.scheduleId,s.uniqueId,a,r)
-    ||!matches(w,a.presentationReadback)||!matches(w,r.presentation))return false;
+    ||!matches(w,a.presentationReadback)||!matches(w,r.presentation)||!widthsMatch(w,a,r,s.uniqueId))return false;
   return styleKeys.every(k=>w.appearance[k]===undefined || (()=>{const part=k.replace('TextTypeId','');
     return object(object(a.presentationReadback)[part]).uniqueId===object(object(r.presentation)[part]).uniqueId;})());
 }

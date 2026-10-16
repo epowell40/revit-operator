@@ -170,7 +170,11 @@ namespace RevitBridge.Handlers
                 if (!RevitBridge.Common.SchedulePresentationContract.Validate(body.RootElement, out var error))
                     return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = error,
                         transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
-            try { RegularSchedulePresentation.Preflight(doc, schedule, p.fieldOrder, p.appearance); }
+            try {
+                RegularSchedulePresentation.Preflight(doc, schedule, p.fieldOrder, p.appearance);
+                if (hasColumnWidths && !hasAddFields && !hasCalculatedFields)
+                    foreach (var width in p.columnWidths!) ResolveUniqueWidthField(doc, schedule, width.field!);
+            }
             catch (ArgumentException ex)
             {
                 return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = ex.Message,
@@ -196,7 +200,12 @@ namespace RevitBridge.Handlers
             bool scopedPresentation;
             using (var body = JsonDocument.Parse(jsonData)) scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
             var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
+            object? definitionBefore = scopedPresentation && hasColumnWidths ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
+            if (definitionBefore != null && !JsonSerializer.SerializeToElement(definitionBefore).GetProperty("complete").GetBoolean())
+                return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_width_preservation", definitionBefore,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
             var result = ApplyOperations(app, doc, schedule, p);
+            if (definitionBefore != null) result["definitionBefore"] = definitionBefore;
             if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
             result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
             result["dryRun"] = false;
@@ -208,6 +217,7 @@ namespace RevitBridge.Handlers
                 {
                     if (scopedPresentation) result["presentationScopeAfter"] = RegularSchedulePresentationScope.Capture(doc, schedule);
                     result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
+                    if (definitionBefore != null) result["definitionAfter"] = ScheduleCombinedFieldOperations.Read(doc, schedule);
                     result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
                     {
                         fieldId = filter.FieldId.IntegerValue,
@@ -617,41 +627,25 @@ namespace RevitBridge.Handlers
             }
         }
 
+        private static ScheduleField ResolveUniqueWidthField(Document doc, ViewSchedule schedule, string name)
+        {
+            var matches = schedule.Definition.GetFieldOrder().Select(id => schedule.Definition.GetField(id))
+                .Where(f => string.Equals(ScheduleSelectionHelper.ReadFieldName(f, doc)?.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1) throw new ArgumentException("Column width requires one unambiguous existing field named " + name + "; found " + matches.Length + ". Resolve duplicate field names before changing widths.");
+            return matches[0];
+        }
+
         private static void ApplyColumnWidths(Document doc, ViewSchedule schedule, List<ColumnWidthSpec> columnWidths, List<object> widthResults)
         {
             foreach (var item in columnWidths)
             {
-                var fieldName = (item.field ?? "").Trim();
-                if (fieldName.Length == 0)
-                {
-                    widthResults.Add(new { field = fieldName, status = "Skipped", reason = "field is required" });
-                    continue;
-                }
-
-                if (!item.widthFeet.HasValue || item.widthFeet.Value <= 0 || item.widthFeet.Value > 100)
-                {
-                    widthResults.Add(new { field = fieldName, status = "Skipped", reason = "widthFeet must be > 0 and <= 100" });
-                    continue;
-                }
-
-                var field = ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
-                if (field == null)
-                {
-                    widthResults.Add(new { field = fieldName, status = "NotFound" });
-                    continue;
-                }
-
-                var width = item.widthFeet.Value;
-                var setGrid = TrySetDoubleProperty(field, "GridColumnWidth", width);
-                var setSheet = TrySetDoubleProperty(field, "SheetColumnWidth", width);
-
-                widthResults.Add(new
-                {
-                    field = fieldName,
-                    status = (setGrid || setSheet) ? "Applied" : "Skipped",
-                    widthFeet = width,
-                    appliedTo = new { grid = setGrid, sheet = setSheet }
-                });
+                var field = ResolveUniqueWidthField(doc, schedule, item.field!);
+                var width = item.widthFeet!.Value;
+                field.GridColumnWidth = width; field.SheetColumnWidth = width;
+                if (Math.Abs(field.GridColumnWidth - width) > 1e-8 || Math.Abs(field.SheetColumnWidth - width) > 1e-8)
+                    throw new InvalidOperationException("Requested grid and sheet column widths did not read back; roll back.");
+                widthResults.Add(new { field = item.field!.Trim(), fieldId = field.FieldId.IntegerValue, status = "Applied", widthFeet = width,
+                    appliedTo = new { grid = true, sheet = true } });
             }
         }
 
