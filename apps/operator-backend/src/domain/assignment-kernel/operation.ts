@@ -86,6 +86,10 @@ export interface OperationV2 {
   native_template_state?: import("./template_reassignment.js").NativeTemplateStateV1;
   reassignment_of_operation_id?: OperationIdV2;
   reassignment_after_operation_id?: OperationIdV2;
+  /** Native filter-only counter-state; intentional restoration is single-use. */
+  native_schedule_filter_state?: import('./schedule_filter_restoration.js').NativeScheduleFilterStateV1;
+  filter_restoration_of_operation_id?: OperationIdV2;
+  filter_restoration_after_operation_id?: OperationIdV2;
   /** Reducer-derived ordering; never accepted from an admission proposal. */
   admitted_assignment_version?: number;
   settled_assignment_version?: number;

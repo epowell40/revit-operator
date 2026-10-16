@@ -131,3 +131,4 @@ export function nativeFailureDependencyLinksV1(value: unknown, declaredTargetIde
   readonly Readonly<{ element_id: string; target_element_ids: readonly string[] }>[] | undefined;
 
 export * from "./native-continuation.js";
+export * from "./schedule-filter-state.js";

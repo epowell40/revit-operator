@@ -815,3 +815,4 @@ export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) 
 }
 
 export * from "./native-continuation.js";
+export * from "./schedule-filter-state.js";

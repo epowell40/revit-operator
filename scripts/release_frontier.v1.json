@@ -290,7 +290,8 @@
     "safe_committed_read_retry_v2.test.ts",
     "circuit_wiring_feedback.test.ts",
     "project_parameter_binding_v2.test.ts",
-    "regular_schedule_column_width_v2.test.ts"
+    "regular_schedule_column_width_v2.test.ts",
+    "assignment_schedule_filter_restoration.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4336,6 +4337,13 @@
         "dotnet:OperatorNativeOwnedValueTests",
         "dotnet:ProjectParameterBindingContractTests"
       ]
+    },
+    {
+      "id": "schedule_filter_restoration_requires_exact_single_use_native_counter_state",
+      "coverage": [
+        "backend:assignment_schedule_filter_restoration.test.ts",
+        "javascript:package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4357,6 +4365,7 @@
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
     "package/operator-assistant-ui/assignment_mutation.test.mjs",
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",
-    "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
+    "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
+    "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
   ]
 }

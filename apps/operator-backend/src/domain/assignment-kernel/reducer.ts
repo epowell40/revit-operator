@@ -12,6 +12,7 @@ import {deriveNativeInventoryWorkloadV1} from './native_inventory_workload.js';
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "./document_checkpoint.js";
 import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "./template_reassignment.js";
+import { deriveNativeScheduleFilterStateV1, scheduleFilterRestorationV1 } from './schedule_filter_restoration.js';
 import { validBoundOperationScope, prerequisiteValueSatisfied } from "./operation_scope.js";
 import { advisoryVerificationV2 } from "./execution_policy.js";
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
@@ -241,6 +242,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
   kernelAssertV2(operation.native_inventory_workload === undefined,'operation_native_inventory_workload_forbidden','Source workload is derived only from retained native evidence.');
   kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_schedule_filter_state === undefined, 'operation_native_filter_state_forbidden', 'Filter state is derived only from retained native evidence.');
   const advisory = advisoryVerificationV2(snapshot);
   kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < advisoryWorkBudget(snapshot).max_operations,
     "operation_budget_exhausted", "The retained local operation allowance is exhausted.");
@@ -322,8 +324,15 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && reassignment.reassignment_after_operation_id === operation.reassignment_after_operation_id,
     "operation_template_reassignment_invalid", "Reassignment requires an unused native committed counter-state on the exact view.");
   }
+  const restoration = operation.filter_restoration_of_operation_id || operation.filter_restoration_after_operation_id
+    ? scheduleFilterRestorationV1(snapshot, operation) : null;
+  if (operation.filter_restoration_of_operation_id !== undefined || operation.filter_restoration_after_operation_id !== undefined) {
+    kernelAssertV2(!!restoration && restoration.filter_restoration_of_operation_id === operation.filter_restoration_of_operation_id
+      && restoration.filter_restoration_after_operation_id === operation.filter_restoration_after_operation_id,
+    'operation_filter_restoration_invalid', 'Restoration requires an unused native committed counter-state on the exact schedule.');
+  }
   const equivalent = Object.values(snapshot.operations).find((candidate) => operationProgressIdentityV2(candidate) === operationProgressIdentityV2(operation));
-  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || operation.purpose === "reconciliation",
+  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || Boolean(restoration) || operation.purpose === "reconciliation",
     "operation_progress_equivalent_repeat", "Equivalent operation requires a typed retry or reconciliation basis.");
   if (advisory && operation.requested_effect === "apply" && operation.request_identity) {
     const duplicateWrite = Object.values(snapshot.operations).some(prior => prior.requested_effect === "apply"
@@ -332,7 +341,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && prior.request_identity?.path === operation.request_identity!.path
       && prior.request_identity?.request_signature === operation.request_identity!.request_signature
       && (prior.persistent_effect !== "none" || prior.settlement_state !== "settled"));
-    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
+    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment) || Boolean(restoration), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
   }
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
@@ -883,6 +892,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const nativeFailureContext = deriveNativeFailureContextV1(operation, nativeFailureDependencyLinksV1(
           operation.observation_commit?.raw_payload, [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]));
         const nativeTemplateState = deriveNativeTemplateStateV1(operation);
+        const nativeFilterState = deriveNativeScheduleFilterStateV1(operation);
         const nativeInventoryWorkload=deriveNativeInventoryWorkloadV1(operation);
         const settledOperation = {
           ...operation,
@@ -892,6 +902,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           observation_retention_error: undefined,
           ...(nativeFailureContext ? { native_failure_context: nativeFailureContext } : {}),
           ...(nativeTemplateState ? { native_template_state: nativeTemplateState } : {}),
+          ...(nativeFilterState ? { native_schedule_filter_state: nativeFilterState } : {}),
           ...(nativeInventoryWorkload?{native_inventory_workload:nativeInventoryWorkload}:{}),
           // The exact payload remains in the immutable result event and the
           // authoritative evidence store. Only pending retention needs another

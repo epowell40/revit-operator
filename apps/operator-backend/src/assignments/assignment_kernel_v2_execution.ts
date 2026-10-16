@@ -8,6 +8,7 @@ import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryComplete
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
 import { committedTargetChangeRetryV2 } from "../domain/assignment-kernel/committed_target_retry.js";
 import { templateReassignmentV1 } from "../domain/assignment-kernel/template_reassignment.js";
+import { scheduleFilterRestorationV1 } from '../domain/assignment-kernel/schedule_filter_restoration.js';
 import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
 import { nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { trustedLocalExperimentHost } from "./local_advisory_policy.js";
@@ -504,6 +505,8 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     if (checkpoint) Object.assign(operation, checkpoint);
     const reassignment = templateReassignmentV1(snapshot, operation);
     if (reassignment) Object.assign(operation, reassignment);
+    const restoration = scheduleFilterRestorationV1(snapshot, operation);
+    if (restoration) Object.assign(operation, restoration);
   }
   appendCurrentAssignmentKernelEventV2({
     goal_id: snapshot.spec.binding.assignment_id,

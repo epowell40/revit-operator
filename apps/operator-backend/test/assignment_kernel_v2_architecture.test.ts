@@ -171,7 +171,11 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === 'schedule_filter_restoration.ts') {
+        assert.match(source, /import \{ nativeScheduleFilterRequestV1, nativeScheduleFilterResultStateV1 \} from '@revitoperator\/assignment-kernel-v2-contracts'/);
+        assert.doesNotMatch(source, /\/revit\//i, 'Filter wire parsing belongs in the shared pure decoder');
+      }
       if (path.basename(file) === "native_inventory_workload.ts") {
         assert.match(source, /import\s*\{\s*nativeSourceInventoryRequestV1\s*,\s*nativeSourceInventoryWorkloadV1\s*\}\s*from ['"]@revitoperator\/assignment-kernel-v2-contracts['"]/);
         assert.doesNotMatch(source, /\/revit\//i, "native inventory wire interpretation belongs in the shared pure decoder");
