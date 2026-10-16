@@ -12,6 +12,23 @@ const guid = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{
 const route = '/revit/project-parameters';
 const normalizedType = (v: string) => ({yes_no:'yesno','yes/no':'yesno',multiline:'multiline_text',multilinetext:'multiline_text'}[v] ?? v);
 const normalizedGroup = (v: string) => v === 'identity' ? 'identity_data' : v;
+function preservation(value: unknown, categoryIds: number[]) {
+  const p=object(value);
+  if(p.schema!=='operator.project_binding_preservation.v1'||p.complete!==true||p.coverage!=='category_instances_and_types_raw_parameters_v1'
+      ||!equal(p.categoryIds,[...categoryIds].sort((a,b)=>a-b))||!(p.excludedParameterId===null||positive(p.excludedParameterId))
+      ||!Array.isArray(p.elements)||p.elements.length>10000||p.elementCount!==p.elements.length
+      ||!Number.isSafeInteger(p.totalParameters)||p.totalParameters<0||p.totalParameters>300000)return null;
+  const rows=new Map<number,Record<string,any>>(),uids=new Set<string>();let count=0;
+  for(const raw of p.elements){const r=object(raw);
+    if(!positive(r.id)||!identity(r.uniqueId)||uids.has(r.uniqueId)||rows.has(r.id)||!categoryIds.includes(r.categoryId)
+        ||!(r.typeId===-1||positive(r.typeId))||typeof r.isType!=='boolean'||!Number.isSafeInteger(r.parameterCount)
+        ||r.parameterCount<0||r.parameterCount>2048||!hash(r.parametersHash))return null;
+    rows.set(r.id,r);uids.add(r.uniqueId);count+=r.parameterCount;
+  }
+  if(count!==p.totalParameters)return null;
+  for(const r of rows.values())if(!r.isType&&r.typeId>0&&rows.get(r.typeId)?.isType!==true)return null;
+  return {value:p,rows};
+}
 export function projectParameterBindingRequestV2(input: unknown) {
   const wrapper = object(input), b = object(wrapper.body ?? input);
   if (b.action !== 'create' || Object.keys(b).some(k => !['action','name','categoryNames','instanceBinding','parameterGroup','dataType','visible','userModifiable','rebindIfExists','dryRun'].includes(k))
@@ -33,7 +50,7 @@ export function projectParameterBindingReadIdV2(input: unknown): number | null {
 function detail(value: unknown) {
   const v=object(value), p=object(v.parameter);
   if(v.status!=='Ok'||v.action!=='detail'||v.read_only!==true||v.schema!=='operator.project_parameter_binding.v1'||v.complete!==true
-      ||v.coverage!=='native_shared_binding_and_complete_owner_values_v1'||!hash(v.otherBindingsHash)
+      ||v.coverage!=='native_shared_binding_and_owner_type_preservation_v2'||!hash(v.otherBindingsHash)
       ||!positive(p.id)||!identity(p.uniqueId)||!identity(p.name)||!guid(p.guid)||!identity(p.dataTypeId)||!identity(p.groupTypeId)
       ||typeof p.isInstance!=='boolean'||typeof p.visible!=='boolean'||!Array.isArray(p.categories)||!p.categories.length||p.categories.length>200
       ||!Array.isArray(v.owners)||v.owners.length>5000)return null;
@@ -48,7 +65,14 @@ function detail(value: unknown) {
         : o.storage==='Integer' ? !Number.isSafeInteger(o.value) : typeof o.value!=='number'||!Number.isFinite(o.value))return null;
     owners.set(o.id,o);
   }
-  return {value:v,parameter:p,owners};
+  const preserved=preservation(v.preservation,[...categories]);
+  if(!preserved||preserved.value.excludedParameterId!==p.id
+      ||[...preserved.rows.values()].filter(r=>r.isType===!p.isInstance).length!==owners.size)return null;
+  for(const o of owners.values()){
+    const r=preserved.rows.get(o.id);
+    if(!r||r.uniqueId!==o.uniqueId||r.typeId!==o.typeId||r.categoryId!==o.categoryId||r.isType!==!p.isInstance)return null;
+  }
+  return {value:v,parameter:p,owners,preserved};
 }
 function inventory(value: unknown) {
   const t=object(value), a=t.added_element_ids,m=t.modified_element_ids,d=t.deleted_element_ids;
@@ -78,6 +102,9 @@ export function projectParameterBindingReadbackMatchesV2(input:unknown,applied:u
       ||object(a.externalDefinitionEffect).selectionRestored!==true)return false;
   const existing=a.existingParameterElementIdBefore;
   if(existing!==null&&existing!==p.parameter.id)return false;
+  const before=preservation(a.preservationBefore,p.parameter.categories.map((c:any)=>c.id));
+  if(!before||before.value.excludedParameterId!==existing||!equal(before.value.elements,p.preserved.value.elements)
+      ||before.value.elementCount!==p.preserved.value.elementCount||before.value.totalParameters!==p.preserved.value.totalParameters)return false;
   if(!equal(tx.added,existing===null?[p.parameter.id]:[])||![...tx.added,...tx.modified].includes(p.parameter.id)
       ||tx.modified.some(id=>id!==p.parameter.id&&!p.owners.has(id)))return false;
   const storage=['text','url','multiline_text'].includes(w.dataType)?'String':w.dataType==='number'?'Double':'Integer';

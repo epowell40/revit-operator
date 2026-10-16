@@ -13,9 +13,30 @@ import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel
 import {projectParameterBindingReadbackMatchesV2,projectParameterBindingRequestV2,projectParameterBindingReadIdV2,projectParameterBindingPostconditionSatisfiedV2} from '../src/verification/project_parameter_binding_v2.js';
 import {postconditionSatisfiedByPayloadV2} from '../src/postcondition_verification_v2.js';
 import {operationTargetSelectorV2,verificationCapabilityAdmissionV2} from '../src/verification/verification_capability_admission_v2.js';
-const local=new URL('./fixtures/project-parameter-binding.json',import.meta.url);
-const file=fs.existsSync(local)?local:new URL('../../test/fixtures/project-parameter-binding.json',import.meta.url);
+const local=new URL('./fixtures/project-parameter-binding-preservation-v2.json',import.meta.url);
+const file=fs.existsSync(local)?local:new URL('../../test/fixtures/project-parameter-binding-preservation-v2.json',import.meta.url);
 const fixture=()=>JSON.parse(fs.readFileSync(file,'utf8'));
+
+test('legacy binding proof without complete old instance/type preservation stays unverified',()=>{
+ const old=new URL('./project-parameter-binding.json',file);
+ const f=JSON.parse(fs.readFileSync(old,'utf8'));
+ assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),false);
+});
+
+test('mutually consistent post-apply echoes cannot hide changed instance or used/unused type values',()=>{
+ for(const id of [1001,321,322]){
+  const f=fixture();
+  for(const value of [f.applied.bindingReadback,f.read])value.preservation.elements.find((r:any)=>r.id===id).parametersHash='e'.repeat(64);
+  assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),false,'old parameter data '+id);
+ }
+ for(const change of [
+  (v:any)=>delete v.preservation,(v:any)=>v.preservation.complete=false,
+  (v:any)=>v.preservation.elements.pop(),(v:any)=>v.preservation.totalParameters++,
+  (v:any)=>v.preservation.excludedParameterId=99,(v:any)=>v.preservation.categoryIds=[-2001140],
+  (v:any)=>v.preservation.elements[0].isType=false,(v:any)=>v.preservation.elements[0].uniqueId='foreign-type',
+  (v:any)=>v.preservation.elements.push(v.preservation.elements[0])
+ ]){const f=fixture();change(f.applied.bindingReadback);change(f.read);assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),false);}
+});
 
 test('new shared instance binding needs actual identity and complete separate native owner readback',()=>{
  const f=fixture();assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),true);
@@ -35,8 +56,22 @@ test('request modes keep type binding, rebinding, preview and engineering quanti
  for(const extra of [{parameterId:0},{parameterId:'41'},{instanceBinding:true},{dryRun:false}])
   assert.equal(projectParameterBindingReadIdV2({action:'detail',parameterId:41,...extra}),null);
 });
+
+test('an explicit type binding preserves all category instances as well as used and unused types',()=>{
+ const f=fixture();f.input.body.instanceBinding=false;f.applied.requestedDefinition.isInstance=false;
+ const types=f.read.preservation.elements.filter((r:any)=>r.isType);
+ const after=types.map((r:any)=>({...structuredClone(f.read.owners[0]),id:r.id,uniqueId:r.uniqueId,typeId:r.typeId}));
+ for(const detail of [f.applied.bindingReadback,f.read]){detail.parameter.isInstance=false;detail.owners=structuredClone(after);}
+ f.applied.parameter.isInstance=false;
+ f.applied.ownerValuesBefore=types.map((r:any)=>({...structuredClone(f.applied.ownerValuesBefore[0]),id:r.id,uniqueId:r.uniqueId,typeId:r.typeId}));
+ f.applied.transaction.modified_element_ids=types.map((r:any)=>r.id);
+ assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),true);
+ for(const detail of [f.applied.bindingReadback,f.read])detail.preservation.elements.find((r:any)=>r.id===1001).parametersHash='f'.repeat(64);
+ assert.equal(projectParameterBindingReadbackMatchesV2(f.input,f.applied,f.read),false);
+});
 test('an existing unbound shared identity preserves its prior owner data rather than fabricating a new element',()=>{
  const f=fixture();f.applied.existingParameterElementIdBefore=41;f.applied.transaction.added_element_ids=[];f.applied.transaction.modified_element_ids.push(41);
+ f.applied.preservationBefore.excludedParameterId=41;
  f.applied.ownerValuesBefore=structuredClone(f.read.owners);
  f.applied.ownerValuesBefore[0].hasValue=true;f.applied.ownerValuesBefore[0].value='Existing note';
  f.applied.bindingReadback.owners[0].hasValue=true;f.applied.bindingReadback.owners[0].value='Existing note';
@@ -67,7 +102,7 @@ test('wrong type, GUID, member coverage, request resolution, values or authorita
  }
 });
 
-for(const variant of ['exact','wrong_instance','partial','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit'] as const)
+for(const variant of ['exact','wrong_instance','partial','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','old_type_changed','preservation_missing'] as const)
 test(`ordinary binding ${variant} uses one guarded read and never replays the committed mutation`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-binding-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
@@ -75,6 +110,8 @@ test(`ordinary binding ${variant} uses one guarded read and never replays the co
   const f=fixture(),goal=createGoal({title:'Add a per-device schedule note',objective:'Add a per-device schedule note.',acceptance_criteria:['An instance text field is available.'],status:'active',
    related_session_id:'binding-session',created_by:'binding-principal',work_budget:{requested_effect:'apply',document_fingerprint:'binding-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'binding-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
+  if(variant==='old_type_changed')for(const value of [f.applied.bindingReadback,f.read])value.preservation.elements.find((r:any)=>r.id===321).parametersHash='e'.repeat(64);
+  if(variant==='preservation_missing')for(const value of [f.applied.bindingReadback,f.read])delete value.preservation;
   const calls:any[]=[],validations:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
    async validateToolArguments(_tool:string,args:any){validations.push(args);if(args.body.action==='detail'){

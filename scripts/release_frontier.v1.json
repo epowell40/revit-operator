@@ -4247,6 +4247,15 @@
         "dotnet:NativeApiArgumentDocumentationTests",
         "dotnet:BoundedNativeSequenceTests"
       ]
+    },
+    {
+      "id": "project_binding_preserves_old_instance_and_type_values",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "dotnet:ParameterValuePreservationDigestTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

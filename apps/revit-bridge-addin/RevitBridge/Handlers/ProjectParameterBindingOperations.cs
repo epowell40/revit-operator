@@ -92,8 +92,10 @@ namespace RevitBridge.Handlers
                 var categoryIds = row.GetProperty("categories").EnumerateArray().Select(c => c.GetProperty("id").GetInt64()).ToArray();
                 var owners = Owners(doc, categoryIds, row.GetProperty("isInstance").GetBoolean()).Select(e => Owner(e, guid)).ToArray();
                 return new { status = "Ok", action = "detail", read_only = true, schema = "operator.project_parameter_binding.v1", complete = true,
-                    parameter = row, owners, dependencies = Dependencies(doc, id), otherBindingsHash = Hash(bindings.Where(b => JsonSerializer.SerializeToElement(b).GetProperty("id").GetInt64() != id).ToArray()),
-                    coverage = "native_shared_binding_and_complete_owner_values_v1" };
+                    parameter = row, owners, dependencies = Dependencies(doc, id),
+                    preservation = ProjectParameterBindingPreservation.Capture(doc, categoryIds, id),
+                    otherBindingsHash = Hash(bindings.Where(b => JsonSerializer.SerializeToElement(b).GetProperty("id").GetInt64() != id).ToArray()),
+                    coverage = "native_shared_binding_and_owner_type_preservation_v2" };
             }
             catch (Exception ex) { return new { status = "Error", action = "detail", read_only = true, schema = "operator.project_parameter_binding.v1", complete = false, error = ex.Message }; }
         }
@@ -121,7 +123,7 @@ namespace RevitBridge.Handlers
             if (dryRun) return new { status = "Dry Run", action = "create", dryRun = true, previewExecuted = false,
                 plan = new { name, categoryIds = categories.Select(c => ElementIdCompat.GetValue(c.Id)), instance, dataTypeId = dataType.TypeId, groupTypeId = group.TypeId, visible, userModifiable },
                 transaction = OperatorNativeTransactionReceipt.NotStarted() };
-            ExternalDefinition definition; object[] beforeValues; long? existingId;
+            ExternalDefinition definition; object[] beforeValues; long? existingId; JsonElement preservationBefore;
             try
             {
                 definition = prepareDefinition();
@@ -129,6 +131,8 @@ namespace RevitBridge.Handlers
                     throw new InvalidOperationException("Existing external definition differs in type or visibility/editability; no model transaction started.");
                 existingId = SharedParameterElement.Lookup(doc, definition.GUID) is SharedParameterElement existing ? ElementIdCompat.GetValue(existing.Id) : (long?)null;
                 beforeValues = owners.Select(e => Owner(e, definition.GUID)).ToArray();
+                preservationBefore = Complete(ProjectParameterBindingPreservation.Capture(doc,
+                    categories.Select(c => ElementIdCompat.GetValue(c.Id)), existingId));
             }
             catch (Exception ex) { return new { status = "Blocked", error = ex.Message, transaction = OperatorNativeTransactionReceipt.NotStarted(), externalDefinitionEffect = externalEffect() }; }
             var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Create project parameter binding", created =>
@@ -147,6 +151,11 @@ namespace RevitBridge.Handlers
                     || !descriptor.GetProperty("categories").EnumerateArray().Select(c => c.GetProperty("id").GetInt64()).SequenceEqual(expectedCategories))
                     throw new InvalidOperationException("Requested parameter definition or instance/type/category binding did not read back; roll back.");
                 if (after.GetProperty("otherBindingsHash").GetString() != Hash(before)) throw new InvalidOperationException("Unrequested binding definition changed; roll back.");
+                var preserved = after.GetProperty("preservation");
+                if (Hash(preserved.GetProperty("elements")) != Hash(preservationBefore.GetProperty("elements"))
+                    || preserved.GetProperty("totalParameters").GetInt32() != preservationBefore.GetProperty("totalParameters").GetInt32()
+                    || preserved.GetProperty("elementCount").GetInt32() != preservationBefore.GetProperty("elementCount").GetInt32())
+                    throw new InvalidOperationException("Existing category instance/type identities or raw parameter values changed; roll back.");
                 var values = after.GetProperty("owners").EnumerateArray().ToArray();
                 if (values.Length != beforeValues.Length) throw new InvalidOperationException("Native bound-owner coverage changed; roll back.");
                 for (var i = 0; i < values.Length; i++)
@@ -165,7 +174,7 @@ namespace RevitBridge.Handlers
                         throw new InvalidOperationException("A new parameter contains an unexpected default value; roll back.");
                 }
                 return new Dictionary<string, object?> { ["parameter"] = after.GetProperty("parameter"), ["bindingReadback"] = after,
-                    ["otherBindingsHashBefore"] = Hash(before), ["ownerValuesBefore"] = beforeValues,
+                    ["otherBindingsHashBefore"] = Hash(before), ["ownerValuesBefore"] = beforeValues, ["preservationBefore"] = preservationBefore,
                     ["requestedDefinition"] = new { name, guid = definition.GUID.ToString("D"), isInstance = instance, dataTypeId = dataType.TypeId,
                         groupTypeId = group.TypeId, visible, userModifiable, categories = categories.Select(c => new { id = ElementIdCompat.GetValue(c.Id), name = c.Name }).OrderBy(c => c.id).ToArray() },
                     ["existingParameterElementIdBefore"] = existingId };

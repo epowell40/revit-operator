@@ -1,4 +1,6 @@
 using System.Linq;
+using System;
+using System.IO;
 using System.Text.Json;
 using RevitBridge.Common;
 using RevitBridge.Operator;
@@ -8,6 +10,38 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class ProjectParameterBindingContractTests
     {
+        [Fact]
+        public void CompleteCategoryInstanceAndTypeStateIsComparedInsideTheNativeTransaction()
+        {
+            var scope = ReadRepoFile("Handlers", "ProjectParameterBindingPreservation.cs");
+            Assert.Contains("new FilteredElementCollector(doc).OfCategoryId", scope);
+            Assert.DoesNotContain("WhereElementIsNotElementType", scope);
+            Assert.DoesNotContain("WhereElementIsElementType", scope);
+            Assert.Contains("element.Parameters.Cast<Parameter>().Select(Value)", scope);
+            Assert.Contains("isType = element is ElementType", scope);
+            Assert.Contains("case StorageType.Integer: raw = p.AsInteger();", scope);
+            Assert.Contains("case StorageType.ElementId: raw = ElementIdCompat.GetValue(p.AsElementId());", scope);
+            var operations = ReadRepoFile("Handlers", "ProjectParameterBindingOperations.cs");
+            var before = operations.IndexOf("preservationBefore = Complete(ProjectParameterBindingPreservation.Capture", StringComparison.Ordinal);
+            var transaction = operations.IndexOf("NativeSingleTransaction.Execute", before, StringComparison.Ordinal);
+            var after = operations.IndexOf("var preserved = after.GetProperty(\"preservation\")", transaction, StringComparison.Ordinal);
+            var guard = operations.IndexOf("Existing category instance/type identities or raw parameter values changed; roll back.", after, StringComparison.Ordinal);
+            var result = operations.IndexOf("return new Dictionary<string, object?>", guard, StringComparison.Ordinal);
+            Assert.True(before >= 0 && transaction > before && after > transaction && guard > after && result > guard);
+            Assert.Contains("preservation = ProjectParameterBindingPreservation.Capture(doc, categoryIds, id)", operations);
+        }
+
+        private static string ReadRepoFile(params string[] parts)
+        {
+            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+            foreach (var prefix in new[] { new[] { "apps", "revit-bridge-addin", "RevitBridge" }, new[] { "revit-bridge-addin", "RevitBridge" } })
+            {
+                var file = Path.Combine(new[] { dir.FullName }.Concat(prefix).Concat(parts).ToArray());
+                if (File.Exists(file)) return File.ReadAllText(file);
+            }
+            throw new FileNotFoundException("Native binding source unavailable.");
+        }
+
         [Theory]
         [InlineData("{}", true)]
         [InlineData("{\"action\":\"list\",\"query\":\"Office\",\"max\":5000}", true)]
