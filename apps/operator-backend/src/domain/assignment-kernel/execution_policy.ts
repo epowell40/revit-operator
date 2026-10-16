@@ -19,6 +19,8 @@ export interface LocalAdvisoryExecutionPolicyV1 {
   max_operations: number;
   max_total_tokens: number;
   max_wall_clock_ms: number;
+  /** New-task opt-in; ready checklist work is not a final handoff checkpoint. */
+  ready_work_handoff?: 'continue_ready_work_v1';
   source_work_allowance?: PdfWorkAllowanceV1;
   /** New-task opt-in: bounded planning from an authoritative native source census. */
   native_scope_planning?: {
@@ -66,6 +68,8 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
     && policy.session_id === spec.binding.session_id && Boolean(policy.document_fingerprint)
     && policy.document_fingerprint === spec.binding.document_fingerprint
     && sourceValid && bounded(policy.max_turns, 16) && bounded(policy.max_provider_calls, callCeiling)
+    && (policy.ready_work_handoff === undefined
+      || policy.ready_work_handoff === 'continue_ready_work_v1' && spec.requested_effect === 'apply')
     && (policy.native_scope_planning===undefined||validNativeScopePlanningPolicyV1(spec))
     && bounded(policy.max_operations, operationCeiling) && bounded(policy.max_total_tokens, tokenCeiling)
     && bounded(policy.max_wall_clock_ms, 120 * 60_000)

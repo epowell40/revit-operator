@@ -4180,6 +4180,15 @@
         "backend:progress_execution_time_v2.test.ts",
         "backend:codex_assignment_timeout.test.ts"
       ]
+    },
+    {
+      "id": "ready_work_premature_final_handoff_with_ample_budget",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:thin_reference_execution.test.ts",
+        "backend:thin_reference_dynamic_boundary.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

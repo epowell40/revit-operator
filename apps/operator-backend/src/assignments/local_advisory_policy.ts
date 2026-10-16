@@ -60,6 +60,8 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
   return { mode: "local_advisory_v1", selected_by: "trusted_local_host", session_id: binding.session_id,
     document_fingerprint: binding.document_fingerprint,
     max_turns: limit("OPERATOR_ADVISORY_MAX_TURNS", 8, 16),
+    ...(requestedEffect === 'apply' && env.OPERATOR_LOCAL_READY_WORK_HANDOFF === 'continue_ready_work_v1'
+      ? { ready_work_handoff: 'continue_ready_work_v1' as const } : {}),
     ...(source?{source_work_allowance:structuredClone(source)}:{}),
     ...(!source&&requestedEffect==='apply'&&env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE==='verified_native_changes_v1'
       &&env.OPERATOR_LOCAL_MODEL_WORK_ALLOWANCE==='native_inventory_planning_v1'&&sourceRequest&&nativeScopePlanningIntentV1(sourceRequest)

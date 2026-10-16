@@ -19,6 +19,7 @@ import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../assignments/assignment
 import { projectWorkPlan } from '../assignments/work_plan_projection.js';
 import { assignmentBudgetForPrompt } from './assignment_budget_prompt.js';
 import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js';
+import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -106,7 +107,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer. Each list permits at most 24 entries, each at most 1000 characters. Keep entries concise; provide detailed tables/coordinates in a saved report artifact and include its usable reference. If proposal validation rejects a field, correct and resubmit the report without repeating model edits.",
+        ADVISORY_HANDOFF_GUIDANCE,
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"

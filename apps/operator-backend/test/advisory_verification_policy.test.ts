@@ -33,6 +33,8 @@ import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment
 import { codexAssignmentEvidenceContextV2 } from "../src/brains/codex_assignment_evidence.js";
 import { assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import {projectWorkReviewV2} from '../src/assignments/work_review_handoff.js';
+import {validLocalAdvisoryPolicyV1} from '../src/domain/assignment-kernel/execution_policy.js';
+import {ADVISORY_HANDOFF_GUIDANCE} from '../src/brains/work_continuation_guidance.js';
 
 test('retained74 omitted-reference completion reaches durable advisory claim without inventing an edit or certifying work',()=>fixture(true,f=>{
  const retained=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/work-plan-completion-refusal-74.json'),'utf8'));
@@ -77,6 +79,123 @@ import { AssignmentJournalV2, canonicalJsonV2, decideAssignmentProgressV2, deriv
 
 const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only", { OPERATOR_API_BASE_URL: "http://127.0.0.1:7007" }) };
 const proposal = { claimed_completed: ["Drafted a useful partial network."], remaining_work: ["Review terminal connections."], uncertainties: ["Drawing elevation is ambiguous."] };
+
+test('new-task ready-work policy rejects premature handoff without stopping the dynamic worker, then preserves ordinary review after ready work is addressed',()=>fixture('installation',async legacy=>{
+ const prior=process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;
+ process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF='continue_ready_work_v1';
+ try {
+  const f=setup('apply','ready-work-task');
+  assert.equal((f.state().spec.execution_policy as any).ready_work_handoff,'continue_ready_work_v1');
+  assert.equal((legacy.state().spec.execution_policy as any).ready_work_handoff,undefined,'Existing task policy must not change');
+  assert.equal((setup('preview','preview-task').state().spec.execution_policy as any).ready_work_handoff,undefined);
+  manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+   {item_id:'batch-one',description:'First completed batch',source_basis:'User package'},
+   {item_id:'batch-two',description:'Remaining ready batch',source_basis:'User package'},
+   {item_id:'engineering',description:'Equipment selection needs engineer',source_basis:'User package'}],assumptions:[]}});
+  manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'batch-one'});
+  manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'engineering',reason:'Manufacturer equipment listing is absent; continue independent drafting.'});
+  const before=structuredClone(f.state());const stops:string[]=[];
+  const request={version:'operator.backend.v1',session_id:f.binding.session_id,message_id:'same-request',user_text:f.goal.objective,assignment_id:f.binding.assignment_id,assignment_run_id:f.binding.run_id,assignment_generation:1} as any;
+  const runtime={assignmentKernelV2Binding:()=>f.binding,queueAssignmentKernelV2TurnStop:(_turn:unknown,reason:string)=>stops.push(reason),callTool:async(_tool:string,args:any)=>({content:[{type:'text',text:JSON.stringify(manageAssignmentWorkPlan({binding:f.binding,action:args.action,completion_proposal:args.completionProposal}))}]})};
+  const owner=beginTeammateLoopOwner(runtime,request,{canonicalSupervisionOnly:true});
+  try {
+   const response:any=await handleCodexDynamicToolCall(runtime as any,{id:'early-handoff',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'turn',tool:'operator_manage_work_plan',arguments:{action:'propose_completion',completionProposal:proposal}}} as any);
+   assert.equal(response.success,false);assert.match(JSON.stringify(response),/ready_work_remaining/);assert.deepEqual(stops,[]);
+   assert.deepEqual(f.state(),before,'Rejected proposal must not write a review, clear effects or change budget/history');
+   let starts=0;await startCodexProviderTurnWhenActive({binding:f.binding,readSnapshot:f.state},async()=>{starts++;});assert.equal(starts,1);
+   manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'batch-two'});
+   const done=manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+   assert.equal(done.outcome,'awaiting_user_review');assert.equal(f.state().completion_proposal?.verified,false);
+   assert.equal(projectWorkReviewV2(f.state()).page.items.find((r:any)=>r.item_id==='engineering')?.status,'deferred');
+  }finally{endTeammateLoopOwner(owner);}
+  __testOnlyResetGoalListCache();assert.equal((f.state().spec.execution_policy as any).ready_work_handoff,'continue_ready_work_v1');
+ }finally{if(prior===undefined)delete process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;else process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF=prior;}
+}));
+
+async function readyWorkFixture(fn:Parameters<typeof fixture>[1]) {
+ const previous=process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;
+ process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF='continue_ready_work_v1';
+ try{await fixture('installation',fn);}finally{if(previous===undefined)delete process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;else process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF=previous;}
+}
+
+test('ready-work selection and policy validation cannot opt hosted, remote, read or preview work into continued execution',()=>readyWorkFixture(f=>{
+ const spec=structuredClone(f.state().spec);
+ assert.equal(validLocalAdvisoryPolicyV1(spec),true);
+ for(const requested_effect of ['read','preview'] as const)assert.equal(validLocalAdvisoryPolicyV1({...spec,requested_effect}),false);
+ assert.equal(validLocalAdvisoryPolicyV1({...spec,execution_policy:{...spec.execution_policy!,ready_work_handoff:'force_execution' as any}}),false);
+ for(const env of [{...process.env,REVIT_OPERATOR_MODE:'hosted'},{...process.env,OPERATOR_HOSTED_ENABLED:'1'}])
+  assert.equal(selectLocalAdvisoryPolicy(f.binding,env,local,'apply'),undefined);
+ const remote={operator_backend_auth:createOperatorBackendAuth('shared_token','test-only',{OPERATOR_API_BASE_URL:'https://example.test'})};
+ assert.equal(selectLocalAdvisoryPolicy(f.binding,process.env,remote,'apply'),undefined);
+ for(const effect of ['read','preview'])assert.equal(selectLocalAdvisoryPolicy(f.binding,process.env,local,effect)?.ready_work_handoff,undefined);
+ assert.equal(selectLocalAdvisoryPolicy(f.binding,{...process.env,OPERATOR_LOCAL_READY_WORK_HANDOFF:'force_execution'},local,'apply')?.ready_work_handoff,undefined);
+}));
+
+test('worker and refreshed task context share the same distinction between progress and final review',()=>readyWorkFixture(f=>{
+ const profile=getThinReferenceCodexProfile('test',true).baseInstructions;
+ const refreshed=prepareCodexAssignmentProgressV2(f.binding,true).prompt;
+ for(const prompt of [profile,refreshed]){
+  assert.ok(prompt.includes(ADVISORY_HANDOFF_GUIDANCE));
+  assert.match(prompt,/without propose_completion/);
+  assert.match(prompt,/pause, usage holds, required input, unknown effects and cumulative limits/);
+  assert.doesNotMatch(prompt,/When done or returning a best effort|propose an honest handoff before another discovery batch/);
+ }
+}));
+
+for(const stop of ['paused','input','unknown'] as const)test(`ready-work continuation preserves ${stop} without dispatch or clearing prior state`,()=>readyWorkFixture(async f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'remaining',description:'Ready independent work',source_basis:'User package'}],assumptions:[]}});
+ if(stop==='paused')controlAssignmentExecutionV2({binding:f.binding,action:'pause',command_id:'pause',expected_command_id:null});
+ if(stop==='input')requestAssignmentInputV2({binding:f.binding,clarification_id:'floor',variable_ids:['floor'],new_variable_ids:['floor'],question:'Which floor?'});
+ if(stop==='unknown'){const lease=open(f,'uncertain','apply');markAssignmentKernelOperationDispatchStartedV2(lease);failAssignmentKernelOperationV2(lease,new Error('lost native ack'),'dispatched');}
+ const before=structuredClone(f.state());let starts=0;
+ if(stop==='unknown'){
+  const request={version:'operator.backend.v1',session_id:f.binding.session_id,message_id:'never-dispatched',user_text:f.goal.objective} as any;
+  const run=await runThinReferenceTurns({request,binding:f.binding,limits:{max_turns:2,max_wall_ms:120000},signal:new AbortController().signal,
+   inspect:()=>({snapshot:f.state(),decision:decide(f.state())}),invoke:async()=>{starts++;throw Error('must not dispatch');}});
+  assert.equal(run.stop_reason,'unknown_effect_requires_reconciliation');assert.equal(run.turns,0);
+ }else{
+  assert.throws(()=>startCodexProviderTurnWhenActive({binding:f.binding,readSnapshot:f.state},async()=>{starts++;}));
+  assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}));
+ }
+ assert.throws(()=>open(f,'after-stop','apply',14));
+ assert.equal(starts,0);assert.deepEqual(f.state(),before);
+}));
+
+test('ready-work handoff guard allows a bounded resource checkpoint and preserves the still-unfinished checklist',async()=>{
+ const prior=process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS;process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS='4';
+ try{await readyWorkFixture(f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'remaining',description:'Ready work remains',source_basis:'User package'}],assumptions:[]}});
+  for(let i=0;i<3;i++)recordCompletedAssignmentProviderReceiptV2({binding:f.binding,call_id:'prior-'+i,provider:'fixture',model:'fixture',reasoning_effort:null,gap_ids:[],criterion_ids:[],expected_information:['Fixture-only prior usage'],admitted_at:new Date().toISOString(),provider_duration_ms:null,usage:{input_tokens:1,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:1,total_tokens:2,reasoning_tokens:null,estimated_cost_usd:null},success:true});
+  assert.equal(assignmentWorkBudgetStatusV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString()).checkpoint_recommended,true);
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+  assert.equal(f.state().outcome,'awaiting_user_review');assert.equal(f.state().work_plan?.items[0].completed_at,undefined);
+ });}finally{if(prior===undefined)delete process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS;else process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS=prior;}
+});
+
+test('user-required review deferral blocks dependent work and remains an ordinary review stop despite ample resources',()=>readyWorkFixture(f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+  {item_id:'first',description:'First batch already checked',source_basis:'User asks to review first batch'},
+  {item_id:'review',description:'User review before later work',source_basis:'User asks to review first batch'},
+  {item_id:'later',description:'Later dependent work',source_basis:'User package',depends_on:['review']}],assumptions:[]}});
+ manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'first'});
+ manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'review',reason:'User explicitly asked to inspect the first batch before later work.'});
+ manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+ assert.equal(f.state().outcome,'awaiting_user_review');assert.equal(f.state().work_plan?.items[2].completed_at,undefined);
+ assert.throws(()=>startCodexProviderTurnWhenActive({binding:f.binding,readSnapshot:f.state},async()=>{}),/advisory_completion_proposed/);
+}));
+
+test('rejected early handoff can finish a provider turn and use the existing bounded loop without changing task identity or policy',()=>readyWorkFixture(async f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'remaining',description:'Remaining independent work',source_basis:'User package'}],assumptions:[]}});
+ const spec=structuredClone(f.state().spec),request={version:'operator.backend.v1',session_id:f.binding.session_id,message_id:'same-message',user_text:f.goal.objective,assignment_id:f.binding.assignment_id,assignment_run_id:f.binding.run_id,assignment_generation:1} as any;
+ const result=await runThinReferenceTurns({request,binding:f.binding,limits:{max_turns:2,max_wall_ms:120000},signal:new AbortController().signal,
+  inspect:()=>advanceAssignmentKernelProgressV2({binding:f.binding}),invoke:async(req,turn)=>{
+   assert.equal(req.assignment_id,f.binding.assignment_id);assert.equal(req.message_id,'same-message');
+   if(turn===1)assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
+   else{assert.equal(turn,2);assert.match(req.user_text??"",/Continue the same unfinished task/);manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'remaining'});manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});}
+   return {version:'operator.backend.v1',assistant_message:turn===1?'Progress retained; work remains.':'Unverified final report.',actions:[],assignment_snapshot_v2:f.state(),provider_turn_usage:{schema:'revit-operator.provider-turn-usage/v1',session_id:f.binding.session_id,message_id:'same-message',thread_id:'fixture-thread',turn_id:'fixture-turn-'+turn,disposition:'completed',raw_response_ids:[]}};
+  }});
+ assert.equal(result.turns,2);assert.equal(result.response.assignment_snapshot_v2?.outcome,'awaiting_user_review');assert.deepEqual(f.state().spec,spec);
+}));
 
 test('unavailable scope-check attempt is retained and replayable without certifying work',()=>fixture(true,f=>{
   manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'typical',description:'Panel leaders off typical',source_basis:'Marked E010'}],assumptions:[]}});
