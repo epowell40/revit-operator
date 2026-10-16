@@ -41,10 +41,10 @@ function setup() {
 }
 type Fixture = ReturnType<typeof setup>;
 type Lease = ReturnType<typeof openAssignmentKernelOperationV2>;
-function save(f: Fixture, id: string, extra = {}) {
+function save(f: Fixture, id: string, extra = {}, requestExtra: Record<string, unknown> = {}) {
   return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
     capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: [`path:${filePath.toLowerCase()}`],
-    arguments: { method: "POST", path: "/revit/save-as", body: { filePath, overwrite: true, dryRun: false, ...extra } } });
+    arguments: { method: "POST", path: "/revit/save-as", body: { filePath, overwrite: true, dryRun: false, ...extra }, ...requestExtra } });
 }
 function change(f: Fixture, id: string, element = 11, value = id) {
   return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
@@ -123,6 +123,62 @@ test("a second successful checkpoint requires a distinct subsequent edit", () =>
   assert.equal(op.checkpoint_of_operation_id, second.operation_id);
   assert.equal(op.checkpoint_after_operation_id, later.operation_id);
 }));
+
+for (const boundary of ["runtime", "reducer"] as const) {
+  for (const [previousHint, nextHint] of [[undefined, true], [undefined, false], [true, undefined], [false, undefined], [true, false], [false, true]] as const) {
+    test(`${boundary} checkpoints ignore only the boolean known-path discovery hint (${previousHint} to ${nextHint})`, () => workspace(() => {
+      const f = setup(), previousInput = previousHint === undefined ? {} : { requireKnownPath: previousHint };
+      const first = save(f, "first", {}, previousInput); settle(f, first, true);
+      const edit = change(f, "edit"); settle(f, edit);
+      const before = f.state(), journal = f.journal(), nextInput = nextHint === undefined ? {} : { requireKnownPath: nextHint };
+      let state, admittedId;
+      if (boundary === "runtime") {
+        __testOnlyResetGoalListCache();
+        const next = save(f, "next", {}, nextInput); state = f.state(); admittedId = next.operation_id;
+      } else {
+        const event = proposal(journal, before.operations[first.operation_id]!, edit.operation_id);
+        if (event.event_type !== "operation_admitted") throw Error("admission fixture");
+        const { requireKnownPath: _hint, ...input } = event.operation.input;
+        event.operation.input = { ...input, ...nextInput };
+        state = journal.append(event); admittedId = "next-checkpoint";
+        assert.deepEqual(new AssignmentJournalV2(journal.events()).snapshot(), state);
+      }
+      const op = state.operations[admittedId]!;
+      assert.equal(op.checkpoint_of_operation_id, first.operation_id);
+      assert.equal(op.checkpoint_after_operation_id, edit.operation_id);
+      assert.equal(op.input.requireKnownPath, nextHint);
+      assert.deepEqual(state.operations[first.operation_id], before.operations[first.operation_id]);
+      assert.deepEqual(state.operations[edit.operation_id], before.operations[edit.operation_id]);
+      assert.deepEqual(state.spec, before.spec);
+      assert.equal(op.retry_of_operation_id, undefined);
+    }));
+  }
+
+  for (const extra of [{ requireKnownPath: "true" }, { requireKnownPath: null }, { requireKnownPath: 1 },
+    { requireKnownPath: true, unreviewedMetadata: true }]) {
+    test(`${boundary} rejects changed or malformed checkpoint input ${JSON.stringify(extra)}`, () => workspace(() => {
+      const f = setup(), first = save(f, "first"); settle(f, first, true);
+      const edit = change(f, "edit"); settle(f, edit);
+      if (boundary === "runtime") assert.throws(() => save(f, "next", {}, extra), /equivalent_repeat|repeat_unsafe/);
+      else {
+        const journal = f.journal(), event = proposal(journal, journal.snapshot().operations[first.operation_id]!, edit.operation_id);
+        if (event.event_type !== "operation_admitted") throw Error("admission fixture");
+        event.operation.input = { ...event.operation.input, ...extra };
+        assert.throws(() => journal.append(event), { code: "operation_document_checkpoint_invalid" });
+      }
+    }));
+  }
+  test(`${boundary} discovery hint cannot create a checkpoint without new changes`, () => workspace(() => {
+    const f = setup(), first = save(f, "first"); settle(f, first, true);
+    if (boundary === "runtime") assert.throws(() => save(f, "next", {}, { requireKnownPath: true }), /equivalent_repeat|repeat_unsafe/);
+    else {
+      const journal = f.journal(), event = proposal(journal, journal.snapshot().operations[first.operation_id]!, "absent-change");
+      if (event.event_type !== "operation_admitted") throw Error("admission fixture");
+      event.operation.input = { ...event.operation.input, requireKnownPath: true };
+      assert.throws(() => journal.append(event), { code: "operation_document_checkpoint_invalid" });
+    }
+  }));
+}
 
 for (const neighbor of ["no_change", "unsettled", "unknown", "no_effect", "rolled_back", "wrapper", "no_actual_targets", "paused", "different_save_after_edit"] as const) {
   test(`runtime rejects checkpoint continuation for ${neighbor}`, () => workspace(() => {

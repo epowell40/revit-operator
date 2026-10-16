@@ -3665,6 +3665,13 @@
       ]
     },
     {
+      "id": "document-checkpoint-boolean-registry-hint-is-not-native-request-identity",
+      "coverage": [
+        "backend:assignment_document_checkpoint.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
       "id": "provider-usage-hold-requires-current-authentic-typed-completion-and-durable-brain-handoff",
       "coverage": [
         "backend:codex_provider_usage_authority.test.ts",
