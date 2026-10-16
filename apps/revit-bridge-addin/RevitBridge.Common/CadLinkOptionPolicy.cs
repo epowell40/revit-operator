@@ -5,6 +5,11 @@ namespace RevitBridge.Common
     /// <summary>Requested CAD semantics are never replaced by a different effect.</summary>
     public static class CadLinkOptionPolicy
     {
+        public static bool ShouldCreateDraftingView(bool hasExistingView, bool directSheetImport,
+            bool hasSheet, string? requestedViewName, bool? createDraftingView)
+            => !hasExistingView && !directSheetImport && createDraftingView != false
+                && (hasSheet || !string.IsNullOrWhiteSpace(requestedViewName));
+
         public static string ResolveColorMode(string? raw)
         {
             var key = (raw ?? "").Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");

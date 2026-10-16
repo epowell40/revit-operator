@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
 
@@ -6,6 +8,31 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class CadLinkOptionPolicyTests
     {
+        [Fact]
+        public void ExactViewFirstRequestHasAPlannedOwnerBeforeAnySheetExists()
+        {
+            using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+                "Fixtures", "cad-named-owner-before-sheet132.json")));
+            var request = fixture.RootElement.GetProperty("request");
+            Assert.False(request.TryGetProperty("sheetNumber", out _));
+            Assert.False(request.GetProperty("placeOnSheet").GetBoolean());
+            Assert.True(CadLinkOptionPolicy.ShouldCreateDraftingView(false, false, false,
+                request.GetProperty("viewName").GetString(), request.GetProperty("createDraftingView").GetBoolean()));
+        }
+
+        [Theory]
+        [InlineData(false, false, false, "CAD Layer Standards", true, true)]
+        [InlineData(false, false, true, null, null, true)]
+        [InlineData(false, false, false, "Named view", null, true)]
+        [InlineData(true, false, false, "Existing view", true, false)]
+        [InlineData(false, false, false, "Named view", false, false)]
+        [InlineData(false, true, true, "Named view", true, false)]
+        [InlineData(false, false, false, null, true, false)]
+        [InlineData(false, false, false, "  ", true, false)]
+        public void DraftingOwnerCanPrecedeSheetButNeverInventsAnUnnamedTarget(bool existing,
+            bool directSheet, bool sheet, string? name, bool? create, bool expected)
+            => Assert.Equal(expected, CadLinkOptionPolicy.ShouldCreateDraftingView(existing, directSheet, sheet, name, create));
+
         [Theory]
         [InlineData(null, "Preserved")]
         [InlineData("", "Preserved")]

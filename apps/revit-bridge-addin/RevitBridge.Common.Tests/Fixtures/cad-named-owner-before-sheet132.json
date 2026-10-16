@@ -1,0 +1,17 @@
+{
+  "request": {
+    "sourcePath": "artifacts/uploads/20261016202355_LAYERS.dwg",
+    "viewName": "CAD Layer Standards",
+    "createDraftingView": true,
+    "placeOnSheet": false,
+    "viewScale": 1,
+    "colorMode": "preserve",
+    "link": true,
+    "dryRun": true
+  },
+  "first_failure": {
+    "status": 500,
+    "error": "link-cad requires a target view (viewId/viewName/viewQuery) or sheetViewId/sheetNumber so a drafting view can be created.",
+    "type": "System.InvalidOperationException"
+  }
+}

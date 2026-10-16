@@ -4306,6 +4306,13 @@
       ]
     },
     {
+      "id": "cad_named_drafting_owner_before_sheet_creation",
+      "coverage": [
+        "dotnet:CadLinkOptionPolicyTests",
+        "dotnet:CadLinkNativeContractTests"
+      ]
+    },
+    {
       "id": "new_external_definition_native_owner_lifetime",
       "coverage": [
         "backend:project_parameter_binding_v2.test.ts",

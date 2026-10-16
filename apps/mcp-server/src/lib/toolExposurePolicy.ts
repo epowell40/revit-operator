@@ -128,7 +128,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:35a468e0e2bf7a1f64814935c741def3eccb602172a8970db992c0a2a51c62fb";
+const BUNDLED_POLICY_HASH = "sha256:6848e2784ae50324adb604891e212471c4fd380790f7597631b871f21ff9e792";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {

@@ -52,6 +52,16 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void HandlerPlansNamedOwnerBeforeSheetCreationAndKeepsLegacyValidationConsistent()
+        {
+            var handler = Read("Handlers", "LinkCadHandler.cs");
+            Assert.Contains("CadLinkOptionPolicy.ShouldCreateDraftingView(targetView != null,", handler);
+            var validator = Read("Operator", "OperatorActionSchemaValidator.cs");
+            Assert.Contains("link-cad requires viewId, viewName, viewQuery, sheetViewId, or sheetNumber.", validator);
+            Assert.DoesNotContain("link-cad requires sheetViewId or sheetNumber.", validator);
+        }
+
+        [Fact]
         public void EmbeddedFileIntakeRetainsCadAsBinaryReference()
         {
             var source = Read("Operator", "OperatorPaneControl.cs");

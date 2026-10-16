@@ -6861,7 +6861,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CadLinkPreflightCapabilityTests.cs",
-      "sha256": "sha256:98ace41079ca494329b66537195dd2e84327a54cd2f20fb246f60f2143c645b9"
+      "sha256": "sha256:fc4ed0448bde9fa52ad496f00940b6537841619fcc6e829036ab1c36212ee98a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CaptureScreenshareHandlerTests.cs",
@@ -6982,6 +6982,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/c138-registered-branch-blocked-rollback.json",
       "sha256": "sha256:7025e8d989bece5d3a392a49511ac8ee8d10d9a0228ef5b9b85fc7f5c4d8fd81"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/cad-capability-probe-unsettled131.json",
+      "sha256": "sha256:30d57bb9afe8655198acbb07584043e72735d1b919d558c9bbc68b11d9d4135e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/change-type-host-modal-42.json",
@@ -7189,7 +7193,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAttemptSettlementTests.cs",
-      "sha256": "sha256:99cc2c6e8fedc2811b50b9a337afe43e5285cd621e9c148de6913e8bd1d85083"
+      "sha256": "sha256:3e6bc4468d1dcc784caff432c91d5e7fe23e343554bfebd2447b08f76b3870f0"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAuthTokenStoreTests.cs",
@@ -7481,7 +7485,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj",
-      "sha256": "sha256:2d64961dcd049533ca6a706de431ae160c9f390676d5eb1ff1853aef65a08bf7"
+      "sha256": "sha256:bcffce81d87bffa00aaa7537b8cd470313cf4d82c3615282e762ecbc7387a972"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitRerouteOperationContractTests.cs",
@@ -7681,7 +7685,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CadLinkPreflightCapability.cs",
-      "sha256": "sha256:21b50318044104e0c82ad02099954bae82c162ba024ddc4e932b95cac65e5597"
+      "sha256": "sha256:0bbe053276097120b96f3ae820af0b983fd536c298a7611acc198791a9ce6ea3"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CaptureScreensharePolicy.cs",
@@ -9869,7 +9873,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:1395836125aff4d06451143579c476f1cfc1b0e5c19a15a1884d28e31a1338e3",
+  "inputs_hash": "sha256:4ad949f540fff012e6da4f91a61e0e9d2b757a15a95c7d431688613a8407836c",
   "result": {
     "passed": true,
     "checks": [

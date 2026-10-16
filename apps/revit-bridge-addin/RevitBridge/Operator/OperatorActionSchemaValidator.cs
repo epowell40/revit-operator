@@ -5880,16 +5880,25 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/link-cad", StringComparison.OrdinalIgnoreCase))
             {
-                // { sourcePath, sheetNumber?, sheetViewId?, placement?, link?, dryRun? }
+                // Source plus existing/named view or sheet. A named drafting owner can precede sheet creation.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "link-cad body must be an object.";
                     return false;
                 }
 
-                if (!ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "preflightOnly", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                var capabilityOnly = obj.Value.TryGetProperty("preflightOnly", out var cadPreflight) && cadPreflight.ValueKind == JsonValueKind.True
+                    && obj.Value.TryGetProperty("dryRun", out var cadDryRun) && cadDryRun.ValueKind == JsonValueKind.True;
+                if (!capabilityOnly && !ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "sheetNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "sheetViewId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "viewName", maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "viewQuery", maxLen: 240, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "createDraftingView", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "placeOnSheet", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "placement", maxLen: 24, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "colorMode", maxLen: 32, out error)) return false;
                 try
@@ -5898,13 +5907,16 @@ namespace RevitBridge.Operator
                 }
                 catch (ArgumentException ex) { error = ex.Message; return false; }
                 if (!ValidateOptionalBool(obj.Value, "link", out error)) return false;
-                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (capabilityOnly) return true;
 
                 var hasSheetViewId = obj.Value.TryGetProperty("sheetViewId", out var svid) && svid.ValueKind == JsonValueKind.Number && svid.TryGetInt64(out var svidV) && svidV > 0;
                 var hasSheetNumber = obj.Value.TryGetProperty("sheetNumber", out var sn) && sn.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sn.GetString());
-                if (!hasSheetViewId && !hasSheetNumber)
+                var hasViewId = obj.Value.TryGetProperty("viewId", out var cadView) && cadView.ValueKind == JsonValueKind.Number && cadView.TryGetInt64(out var cadViewId) && cadViewId > 0;
+                var hasViewName = obj.Value.TryGetProperty("viewName", out var cadName) && cadName.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cadName.GetString());
+                var hasViewQuery = obj.Value.TryGetProperty("viewQuery", out var cadQuery) && cadQuery.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cadQuery.GetString());
+                if (!hasSheetViewId && !hasSheetNumber && !hasViewId && !hasViewName && !hasViewQuery)
                 {
-                    error = "link-cad requires sheetViewId or sheetNumber.";
+                    error = "link-cad requires viewId, viewName, viewQuery, sheetViewId, or sheetNumber.";
                     return false;
                 }
 

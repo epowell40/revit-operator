@@ -64,7 +64,8 @@ namespace RevitBridge.Handlers
             var targetView = directSheetImport
                 ? (sheet as View)
                 : ResolveExistingTargetView(doc, p);
-            var plannedDraftingViewName = targetView == null && !directSheetImport && sheet != null && (p.createDraftingView ?? true)
+            var plannedDraftingViewName = CadLinkOptionPolicy.ShouldCreateDraftingView(targetView != null,
+                directSheetImport, sheet != null, p.viewName, p.createDraftingView)
                 ? ResolvePlannedDraftingViewName(p, src, sheet)
                 : null;
             if (targetView == null && string.IsNullOrWhiteSpace(plannedDraftingViewName))
