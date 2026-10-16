@@ -8,6 +8,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SUPPORTED_MCP_ALIASES, isSupportedNativeTool } from "./supportedToolInventory.js";
 import { filterRegistryEntriesForSearch, isKnownToolExposureRoute, isToolRouteExposedForSearch } from "./toolExposurePolicy.js";
+import { protectedSmokeResponse, writeNativeReceipt } from './nativeTransport.testSupport.js';
+import { NATIVE_TRANSPORT_CONTENT_TYPE, NATIVE_TRANSPORT_PATH } from './nativeTransport.js';
 
 const nativeSource = fs.readFileSync(path.resolve(process.cwd(), "../revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs"), "utf8");
 const implemented = [...nativeSource.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*"(GET|POST)",\s*"([^"]+)"/g)]
@@ -15,13 +17,14 @@ const implemented = [...nativeSource.matchAll(/new OperatorToolInfo\("[^"\r\n]+"
 const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
 
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
+  assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
   assert.equal(implemented.length, 217);
-  assert.equal(excluded.length, 108);
+  assert.equal(excluded.length, 107);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 109);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 110);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/locate-elements", env), true);
     assert.equal(isToolRouteExposedForSearch("GET", "/revit/locate-elements", env), false);
     for (const route of excluded) {
@@ -29,6 +32,35 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
       assert.equal(isToolRouteExposedForSearch(route.method, route.path, env), false);
     }
   }
+});
+
+test('actual MCP documentation can discover the new instance-parameter operation without executing it',async()=>{
+ const requests:string[]=[];
+ const schema=JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/project-parameters'];
+ const token='p'.repeat(32),epoch=Buffer.alloc(32,7).toString('base64url');
+ const backend=http.createServer(async(request,response)=>{const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
+  assert.equal(request.url,NATIVE_TRANSPORT_PATH);response.setHeader('content-type',NATIVE_TRANSPORT_CONTENT_TYPE);
+  response.end(protectedSmokeResponse(Buffer.concat(chunks).toString('utf8'),token,200,inner=>{
+   requests.push(inner.path);assert.equal(inner.method,'POST');assert.equal(inner.path,'/revit/tool-doc');
+   assert.deepEqual(JSON.parse(inner.body_json),{method:'POST',path:'/revit/project-parameters'});
+   return JSON.stringify({method:'POST',path:'/revit/project-parameters',request_schema:schema});
+  }));});
+ await new Promise<void>(resolve=>backend.listen(0,'127.0.0.1',resolve));const address=backend.address();assert(address&&typeof address!=='string');
+ const workspace=fs.mkdtempSync(path.join(os.tmpdir(),'parameter-discovery-stdio-'));
+ writeNativeReceipt(workspace,`http://127.0.0.1:${address.port}`,epoch);
+ const transport=new StdioClientTransport({command:process.execPath,args:[path.join(process.cwd(),'dist/server.js')],cwd:process.cwd(),stderr:'pipe',
+  env:{...process.env,REVIT_OPERATOR_MODE:'development',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_TOKEN:token,OPERATOR_OPENAI_API_KEY:'test-only',OPERATOR_AUTH_MODE:'shared_token',
+   LOCALAPPDATA:workspace,OPERATOR_REVIT_TRANSPORT:'direct',OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT:'0',
+   OPERATOR_WORKSPACE_ROOT:workspace,OPERATOR_API_BASE_URL:`http://127.0.0.1:${address.port}`,REVIT_BRIDGE_URL:`http://127.0.0.1:${address.port}`}});
+ transport.stderr?.on('data',()=>{});const client=new Client({name:'parameter-discovery',version:'1.0.0'},{capabilities:{}});
+ try{
+  await client.connect(transport);const doc=await client.callTool({name:'revit_tool_doc',arguments:{method:'POST',path:'/revit/project-parameters'}});
+  assert.notEqual(doc.isError,true,JSON.stringify(doc.content));
+  const value=JSON.parse((doc.content as Array<{type:string,text?:string}>).find(c=>c.type==='text')!.text!);
+  assert.equal(value.path,'/revit/project-parameters');
+  assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
+  assert(requests.length>0);assert(requests.every(p=>p.endsWith('/revit/tool-doc')),'Discovery must never execute the parameter mutation.');
+ }finally{await client.close();await transport.close();await new Promise<void>((resolve,reject)=>backend.close(error=>error?reject(error):resolve()));fs.rmSync(workspace,{recursive:true,force:true});}
 });
 
 test("actual MCP list generic call and tool documentation cannot expose or dispatch excluded routes", async () => {

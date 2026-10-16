@@ -623,6 +623,6 @@ test('project-parameter discovery publishes separate bounded instance creation a
   assert.equal(check(good),null,JSON.stringify(good));
  for(const bad of [{action:'detail'}, {action:'detail',parameterId:'42'}, {action:'detail',parameterId:0},
   {action:'detail',parameterId:42,instanceBinding:true}, {...create,parameterId:42}, {...create,instanceBinding:null},
-  {...create,categoryNames:[]}, {...create,dataType:'airflow'}, {action:'list',max:5001}, {action:'list',name:'Note'}])
+  {...create,categoryNames:[]}, {...create,dataType:'airflow'}, {...create,rebindIfExists:true}, {action:'list',max:5001}, {action:'list',name:'Note'}])
   assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
 });

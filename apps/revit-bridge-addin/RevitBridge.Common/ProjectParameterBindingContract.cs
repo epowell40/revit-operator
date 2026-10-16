@@ -34,6 +34,11 @@ namespace RevitBridge.Common
                 || cats.EnumerateArray().Any(c => c.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(c.GetString()) || c.GetString()!.Length > 120)) return false;
             foreach (var key in new[] { "instanceBinding", "visible", "userModifiable", "rebindIfExists", "dryRun" })
                 if (body.TryGetProperty(key, out var b) && b.ValueKind != JsonValueKind.True && b.ValueKind != JsonValueKind.False) return false;
+            if (body.TryGetProperty("rebindIfExists", out var rebind) && rebind.ValueKind == JsonValueKind.True)
+            {
+                error = "Existing bindings are preserved. Create a distinct instance parameter instead of converting a type binding or replacing its categories.";
+                return false;
+            }
             if (body.TryGetProperty("dataType", out var type) && (type.ValueKind != JsonValueKind.String || !new[] { "text", "url", "multiline_text", "multiline", "multilinetext", "yesno", "yes_no", "yes/no", "integer", "number" }.Contains(type.GetString()))) return false;
             if (body.TryGetProperty("parameterGroup", out var group) && (group.ValueKind != JsonValueKind.String || !new[] { "identity_data", "identity", "data", "text", "constraints", "geometry", "materials", "graphics", "phasing" }.Contains(group.GetString()))) return false;
             error = ""; return true;

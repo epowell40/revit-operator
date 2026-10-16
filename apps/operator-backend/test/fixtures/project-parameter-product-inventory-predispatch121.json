@@ -1,0 +1,17 @@
+{
+  "source": "Actual installed native preflight 2026-10-16, before actor or mutation",
+  "request": {
+    "method": "POST",
+    "path": "/revit/tool-doc",
+    "body": {
+      "method": "POST",
+      "path": "/revit/project-parameters"
+    }
+  },
+  "first_response": {
+    "status": 200,
+    "code": "PRODUCT_TOOL_NOT_SUPPORTED",
+    "request_dispatched": false,
+    "outcome_unknown": false
+  }
+}

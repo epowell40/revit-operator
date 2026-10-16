@@ -10,13 +10,22 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void SharedInstanceParameterCreationAndInspectionAreDiscoverableWithoutWideningOtherRoutes()
+        {
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/project-parameters"));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", "/revit/project-parameters"));
+            Assert.Single(OperatorToolManifest.Tools.Where(t => t.Method == "POST" && t.Path == "/revit/project-parameters"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/project-parameters"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/project-parameters-unreviewed"));
+        }
+        [Fact]
         public void EveryImplementedRouteIsConstrainedAtNativeAdmissionAndDiscovery()
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(217, implemented.Count);
-            Assert.Equal(109, OperatorToolManifest.Tools.Count);
-            Assert.Equal(109, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(110, OperatorToolManifest.Tools.Count);
+            Assert.Equal(110, OperatorActionAllowlist.EnumerateAllowed().Count());
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));

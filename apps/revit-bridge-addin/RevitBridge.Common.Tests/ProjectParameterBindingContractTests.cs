@@ -38,6 +38,7 @@ namespace RevitBridge.Common.Tests
         [InlineData("{\"action\":\"create\",\"name\":\"Note\",\"categoryNames\":[\"Air Terminals\"],\"instanceBinding\":null}", false)]
         [InlineData("{\"action\":\"create\",\"name\":\"Note\",\"categoryNames\":[\"Air Terminals\"],\"dataType\":\"airflow\"}", false)]
         [InlineData("{\"action\":\"create\",\"name\":\"Note\",\"categoryNames\":[\"Air Terminals\"],\"parameterId\":42}", false)]
+        [InlineData("{\"action\":\"create\",\"name\":\"Note\",\"categoryNames\":[\"Air Terminals\"],\"rebindIfExists\":true}", false)]
         public void NewBindingKeepsTypeAndInstanceChoicesExplicitAndDoesNotInventEngineeringTypes(string json, bool expected)
         {
             using var doc = JsonDocument.Parse(json);

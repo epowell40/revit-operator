@@ -320,6 +320,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/project-parameters"
+    },
+    {
+      "method": "POST",
       "path": "/revit/query"
     },
     {

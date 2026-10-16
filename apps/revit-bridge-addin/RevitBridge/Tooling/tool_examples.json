@@ -1172,7 +1172,7 @@
             "action": "create",
             "plan": {
               "name": "ClashPilot_Status",
-              "categoryCount": 1
+              "instance": true
             }
           }
         },
@@ -1194,7 +1194,7 @@
             "action": "create",
             "plan": {
               "name": "QA_Checked",
-              "dataType": "yesno"
+              "instance": true
             }
           }
         },

@@ -16,9 +16,22 @@ const manifest = fs.readFileSync(path.join(apps, "revit-bridge-addin/RevitBridge
 const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*"(GET|POST)",\s*"([^"]+)"/g)]
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
+test('shared instance parameter route survives fixed inventory and allowlist without opening adjacent routes',()=>{
+  const here=new URL('./fixtures/project-parameter-product-inventory-predispatch121.json',import.meta.url);
+  const fixture=JSON.parse(fs.readFileSync(fs.existsSync(here)?here:new URL('../../test/fixtures/project-parameter-product-inventory-predispatch121.json',import.meta.url),'utf8'));
+  assert.equal(fixture.first_response.code,'PRODUCT_TOOL_NOT_SUPPORTED');
+  assert.equal(fixture.first_response.request_dispatched,false);assert.equal(fixture.first_response.outcome_unknown,false);
+  assert.equal(fixture.request.body.path,'/revit/project-parameters');
+  assert.equal(isSupportedToolRoute('POST','/revit/project-parameters'),true);
+  assert.equal(isAllowlisted('POST','/revit/project-parameters'),true);
+  assert.equal(isSupportedNativeTransport('POST','/revit/project-parameters'),true);
+  assert.equal(isSupportedToolRoute('GET','/revit/project-parameters'),false);
+  assert.equal(isSupportedToolRoute('POST','/revit/project-parameters-unreviewed'),false);
+});
+
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 217);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 109);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 110);
   assert.equal(isSupportedToolRoute("POST", "/revit/locate-elements"), true);
   assert.equal(isSupportedToolRoute("GET", "/revit/locate-elements"), false);
   assert.equal(isAllowlisted("POST", "/revit/locate-elements"), true);
@@ -34,7 +47,7 @@ test("supported inventory rejects every excluded source route before transport d
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
-  assert.equal(excluded.length, 107);
+  assert.equal(excluded.length, 106);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

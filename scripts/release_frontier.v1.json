@@ -286,7 +286,8 @@
     "requested_family_scope_dispatch_v1.test.ts",
     "native_schedule_presentation_v2.test.ts",
     "safe_committed_read_retry_v2.test.ts",
-    "circuit_wiring_feedback.test.ts"
+    "circuit_wiring_feedback.test.ts",
+    "project_parameter_binding_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -443,7 +444,8 @@
     "SheetViewportPlacementTests",
     "ScheduleCellAppearanceContractTests",
     "PanelScheduleReadWindowTests",
-    "ScheduleInventoryWindowTests"
+    "ScheduleInventoryWindowTests",
+    "ProjectParameterBindingContractTests"
   ],
   "failure_families": [
     {
@@ -4205,6 +4207,17 @@
         "backend:thin_reference_execution.test.ts",
         "backend:thin_reference_dynamic_boundary.test.ts",
         "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "schedulable_instance_parameter_discovery_and_bound_native_verification",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "backend:project_parameter_binding_v2.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests",
+        "dotnet:ProjectParameterBindingContractTests"
       ]
     }
   ],
