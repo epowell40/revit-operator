@@ -3,6 +3,17 @@ const sameBinding = (a, b) => bindingKeys.every(key => a?.[key] === b?.[key]);
 const canonical = view => view?._sourceKind === 'assignment_kernel_v2'
   && Number.isSafeInteger(view._assignmentVersion) && view._assignmentVersion > 0;
 
+/** Navigation only: open this exact saved task, then load its authoritative
+ * publication and use ordinary controls. Selecting history never resumes it. */
+export function savedAssignmentNavigationTargetV2(view, currentSessionId) {
+  const binding = view?._bindingV2;
+  if (!canonical(view) || !binding || !currentSessionId || binding.session_id !== currentSessionId
+      || !bindingKeys.slice(0, 3).every(key => typeof binding[key] === 'string' && binding[key].length > 0 && binding[key].length <= 240)
+      || !Number.isSafeInteger(binding.generation) || binding.generation < 0
+      || view._sourceRecordId !== binding.assignment_id || view.id !== `goal:${binding.assignment_id}`) return null;
+  return { session_id: binding.session_id, assignment_id: binding.assignment_id };
+}
+
 /** A save's exact acknowledgment owns continuation. Background polling does not. */
 export async function acknowledgeAssignmentMutationV2(readJson, projectPublication, backendPath, body) {
   const result = await readJson(backendPath, {

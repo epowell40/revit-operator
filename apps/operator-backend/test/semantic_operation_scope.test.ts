@@ -43,6 +43,13 @@ test("actual intake instructions and output schema distinguish missing informati
   assert.doesNotMatch(kind.description,/before.*approval/i);
 });
 
+test("source consultation is worker discovery, while explicit human conditions remain prerequisites",()=>{
+  assert.match(INTAKE_INSTRUCTIONS,/Do not create a user-only prerequisite merely because/);
+  assert.match(INTAKE_INSTRUCTIONS,/Consulting supplied references or project information is worker discovery/);
+  assert.match(INTAKE_INSTRUCTIONS,/explicitly requires a human answer, choice or approval before/);
+  assert.match(INTAKE_INSTRUCTIONS,/No prerequisite may be pre-satisfied by the model/);
+});
+
 async function workspace(fn:()=>Promise<void>) {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT, v2 = process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-semantic-scope-"));
@@ -63,6 +70,28 @@ function apply(snapshot:any) { return openAssignmentKernelOperationV2({snapshot,
   capability_id:"element.update",classified_effect:"apply",arguments:{elementId:42}}); }
 function teammate(snapshot:any) {return buildTeammateTurnContract({user_text:prompt,session_id:snapshot.current_binding.session_id,
   assignment_id:snapshot.current_binding.assignment_id,assignment_run_id:snapshot.current_binding.run_id,assignment_generation:snapshot.current_binding.generation,context:{}});}
+
+test("resource handoff can reach ordinary discovery without inventing a human input gate",()=>workspace(async()=>{
+  const text="Update the schedule notes using the project basis. Inspect the available sources and verify supported changes.";
+  const interpreted=decision({...scope("apply",[]),protected_clauses:[]});
+  const snapshot=await prepare(text,interpreted);
+  assert.deepEqual(snapshot.pending_input_variable_ids,[]);
+  assert.equal(snapshot.spec.source_user_request,text);
+  assert.equal(snapshot.spec.requested_effect,"apply");
+  assert.equal(apply(snapshot).requested_effect,"apply","Ordinary admission only; no native execution or engineering approval is asserted");
+}));
+
+test("a reference does not answer an explicit human condition at assignment admission",()=>workspace(async()=>{
+  const human="Before changing any circuit, ask me which conductor material to use and wait for my answer.";
+  const text=`Use the attached project reference. ${human}`;
+  const interpreted=decision({...scope("apply",[{variable_id:"material_choice",kind:"information",question:"Which conductor material should I use?",source_quote:human}]),protected_clauses:[]});
+  assert.equal((await routeConversation(body(text,{user_attachments:[{name:"approved-reference.txt"}]}),{interpret:async()=>({value:interpreted})})).routing_status,"accepted");
+  const prepared=prepareAssignmentTurn({sessionId:"semantic-scope",messageId:"request",userText:text,toolResults:[],source:"chat",createdBy:null,
+    requestContext:{revit:{document:{projectIdentity:{fingerprint:"disposable-model"}}}}})!;
+  const snapshot=getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+  assert.deepEqual(snapshot.pending_input_variable_ids,["material_choice"]);
+  assert.throws(()=>apply(snapshot),/admission_after_terminal_outcome|input_missing/);
+}));
 
 test("scope diagnostic predicates preserve exact quotes, duplicate identifiers and model-effect limits",()=>{
   const cases:[any,string][]=[

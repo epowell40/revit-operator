@@ -4157,6 +4157,21 @@
       ]
     },
     {
+      "id": "source_consultation_does_not_invent_human_gate_and_explicit_conditions_remain_authoritative",
+      "coverage": [
+        "backend:semantic_operation_scope.test.ts",
+        "backend:conversation_intake_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "explicit_same_conversation_history_open_preserves_canonical_target_without_execution",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/assignment_mutation.test.mjs",
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/assignment_workspace_v2.test.js"
+      ]
+    },
+    {
       "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
       "coverage": [
         "backend:progress_outer_deadline_v2.test.ts",
@@ -4183,6 +4198,7 @@
     "package/operator-assistant-ui/chat_submission_admission.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
+    "package/operator-assistant-ui/assignment_mutation.test.mjs",
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",
     "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
   ]

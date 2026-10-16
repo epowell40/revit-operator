@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acknowledgeAssignmentMutationV2 as mutate,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge} from './assignment_mutation.mjs';
+import {acknowledgeAssignmentMutationV2 as mutate,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge,savedAssignmentNavigationTargetV2 as navigation} from './assignment_mutation.mjs';
 const binding={assignment_id:'task',session_id:'session',run_id:'run',generation:1};
 const view=(version=8)=>({id:'goal:task',_sourceKind:'assignment_kernel_v2',_bindingV2:binding,_assignmentVersion:version,_canResume:true,_pendingInputs:[]});
+
+test('an explicitly selected saved assignment opens its exact canonical target without authority or execution',()=>{
+ const older={...view(3),_sourceRecordId:'task',_canResume:false,_pendingInputs:[{question:'An unanswered question'}]};
+ const before=structuredClone(older);
+ assert.deepEqual(navigation(older,'session'),{session_id:'session',assignment_id:'task'});
+ assert.deepEqual(older,before);
+ for(const invalid of [{...older,_sourceKind:'goal'},{...older,_sourceRecordId:'other'},
+  {...older,id:'goal:other'},{...older,_assignmentVersion:0},
+  {...older,_bindingV2:{...binding,generation:-1}},{...older,_bindingV2:{...binding,run_id:''}}])assert.equal(navigation(invalid,'session'),null);
+ assert.equal(navigation(older,'foreign'),null);
+ assert.equal(navigation(older,''),null);
+});
 test('mutation reads only exact post-save publication and returns small acknowledged view',async()=>{const calls=[];const result=await mutate(async(path,options)=>{calls.push({path,options});return options.method==='POST'?{ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8}}:{assignment_kernel_v2:view()};},v=>v,'/answer',binding);assert.equal(result.assignment._assignmentVersion,8);assert.equal(calls[1].path,'/api/assignments/v2/task');assert.equal(calls.length,2);});
 test('committed save with failed or regressed refresh reports saved without authorizing continuation',async()=>{for(const publication of [null,view(7),{...view(),_bindingV2:{...binding,generation:2}}]){const result=await mutate(async(_,options)=>options.method==='POST'?{ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8}}:{assignment_kernel_v2:publication},v=>v,'/answer',binding);assert.equal(result.ok,true);assert.ok(result.refresh_error);assert.equal(result.assignment,undefined);}});
 test('missing or foreign acknowledgment cannot start a read or continuation',async()=>{for(const acknowledgment of [{ok:true},{ok:true,assignment_snapshot_v2:{current_binding:{...binding,session_id:'foreign'},assignment_version:8}}]){let calls=0;await assert.rejects(mutate(async()=>{calls++;return acknowledgment;},v=>v,'/answer',binding));assert.equal(calls,1);}});
