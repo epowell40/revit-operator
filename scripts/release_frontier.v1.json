@@ -352,6 +352,7 @@
     "OperatorNativePresentationPropertyReadPolicyTests",
     "RenameViewPlanSettlementTests",
     "NativeApiPolicyMethodBoundaryContractTests",
+    "OperatorNativeDependencyReadPolicyTests",
     "ViewOwnedDetailingInventoryContractTests",
     "OperatorDesktopLaunchPlanTests",
     "OperatorDuplicateSheetContractTests",
@@ -4236,6 +4237,15 @@
         "backend:regular_schedule_presentation_v2.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts",
         "backend:work_review_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "native_dependency_read_null_filter_signature",
+      "coverage": [
+        "dotnet:OperatorNativeDependencyReadPolicyTests",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests",
+        "dotnet:NativeApiArgumentDocumentationTests",
+        "dotnet:BoundedNativeSequenceTests"
       ]
     }
   ],

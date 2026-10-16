@@ -9,6 +9,24 @@ namespace RevitBridge.Common.Tests
     public sealed class NativeApiPolicyMethodBoundaryContractTests
     {
         [Fact]
+        public void DependencyReadExceptionIsSdkBoundGraphOnlyAndRejectsNonNullBeforeInvocation()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway, "private static NativeApiMemberDescriptor? BuildDescriptor(",
+                "dependencyRead.DeclaringType == typeof(Element)",
+                "dependencyRead.DeclaringType.Assembly == typeof(Element).Assembly",
+                "OperatorNativeDependencyReadPolicy.IsUnfilteredRead(",
+                "!unfilteredDependencyRead && !IsGraphSupportedType(p.ParameterType)",
+                "Callable = unsupported.Count == 0", "UnfilteredDependencyRead = unfilteredDependencyRead");
+            AssertOrdered(gateway, "var provided = descriptor == null ? new List<JsonElement>() : ReadArgs(operation.args);",
+                "OperatorNativeDependencyReadPolicy.RequireNullFilter(provided)",
+                "var args = new object?[ps.Length];", "args[i] = null;",
+                "raw = propertyInfo != null ? propertyInfo.GetValue(targetObject, null) : InvokeReflectedMember(descriptor!, targetObject, args);");
+            Assert.Contains("BoundedNativeSequence.Project(seq, item => ReturnShape(item, depth + 1))", gateway);
+            Assert.Contains("native-api-ops v2 is read-only; member is not low-risk", gateway);
+        }
+
+        [Fact]
         public void SingleCallGatewayRejectsMutationAndFreezeRiskBeforeReflection()
         {
             var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");

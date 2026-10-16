@@ -76,6 +76,7 @@ namespace RevitBridge.Operator
         public string[] ParameterTypes { get; set; } = Array.Empty<string>();
         public bool Callable { get; set; }
         public bool GraphCallable { get; set; }
+        public bool UnfilteredDependencyRead { get; set; }
         public bool DetachedGeometryFactory { get; set; }
         public string[] UnsupportedParameterTypes { get; set; } = Array.Empty<string>();
         public string DocsSearchUrl { get; set; } = "";
@@ -785,6 +786,8 @@ namespace RevitBridge.Operator
 
                 var ps = descriptor?.Method?.GetParameters() ?? Array.Empty<ParameterInfo>();
                 var provided = descriptor == null ? new List<JsonElement>() : ReadArgs(operation.args);
+                if (descriptor?.UnfilteredDependencyRead == true)
+                    RevitBridge.Common.OperatorNativeDependencyReadPolicy.RequireNullFilter(provided);
                 if (provided.Count > ps.Length)
                     throw new InvalidOperationException($"Native API operation '{id}' supplied {provided.Count} arguments for a member that accepts {ps.Length}.");
                 var args = new object?[ps.Length];
@@ -795,6 +798,13 @@ namespace RevitBridge.Operator
                     if (parameter.IsOut || parameter.ParameterType.IsByRef) throw new InvalidOperationException($"Unsupported by-ref parameter: {parameter.Name}");
                     if (i < provided.Count)
                     {
+                        if (descriptor?.UnfilteredDependencyRead == true)
+                        {
+                            // Only this exact SDK read accepts a literal null for
+                            // ElementFilter. Never deserialize an arbitrary filter.
+                            args[i] = null;
+                            continue;
+                        }
                         var resolved = ConvertOperationArgument(provided[i], parameter.ParameterType, values, valueOwners, argumentResolver, id);
                         args[i] = resolved.Value;
                         argumentOwners.AddRange(resolved.Owners);
@@ -1243,6 +1253,7 @@ namespace RevitBridge.Operator
                 priority = d.Priority,
                 signature_supported = signatureSupported,
                 graph_signature_supported = d.GraphCallable,
+                unfiltered_dependency_read = d.UnfilteredDependencyRead,
                 graph_allowed = graphAllowed,
                 graph_blocked_reason = graphAllowed ? null : graphReason,
                 detached_geometry_factory = d.DetachedGeometryFactory,
@@ -1317,6 +1328,12 @@ namespace RevitBridge.Operator
         private static NativeApiMemberDescriptor? BuildDescriptor(Type t, MethodBase m, string kind)
         {
             var ps = m.GetParameters();
+            var unfilteredDependencyRead = m is MethodInfo dependencyRead
+                && dependencyRead.DeclaringType == typeof(Element)
+                && dependencyRead.DeclaringType.Assembly == typeof(Element).Assembly
+                && RevitBridge.Common.OperatorNativeDependencyReadPolicy.IsUnfilteredRead(
+                    dependencyRead.DeclaringType.FullName, dependencyRead.Name, dependencyRead.IsStatic,
+                    NativeParameterShape(dependencyRead.ReturnType), ps.Select(p => NativeParameterShape(p.ParameterType)).ToArray());
             var paramTypes = ps.Select(x => FriendlyType(x.ParameterType)).ToArray();
             var unsupported = new List<string>();
             var graphUnsupported = new List<string>();
@@ -1324,7 +1341,7 @@ namespace RevitBridge.Operator
             {
                 if (p.IsOut || p.ParameterType.IsByRef) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
                 else if (!IsSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
-                if (p.IsOut || p.ParameterType.IsByRef || (!IsGraphSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)))
+                if (p.IsOut || p.ParameterType.IsByRef || (!unfilteredDependencyRead && !IsGraphSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)))
                     graphUnsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
             }
 
@@ -1353,6 +1370,7 @@ namespace RevitBridge.Operator
                 ParameterTypes = paramTypes,
                 Callable = unsupported.Count == 0,
                 GraphCallable = graphUnsupported.Count == 0,
+                UnfilteredDependencyRead = unfilteredDependencyRead,
                 DetachedGeometryFactory = m is MethodInfo factory && OperatorNativeGeometryGraphPolicy.IsDetachedFactory(
                     factory.DeclaringType?.FullName ?? "", factory.Name, factory.IsStatic, factory.ReturnType.FullName ?? "",
                     ps.Select(parameter => NativeParameterShape(parameter.ParameterType)).ToArray()),
