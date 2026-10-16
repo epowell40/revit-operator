@@ -16,7 +16,9 @@ import { postconditionSatisfiedByPayloadV2 } from '../src/postcondition_verifica
 import { operationTargetSelectorV2, verificationCapabilityAdmissionV2 } from '../src/verification/verification_capability_admission_v2.js';
 
 import {scheduleCombinedFieldRequestV2,scheduleCombinedFieldReadbackMatchesV2} from '../src/verification/schedule_combined_field_v2.js';
-const fixture=()=>JSON.parse(fs.readFileSync(new URL('./fixtures/schedule-combined-field.json',import.meta.url),'utf8'));
+const localFixture=new URL('./fixtures/schedule-combined-field.json',import.meta.url);
+const fixtureFile=fs.existsSync(localFixture)?localFixture:new URL('../../test/fixtures/schedule-combined-field.json',import.meta.url);
+const fixture=()=>JSON.parse(fs.readFileSync(fixtureFile,'utf8'));
 test('combined definition verifies actual ordered native bindings with no generic echo fallback',()=>{
  const f=fixture();assert.equal(scheduleCombinedFieldReadbackMatchesV2(f.input,f.applied,f.read),true);
  assert.equal(regularSchedulePresentationReadbackMatchesV2(f.input,f.applied,f.read),true);
