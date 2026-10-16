@@ -788,7 +788,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:5d26f07f6e8b4db46e58a5c93f79966dc0f00409a1b44ac3324a96676b631079"
+      "sha256": "sha256:3c093d4ed8a7097fc6241585934fe81ccc9251cb5eed0537ad39592593bfce53"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -932,7 +932,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/native_observation_inputs_v2.ts",
-      "sha256": "sha256:c01829f61869f371ba499c8b91127d0d9433a17753938e6b96d673a7d7eb3953"
+      "sha256": "sha256:1d36255daffdb12f2e8de760649cb565cc1cd6c392b8e26ee49450a31bdb4b3d"
     },
     {
       "path": "apps/operator-backend/src/assignments/noop_completion.ts",
@@ -3701,7 +3701,7 @@
     },
     {
       "path": "apps/operator-backend/src/postcondition_verification_v2.ts",
-      "sha256": "sha256:a0252336beaf5468f8b57374dab3b44942a8fa4498cf950d19137957e16b09fb"
+      "sha256": "sha256:36f9ea5b2d63eccfc06f69a4e52b0d97bd2a7d6e6f0ead3df40f9a6730548743"
     },
     {
       "path": "apps/operator-backend/src/provider_token_cost.ts",
@@ -4229,7 +4229,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/regular_schedule_recheck_v2.ts",
-      "sha256": "sha256:1c9deffc39b2618d14617b4a72ac8199b635b6665110fdb276846e6f12eaefe3"
+      "sha256": "sha256:d20aaeebcc12a654ccd86173f9ca6b33f8e5b02b575e866e56e549537ce9921a"
     },
     {
       "path": "apps/operator-backend/src/verification/requested_family_scope_readback_v1.ts",
@@ -4258,6 +4258,10 @@
     {
       "path": "apps/operator-backend/src/verification/schedule_combined_field_v2.ts",
       "sha256": "sha256:2156f2221f1d0149fb2af192b7a5c830e7e963843c0163a0e531d8abebf3a1aa"
+    },
+    {
+      "path": "apps/operator-backend/src/verification/schedule_filter_postcondition_v2.ts",
+      "sha256": "sha256:e8c929a5312496da5151f693e0f318cca4356002c2f08f7ec2d2f535fe72c212"
     },
     {
       "path": "apps/operator-backend/src/verification/sheet_move_postcondition_v2.ts",
@@ -4637,7 +4641,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_schedule_filter_restoration.test.ts",
-      "sha256": "sha256:d0160c87fc396ea83b5dd7439481a5899a094d17bc7f9a434acc15b821e88717"
+      "sha256": "sha256:92f5acb14c86ebddd015487c09210c944751ca471c5dac9262d4b7d72fc86bd1"
     },
     {
       "path": "apps/operator-backend/test/assignment_status_projection.test.ts",
@@ -6249,7 +6253,7 @@
     },
     {
       "path": "apps/operator-backend/test/postcondition_verification_v2.test.ts",
-      "sha256": "sha256:3aec3945f4fcf74a3f8d43e99ac267d354602c8097c2912ccc7caed976110acd"
+      "sha256": "sha256:11623ecb01530f72a2c1214e677f4221a5fc410f49a349ef30c2422eb64f6f00"
     },
     {
       "path": "apps/operator-backend/test/principal_runtime_security.test.ts",
@@ -6538,6 +6542,10 @@
     {
       "path": "apps/operator-backend/test/schedule_combined_field_v2.test.ts",
       "sha256": "sha256:78cd1e520004afe0137a406df072fb498fae9710ba8db0150ecfeb9d1b4b5752"
+    },
+    {
+      "path": "apps/operator-backend/test/schedule_filter_postcondition_v2.test.ts",
+      "sha256": "sha256:d2b8f883dd2e784f36e1338f4f93d2162e13b1ec38f8f12da5407e92bd5859ed"
     },
     {
       "path": "apps/operator-backend/test/schedule_read_runtime.test.ts",
@@ -9909,7 +9917,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:8b5e3138db004b6d25cc698ed270594e6e23868a5a6e83db46c78be1e151ee2f",
+  "inputs_hash": "sha256:75126f26785bde1208898aa03573ee40dae75e3bdbf97f5755084bdd8dbefbbb",
   "result": {
     "passed": true,
     "checks": [
