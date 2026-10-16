@@ -2,14 +2,14 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';i
 import {createHash} from 'node:crypto';
 import {nativeSchedulePresentationRequestV2,nativeSchedulePresentationMatchesV2,nativeSchedulePresentationReadbacksMatchV2,committedNativeSchedulePresentationReadbackPlanV2,nativeSchedulePresentationPostconditionSatisfiedV2} from '../src/verification/native_schedule_presentation_v2.js';
 import {verificationCapabilityAdmissionV2,operationTargetSelectorV2} from '../src/verification/verification_capability_admission_v2.js';
-import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
+import {createGoal,getGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_kernel_v2_factory.js';
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
 import {beginTeammateLoopOwner,endTeammateLoopOwner} from '../src/teammate_loop_runtime.js';
 import {handleCodexDynamicToolCall} from '../src/brains/codex_dynamic_tool_handler.js';
 import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
-import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
+import {canonicalJsonV2,deriveProgressGapsV2,AssignmentJournalV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 import {postconditionSatisfiedByPayloadV2} from '../src/postcondition_verification_v2.js';
 const GET='method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)',TABLE_GET='method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetTableData()',SECTION='method:Autodesk.Revit.DB.TableData.GetSectionData(Autodesk.Revit.DB.SectionType)';
@@ -313,14 +313,19 @@ test('capability and target selectors require schedule getters, not lists, place
  const unrelated=structuredClone(f.read);unrelated.operations[0]!.result_preview.id=42;
  assert.deepEqual(operationTargetSelectorV2({operation:verification,value:unrelated}).principal_target_tokens,['id:42']);
 });
-for(const variant of ['wide','wide_context','wide_mixed','wide_wrong_last','wide_foreign_uid','wide_read_failure','wide_pause_between','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','scope_set_order','scope_wrong_member','scope_duplicate','scope_foreign_uid','scope_pending','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit'] as const)
-test(`ordinary SDK presentation ${variant} gets one separate internal read, never a repeated write`,async()=>{
+for(const variant of ['wide','wide_context','wide_mixed','wide_wrong_last','wide_foreign_uid','wide_read_failure','wide_pause_between','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','batch_wrong_second','batch_foreign_second','batch_read_failure','batch_paused','width_batch','width_wrong_last','width_foreign_second','width_paused','width_read_failure','scope_set_order','scope_wrong_member','scope_duplicate','scope_foreign_uid','scope_pending','wrong_text','wrong_height','foreign_uid','read_failure','wrong_digest','unretained_apply','paused_after_commit','admission_retry','admission_twice','admission_paused'] as const)
+test(`ordinary SDK presentation ${variant} uses bounded separate reads, never a repeated write`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-schedule-presentation-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const f=variant==='wide_mixed'?mixedWideFixture():variant.startsWith('wide')?wideFixture(variant==='wide_context'):variant.startsWith('scope_')?scopeOrderFixture():variant.startsWith('width')?widthFixture():variant.startsWith('batch')?batchFixture():variant==='active_view'?contextFixture():variant==='native_overloads'?nativeOverloadFixture():variant==='default_create_omitted'?defaultCreationFixture('omitted'):variant==='default_create_null'?defaultCreationFixture('null'):variant==='regular'?regularFixture():fixture(),goal=createGoal({title:'Compact schedule notes',objective:'Use compact wiring notation.',acceptance_criteria:['The requested schedule changes are established.'],status:'active',related_session_id:'presentation-session',created_by:'presentation-principal',work_budget:{requested_effect:'apply',document_fingerprint:'presentation-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'presentation-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
-  let readIndex=0;const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops'){assert(args.body.operations.length<=16,'Native/MCP operation cap stays sixteen');assert.deepEqual(args,'plans' in f?(f.plans as any[])[readIndex]:f.readInput);}},
+  let readIndex=0,admissionFailures=0;const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(_tool:string,args:any){if(args.path==='/revit/native-api-ops'){assert(args.body.operations.length<=16,'Native/MCP operation cap stays sixteen');assert.deepEqual(args,'plans' in f?(f.plans as any[])[readIndex]:f.readInput);}},
    async callTool(_tool:string,args:any,context:any){calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const reading=args.path==='/revit/native-api-ops';
+    if(reading&&variant.startsWith('admission_')&&(admissionFailures++===0||variant==='admission_twice')){
+     if(variant==='admission_paused')controlAssignmentExecutionV2({binding,command_id:'pause-after-read-admission-failure',expected_command_id:null,action:'pause'});
+     const correlation='native:'+lease.operation_id,failure={schema:'revit-operator.revit-bridge-failure.v1',ok:false,code:'revit_bridge_http_error',bridge_code:'CERTIFICATION_DIRECT_AUTHORIZATION_UNAVAILABLE',phase:'certification_native_direct_admission',retryable:true,request_dispatched:false,outcome_unknown:false,method:'POST',path:args.path,status:503,correlation_id:correlation,error:'Native Revit authorization backend is unavailable.'};
+     return {isError:true,content:[{type:'text',text:JSON.stringify(failure)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,status:'failed_before_dispatch',dispatch_state:'not_dispatched',persistent_effect:'none',native_transaction_state:'not_applicable',authority:'native-host',affected_target_identities:[],result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:false,native_correlation_id:correlation,request_identity:lease.request_identity,completed_at:new Date().toISOString(),error_code:'native_operation_failed'}}};
+    }
     if(reading&&['read_failure','batch_read_failure','width_read_failure'].includes(variant))throw Error('native_read_failed');
     const index=reading?readIndex++:-1;if(reading&&variant==='wide_read_failure'&&index===1)throw Error('second_native_read_failed');
     const payload:any=structuredClone(reading?('plans' in f?native((f.plans as any[])[index].body.operations,false):f.read):f.applied);
@@ -344,11 +349,20 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
      observation:{raw_payload:!reading&&variant==='unretained_apply'?{ok:true}:payload,semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'presentation-task',user_text:goal.objective,assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
-  try{await handleCodexDynamicToolCall(runtime,{id:'sdk-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'presentation-turn',tool:'revit_call_tool',arguments:f.input}} as any);
+  try{const response:any=await handleCodexDynamicToolCall(runtime,{id:'sdk-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'presentation-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply')!;
-   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:variant.startsWith('wide')&&variant!=='wide_pause_between'?2:1);
+   assert.equal(calls.filter(c=>c.path===f.input.path).length,1);assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit','batch_paused','width_paused'].includes(variant)?0:['admission_retry','admission_twice'].includes(variant)?2:variant.startsWith('wide')&&variant!=='wide_pause_between'?2:1,JSON.stringify(response.contentItems.filter((i:any)=>i.type==='inputText').map((i:any)=>i.text.slice(0,1800))));
    const checked=apply.verification_operation_ids.some(id=>snapshot.operations[id]!.observation_ids.some(oid=>snapshot.observations[oid]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
-   assert.equal(checked,['wide','wide_context','wide_mixed','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   assert.equal(checked,['wide','wide_context','wide_mixed','exact','active_view','native_overloads','default_create_omitted','default_create_null','regular','batch','width_batch','scope_set_order','admission_retry'].includes(variant));assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(variant.startsWith('admission_')){const reads=Object.values(snapshot.operations).filter(o=>o.requested_effect==='read');assert.equal(reads[0]!.result?.status,'failed_before_dispatch');assert.equal(reads[0]!.result?.persistent_effect,'none');assert.equal(reads[0]!.observation_ids.length,0);assert(!apply.verification_operation_ids.includes(reads[0]!.operation_id));assert.deepEqual(snapshot.unresolved_unknown_operation_ids,[]);if(variant==='admission_retry'){assert.notEqual(reads[0]!.operation_id,reads[1]!.operation_id);assert.equal(reads[1]!.result?.status,'succeeded');}}
+   if(variant==='admission_retry'){
+    const events=getGoal(goal.id)!.assignment_kernel_v2!.events;
+    assert.deepEqual(new AssignmentJournalV2(events).snapshot(),snapshot,'Cold replay retains failed attempt and separately checked new read');
+    const retry=Object.values(snapshot.operations).find(o=>o.retry_basis==='native_pre_dispatch_read')!;assert(retry);
+    const index=events.findIndex(e=>e.event_type==='operation_admitted'&&e.operation.operation_id===retry.operation_id);
+    const event=structuredClone(events[index]!) as any;event.operation.input.body.returns=['$wrong'];
+    assert.throws(()=>new AssignmentJournalV2(events.slice(0,index)).append(event),{code:'operation_pre_dispatch_read_retry_invalid'},'The reducer rejects a claimed retry of different input');
+   }
    if(variant.startsWith('wide')){const reads=apply.verification_operation_ids.map(id=>snapshot.operations[id]!).sort((a,b)=>(a.input.body as any).operations.length>(b.input.body as any).operations.length?-1:1);assert(reads.length>=1);assert(reads[0]!.observation_ids.every(id=>!snapshot.observations[id]!.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)),'First partial slice never certifies the complete edit');
     if(['wide','wide_context','wide_mixed'].includes(variant)){
      assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),false);
@@ -385,7 +399,7 @@ test(`ordinary SDK presentation ${variant} gets one separate internal read, neve
       assert.equal(nativeSchedulePresentationPostconditionSatisfiedV2(s,a,r.result!,f.read),false);
     }
    }
-   else if(!['unretained_apply','wide','wide_context','wide_mixed'].includes(variant))assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),true);
+   else if(!['unretained_apply','wide','wide_context','wide_mixed','admission_retry'].includes(variant))assert.equal(deriveProgressGapsV2(snapshot).some(g=>g.gap_id==='verification:'+apply.operation_id),true);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });

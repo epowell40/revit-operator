@@ -68,6 +68,7 @@ import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/s
 import { committedNativeSchedulePresentationReadbackPlanV2, committedNativeSchedulePresentationReadbackPlansV2 } from "../verification/native_schedule_presentation_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
+import { committedReadRetryDecisionV2 } from '../verification/safe_committed_read_retry_v2.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
 
 const parallelGuard = new RevitToolParallelGuard();
@@ -385,12 +386,25 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         // The new call still validates ownership, pause, admission and freshness.
         parallel.release();
         for(const [index,plan] of readPlans.entries())try {
-          const response = await handleCodexDynamicToolCall(runtime, {
+          const applyOperationId=typedRead?.operation_id ?? lease.operation_id;
+          const beforeRead=getAssignmentKernelSnapshotV2(lease.assignment_id);
+          let response = await handleCodexDynamicToolCall(runtime, {
             id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}:${index}`, method: "item/tool/call",
             params: { namespace: "revit_operator", tool: "revit_call_tool",
               turnId: params.turnId, threadId: params.threadId, arguments: plan }
           }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
           if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
+          const retryDecision=committedReadRetryDecisionV2({planning:current,beforeRead,afterRead:getAssignmentKernelSnapshotV2(lease.assignment_id),
+            applyOperationId,plan,response,retryAttempt:0});
+          if(!response.success&&!retryDecision.retry)hostReadResponse.contentItems.push({type:'inputText',text:`Automatic readback remains unverified (${retryDecision.reason}). Obtain fresh authorized evidence; do not repeat the committed change.`});
+          if(retryDecision.retry){
+            await new Promise(resolve=>setTimeout(resolve,200));
+            response=await handleCodexDynamicToolCall(runtime,{
+              id:`host-committed-readback:${applyOperationId}:${index}:retry:1`,method:'item/tool/call',
+              params:{namespace:'revit_operator',tool:'revit_call_tool',turnId:params.turnId,threadId:params.threadId,arguments:plan}
+            }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+            hostReadResponse.contentItems.push({type:'inputText',text:'Host attempted one separate read after a confirmed pre-dispatch authorization-service availability failure. The original failed read remains retained; the new read must independently establish its postcondition.'},...response.contentItems);
+          }
           if(!response.success)break;
         } catch (error) {
           const failure = { success:false, contentItems:[{type:"inputText" as const,text:

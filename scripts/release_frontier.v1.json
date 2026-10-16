@@ -283,7 +283,9 @@
     "family_static_text_scope_v1.test.ts",
     "requested_family_scope_readback_v1.test.ts",
     "requested_family_scope_dispatch_v1.test.ts",
-    "native_schedule_presentation_v2.test.ts"
+    "native_schedule_presentation_v2.test.ts",
+    "safe_committed_read_retry_v2.test.ts",
+    "circuit_wiring_feedback.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4131,6 +4133,20 @@
       "coverage": [
         "backend:native_schedule_presentation_v2.test.ts",
         "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "settled_non_dispatch_read_recovery_preserves_failed_receipt_and_never_replays_apply",
+      "coverage": [
+        "backend:safe_committed_read_retry_v2.test.ts",
+        "backend:native_schedule_presentation_v2.test.ts"
+      ]
+    },
+    {
+      "id": "dependent_circuit_wiring_settlement_is_feedback_not_design_or_installation_verdict",
+      "coverage": [
+        "backend:circuit_wiring_feedback.test.ts",
+        "dotnet:SetParameterFailureHandlingTests"
       ]
     },
     {

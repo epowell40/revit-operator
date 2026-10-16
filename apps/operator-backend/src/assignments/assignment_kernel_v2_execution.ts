@@ -77,6 +77,7 @@ import {
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 import { existingTagRepairRequestV2 } from "../verification/tag_property_readback_v2.js";
+import { preDispatchReadRetryV2 } from '../domain/assignment-kernel/pre_dispatch_read_retry.js';
 
 import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
 import { duplicatedTypePostconditionSatisfiedV2 } from "../verification/duplicated_type_postcondition_v2.js";
@@ -526,7 +527,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   };
   assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
   if (!operation.retry_of_operation_id) {
-    const correction = familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
+    const correction = preDispatchReadRetryV2(snapshot, operation) ?? familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
     if (correction) Object.assign(operation, correction);
     const checkpoint = documentCheckpointContinuationV2(snapshot, operation, nativeDocumentCheckpointResultV2);
     if (checkpoint) Object.assign(operation, checkpoint);

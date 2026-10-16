@@ -1,5 +1,6 @@
 import { defaultAssignmentWorkBudgetV2 } from "./effective_work_budget.js";
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
+import { preDispatchReadRetryV2 } from './pre_dispatch_read_retry.js';
 import { recordWorkPlanLocationV2 } from './work_plan_location.js';
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
@@ -381,6 +382,11 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
     kernelAssertV2(Boolean(operation.retry_basis), "operation_retry_basis_missing", "A retry must state the material correction that permits it.");
+    if(operation.retry_basis==='native_pre_dispatch_read'){
+      const correction=preDispatchReadRetryV2(snapshot,operation);
+      kernelAssertV2(correction?.retry_of_operation_id===operation.retry_of_operation_id,
+        'operation_pre_dispatch_read_retry_invalid','Retry requires an unused, settled native non-dispatch of the same verification read and unchanged committed subject.');
+    }
     if (operation.retry_basis === "family_session_capacity_released") {
       const correction = familyCapacityRetryV2(snapshot, operation);
       kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
