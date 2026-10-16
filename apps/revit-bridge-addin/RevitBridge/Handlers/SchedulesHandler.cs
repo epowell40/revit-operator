@@ -216,6 +216,7 @@ namespace RevitBridge.Handlers
                 sortGroupDefinitions,
                 sortGroupDefinitionsComplete,
                 appearance,
+                presentation = RegularSchedulePresentation.Read(doc, schedule),
                 settings,
                 table
             };
@@ -521,6 +522,8 @@ namespace RevitBridge.Handlers
                     fields.Add(new
                     {
                         index = i,
+                        fieldId = field.FieldId.IntegerValue,
+                        widths = ReadFieldWidths(field),
                         name,
                         heading,
                         headingOrientation,
@@ -533,6 +536,7 @@ namespace RevitBridge.Handlers
                     fields.Add(new
                     {
                         index = i,
+                        readable = false,
                         name = (string?)null,
                         heading = (string?)null,
                         headingOrientation = (string?)null,
@@ -543,6 +547,12 @@ namespace RevitBridge.Handlers
             }
 
             return fields;
+        }
+
+        private static object ReadFieldWidths(ScheduleField field)
+        {
+            try { return new { complete = true, sheetColumnWidthFeet = field.SheetColumnWidth, gridColumnWidthFeet = field.GridColumnWidth }; }
+            catch (Exception ex) { return new { complete = false, error = ex.Message }; }
         }
 
         private static bool IsTitleblockRevisionSchedule(ViewSchedule schedule)

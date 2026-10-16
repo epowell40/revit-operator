@@ -8487,6 +8487,8 @@ namespace RevitBridge.Operator
 
                 if (obj.Value.TryGetProperty("cellStyles", out _))
                     return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, true, out error);
+                if (!RevitBridge.Common.SchedulePresentationContract.Validate(obj.Value, out error)) return false;
+                var hasFieldOrder = obj.Value.TryGetProperty("fieldOrder", out var fieldOrder) && fieldOrder.ValueKind == JsonValueKind.Array;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "query", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
@@ -8843,7 +8845,7 @@ namespace RevitBridge.Operator
                 var hasItemization = obj.Value.TryGetProperty("isItemized", out var itemized) && itemized.ValueKind != JsonValueKind.Null;
                 var hasGrandTotals = obj.Value.TryGetProperty("showGrandTotals", out var gt) && gt.ValueKind != JsonValueKind.Null;
                 var hasFilterBySheet = obj.Value.TryGetProperty("filterBySheet", out var fbs) && fbs.ValueKind != JsonValueKind.Null;
-                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
+                if (!hasFieldOrder && !hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
                 {
                     error = "configure-schedule requires at least one operation.";
                     return false;

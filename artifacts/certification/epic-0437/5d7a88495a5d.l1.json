@@ -8690,7 +8690,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/ProjectElectricalCircuitInventory.cs",
-      "sha256": "sha256:d0266f7ce86d011fa27b18ab41cd73de12c7eee5fc9e2ff64dd81e2ace5321e7"
+      "sha256": "sha256:be7d8b900cdb1ddd8b8c80ac5153170f3db503c1e3dc786f51fe6350c0935e14"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/QuantifyElementsHandler.cs",
@@ -9689,7 +9689,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:963c05165436dd73d76184fc4622d6fe34bb29b9da7189a873876ad769c3f22c",
+  "inputs_hash": "sha256:d79a5d96de68ccb44369f421d7f4bd68cffd5003305d841dc6f36ada8af6db53",
   "result": {
     "passed": true,
     "checks": [

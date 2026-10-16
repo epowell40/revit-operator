@@ -1,3 +1,4 @@
+import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
 /**
  * Versioned application contract for post-apply verification capabilities.
  *
@@ -269,6 +270,11 @@ export function operationTargetSelectorV2(input: Readonly<{
     if(ids.length)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',
       principal_target_tokens:(nativeSchedulePresentationObservedTargetsV2(input.value).length?nativeSchedulePresentationObservedTargetsV2(input.value):nativeSchedulePresentationReadTargetsV2(input.value)).map(id=>'id:'+id),contextual_scope_tokens:[]};
   }
+  if (pathOf(input.operation) === '/revit/configure-schedule' && isRegularSchedulePresentationEditV2(input.operation.arguments)) {
+    const v=objectValue(input.value), body=objectValue(v.body??v), schedule=objectValue(v.schedule);
+    return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',
+      principal_target_tokens:tokensFromReviewedFields({scheduleId:body.scheduleId??schedule.id},['scheduleId']),contextual_scope_tokens:[]};
+  }
   if (pathOf(input.operation) === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(input.operation.arguments)) {
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
       principal_target_tokens: tokensFromReviewedFields(input.value, ["scheduleId"]), contextual_scope_tokens: [] };
@@ -336,6 +342,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
   if(path==='/revit/native-api-mutation-ops'&&nativeSchedulePresentationRequestV2(apply.arguments))return ['schedule.presentation_values'];
+  if (path === '/revit/configure-schedule' && isRegularSchedulePresentationEditV2(apply.arguments)) return ['schedule.native_presentation'];
   if (path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(apply.arguments)) return ["schedule.cell_appearance"];
   if (path === "/revit/assign-electrical-circuit") return ["electrical.circuit_membership"];
   if (path === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
@@ -369,6 +376,8 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   }
   if (pathOf(verification) === "/revit/schedules") {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args);
+    if(body.action==='detail'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0&&body.includeFields===true
+      && Object.keys(body).every(k=>['action','scheduleId','includeFields'].includes(k)))return ['schedule.native_presentation'];
     return body.action==='cell_styles' && Number.isSafeInteger(body.scheduleId) && Number(body.scheduleId)>0
       && Array.isArray(body.cells) && body.cells.length>0 && body.cells.length<=64 ? contract.semantic_outputs : [];
   }

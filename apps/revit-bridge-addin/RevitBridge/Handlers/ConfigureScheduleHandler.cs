@@ -72,7 +72,7 @@ namespace RevitBridge.Handlers
             public int[]? backgroundColorRgb { get; set; } // [r,g,b]
         }
 
-        public sealed class AppearanceSpec
+        public sealed class AppearanceSpec : RevitBridge.Common.ScheduleTextStyles
         {
             public bool? showTitle { get; set; }
             public bool? showHeaders { get; set; }
@@ -87,6 +87,7 @@ namespace RevitBridge.Handlers
             public bool? exact { get; set; }
 
             public List<string>? addFields { get; set; }
+            public List<int>? fieldOrder { get; set; }
             public List<FilterSpec>? filters { get; set; }
             public bool? replaceFilters { get; set; }
 
@@ -151,12 +152,22 @@ namespace RevitBridge.Handlers
             var hasAppearance = p.appearance != null;
             var hasFilterBySheet = p.filterBySheet.HasValue;
 
-            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
+            if (p.fieldOrder == null && !hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
             {
                 throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet, isItemized).");
             }
 
             var dryRun = p.dryRun ?? false;
+            using (var body = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData))
+                if (!RevitBridge.Common.SchedulePresentationContract.Validate(body.RootElement, out var error))
+                    return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = error,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            try { RegularSchedulePresentation.Preflight(doc, schedule, p.fieldOrder, p.appearance); }
+            catch (ArgumentException ex)
+            {
+                return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = ex.Message,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            }
             var plan = BuildPlan(doc, schedule, p);
             if (dryRun)
             {
@@ -183,6 +194,7 @@ namespace RevitBridge.Handlers
             {
                 try
                 {
+                    result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
                     result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
                     {
                         fieldId = filter.FieldId.IntegerValue,
@@ -193,7 +205,7 @@ namespace RevitBridge.Handlers
                             : filter.IsIntegerValue ? (object)filter.GetIntegerValue() : filter.IsDoubleValue ? (object)filter.GetDoubleValue()
                             : filter.IsStringValue ? (object)filter.GetStringValue() : null
                     }).ToArray();
-                    result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name,
+                    result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), uniqueId = schedule.UniqueId, name = schedule.Name,
                         fieldCount = schedule.Definition.GetFieldCount(), isItemized = schedule.Definition.IsItemized };
                 }
                 catch (Exception ex)
@@ -346,11 +358,15 @@ namespace RevitBridge.Handlers
                 },
                 appearance = new
                 {
+                    titleTextTypeId = p.appearance?.titleTextTypeId,
+                    headerTextTypeId = p.appearance?.headerTextTypeId,
+                    bodyTextTypeId = p.appearance?.bodyTextTypeId,
                     showTitle = p.appearance?.showTitle,
                     showHeaders = p.appearance?.showHeaders,
                     stripedRows = p.appearance?.stripedRows,
                     freezeHeaders = p.appearance?.freezeHeaders
                 },
+                fieldOrder = p.fieldOrder,
                 isItemized = new { before = definition.IsItemized, requested = p.isItemized },
                 filterBySheet = p.filterBySheet
             };
@@ -413,6 +429,8 @@ namespace RevitBridge.Handlers
                 {
                     ApplyConditionalFormats(doc, schedule, p.conditionalFormats, conditionalResults);
                 }
+
+                RegularSchedulePresentation.Apply(schedule, p.fieldOrder, p.appearance, appearanceResults);
 
                 if (p.appearance != null)
                 {

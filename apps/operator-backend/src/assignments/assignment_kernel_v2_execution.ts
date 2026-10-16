@@ -1,3 +1,4 @@
+import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
 import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
@@ -765,6 +766,8 @@ function commitInput(
           ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(verificationSubject.input)
           ? scheduleCellBackgroundPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isRegularSchedulePresentationEditV2(verificationSubject.input)
+          ? regularSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
           ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"

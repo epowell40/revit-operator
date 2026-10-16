@@ -1,3 +1,4 @@
+import { committedRegularSchedulePresentationReadbackPlanV2 } from "../verification/regular_schedule_presentation_v2.js";
 import type { CodexServerRequest } from "../codex/app_server.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
@@ -364,6 +365,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedRegularSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
