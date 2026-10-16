@@ -4219,6 +4219,14 @@
       ]
     },
     {
+      "id": "resume_control_acknowledged_view_survives_superseded_poll_without_weakening_fences",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "javascript:package/operator-assistant-ui/assignment_mutation.test.mjs",
+        "desktop:test/provider_usage_hold_ui.test.js"
+      ]
+    },
+    {
       "id": "explicit_same_conversation_history_open_preserves_canonical_target_without_execution",
       "coverage": [
         "javascript:package/operator-assistant-ui/assignment_mutation.test.mjs",

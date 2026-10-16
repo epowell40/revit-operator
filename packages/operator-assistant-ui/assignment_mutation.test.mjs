@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acknowledgeAssignmentMutationV2 as mutate,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge,savedAssignmentNavigationTargetV2 as navigation,readSavedAssignmentHistoryV2 as history} from './assignment_mutation.mjs';
+import {acknowledgeAssignmentMutationV2 as mutate,acknowledgeAssignmentControlV2 as control,acceptAssignmentMutationViewV2 as accept,retainNewerAssignmentViewsV2 as merge,savedAssignmentNavigationTargetV2 as navigation,readSavedAssignmentHistoryV2 as history} from './assignment_mutation.mjs';
 const binding={assignment_id:'task',session_id:'session',run_id:'run',generation:1};
 const view=(version=8)=>({id:'goal:task',_sourceKind:'assignment_kernel_v2',_bindingV2:binding,_assignmentVersion:version,_canResume:true,_pendingInputs:[]});
 
@@ -36,5 +36,24 @@ test('an explicitly selected saved assignment opens its exact canonical target w
 test('mutation reads only exact post-save publication and returns small acknowledged view',async()=>{const calls=[];const result=await mutate(async(path,options)=>{calls.push({path,options});return options.method==='POST'?{ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8}}:{assignment_kernel_v2:view()};},v=>v,'/answer',binding);assert.equal(result.assignment._assignmentVersion,8);assert.equal(calls[1].path,'/api/assignments/v2/task');assert.equal(calls.length,2);});
 test('committed save with failed or regressed refresh reports saved without authorizing continuation',async()=>{for(const publication of [null,view(7),{...view(),_bindingV2:{...binding,generation:2}}]){const result=await mutate(async(_,options)=>options.method==='POST'?{ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8}}:{assignment_kernel_v2:publication},v=>v,'/answer',binding);assert.equal(result.ok,true);assert.ok(result.refresh_error);assert.equal(result.assignment,undefined);}});
 test('missing or foreign acknowledgment cannot start a read or continuation',async()=>{for(const acknowledgment of [{ok:true},{ok:true,assignment_snapshot_v2:{current_binding:{...binding,session_id:'foreign'},assignment_version:8}}]){let calls=0;await assert.rejects(mutate(async()=>{calls++;return acknowledgment;},v=>v,'/answer',binding));assert.equal(calls,1);}});
+
+test('control retains exact acknowledgment fences and adopts only its post-save view',async()=>{
+ const acknowledgment={ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8,execution_control:{state:'running',command_id:'resume-same'}},provider_interrupt:'not_requested'};
+ const calls=[];const result=await control(async(path,options)=>{calls.push({path,options});return options.method==='POST'?acknowledgment:{assignment_kernel_v2:view()};},v=>v,'/control',{...binding,command_id:'resume-same'});
+ assert.equal(result.assignment_snapshot_v2,acknowledgment.assignment_snapshot_v2);
+ assert.equal(result.provider_interrupt,'not_requested');assert.equal(result.assignment._assignmentVersion,8);
+ assert.equal(calls.length,2);assert.equal(calls[1].path,'/api/assignments/v2/task');
+ const state={sessionId:'session',goals:[view(7)],goalsSyncRequestId:4};
+ assert.equal(accept(state,result,binding),result.assignment);assert.equal(state.goalsSyncRequestId,5);
+ assert.equal(merge([view(7)],state.goals)[0]._assignmentVersion,8);
+});
+
+test('control refresh failure keeps saved acknowledgment but cannot supply a usable view',async()=>{
+ const acknowledgment={ok:true,assignment_snapshot_v2:{current_binding:binding,assignment_version:8}};
+ for(const current of [null,view(7),{...view(),_bindingV2:{...binding,generation:2}}]){
+  const result=await control(async(_,options)=>options.method==='POST'?acknowledgment:{assignment_kernel_v2:current},v=>v,'/control',binding);
+  assert.equal(result.assignment_snapshot_v2,acknowledgment.assignment_snapshot_v2);assert.ok(result.refresh_error);assert.equal(result.assignment,undefined);
+ }
+});
 test('exact answer acknowledgment fences an older poll and later regressed display',()=>{const old={...view(7),_canResume:false,_pendingInputs:[{}]},saved=view();const state={sessionId:'session',goals:[old],goalsSyncRequestId:3};assert.equal(accept(state,{ok:true,assignment:saved},binding),saved);assert.equal(state.goalsSyncRequestId,4);assert.equal(state.goals[0],saved);assert.equal(merge([old],state.goals)[0],saved);assert.equal(merge([view(9)],state.goals)[0]._assignmentVersion,9);});
 test('navigation, generation change and newer display cannot be overwritten by answer acknowledgment',()=>{for(const old of [{...view(),_bindingV2:{...binding,generation:2}},view(9)]){const state={sessionId:'session',goals:[old],goalsSyncRequestId:3};assert.equal(accept(state,{ok:true,assignment:view()},binding),null);assert.equal(state.goalsSyncRequestId,3);}const state={sessionId:'foreign',goals:[view(7)]};assert.equal(accept(state,{ok:true,assignment:view()},binding),null);});

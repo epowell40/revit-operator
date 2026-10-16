@@ -62,6 +62,18 @@ export async function acknowledgeAssignmentMutationV2(readJson, projectPublicati
   }
 }
 
+/** Keep the control's original authoritative fences and attach an exact refreshed
+ * view. A cancelled/superseded background poll cannot own Resume continuation. */
+export async function acknowledgeAssignmentControlV2(readJson, projectPublication, backendPath, body) {
+  let acknowledged;
+  const refreshed = await acknowledgeAssignmentMutationV2(async (path, options) => {
+    const response = await readJson(path, options);
+    if (options.method === 'POST') acknowledged = response;
+    return response;
+  }, projectPublication, backendPath, body);
+  return { ...acknowledged, ...refreshed };
+}
+
 /** Preserve a newer verified display version when a status response arrives late. */
 export function retainNewerAssignmentViewsV2(incoming, retained) {
   const previous = new Map(retained.filter(canonical).map(view => [view.id, view]));
