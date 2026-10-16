@@ -10,6 +10,15 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void CadLinkIsDiscoverableAndAdmittedWithoutOpeningAdjacentRoutes()
+        {
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/link-cad"));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", "/revit/link-cad"));
+            Assert.Single(OperatorToolManifest.Tools.Where(t => t.Method == "POST" && t.Path == "/revit/link-cad"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/link-cad"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/link-cad-unreviewed"));
+        }
+        [Fact]
         public void SharedInstanceParameterCreationAndInspectionAreDiscoverableWithoutWideningOtherRoutes()
         {
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/project-parameters"));
@@ -24,8 +33,8 @@ namespace RevitBridge.Common.Tests
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(217, implemented.Count);
-            Assert.Equal(110, OperatorToolManifest.Tools.Count);
-            Assert.Equal(110, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(111, OperatorToolManifest.Tools.Count);
+            Assert.Equal(111, OperatorActionAllowlist.EnumerateAllowed().Count());
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));

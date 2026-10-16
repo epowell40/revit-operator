@@ -236,6 +236,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/link-cad"
+    },
+    {
+      "method": "POST",
       "path": "/revit/linked-room-boundaries"
     },
     {

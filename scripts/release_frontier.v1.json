@@ -4291,6 +4291,14 @@
       ]
     },
     {
+      "id": "cad_link_supported_discovery_after_exact_predispatch_rejection",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "mcp:lib/supportedToolInventory.test.js",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
+    },
+    {
       "id": "new_external_definition_native_owner_lifetime",
       "coverage": [
         "backend:project_parameter_binding_v2.test.ts",
