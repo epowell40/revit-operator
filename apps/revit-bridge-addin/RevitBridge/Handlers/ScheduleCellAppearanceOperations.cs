@@ -86,6 +86,8 @@ namespace RevitBridge.Handlers
             }
         }
 
+        internal static object ReadAllCellsForPreservation(TableView view) => Preservation(view, Array.Empty<ScheduleCellLocator>());
+
         private static object Preservation(TableView view, IReadOnlyList<ScheduleCellLocator> targets)
         {
             var selected = targets.Select(c => Cell(view, c)).ToArray();

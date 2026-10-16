@@ -376,8 +376,8 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   }
   if (pathOf(verification) === "/revit/schedules") {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args);
-    if(body.action==='detail'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0&&body.includeFields===true
-      && Object.keys(body).every(k=>['action','scheduleId','includeFields'].includes(k)))return ['schedule.native_presentation'];
+    if(body.action==='presentation'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0
+      && Object.keys(body).every(k=>['action','scheduleId'].includes(k)))return ['schedule.native_presentation'];
     return body.action==='cell_styles' && Number.isSafeInteger(body.scheduleId) && Number(body.scheduleId)>0
       && Array.isArray(body.cells) && body.cells.length>0 && body.cells.length<=64 ? contract.semantic_outputs : [];
   }

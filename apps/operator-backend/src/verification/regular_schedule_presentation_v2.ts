@@ -1,3 +1,4 @@
+import { regularSchedulePresentationScopeMatchesV2, regularSchedulePresentationInventoryMatchesV2 } from './regular_schedule_presentation_scope_v2.js';
 import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
 import { canonicalJsonV2, sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
@@ -36,11 +37,10 @@ function matches(wanted:NonNullable<ReturnType<typeof regularSchedulePresentatio
 }
 export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appliedPayload:unknown,freshPayload:unknown):boolean {
   const w=regularSchedulePresentationRequestV2(input),a=object(appliedPayload),r=object(freshPayload),s=object(a.schedule),rs=object(r.schedule),tx=object(a.transaction);
-  if(!w||a.status!=='Success'||a.dryRun!==false||r.status!=='Ok'||r.action!=='detail'||s.id!==w.scheduleId||rs.id!==w.scheduleId
+  if(!w||a.status!=='Success'||a.dryRun!==false||r.status!=='Ok'||r.action!=='presentation'||r.read_only!==true||s.id!==w.scheduleId||rs.id!==w.scheduleId
     ||typeof s.uniqueId!=='string'||!s.uniqueId||rs.uniqueId!==s.uniqueId||rs.kind!=='schedule'
     ||tx.committed!==true||tx.rolledBack===true||tx.pending===true||object(a.changeTracking).exhaustiveChangeInventory!==true
-    ||!Array.isArray(tx.added_element_ids)||tx.added_element_ids.length||!Array.isArray(tx.deleted_element_ids)||tx.deleted_element_ids.length
-    ||!Array.isArray(tx.modified_element_ids)||!tx.modified_element_ids.includes(w.scheduleId)||tx.modified_element_ids.some((id:unknown)=>id!==w.scheduleId)
+    || !regularSchedulePresentationScopeMatchesV2(w.scheduleId,s.uniqueId,a,r)
     ||!matches(w,a.presentationReadback)||!matches(w,r.presentation))return false;
   return styleKeys.every(k=>w.appearance[k]===undefined || (()=>{const part=k.replace('TextTypeId','');
     return object(object(a.presentationReadback)[part]).uniqueId===object(object(r.presentation)[part]).uniqueId;})());
@@ -55,8 +55,8 @@ function settledApply(snapshot: AssignmentSnapshotV2, op: OperationV2) {
       || !r || r.authority !== 'native-host' || r.status !== 'succeeded' || r.dispatch_state !== 'dispatched' || r.native_transaction_state !== 'committed' || r.persistent_effect !== 'applied'
       || !sameAssignmentBindingV2(r.binding,op.binding) || r.operation_id !== op.operation_id
       || r.request_identity?.request_signature !== op.request_identity.request_signature || !r.native_correlation_id || !r.receipt_id
-      || !Number.isFinite(Date.parse(r.completed_at)) || r.affected_target_identities?.length !== 1
-      || r.affected_target_identities[0] !== 'element_id:'+wanted.scheduleId) return null;
+      || !Number.isFinite(Date.parse(r.completed_at)) || !Array.isArray(r.affected_target_identities)
+      || !r.affected_target_identities.includes('element_id:'+wanted.scheduleId)) return null;
   // A later edit anywhere may affect a dependent cell; reacquire current state after the latest mutation.
   if (Object.values(snapshot.operations).some(other => other.operation_id !== op.operation_id && other.requested_effect === 'apply'
       && ((other.dispatch_state === 'dispatched' && other.settlement_state !== 'settled')
@@ -82,7 +82,7 @@ export function committedRegularSchedulePresentationReadbackPlanV2(snapshot: Ass
   const wanted = settledApply(snapshot,op);
   if (!wanted || snapshot.terminal || snapshot.outcome !== 'active' || snapshot.completion_proposal || snapshot.execution_control?.state === 'paused'
       || op.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)) return null;
-  return {method:'POST',path:'/revit/schedules',body:{action:'detail',scheduleId:wanted.scheduleId,includeFields:true}};
+  return {method:'POST',path:'/revit/schedules',body:{action:'presentation',scheduleId:wanted.scheduleId}};
 }
 
 export function regularSchedulePresentationPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2, op: OperationV2, read: OperationResultV2, payload: unknown) {
@@ -105,6 +105,8 @@ export function regularSchedulePresentationPostconditionSatisfiedV2(snapshot: As
       || !Number.isFinite(Date.parse(readOp.opened_at)) || Date.parse(readOp.opened_at) < Date.parse(op.result!.completed_at)
       || Date.parse(read.completed_at) < Date.parse(readOp.opened_at)
       || !sameAssignmentBindingV2(readOp.binding,read.binding) || readOp.request_identity?.request_signature !== read.request_identity.request_signature
-      || !equal(b,{action:'detail',scheduleId:wanted.scheduleId,includeFields:true})) return false;
-  return regularSchedulePresentationReadbackMatchesV2(op.input,retainedApply(snapshot,op),payload);
+      || !equal(b,{action:'presentation',scheduleId:wanted.scheduleId})) return false;
+  const applied=retainedApply(snapshot,op);
+  return regularSchedulePresentationInventoryMatchesV2(applied,op.result!.affected_target_identities)
+    && regularSchedulePresentationReadbackMatchesV2(op.input,applied,payload);
 }

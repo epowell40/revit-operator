@@ -23,7 +23,7 @@ function fixture(){
    title:{id:70,uniqueId:'style:70'},header:{id:71,uniqueId:'style:71'},body:{id:72,uniqueId:'style:72'}};
  const applied={status:'Success',dryRun:false,schedule:{id:41,uniqueId:'view:41'},presentationReadback:presentation,
    transaction:{committed:true,rolledBack:false,pending:false,added_element_ids:[] as number[],deleted_element_ids:[] as number[],modified_element_ids:[41]},changeTracking:{exhaustiveChangeInventory:true}};
- const read={status:'Ok',action:'detail',schedule:{id:41,uniqueId:'view:41',kind:'schedule'},presentation:structuredClone(presentation)};
+ const read={status:'Ok',action:'presentation',read_only:true,schedule:{id:41,uniqueId:'view:41',kind:'schedule'},presentation:structuredClone(presentation)};
  return {input,applied,read};
 }
 test('native default styles and complete order must match in commit and independent read',()=>{
@@ -49,14 +49,14 @@ test('mixed edits, partial orders and unsafe IDs cannot fall into generic verifi
   assert.equal(regularSchedulePresentationRequestV2({body}),null);
  }
  const f=fixture();const apply={capability_id:'revit_call_tool',method:'POST',path:f.input.path,arguments:f.input};
- const verification={capability_id:'revit_call_tool',method:'POST',path:'/revit/schedules',arguments:{body:{action:'detail',scheduleId:41,includeFields:true}}};
+ const verification={capability_id:'revit_call_tool',method:'POST',path:'/revit/schedules',arguments:{body:{action:'presentation',scheduleId:41}}};
  assert.equal(verificationCapabilityAdmissionV2({apply,verification}).admissible,true);
  assert.equal(verificationCapabilityAdmissionV2({apply,verification:{...verification,arguments:{body:{action:'list'}}}}).admissible,false);
- assert.equal(verificationCapabilityAdmissionV2({apply,verification:{...verification,arguments:{body:{action:'detail',query:'air',includeFields:true}}}}).admissible,false);
+ assert.equal(verificationCapabilityAdmissionV2({apply,verification:{...verification,arguments:{body:{action:'presentation',query:'air'}}}}).admissible,false);
  assert.deepEqual(operationTargetSelectorV2({operation:apply,value:f.applied}).principal_target_tokens,['id:41','scheduleid:41']);
 });
 // Ordinary dynamic-tool pipeline with durable evidence, not an external grader.
-for(const variant of ['exact','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit'] as const)
+for(const variant of ['exact','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_changed','wide_unowned'] as const)
 test(`ordinary native presentation edit ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-presentation-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
@@ -68,12 +68,20 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
   const calls:any[]=[],validations:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
    async validateToolArguments(_tool:string,args:any){validations.push(args);if(args.path==='/revit/schedules'){
-    assert.deepEqual(args.body,{action:'detail',scheduleId:41,includeFields:true});if(variant==='read_schema_rejected')throw Error('read_schema_rejected');
+    assert.deepEqual(args.body,{action:'presentation',scheduleId:41});if(variant==='read_schema_rejected')throw Error('read_schema_rejected');
    }},
    async callTool(_tool:string,args:any,context:any){
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();
     const read=args.path==='/revit/schedules';if(read&&variant==='read_failure')throw Error('native_read_failed');
     const payload:any=read?structuredClone(f.native_read):structuredClone(fixture85.applied);
+    if(variant.startsWith('wide_')){
+      const before={schema:'operator.regular_schedule_presentation_scope.v1',complete:true,coverage:'configuration_cell_text_style_geometry_v1',targetId:41,targetUniqueId:'view:41',totalUnrequestedCells:400,
+        unrequestedSchedules:[{scheduleId:42,uniqueId:'view:42',semanticHash:'a'.repeat(64)}],dependencies:[] as any[]};
+      const after=structuredClone(before);after.dependencies.push({id:900,uniqueId:'generated:900',className:'Autodesk.Revit.DB.Element',ownerViewId:-1});
+      if(read){payload.scope=after;if(variant==='wide_changed')payload.scope.unrequestedSchedules[0].semanticHash='b'.repeat(64);if(variant==='wide_unowned')payload.scope.dependencies=[];}
+      else{payload.presentationScopeBefore=before;payload.presentationScopeAfter=after;payload.transaction.added_element_ids=[900];payload.transaction.modified_element_ids=[41,42];}
+    }
+
     if(read){
       if(variant==='wrong_style')payload.presentation.header.id=99;
       if(variant==='partial')payload.presentation.complete=false;
@@ -86,7 +94,7 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
      operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:read?'none':'applied',native_transaction_state:read?'not_applicable':'committed',authority:'native-host',
-      affected_target_identities:['element_id:41'],result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
+      affected_target_identities:!read&&variant.startsWith('wide_')?['element_id:41','element_id:42','element_id:900']:['element_id:41'],result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
       raw_payload_hash:read&&variant==='wrong_digest'?'e'.repeat(64):createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:new Date().toISOString()},observation:{raw_payload:!read&&variant==='unretained_apply'?{status:'Success'}:payload,
        semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
@@ -103,8 +111,8 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/schedules').length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    assert.equal(calls.filter(c=>c.path==='/revit/schedules').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,variant==='exact');
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','unretained_apply'].includes(variant));
+   assert.equal(verified,['exact','wide_exact'].includes(variant));
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','wide_exact','unretained_apply'].includes(variant));
    assert.equal(Object.values(s.operations).filter(o=>o.requested_effect==='apply').length,1);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
@@ -116,14 +124,14 @@ test('native presentation read planning rejects stale bindings, unknowns, pendin
   admission_state:'admitted',dispatch_state:'dispatched',settlement_state:'settled',requested_effect:'apply',persistent_effect:'applied',verification_operation_ids:[],observation_ids:[],
   result:{operation_id:'opv2_'+'a'.repeat(64),binding,status:'succeeded',dispatch_state:'dispatched',authority:'native-host',native_transaction_state:'committed',persistent_effect:'applied',completed_at:'2026-10-14T10:00:01Z',request_identity:{request_signature:'b'.repeat(64)},affected_target_identities:['element_id:41'],receipt_id:'receipt:one',native_correlation_id:'native:one'}};
  const snapshot:any={terminal:false,outcome:'active',current_binding:binding,unresolved_unknown_operation_ids:[],operations:{[op.operation_id]:op},observations:{}};
- assert.deepEqual(committedRegularSchedulePresentationReadbackPlanV2(snapshot,op),{method:'POST',path:'/revit/schedules',body:{action:'detail',scheduleId:41,includeFields:true}});
+ assert.deepEqual(committedRegularSchedulePresentationReadbackPlanV2(snapshot,op),{method:'POST',path:'/revit/schedules',body:{action:'presentation',scheduleId:41}});
  for(const mutate of [(s:any,o:any)=>o.requested_effect='preview',(s:any,o:any)=>o.input.body.dryRun=true,
   (s:any,o:any)=>o.input.body.dryRun='false',(s:any)=>s.unresolved_unknown_operation_ids=['old'],
   (s:any,o:any)=>o.binding={...o.binding,generation:2},(s:any,o:any)=>o.result.binding={...o.binding,run_id:'foreign'},
   (s:any,o:any)=>o.result.native_transaction_state='pending',(s:any,o:any)=>o.result.authority='model',
   (s:any,o:any)=>o.result.dispatch_state='not_started',(s:any,o:any)=>o.result.receipt_id='',
   (s:any,o:any)=>o.result.request_identity.request_signature='foreign',(s:any,o:any)=>o.result.affected_target_identities=[],
-  (s:any,o:any)=>o.result.affected_target_identities.push('element_id:99'),(s:any,o:any)=>o.verification_operation_ids=['already'],
+  (s:any,o:any)=>o.verification_operation_ids=['already'],
   (s:any)=>s.execution_control={state:'paused'},(s:any)=>s.completion_proposal={},(s:any)=>s.terminal=true,
   (s:any,o:any)=>s.input_invalidated_operation_ids=[o.operation_id],
   (s:any,o:any)=>s.operations.later={...o,operation_id:'later',result:{...o.result}},

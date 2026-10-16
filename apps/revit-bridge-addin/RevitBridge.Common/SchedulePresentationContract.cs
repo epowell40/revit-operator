@@ -39,6 +39,32 @@ namespace RevitBridge.Common
             return true;
         }
 
+        public static bool IsBoundedPresentationEdit(JsonElement body)
+        {
+            if (!Validate(body, out _) || !body.TryGetProperty("scheduleId", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0) return false;
+            if (body.EnumerateObject().Any(p => !new[] { "scheduleId", "fieldOrder", "appearance", "dryRun" }.Contains(p.Name))) return false;
+            var changed = body.TryGetProperty("fieldOrder", out var order) && order.ValueKind == JsonValueKind.Array;
+            if (body.TryGetProperty("appearance", out var appearance) && appearance.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in appearance.EnumerateObject())
+                {
+                    if (!new[] { "titleTextTypeId", "headerTextTypeId", "bodyTextTypeId", "showTitle", "showHeaders" }.Contains(property.Name)) return false;
+                    if (property.Name.EndsWith("TextTypeId") && property.Value.ValueKind == JsonValueKind.Number) changed = true;
+                }
+            }
+            return changed;
+        }
+
+        public static bool ValidateRead(JsonElement body, out string error)
+        {
+            error = "";
+            if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any(p => !new[] { "action", "scheduleId" }.Contains(p.Name))
+                || !body.TryGetProperty("action", out var action) || action.ValueKind != JsonValueKind.String || action.GetString() != "presentation"
+                || !body.TryGetProperty("scheduleId", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0)
+            { error = "Presentation read requires exactly action=presentation and one positive scheduleId."; return false; }
+            return true;
+        }
+
         public static void RequireCompleteOrder(IList<int> current, IList<int> requested)
         {
             if (requested.Count < 1 || requested.Count > 200 || requested.Any(id => id < 0)

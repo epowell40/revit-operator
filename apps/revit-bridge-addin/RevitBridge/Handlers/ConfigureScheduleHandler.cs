@@ -185,7 +185,11 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            bool scopedPresentation;
+            using (var body = JsonDocument.Parse(jsonData)) scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
+            var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
             var result = ApplyOperations(app, doc, schedule, p);
+            if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
             result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
             result["dryRun"] = false;
             result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name };
@@ -194,6 +198,7 @@ namespace RevitBridge.Handlers
             {
                 try
                 {
+                    if (scopedPresentation) result["presentationScopeAfter"] = RegularSchedulePresentationScope.Capture(doc, schedule);
                     result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
                     result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
                     {

@@ -51,6 +51,12 @@ namespace RevitBridge.Handlers
             }
 
             var action = (p.action ?? "list").Trim().ToLowerInvariant();
+            if (action == "presentation")
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.SchedulePresentationContract.ValidateRead(body.RootElement, out var error)) throw new ArgumentException(error);
+                return Task.FromResult(RegularSchedulePresentationScope.Read(doc, p.scheduleId!.Value));
+            }
             if (action == "cell_styles")
             {
                 using (var body = JsonDocument.Parse(jsonData))
@@ -338,6 +344,27 @@ namespace RevitBridge.Handlers
             }
 
             return definitions;
+        }
+
+        internal static object ReadPresentationScopeState(Document doc, ViewSchedule schedule)
+        {
+            var fields = BuildFieldDetails(doc, schedule);
+            var raw = JsonSerializer.SerializeToElement(fields);
+            if (fields.Count != schedule.Definition.GetFieldCount() || raw.EnumerateArray().Any(field =>
+                !field.TryGetProperty("fieldId", out _) || !field.GetProperty("widths").GetProperty("complete").GetBoolean()))
+                throw new InvalidOperationException("Unrequested schedule field inventory is incomplete.");
+            var filters = BuildFilterDefinitions(doc, schedule, out var filtersComplete);
+            var sort = BuildSortGroupDefinitions(doc, schedule, out var sortComplete);
+            var presentation = RegularSchedulePresentation.Read(doc, schedule);
+            if (!filtersComplete || !sortComplete || !JsonSerializer.SerializeToElement(presentation).GetProperty("complete").GetBoolean())
+                throw new InvalidOperationException("Unrequested schedule configuration cannot be fully observed.");
+            var parameters = schedule.Parameters.Cast<Parameter>().OrderBy(p => RevitBridge.Common.ElementIdCompat.GetValue(p.Id)).ThenBy(p => p.Definition.Name)
+                .Select(p => new { id = RevitBridge.Common.ElementIdCompat.GetValue(p.Id), name = p.Definition.Name, storage = p.StorageType.ToString(),
+                    value = !p.HasValue ? null : p.StorageType == StorageType.String ? (object?)p.AsString()
+                        : p.StorageType == StorageType.Double ? p.AsDouble() : p.StorageType == StorageType.Integer ? p.AsInteger()
+                        : p.StorageType == StorageType.ElementId ? RevitBridge.Common.ElementIdCompat.GetValue(p.AsElementId()) : null }).ToArray();
+            return new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), uniqueId = schedule.UniqueId, schedule.Name,
+                fields, filters, sort, presentation, appearance = BuildAppearance(schedule), settings = BuildSettings(schedule), parameters };
         }
 
         private static object BuildAppearance(ViewSchedule schedule)

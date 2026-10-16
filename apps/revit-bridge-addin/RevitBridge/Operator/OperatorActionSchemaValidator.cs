@@ -8245,6 +8245,8 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("action", out var presentationAction) && presentationAction.ValueKind == JsonValueKind.String && presentationAction.GetString() == "presentation")
+                    return RevitBridge.Common.SchedulePresentationContract.ValidateRead(obj.Value, out error);
                 if (obj.Value.TryGetProperty("action", out var cellAction) && cellAction.ValueKind == JsonValueKind.String && cellAction.GetString() == "cell_styles")
                     return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, false, out error);
                 if (obj.Value.TryGetProperty("cells", out _)) { error = "schedules.cells requires action=cell_styles."; return false; }

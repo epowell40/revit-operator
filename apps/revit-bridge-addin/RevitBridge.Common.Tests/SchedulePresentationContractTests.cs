@@ -45,6 +45,30 @@ namespace RevitBridge.Common.Tests
             Assert.Throws<ArgumentException>(() => SchedulePresentationContract.RequireCompleteOrder(current, new[] { 11, 12, 13, 14, 15, 16, 17, 19, 18, 18 }));
         }
 
+        [Theory]
+        [InlineData("{\"action\":\"presentation\",\"scheduleId\":41}", true)]
+        [InlineData("{\"action\":\"presentation\",\"query\":\"air\"}", false)]
+        [InlineData("{\"action\":\"presentation\",\"scheduleId\":true}", false)]
+        [InlineData("{\"action\":\"presentation\",\"scheduleId\":-1}", false)]
+        [InlineData("{\"action\":\"presentation\",\"scheduleId\":41,\"includeFields\":true}", false)]
+        public void IndependentPresentationReadsRequireOneExactNativeTarget(string json, bool expected)
+        {
+            using var doc = JsonDocument.Parse(json);
+            Assert.Equal(expected, SchedulePresentationContract.ValidateRead(doc.RootElement, out _));
+        }
+
+        [Theory]
+        [InlineData("{\"scheduleId\":41,\"fieldOrder\":[0,12]}", true)]
+        [InlineData("{\"scheduleId\":true,\"fieldOrder\":[0,12]}", false)]
+        [InlineData("{\"scheduleId\":41,\"appearance\":{\"titleTextTypeId\":70}}", true)]
+        [InlineData("{\"scheduleId\":41,\"appearance\":{\"titleTextTypeId\":70,\"stripedRows\":true}}", false)]
+        [InlineData("{\"scheduleId\":41,\"fieldOrder\":[0,12],\"filters\":[]}", false)]
+        public void ScopeCensusIsOnlyForTheReviewedPresentationSubset(string json, bool expected)
+        {
+            using var doc = JsonDocument.Parse(json);
+            Assert.Equal(expected, SchedulePresentationContract.IsBoundedPresentationEdit(doc.RootElement));
+        }
+
         [Fact]
         public void LargeRequestsAreBoundedBeforeNativeWork()
         {
