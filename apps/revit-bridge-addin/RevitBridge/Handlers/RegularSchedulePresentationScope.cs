@@ -95,7 +95,8 @@ namespace RevitBridge.Handlers
                 throw new ArgumentException("Presentation read requires one actual regular schedule resolved from the active document.");
             return new { status = "Ok", action = "presentation", read_only = true,
                 schedule = new { id = scheduleId, uniqueId = schedule.UniqueId, kind = "schedule" },
-                presentation = RegularSchedulePresentation.Read(doc, schedule), scope = Capture(doc, schedule) };
+                presentation = RegularSchedulePresentation.Read(doc, schedule), scope = Capture(doc, schedule),
+                definition = ScheduleCombinedFieldOperations.Read(doc, schedule) };
         }
     }
 }

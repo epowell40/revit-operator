@@ -69,6 +69,24 @@ function actualType(value: unknown): string {
   return typeof value;
 }
 
+// JSON equality for uniqueItems, with the same bounded traversal as schema
+// validation. Object key order is immaterial; strings and numbers stay distinct.
+function uniquenessKey(value: unknown, depth: number, budget: ValidationBudget): string {
+  if (budget.remaining-- <= 0 || depth > MAX_SCHEMA_DEPTH) { budget.exhausted=true; return ''; }
+  if (Array.isArray(value)) {
+    const keys:string[]=[];
+    for(const item of value){if(budget.exhausted)break;keys.push(uniquenessKey(item,depth+1,budget));}
+    return '['+keys.join(',')+']';
+  }
+  const o=record(value);
+  if(o) {
+    const keys:string[]=[];
+    for(const key of Object.keys(o).sort()){if(budget.exhausted)break;keys.push(JSON.stringify(key)+':'+uniquenessKey(o[key],depth+1,budget));}
+    return '{'+keys.join(',')+'}';
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 function schemaViolations(value: unknown, schemaValue: unknown, field: string, violations: GenericToolValidationIssue[], depth: number, budget: ValidationBudget): void {
   if (budget.remaining-- <= 0) { budget.exhausted = true; return; }
   if (field.length > MAX_FIELD_PATH_LENGTH) { budget.exhausted = true; return; }
@@ -207,6 +225,18 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
     if (schema.items !== undefined) {
       for (let index = 0; index < value.length && !budget.exhausted && violations.length < MAX_VALIDATION_ISSUES; index++)
         schemaViolations(value[index], schema.items, `${field}[${index}]`, violations, depth + 1, budget);
+    }
+    if (schema.uniqueItems === true && !budget.exhausted && violations.length < MAX_VALIDATION_ISSUES) {
+      const keys = new Set<string>();
+      for (const item of value) {
+        const key=uniquenessKey(item,depth+1,budget);
+        if(budget.exhausted)break;
+        if(keys.has(key)) {
+          pushIssue(violations,{field_path:field,expected_type:'uniqueItems',actual_type:'array',safe_correction_eligibility:'provider_corrected_arguments_required',correction_action:'provider_resubmit',expected_constraint:{kind:'unique_items'},message:`${field} must contain distinct items`});
+          break;
+        }
+        keys.add(key);
+      }
     }
   }
 

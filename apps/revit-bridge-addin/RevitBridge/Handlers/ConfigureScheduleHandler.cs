@@ -88,6 +88,7 @@ namespace RevitBridge.Handlers
 
             public List<string>? addFields { get; set; }
             public List<int>? fieldOrder { get; set; }
+            public RevitBridge.Common.ScheduleCombinedFieldSpec? combinedField { get; set; }
             public List<FilterSpec>? filters { get; set; }
             public bool? replaceFilters { get; set; }
 
@@ -123,6 +124,13 @@ namespace RevitBridge.Handlers
                     if (!RevitBridge.Common.ScheduleCellAppearanceContract.Validate(body.RootElement, true, out var error))
                         throw new ArgumentException(error);
                 return Task.FromResult<object>(ScheduleCellAppearanceOperations.Edit(app, doc, p.scheduleId!.Value, p.cellStyles, p.dryRun ?? false));
+            }
+
+            if (p.combinedField != null)
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCombinedFieldContract.ValidateEdit(body.RootElement, out var error)) throw new ArgumentException(error);
+                return Task.FromResult<object>(ScheduleCombinedFieldOperations.Edit(app, doc, p.scheduleId!.Value, p.combinedField, p.dryRun ?? false));
             }
 
             var exact = p.exact ?? false;

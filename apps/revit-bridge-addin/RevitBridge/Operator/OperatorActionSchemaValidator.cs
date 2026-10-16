@@ -8487,6 +8487,8 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("combinedField", out _))
+                    return RevitBridge.Common.ScheduleCombinedFieldContract.ValidateEdit(obj.Value, out error);
                 if (obj.Value.TryGetProperty("cellStyles", out _))
                     return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, true, out error);
                 if (!RevitBridge.Common.SchedulePresentationContract.Validate(obj.Value, out error)) return false;

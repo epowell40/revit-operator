@@ -44,7 +44,7 @@ namespace RevitBridge.Handlers
             => value is Color color ? (object)Rgb(color) : value is ElementId id ? ElementIdCompat.GetValue(id)
                 : value is Enum enumeration ? enumeration.ToString() : value;
 
-        private static Dictionary<string, object?> Style(TableCellStyle style)
+        internal static Dictionary<string, object?> Style(TableCellStyle style)
         {
             var preserved = new SortedDictionary<string, object?>(StringComparer.Ordinal);
             foreach (var property in PreservedProperties)

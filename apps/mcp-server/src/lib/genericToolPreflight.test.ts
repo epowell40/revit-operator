@@ -591,3 +591,26 @@ test("native published schedule modes admit the exact retained presentation read
  }
  for(const valid of [{},{action:'list',query:''},{action:'list',kind:'all',offset:0,max:100},{action:'detail',scheduleId:1542917,includeSchedulableFields:true,maxSchedulableFields:200},{action:'detail',query:'AIR DEVICE SCHEDULE',includeData:true,maxRows:500,maxColumns:100},{action:'circuits',offset:0,max:500},{action:'circuits',scheduleId:41},{action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:0,column:0}]}])assert.equal(preflightKnownGenericToolBody(contract,valid),null,JSON.stringify(valid));
 });
+
+
+test('native combined-field fragment admits bounded bindings and keeps legacy and mixed edits separate',()=>{
+ const f=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json',import.meta.url),'utf8')).schedule_combined_field;
+ const legacy={type:'object',additionalProperties:false,properties:{scheduleId:{type:'integer'},query:{type:'string'},fieldOrder:{type:'array',items:{type:'integer'}}}};
+ const schema={type:'object',properties:{...legacy.properties,combinedField:f.properties.combinedField,dryRun:{type:'boolean'}},additionalProperties:false,oneOf:[legacy,f]};
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/configure-schedule',request_schema:schema},body);
+ const good={scheduleId:41,combinedField:{name:'Basis of Design',sourceFieldIds:[0,12],separator:' / ',hideSourceFields:true,index:0,widthFeet:.12},dryRun:false};
+ assert.equal(check(good),null);assert.equal(check({query:'Air devices',fieldOrder:[0,12]}),null);
+ for(const bad of [{...good,query:'air'},{...good,fieldOrder:[0,12]},{...good,dryRun:null},
+  ...[{sourceFieldIds:[]},{sourceFieldIds:[0]},{sourceFieldIds:[0,0]},{sourceFieldIds:[0,-1]},{sourceFieldIds:[0,1.2]},
+    {sourceFieldIds:[0,1,2,3,4,5,6,7,8]},{name:''},{widthFeet:0},{widthFeet:6},{index:201},{index:1.2},{hideSourceFields:null},{separator:null},{invented:true}]
+    .map(extra=>({...good,combinedField:{...good.combinedField,...extra}}))])assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
+
+
+test('uniqueItems uses bounded JSON equality without confusing object order or scalar types',()=>{
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{type:'array',uniqueItems:true}},body);
+ assert.equal(check([1,'1',null,false,{},[]]),null);
+ for(const v of [[0,-0],[null,null],[{a:1,b:2},{b:2,a:1}],[[1,2],[1,2]]])assert.equal(check(v)?.request_dispatched,false);
+ let deep:any=0;for(let i=0;i<30;i++)deep=[deep];assert.equal(check([deep])?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
+ assert.equal(check(Array(100_001).fill(1).map((v,i)=>i))?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
+});

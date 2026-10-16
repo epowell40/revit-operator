@@ -446,6 +446,13 @@ namespace RevitBridge.Operator
                 if (OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema))
                     return conditionalSchema;
 
+                if (p == "/revit/configure-schedule")
+                {
+                    var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    OperatorConditionalRequestContracts.ApplyScheduleCombinedFragment(schema);
+                    return schema;
+                }
+
                 if (p == "/revit/create-duct" || p == "/revit/create-pipe" || p == "/revit/repair-mep-connectors")
                 {
                     var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);

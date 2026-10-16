@@ -3,6 +3,7 @@ import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
 import { canonicalJsonV2, sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
 import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
+import { scheduleCombinedFieldRequestV2, scheduleCombinedFieldReadbackMatchesV2 } from './schedule_combined_field_v2.js';
 
 const object = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 const positive = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
@@ -10,7 +11,7 @@ const equal = (a: unknown, b: unknown) => canonicalJsonV2(a) === canonicalJsonV2
 const styleKeys = ['titleTextTypeId','headerTextTypeId','bodyTextTypeId'];
 export function isRegularSchedulePresentationEditV2(input: unknown): boolean {
   const w=object(input), b=object(w.body??input), a=object(b.appearance);
-  return Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
+  return Object.hasOwn(b,'combinedField') || Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
 }
 /** Deliberately covers only explicit existing-field order/default-style edits, never mixed changes or visual appearance. */
 export function regularSchedulePresentationRequestV2(input: unknown) {
@@ -36,6 +37,7 @@ function matches(wanted:NonNullable<ReturnType<typeof regularSchedulePresentatio
   return ['showTitle','showHeaders'].every(k=>wanted.appearance[k]===undefined||p[k]===wanted.appearance[k]);
 }
 export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appliedPayload:unknown,freshPayload:unknown):boolean {
+  if(Object.hasOwn(object(object(input).body??input),'combinedField'))return scheduleCombinedFieldReadbackMatchesV2(input,appliedPayload,freshPayload);
   const w=regularSchedulePresentationRequestV2(input),a=object(appliedPayload),r=object(freshPayload),s=object(a.schedule),rs=object(r.schedule),tx=object(a.transaction);
   if(!w||a.status!=='Success'||a.dryRun!==false||r.status!=='Ok'||r.action!=='presentation'||r.read_only!==true||s.id!==w.scheduleId||rs.id!==w.scheduleId
     ||typeof s.uniqueId!=='string'||!s.uniqueId||rs.uniqueId!==s.uniqueId||rs.kind!=='schedule'
@@ -47,7 +49,7 @@ export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appli
 }
 
 function settledApply(snapshot: AssignmentSnapshotV2, op: OperationV2) {
-  const r = op.result, wanted = regularSchedulePresentationRequestV2(op.input);
+  const r = op.result, wanted = regularSchedulePresentationRequestV2(op.input) ?? scheduleCombinedFieldRequestV2(op.input);
   if (!wanted || snapshot.unresolved_unknown_operation_ids.length || snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
       || !sameAssignmentBindingV2(op.binding,snapshot.current_binding) || op.request_identity?.path !== '/revit/configure-schedule'
       || op.input.path !== op.request_identity.path || op.input.method !== 'POST' || op.requested_effect !== 'apply'
