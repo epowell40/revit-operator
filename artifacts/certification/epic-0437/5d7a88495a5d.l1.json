@@ -1016,11 +1016,11 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/task_navigation.ts",
-      "sha256": "sha256:f304829735a3c06ced9df8c81805266ee901537c27c0781666562a2843d3fa25"
+      "sha256": "sha256:ac24958b70615e1384d6ab33721f02a95933e3b95ec4a516549f6ba15264d48e"
     },
     {
       "path": "apps/operator-backend/src/assignments/task_navigation_projection.ts",
-      "sha256": "sha256:0d394dbdc883dcefefdfd0eb01f823b216ab59a4029cc263c9a53ce45a77b02b"
+      "sha256": "sha256:59382335dd3e1d045152716058664d220e6f90e7e4bd6438902b5f2793764fab"
     },
     {
       "path": "apps/operator-backend/src/assignments/task_navigation_reader.ts",
@@ -6793,7 +6793,7 @@
     },
     {
       "path": "apps/operator-backend/test/task_navigation.test.ts",
-      "sha256": "sha256:c2a2f2166af5742ce5d4cc229c80fbd42c05ff714a5ea27fa06dc2947ece5354"
+      "sha256": "sha256:c1edc03f37a4117fa127e35634bd780f73e3ae99add54a04f6adcec671346f40"
     },
     {
       "path": "apps/operator-backend/test/task_steering.test.ts",
@@ -10125,7 +10125,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:13610c28a7e9bffa4dda6952f8f074a5e43489c0c344fa170da72a269d4ba84b",
+  "inputs_hash": "sha256:e16ca687945e1884fa4a03bcf88d74e57d03e8cd4e026ee4ac1622aa0dd0f356",
   "result": {
     "passed": true,
     "checks": [
