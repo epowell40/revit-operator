@@ -1,4 +1,4 @@
-import { regularScheduleCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
+import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
 import { committedRegularSchedulePresentationReadbackPlanV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { committedProjectParameterBindingReadbackPlanV2 } from "../verification/project_parameter_binding_v2.js";
@@ -420,7 +420,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         }
       }
       // A later edit can invalidate earlier checks. Refresh only previously
-      // successful schedule checks, with real reads through ordinary gates.
+      // successful recognized checks, with real reads through ordinary gates.
       // Bound fan-out and stop at the first refusal/mismatch. Never replay an
       // apply, reinterpret a failed check, or manufacture a final proof fact.
       if(current?.operations[lease.operation_id]?.requested_effect==='apply') {
@@ -428,20 +428,21 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         for(let n=0;n<16;n++) {
           const before=getAssignmentKernelSnapshotV2(lease.assignment_id);if(!before)break;
           const candidate=Object.values(before.operations)
-            .filter(op=>regularScheduleCheckNeedsRefreshV2(before,op))
+            .filter(op=>committedCheckNeedsRefreshV2(before,op))
             .sort((a,b)=>`${b.settled_at??b.opened_at}:${b.operation_id}`.localeCompare(`${a.settled_at??a.opened_at}:${a.operation_id}`))
-            .map(op=>({op,plan:committedRegularSchedulePresentationReadbackPlanV2(before,op)})).find(v=>v.plan);
+            .map(op=>({op,plan:committedRegularSchedulePresentationReadbackPlanV2(before,op)
+              ??committedVisibilityReadbackPlanV2(before,op)})).find(v=>v.plan);
           if(!candidate)break;
           try {
             const response=await handleCodexDynamicToolCall(runtime,{
-              id:`host-final-schedule-readback:${lease.operation_id}:${candidate.op.operation_id}:${n}`,method:'item/tool/call',
+              id:`host-final-committed-readback:${lease.operation_id}:${candidate.op.operation_id}:${n}`,method:'item/tool/call',
               params:{namespace:'revit_operator',tool:'revit_call_tool',turnId:params.turnId,threadId:params.threadId,arguments:candidate.plan}
             }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
             if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
             const after=getAssignmentKernelSnapshotV2(lease.assignment_id);
             if(!response.success||!after||!checkedEditIsCurrentV2(after,candidate.op.operation_id))break;
           }catch(error){
-            const item={type:'inputText' as const,text:`Final native schedule recheck remains open: ${String(error).slice(0,500)}. Do not replay committed changes.`};
+            const item={type:'inputText' as const,text:`Final native recheck remains open: ${String(error).slice(0,500)}. Do not replay committed changes.`};
             if(hostReadResponse)hostReadResponse.contentItems.push(item);else hostReadResponse={success:false,contentItems:[item]};break;
           }
         }

@@ -297,6 +297,7 @@
     "native_phase_filter_runtime.test.ts",
     "visibility_phasing_readback_v2.test.ts",
     "visibility_phasing_runtime.test.ts",
+    "visibility_refresh_runtime.test.ts",
     "current_work_packet_verification.test.ts"
   ],
   "mcp_tests": [
@@ -4370,6 +4371,12 @@
       "coverage": [
         "backend:visibility_phasing_readback_v2.test.ts",
         "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "stale_view_check_refresh_without_replaying_or_reviving_superseded_intent",
+      "coverage": [
+        "backend:visibility_refresh_runtime.test.ts"
       ]
     },
     {
