@@ -67,3 +67,16 @@ export function compareNativeChangeObservations(before, after) {
     observation_limits: 'No-change observations do not prove a UI command succeeded. Concurrent human/add-in edits are not attributed to this actor. SaveAs changes session identity and must be reconciled explicitly.'
   });
 }
+
+// The interval comes from the host dispatcher, never parsed tool arguments or
+// caller output. Keep feedback visible when the raw artifact needs projection.
+export function nativeChangeFeedbackModelOutput(modelOutput, interval, evidenceId) {
+  if (!interval || typeof modelOutput?.output !== 'string' || !text(evidenceId)) throw new Error('native_change_feedback_projection_input_invalid');
+  const envelope = JSON.parse(modelOutput.output);
+  if (envelope.schema !== 'revit-operator.model-evidence-envelope.v1' || !Array.isArray(envelope.evidence_projections)
+    || !envelope.evidence_projections.some(p => p.evidence_id === evidenceId)) throw new Error('native_change_feedback_artifact_binding_missing');
+  const feedback = compareNativeChangeObservations(interval.before, nativeChangeObservationFromContext(interval.context));
+  const output = JSON.stringify({...envelope, native_change_feedback: {...feedback, source_evidence_id: evidenceId}});
+  if (new TextEncoder().encode(output).byteLength > 32768) throw new Error('native_change_feedback_model_budget_exceeded');
+  return {...modelOutput, output};
+}
