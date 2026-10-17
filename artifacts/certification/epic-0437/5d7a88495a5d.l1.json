@@ -892,7 +892,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
-      "sha256": "sha256:4b99a8bf2a3a4552f81b01a74965f0c1032993feae076bd9909ea91d738b7b91"
+      "sha256": "sha256:08aff6a4cfbce2e727356627268c256daee652aaacb87bcf2936d1737813e349"
     },
     {
       "path": "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts",
@@ -1540,7 +1540,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:325f7d3ef5bf8af2710e3f9b9959f26fc3e5919f0832dcac2dcae41f14ad8407"
+      "sha256": "sha256:d9090d59ecf6f5a0e5f20b00d126f58c1068ca11c6392f3c1169594cf892627d"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
@@ -1552,7 +1552,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:2a81984365af37e24782e8a92096c47b6ef5c49fa5451cd74ba371172545e270"
+      "sha256": "sha256:98a15902a2d33f237ca0b698edce8a427f70b1ec1d52630b43102b534efbfb17"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1611,6 +1611,10 @@
       "sha256": "sha256:df7c635f635c15f8cd32da88f6af9ee9fb0f955e9153e10d3196656df791dc15"
     },
     {
+      "path": "apps/operator-backend/src/brains/desktop_helper_return.ts",
+      "sha256": "sha256:d2d21f00e9e28097099d701d58afbdac8960f75affe09fa13dd1d65ef525e191"
+    },
+    {
       "path": "apps/operator-backend/src/brains/direct_revit_bridge.ts",
       "sha256": "sha256:98e164e6f3eed7af0c50f4d28ad1858ebb4a9beff9b96c4743df044a79a0e4d6"
     },
@@ -1660,7 +1664,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/thin_reference_execution.ts",
-      "sha256": "sha256:b573454c515c518d7d0267c76edf521718d0662bb47876e438fb9fb50ddf6c84"
+      "sha256": "sha256:dd1226b03f29848509b16798b3e4ec4a7994a5c3003c684c7355763f973722f6"
     },
     {
       "path": "apps/operator-backend/src/brains/work_continuation_guidance.ts",
@@ -2729,7 +2733,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:abb60653c316070d091a02e50e5af21a4a2b03adb48a134ed92b6c1e07b28116"
+      "sha256": "sha256:f7313f3bf88c33816d09dcd5bfad7682ac64a1b9badb1d0509e99b0316364a82"
     },
     {
       "path": "apps/operator-backend/src/conversation_evidence_guidance.ts",
@@ -4565,7 +4569,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:9046576bed303581ad48e362376002ddf82fceb60b6f0b7e481f856d92fb5fe2"
+      "sha256": "sha256:dccd31856d51afc4ec666ca5778807eab423840ca214323ba953e249df00fa25"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -5037,7 +5041,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_scoped_handoff.test.ts",
-      "sha256": "sha256:259423a26b065265d325b8b60b02873928ceeda53eec5866780ca41525b975e9"
+      "sha256": "sha256:1ce25927379e1930fc5fe973fd931370ad161effbacdcc18e8245c2562597222"
     },
     {
       "path": "apps/operator-backend/test/detailing_model_projection.test.ts",
@@ -6777,7 +6781,7 @@
     },
     {
       "path": "apps/operator-backend/test/thin_reference_dynamic_boundary.test.ts",
-      "sha256": "sha256:5fe91344dd9c82b1b87714bcc3c1620c6078193154977bcd3e2bca04dd2a197d"
+      "sha256": "sha256:d593d3a0434e51d759085e03e29ad46e7b9f84de66ce9575c2f70645c9f9c154"
     },
     {
       "path": "apps/operator-backend/test/thin_reference_execution.test.ts",
@@ -10041,7 +10045,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:c3c974d263562f7d27b486177ee5baf9b87c1fbd36c7b70a95965f2f366f97e6",
+  "inputs_hash": "sha256:37929a0b4826f498a34f3a1ac2f12cd1ef88db1f589240f9529b68ff569dcbd4",
   "result": {
     "passed": true,
     "checks": [
