@@ -788,7 +788,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:2df4d69e0cd5b9fcfea74cd40da2fc0d477fb363aa98acb8623901272685a620"
+      "sha256": "sha256:0c16f390faef20c571edb2488a5a77ee0ba0e9f8cf6d52381e9208bba48d433f"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -932,7 +932,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/native_observation_inputs_v2.ts",
-      "sha256": "sha256:1d36255daffdb12f2e8de760649cb565cc1cd6c392b8e26ee49450a31bdb4b3d"
+      "sha256": "sha256:a730bea587d1c2c5cf834590e97fc724335e0fbdebb5a2fe3d6f168b5ed03142"
     },
     {
       "path": "apps/operator-backend/src/assignments/noop_completion.ts",
@@ -3701,7 +3701,7 @@
     },
     {
       "path": "apps/operator-backend/src/postcondition_verification_v2.ts",
-      "sha256": "sha256:4015dc05ad8b54eb99c12ec3bd3448f9273562f04516c21f52ecc602748695fa"
+      "sha256": "sha256:571c2fce6ef00db940162353edeb407fbf34593cf8b538894da8d80b84553bc7"
     },
     {
       "path": "apps/operator-backend/src/provider_token_cost.ts",
@@ -4301,7 +4301,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/visibility_view_contract_v2.ts",
-      "sha256": "sha256:bd931bf86c15abdd3a969c3cb28019ee62c9efc5dab4168e857dc851d76421cf"
+      "sha256": "sha256:8124f7e406433f6c39875d0e6f2f9a88fc3977aacc260a1a434bd60606b308ea"
     },
     {
       "path": "apps/operator-backend/src/vision/gemini_agentic_vision.ts",
@@ -6790,6 +6790,14 @@
     {
       "path": "apps/operator-backend/test/visibility_category_readback_v2.test.ts",
       "sha256": "sha256:de0991c37a9520754bc1fa5b6a3d348041198ab64989a373fcafa50fd488a5c6"
+    },
+    {
+      "path": "apps/operator-backend/test/visibility_phasing_readback_v2.test.ts",
+      "sha256": "sha256:cdbb4cea2f000b1c975bf9248417d5d7d25e5a170db7e0e76519c2234eee9471"
+    },
+    {
+      "path": "apps/operator-backend/test/visibility_phasing_runtime.test.ts",
+      "sha256": "sha256:c00185ff3094cca84b009a091cf8781e8c62ddeb8f65d200c5c3b7f29c44cefd"
     },
     {
       "path": "apps/operator-backend/test/web_research_evidence.test.ts",
@@ -9933,7 +9941,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:d0a91f9620984e5ec651f294ee6aaf49011c608ab6e89bed838ff4e425024274",
+  "inputs_hash": "sha256:98b1c9c4f31915e7ba85203e7659ce07f1a6dd7e002eadd688757c30cff994a4",
   "result": {
     "passed": true,
     "checks": [
