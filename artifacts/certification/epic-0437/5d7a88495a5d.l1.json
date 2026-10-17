@@ -788,7 +788,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:0c16f390faef20c571edb2488a5a77ee0ba0e9f8cf6d52381e9208bba48d433f"
+      "sha256": "sha256:0f16118777543cc413809b69e0994953020033c954b0e23e65f6b47bf05fad64"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -1528,7 +1528,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_evidence.ts",
-      "sha256": "sha256:333f14e67857715d45862ae444850e20da48ab218268b739a665c12dcd981719"
+      "sha256": "sha256:d3302cefa3b09d65d757f624d54d6a7fdfb1964890a15119e4cf488e41d5f192"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
@@ -4180,6 +4180,10 @@
       "sha256": "sha256:fe874f89a4650b61561de1a4aee52baacf5cca5eb2fb443567a80783190c180a"
     },
     {
+      "path": "apps/operator-backend/src/verification/native_property_comparison_v2.ts",
+      "sha256": "sha256:d6cf261fe7629f0b5a98f736c3393106518d54d30c70c19f1809c9159ab00481"
+    },
+    {
       "path": "apps/operator-backend/src/verification/native_schedule_presentation_v2.ts",
       "sha256": "sha256:ffd43bc88a03fcf49c44e20e0aba106cb6ef59ebacc8f91c74997b89ee647d4e"
     },
@@ -6112,6 +6116,10 @@
       "sha256": "sha256:6cad7c28d8e399d0e255a4a5bb6c7e5b5da19f1c3cd7feca861bf18b59a018b8"
     },
     {
+      "path": "apps/operator-backend/test/native_comparison_feedback_runtime.test.ts",
+      "sha256": "sha256:60f42946cd2bda1cd851f47c2b1adc8cb2d65370cfd9a8ee9819c92cae01793b"
+    },
+    {
       "path": "apps/operator-backend/test/native_completion_delivery_recovery.test.ts",
       "sha256": "sha256:3d58853d3ac8858c57600a705d5aeae2621eab8d7e4c9bf11330214de85bcaab"
     },
@@ -6130,6 +6138,10 @@
     {
       "path": "apps/operator-backend/test/native_phase_filter_v2.test.ts",
       "sha256": "sha256:1f387dd068b6dd66667ad0b3deb2f599f642ad77eea4b83b7eacffcdaefdb929"
+    },
+    {
+      "path": "apps/operator-backend/test/native_property_comparison_v2.test.ts",
+      "sha256": "sha256:0655a535692d6b7872aa44854a11f6c364c7f11507733a58a02e7475b0ad372d"
     },
     {
       "path": "apps/operator-backend/test/native_property_kernel_v2.test.ts",
@@ -9949,7 +9961,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:abdb59d80a45d30816cfde6a217732eecb5efc0b2e95fc4a98b13199eb55129a",
+  "inputs_hash": "sha256:f920298da781ffd0c815b4cd458653146baaa36cab661fac14ee56dd0adbb18b",
   "result": {
     "passed": true,
     "checks": [
