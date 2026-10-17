@@ -16,18 +16,18 @@ export function sameVisualReviewOwner(a,b){try{const x=visualReviewOwner(a),y=vi
 export const VISUAL_WORK_REVIEW_TOOL={type:'function',name:'review_current_work',description:
   'Ask a separate, tool-free reviewer to examine fresh actual work pixels against up to eight explicit visual checks. '+
   'Prefer capture_mode target_view for a sheet or drawing view: export that exact target even when another view is displayed. Use visible_work for an actual displayed schedule editor or owned dialog. Revit cannot export standalone schedules; use their placed sheet or open the editor. '+
-  'Retain sheet/view location. If a full export is too small, zoom/navigate to the work and use visible_work. Use for layout, legibility, symbols and visible settings after a useful bounded change or when unsure; use native readback for hidden attributes, membership and dimensions. '+
+  'Retain sheet/view location. Target exports exceeding the 24-megapixel review limit get one bounded read-only re-export at a suitable width; actual resolution is reported. If a full export is too small, zoom/navigate to the work and use visible_work. Use for layout, legibility, symbols and visible settings after a useful bounded change or when unsure; use native readback for hidden attributes, membership and dimensions. '+
   'For visible_work open the actual target view/schedule first. Home or an unrelated active screenshot cannot verify background changes; parameter-only work may require native readback without a visual check. '+
   'When reviewing a known defect before editing, check the desired final condition so the discrepancy can become matched after correction; confirming that the defect exists is only a baseline observation. '+
   'Read each discrepancy, make an authorized targeted correction, then inspect/review again. Uncertain or unavailable is not a mismatch and never justifies replaying an uncertain write. '+
   'This uses the same model/settings and remaining task budget, not a new allowance. It is supporting visual assessment, not native transaction, engineering or whole-task completion proof.',
-  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work; target_view exports the requested view without activation.'},capture_mode:{type:'string',enum:['visible_work','target_view'],description:'Default visible_work captures current work/editor/dialog. Prefer target_view for sheets and drawings; no screenshot of another active view is substituted.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional target_view export width, default 4000 pixels. Not a pixel-to-model mapping.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id','checks']}};
+  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work; target_view exports the requested view without activation.'},capture_mode:{type:'string',enum:['visible_work','target_view'],description:'Default visible_work captures current work/editor/dialog. Prefer target_view for sheets and drawings; no screenshot of another active view is substituted.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional target_view export width, default 4000 pixels; one read-only reduction may be needed for the pixel-area limit. Ignored for visible_work. Not a pixel-to-model mapping.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id','checks']}};
 
 export function normalizeVisualReviewRequest(input){
   if(!object(input)||Object.keys(input).some(k=>!['view_id','checks','reference_filename','capture_mode','image_size'].includes(k))||!positive(input.view_id)
     ||!Array.isArray(input.checks)||!input.checks.length||input.checks.length>8)throw Error('visual_review_request_invalid');
-  if(input.capture_mode!==undefined&&!['visible_work','target_view'].includes(input.capture_mode)
-    ||input.image_size!==undefined&&(input.capture_mode!=='target_view'||!Number.isSafeInteger(input.image_size)||input.image_size<1024||input.image_size>6000))throw Error('visual_review_capture_mode_invalid');
+  if(input.capture_mode!==undefined&&!['visible_work','target_view'].includes(input.capture_mode))throw Error('visual_review_capture_mode_invalid');
+  if(input.image_size!==undefined&&(!Number.isSafeInteger(input.image_size)||input.image_size<1024||input.image_size>6000))throw Error('visual_review_image_size_invalid');
   const reference=input.reference_filename;
   const noReference=reference===undefined||reference===null||(typeof reference==='string'&&reference.length<=240&&!reference.trim());
   if(!noReference&&(!bounded(reference,240)||/[\\/:]/.test(reference)))throw Error('visual_review_reference_filename_invalid');
@@ -78,7 +78,7 @@ export function validateTargetVisualReviewCapture(capture,location,now){
   const native=capture?.native_result,settlement=native?.canonical_attempt_settlement,image=capture?.image_base64,mime=capture?.mime_type;
   if(!object(native)||native.processId!==location.process_id||native.documentSessionId!==location.document_session_id||native.projectFingerprint!==location.project_fingerprint
     ||native.viewId!==location.view_id||native.exportMode!=='full_view'||!bounded(native.viewName,600)||!bounded(native.viewUniqueId,200)
-    ||!bounded(native.viewType,80)||!positive(native.widthPx)||!positive(native.heightPx)||native.widthPx*native.heightPx>24000000
+    ||!bounded(native.viewType,80)||!positive(native.widthPx)||!positive(native.heightPx)
     ||!positive(native.bytes)||native.bytes>5*1024*1024||!/^([a-f0-9]{64})$/.test(native.sha256??'')
     ||settlement?.method!=='POST'||settlement.path!=='/revit/export-image'||settlement.requested_effect!=='read'||settlement.effect_state!=='none'
     ||!Number.isFinite(Date.parse(native.timestamp))||now-Date.parse(native.timestamp)>10000||Date.parse(native.timestamp)>now+1000
@@ -87,6 +87,9 @@ export function validateTargetVisualReviewCapture(capture,location,now){
   if(bytes.length!==native.bytes||createHash('sha256').update(bytes).digest('hex')!==native.sha256)throw Error('visual_review_target_pixels_changed');
   if(mime==='image/png'?(bytes.length<33||bytes.toString('ascii',12,16)!=='IHDR'||bytes.readUInt32BE(16)!==native.widthPx||bytes.readUInt32BE(20)!==native.heightPx)
     :(bytes.length<4||bytes[0]!==255||bytes[1]!==216||bytes[bytes.length-2]!==255||bytes[bytes.length-1]!==217))throw Error('visual_review_target_image_invalid');
+  // Only an otherwise valid, bound native image may request a smaller export.
+  // Identity, freshness and byte validation must precede this typed condition.
+  if(native.widthPx*native.heightPx>24000000)throw Error('visual_review_target_pixel_limit_exceeded');
   return {image,mime,frame:{schema:'operator.visual_review_target_capture.v1',kind:'native_target_view',selection_authority:'authorized_native_target_export',
     process_id:location.process_id,document_session_id:location.document_session_id,view_id:native.viewId,view_unique_id:native.viewUniqueId,
     view_name:native.viewName,view_type:native.viewType,sheet_number:typeof native.sheetNumber==='string'?native.sheetNumber:null,
@@ -138,10 +141,27 @@ export async function reviewCurrentWork(input,host){
   const target=request.capture_mode==='target_view',makeScene=value=>target?targetScene(value,request.view_id,owner):scene(value,request.view_id,(host.now||Date.now)());
   const same=target?sameTargetScene:sameScene;
   const base={schema:'operator.visual_work_review.v1',authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,request,owner};
-  let captureRef=null,initial=null,responseId=null;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
+  let captureRef=null,initial=null,responseId=null,effectiveWidth=request.image_size,resolutionAdjusted=false;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
   const observed=async()=>{const value=await (target?host.readTargetContext():host.readContext());raw.native_identity_observations.push(value);return value;};
   const captured=async location=>{
-    if(target){const value=await host.captureTarget(location,request);raw.native_target_exports??=[];raw.native_target_exports.push({native_result:value?.native_result,image_delivery:value?.image_delivery});return validateTargetVisualReviewCapture(value,location,(host.now||Date.now)());}
+    if(target){
+      const exported=async()=>{const value=await host.captureTarget(location,{...request,image_size:effectiveWidth});raw.native_target_exports??=[];raw.native_target_exports.push({native_result:value?.native_result,image_delivery:value?.image_delivery});return value;};
+      let value=await exported();
+      try{return validateTargetVisualReviewCapture(value,location,(host.now||Date.now)());}
+      catch(error){
+        if(error?.message!=='visual_review_target_pixel_limit_exceeded'||resolutionAdjusted)throw error;
+        const native=value.native_result,width=Math.min(effectiveWidth-1,Math.floor(native.widthPx*Math.sqrt(24000000/(native.widthPx*native.heightPx))*.99));
+        if(!Number.isSafeInteger(width)||width<1024)throw Error('visual_review_target_aspect_ratio_requires_focused_view');
+        await control();const saved=await host.retainImage(value.image_base64,{mime_type:value.mime_type,capture_mode:'target_view'});
+        if(!safeId(saved?.ref?.evidence_id)||saved.ref.content_hash!=='sha256:'+native.sha256||saved.ref.byte_count!==native.bytes)throw Error('visual_review_target_retention_mismatch');
+        raw.resolution_adjustment={reason:'pixel_limit',initial_width:native.widthPx,initial_height:native.heightPx,initial_evidence_ref:saved.ref};
+        await control();if(!same(location,makeScene(await observed())))throw Error('visual_review_scene_changed_before_resolution_adjustment');
+        resolutionAdjusted=true;effectiveWidth=width;base.capture_resolution={requested_width:request.image_size,effective_width:width,max_pixels:24000000,read_only_adjustments:1};
+        await control();value=await exported();const reduced=validateTargetVisualReviewCapture(value,location,(host.now||Date.now)());
+        if(!['viewId','viewUniqueId','viewName','viewType','sheetNumber'].every(k=>native[k]===value.native_result[k]))throw Error('visual_review_target_identity_changed_during_resolution_adjustment');
+        return reduced;
+      }
+    }
     return {...validateVisualReviewCapture(await host.capture(location),location,(host.now||Date.now)()),mime:'image/png'};
   };
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
@@ -191,7 +211,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId){
     state:result.state,ok:result.ok,location,
     capture:result.capture?{evidence_id:result.capture.evidence_id,content_hash:result.capture.content_hash,
       kind:result.capture.frame?.kind,width:result.capture.frame?.rectangle?.width??result.capture.frame?.width,height:result.capture.frame?.rectangle?.height??result.capture.frame?.height}:null,
-    reference:result.reference??null,reviewer_response_id:result.reviewer_response_id??null,
+    reference:result.reference??null,capture_resolution:result.capture_resolution??null,reviewer_response_id:result.reviewer_response_id??null,
     reason_code:typeof result.reason==='string'?result.reason.match(/(?:^|\n)(visual_review_[a-z0-9_]+)(?=\s|$)/)?.[1]??null:null,
     reason_summary:typeof result.reason==='string'?result.reason.slice(0,500):null,
     reason_complete:typeof result.reason!=='string'||result.reason.length<=500,

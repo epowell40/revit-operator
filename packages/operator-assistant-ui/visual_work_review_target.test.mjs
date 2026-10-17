@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash}from'node:crypto';
+import fs from 'node:fs';import {reviewTestPng}from'./fixtures/visual-review-image.mjs';
 import {reviewCurrentWork,normalizeVisualReviewRequest,visualWorkReviewModelOutput}from'./visual_work_review.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
@@ -46,5 +47,33 @@ test('changed target pixels retain both images and invalidate the review rather 
 test('retained pixels must match native image identity; modes and resolution are bounded, actor image/path injection stays forbidden',async()=>{
  const f=setup();f.h.retainImage=async()=>({ref:{evidence_id:'ev1_wrong',content_hash:'sha256:'+'a'.repeat(64),byte_count:1}});assert.equal((await reviewCurrentWork(request,f.h)).reason,'visual_review_target_retention_mismatch');assert.equal(f.calls.providers.length,0);
  assert.equal(normalizeVisualReviewRequest(request).image_size,4000);
- for(const bad of [{...request,capture_mode:'auto'},{...request,image_size:100000},{...request,image_size:1023},{...request,capture_mode:'visible_work',image_size:4000},{...request,path:'other.png'},{...request,image_base64:image}])assert.throws(()=>normalizeVisualReviewRequest(bad));
+ for(const bad of [{...request,capture_mode:'auto'},{...request,image_size:100000},{...request,image_size:1023},{...request,path:'other.png'},{...request,image_base64:image}])assert.throws(()=>normalizeVisualReviewRequest(bad));
+});
+
+const retained167=JSON.parse(fs.readFileSync(new URL('./fixtures/visual-review-resolution167.json',import.meta.url),'utf8'));
+test('exact167 visible-work request tolerates an unused valid export-size hint without weakening screen checks',()=>{
+ const normalized=normalizeVisualReviewRequest(retained167.next_request);assert.equal(normalized.capture_mode,'visible_work');assert.equal(normalized.image_size,undefined);
+ assert.throws(()=>normalizeVisualReviewRequest({...retained167.next_request,capture_mode:'auto'}));
+});
+test('exact167 high-resolution target is bounded once and its effective resolution is reused for the fresh recheck',async()=>{
+ const f=setup(),sizes=[],cache=new Map();f.h.captureTarget=async(location,args)=>{sizes.push(args.image_size);const width=args.image_size,height=Math.floor(width*retained167.native_dimensions.heightPx/retained167.native_dimensions.widthPx);
+  if(!cache.has(width))cache.set(width,reviewTestPng(width,height));const bytes=cache.get(width),c=f.capture();c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{widthPx:width,heightPx:height,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return c;};
+ const result=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(result.state,'mismatch');assert.equal(sizes.length,3);assert.equal(sizes[0],6000);assert(sizes[1]<6000&&sizes[1]>=1024);assert.equal(sizes[1],sizes[2]);
+ assert(result.capture.frame.width*result.capture.frame.height<=24000000);assert.equal(result.capture_resolution.requested_width,6000);assert.equal(result.capture_resolution.effective_width,sizes[1]);assert.equal(result.raw_review_evidence.native_target_exports.length,3);assert.equal(f.calls.providers.length,1);assert.equal(result.native_postcondition_verified,false);
+});
+test('oversized wrong-document image never gets a resolution retry or reviewer call',async()=>{
+ const f=setup();let captures=0;f.h.captureTarget=async()=>{captures++;const bytes=reviewTestPng(6000,4285),c=f.capture();c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{documentSessionId:'other',widthPx:6000,heightPx:4285,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return c;};
+ const r=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(r.state,'unavailable');assert.equal(captures,1);assert.equal(f.calls.providers.length,0);
+});
+test('resolution adjustment is read-only and refuses scene changes, changed target identity or a second oversized export',async()=>{
+ const bytes=reviewTestPng(6000,4285),digest=createHash('sha256').update(bytes).digest('hex');
+ for(const issue of ['scene','target','still-oversized']){const f=setup();let captures=0,contexts=0;f.h.readTargetContext=async()=>{const c=f.context();if(issue==='scene'&&++contexts===2)c.nativeChangeObservations.throughSequence=1;return c;};
+  f.h.captureTarget=async()=>{const c=f.capture();if(++captures===1||issue==='still-oversized'){c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{widthPx:6000,heightPx:4285,bytes:bytes.length,sha256:digest});}else if(issue==='target')c.native_result.viewUniqueId='different-target';return c;};
+  const r=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(r.state,'unavailable',issue);assert.equal(captures,issue==='scene'?1:2,issue);assert.equal(f.calls.providers.length,0,issue);
+  assert.match(r.reason,/scene_changed_before_resolution|target_identity_changed|pixel_limit_exceeded/);
+ }
+});
+test('extreme target aspect ratio asks for a focused view instead of spinning on exports',async()=>{
+ const f=setup();let captures=0;f.h.captureTarget=async()=>{captures++;const bytes=reviewTestPng(1024,25000),c=f.capture();c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{widthPx:1024,heightPx:25000,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return c;};
+ const r=await reviewCurrentWork({...request,image_size:1024},f.h);assert.equal(r.reason,'visual_review_target_aspect_ratio_requires_focused_view');assert.equal(captures,1);assert.equal(f.calls.providers.length,0);
 });

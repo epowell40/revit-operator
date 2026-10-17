@@ -4563,6 +4563,13 @@
         "desktop:test/visual_work_review.test.js"
       ],
       "id": "independent_review_uses_native_target_pixels_with_document_binding_and_modal_safe_reads"
+    },
+    {
+      "id": "native_target_review_bounds_resolution_once_and_ignores_unused_screen_export_hint",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
