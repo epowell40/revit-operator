@@ -2801,7 +2801,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:44b84cada4ff263f865c0b82544eab9c331b2c34fdf8ecc472617004dd445403"
+      "sha256": "sha256:ae8a65a1555e13af4e3ecf62b759d718b2546d68f9fa34bc1c12389c33edf223"
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
@@ -5037,7 +5037,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:20cbdcd4f150c9656af5d97ec33dcc37cb216333b58e836ee59a100c2019492b"
+      "sha256": "sha256:0c3db1ae2e717b476fc4dfd43b53c94606828b4c894e50852bee4942546c509d"
     },
     {
       "path": "apps/operator-backend/test/desktop_conversation.test.ts",
@@ -7537,7 +7537,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUiContextSnapshotTests.cs",
-      "sha256": "sha256:7dc6d290c1593fcfc0a9dc5df05c4520a093fea772c62bf65db6dfc752e781a5"
+      "sha256": "sha256:a0d6c0a21167dd9a94485f89fa365fe7ca7134dae18f111864a8ee19f4f8ea5f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUiWakeSchedulerTests.cs",
@@ -9898,7 +9898,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Services/RevitUiContextSnapshot.cs",
-      "sha256": "sha256:ea5d3b00e419409851a7e7b7ffafc06b42c6d86b9267224ed9c966337d4f9b49"
+      "sha256": "sha256:eb444954cd99bcbcc8dbfbd30b1e50065e0188944ebbc65a93e4aeca36b53e4c"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Tooling/tool_examples.json",
@@ -10069,7 +10069,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:59bed126988281a8cc570d13134ef344aca9bd975e7c2d8b7d35dba46c474369",
+  "inputs_hash": "sha256:c4bb62c560c1ba7d3f5489075dcbd584dac02bda2963296bf0c434c21ebf909b",
   "result": {
     "passed": true,
     "checks": [
