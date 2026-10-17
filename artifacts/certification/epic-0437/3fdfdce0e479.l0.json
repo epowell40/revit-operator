@@ -4273,7 +4273,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/schedule_field_formats_v2.ts",
-      "sha256": "sha256:20576b26503092c55547017a2844a608ae7ae76e6cc53725fe396dc256e4e0b7"
+      "sha256": "sha256:7d66f19708e3a9fc39a5f0445ec8f263fe8311f654bed38cf8d3f3285daa4de4"
     },
     {
       "path": "apps/operator-backend/src/verification/schedule_filter_postcondition_v2.ts",
@@ -6585,7 +6585,7 @@
     },
     {
       "path": "apps/operator-backend/test/schedule_field_formats_v2.test.ts",
-      "sha256": "sha256:cdf7cbffc221a6410eeed1d91fb107b8091d6563252ec444250f5e368f31f81b"
+      "sha256": "sha256:9bb6b7535696c6eb6ce1c7acacebf4ef69106c0124cfc306b278988058466c6a"
     },
     {
       "path": "apps/operator-backend/test/schedule_filter_postcondition_v2.test.ts",
@@ -7425,7 +7425,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransportTests.cs",
-      "sha256": "sha256:ac32e54c6d93ebd75b00ab31c5e1b207de9ce2865d47a4de50626f55a4dac8ba"
+      "sha256": "sha256:67f6965463d64b6bf6f9b0e9fe68fbdad03b207d75a9980f6eed99723e4051f8"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPaneIntegrationContractTests.cs",
@@ -7622,6 +7622,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/SchedulePresentationContractTests.cs",
       "sha256": "sha256:e751e25a3ac42272cc8a31f195a999950fe7826269de7b4510f8909b394553e8"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleRowHeightPolicyTests.cs",
+      "sha256": "sha256:2d42dc5557a8cb5aa496fb7eb5d15d76e2772d2937d120f1a8e7a61baff3ac91"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleSettlementTests.cs",
@@ -8359,6 +8363,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/SchedulePresentationContract.cs",
       "sha256": "sha256:3291b1dd200de8f325b166c49a17a575cd7a05d9be73595f0104ccf35afe767b"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleRowHeightPolicy.cs",
+      "sha256": "sha256:ddc702c145f59cd23fa0e1b7fcd05481c50866ff428af6b4ef520dd75cbc9f80"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleValueReplacementPolicy.cs",
@@ -9306,7 +9314,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ConfigureScheduleHandler.cs",
-      "sha256": "sha256:43fe03ad662a04325edfb4abb0a0908335cf0800f2d274aa1ae0a6594b3b3aa8"
+      "sha256": "sha256:0edc8f3b2e062e5c31306a0fc59341a21d9c8805b6f1948d5bbed6a9b03a5cee"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ContextHandler.cs",
@@ -9602,11 +9610,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleCellAppearanceOperations.cs",
-      "sha256": "sha256:2ba001943f4ba76100b33be974509fdb954b3634afcbdce547d8b94523a9bcfc"
+      "sha256": "sha256:ef8cdce67b69734c7a3a0d5064800fffd3cb34804d643b788f00e152fbd384ef"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleCombinedFieldOperations.cs",
-      "sha256": "sha256:c74e8c1e798fbc45450815c569925f7a7a60d4fab6a2e127d92014ff4b42c5a1"
+      "sha256": "sha256:f10f11aba883f101d09eb2774baf41c80f8c10061985e76b22c81394005ca087"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ScheduleSelectionHelper.cs",
@@ -9993,7 +10001,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:2059cb607947874a9f4cd53c48ebc17ba7c4226e4dfe01b0988fa03eec507e26",
+  "inputs_hash": "sha256:cbc819fa91b760d267dfd70629d7fd63768c27d2ed56300be11e7b0c7a83280d",
   "result": {
     "passed": true,
     "checks": [
