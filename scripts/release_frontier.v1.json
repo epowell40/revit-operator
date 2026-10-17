@@ -369,7 +369,8 @@
     "test/sidecar_revit_listener_identity.test.js",
     "test/task_navigation.test.js",
     "test/delegated_assignment_recovery.test.mjs",
-    "test/provider_usage_hold_ui.test.js"
+    "test/provider_usage_hold_ui.test.js",
+    "test/native_change_feedback.test.js"
   ],
   "dotnet_test_classes": [
     "CadLinkOptionPolicyTests",
@@ -481,7 +482,8 @@
     "ScheduleRowHeightPolicyTests",
     "BoundedNativeSequenceTests",
     "ParameterValuePreservationDigestTests",
-    "OperatorDelegatedBatchTruthTests"
+    "OperatorDelegatedBatchTruthTests",
+    "OperatorDocumentChangeObservationTests"
   ],
   "failure_families": [
     {
@@ -4485,6 +4487,14 @@
         "backend:desktop_conversation.test.ts",
         "backend:desktop_conversation_http.test.ts"
       ]
+    },
+    {
+      "coverage": [
+        "dotnet:OperatorDocumentChangeObservationTests",
+        "javascript:package/operator-assistant-ui/native_change_observations.test.mjs",
+        "desktop:test/native_change_feedback.test.js"
+      ],
+      "id": "desktop_native_change_observations_require_fresh_target_readback_not_actor_or_commit_proof"
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4508,6 +4518,7 @@
     "package/operator-assistant-ui/assignment_mutation.test.mjs",
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",
     "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
-    "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
+    "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
+    "package/operator-assistant-ui/native_change_observations.test.mjs"
   ]
 }

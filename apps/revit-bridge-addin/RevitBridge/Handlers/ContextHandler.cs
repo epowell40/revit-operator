@@ -28,6 +28,8 @@ namespace RevitBridge.Handlers
                 username = app.Application.Username,
                 process_id = Process.GetCurrentProcess().Id,
                 courier_executor_id = RevitBridge.Operator.OperatorRevitCourierWorker.ExecutorIdForCurrentProcess(),
+                nativeChangeObservations = doc == null ? (object?)null : RevitBridge.Services.RevitDocumentChangeObservations.Read(
+                    RevitBridge.Common.OperatorNativeDocumentSessionAuthority.GetSessionId(doc)),
                 readiness = new
                 {
                     revit_launched = true,
