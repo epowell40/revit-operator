@@ -175,8 +175,14 @@ namespace RevitBridge.Handlers
                 if (hasColumnWidths && !hasAddFields && !hasCalculatedFields)
                     foreach (var width in p.columnWidths!) ResolveUniqueWidthField(doc, schedule, width.field!);
                 using (var formatBody = JsonDocument.Parse(jsonData))
+                {
+                    if (RevitBridge.Common.ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow(formatBody.RootElement))
+                        return Task.FromResult<object>(new { status = "Failed", errorCode = "standard_schedule_body_row_height_unsupported",
+                            message = "Revit does not permit per-row resizing in a standard schedule body. For all body rows, omit rowNumber and use the host-supported schedule-wide override; the header/data spacer requires the Appearance UI. No mutation was started.",
+                            transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
                     if (RevitBridge.Common.ScheduleFieldFormatContract.IsBoundedEdit(formatBody.RootElement))
                         foreach (var format in p.fieldFormats!) ResolveUniqueWidthField(doc, schedule, format.field!);
+                }
             }
             catch (ArgumentException ex)
             {
@@ -411,7 +417,7 @@ namespace RevitBridge.Handlers
             var appearanceResults = new List<object>();
             var filterBySheetResults = new List<object>();
 
-            return RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Configure Schedule", created =>
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Configure Schedule", created =>
             {
                 if (p.isItemized.HasValue)
                     schedule.Definition.IsItemized = p.isItemized.Value;
@@ -439,6 +445,7 @@ namespace RevitBridge.Handlers
                 if (p.rowHeights != null)
                 {
                     ApplyRowHeights(schedule, p.rowHeights, rowHeightResults);
+                    if (p.rowHeights.Count > 0) RevitBridge.Common.ScheduleRowHeightPolicy.RequireAppliedRows(JsonSerializer.SerializeToElement(rowHeightResults));
                 }
 
                 if (p.calculatedFields != null)
@@ -482,6 +489,8 @@ namespace RevitBridge.Handlers
                 filterBySheet = filterBySheetResults
             } };
             });
+            if (rowHeightResults.Count > 0 && (!result.TryGetValue("success", out var success) || !Equals(success, true))) result["rowHeightAttemptReadback"] = rowHeightResults;
+            return result;
         }
 
         private static void ApplyAddFields(Document doc, ViewSchedule schedule, List<string> addFields, List<object> addResults)

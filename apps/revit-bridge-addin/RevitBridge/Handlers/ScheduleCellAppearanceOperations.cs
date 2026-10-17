@@ -44,7 +44,7 @@ namespace RevitBridge.Handlers
             => value is Color color ? (object)Rgb(color) : value is ElementId id ? ElementIdCompat.GetValue(id)
                 : value is Enum enumeration ? enumeration.ToString() : value;
 
-        internal static Dictionary<string, object?> Style(TableCellStyle style)
+        internal static Dictionary<string, object?> Style(TableCellStyle style, bool includePreservedProperties = false)
         {
             var preserved = new SortedDictionary<string, object?>(StringComparer.Ordinal);
             foreach (var property in PreservedProperties)
@@ -57,11 +57,17 @@ namespace RevitBridge.Handlers
             var flags = style.GetCellStyleOverrideOptions();
             foreach (var property in flags.GetType().GetProperties().Where(p => p.PropertyType == typeof(bool) && p.CanRead && p.Name != "IsValidObject" && p.Name != "BackgroundColor").OrderBy(p => p.Name))
                 preserved["override:" + property.Name] = property.GetValue(flags);
-            return new Dictionary<string, object?> {
+            var result = new Dictionary<string, object?> {
                 ["gridBackgroundColorRgb"] = Rgb(style.BackgroundColor), ["sheetBackgroundColorRgb"] = Rgb(style.SheetBackgroundColor),
                 ["inactivePhaseShading"] = style.IsInactivePhaseload, ["isOverridden"] = style.IsOverridden,
                 ["backgroundOverride"] = flags.BackgroundColor, ["preservedStyleHash"] = Hash(preserved)
             };
+            if (includePreservedProperties)
+            {
+                result["preservedPropertiesSchema"] = "operator.table_cell_style_preserved_properties.v1";
+                result["preservedProperties"] = preserved;
+            }
+            return result;
         }
 
         private static Dictionary<string, object?> Cell(TableView view, ScheduleCellLocator cell)

@@ -769,6 +769,10 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
             Assert.Contains("NativeSingleTransaction.Execute(app, doc, \"Configure Schedule\"", handler, StringComparison.Ordinal);
             Assert.Contains("OperatorNativeTransactionExecution.OutcomeStatus(result, \"Success\")", handler, StringComparison.Ordinal);
+            Assert.Contains("ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow(formatBody.RootElement)", handler, StringComparison.Ordinal);
+            Assert.True(handler.IndexOf("ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow", StringComparison.Ordinal) < handler.IndexOf("var plan = BuildPlan", StringComparison.Ordinal));
+            Assert.Contains("ScheduleRowHeightPolicy.RequireAppliedRows(JsonSerializer.SerializeToElement(rowHeightResults))", handler, StringComparison.Ordinal);
+            Assert.Contains("result[\"rowHeightAttemptReadback\"] = rowHeightResults", handler, StringComparison.Ordinal);
             Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(", handler, StringComparison.Ordinal);
             Assert.DoesNotContain("TryClearFilters(", handler, StringComparison.Ordinal);
             Assert.Contains("definition.SetFilters(combined);", handler, StringComparison.Ordinal);

@@ -34,7 +34,7 @@ namespace RevitBridge.Handlers
                 fieldType = field.FieldType.ToString(), isCalculated = field.IsCalculatedField, isCombined = field.IsCombinedParameterField,
                 heading = field.ColumnHeading, headingOrientation = field.HeadingOrientation.ToString(), horizontalAlignment = field.HorizontalAlignment.ToString(),
                 gridWidthFeet = field.GridColumnWidth, sheetWidthFeet = field.SheetColumnWidth,
-                style = ScheduleCellAppearanceOperations.Style(style), parts };
+                style = ScheduleCellAppearanceOperations.Style(style, includePreservedProperties: true), parts };
             return new { fieldId = field.FieldId.IntegerValue, isHidden = field.IsHidden, attributes, semanticHash = Hash(attributes) };
         }
         internal static object Read(Document doc, ViewSchedule schedule)

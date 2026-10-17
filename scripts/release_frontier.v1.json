@@ -473,6 +473,7 @@
     "OperatorNativeOwnedValueTests",
     "SchedulePresentationContractTests",
     "ScheduleFieldFormatContractTests",
+    "ScheduleRowHeightPolicyTests",
     "BoundedNativeSequenceTests",
     "ParameterValuePreservationDigestTests",
     "OperatorDelegatedBatchTruthTests"
@@ -4388,6 +4389,14 @@
     {
       "id": "bounded_schedule_field_formats_native_census_and_separate_readback",
       "coverage": ["backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts", "dotnet:ScheduleFieldFormatContractTests"]
+    },
+    {
+      "id": "schedule_row_failure_cannot_commit_success_and_pending_rollback_stays_unknown",
+      "coverage": ["dotnet:ScheduleRowHeightPolicyTests", "dotnet:OperatorNativeTransportTests", "backend:regular_schedule_presentation_v2.test.ts"]
+    },
+    {
+      "id": "explicit_desktop_ui_fresh_intake_preserves_existing_backend_assignment_owner",
+      "coverage": ["javascript:package/operator-assistant-ui/composer_intake.test.mjs", "desktop:test/composer_intake.test.js"]
     },
     {
       "id": "native_scalar_mismatch_feedback_and_corrective_readback_without_proof_promotion",

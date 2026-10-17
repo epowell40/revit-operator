@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { selectChatSubmissionMode } from './composer_intake.mjs';
+import { needsDesktopUiLane } from './composer_intake.mjs';
 const capability = { schema: 'revit-operator.local-executor-capability/v1', source: 'backend_configuration',
   profile: 'codex_v2_advisory_v1', executor: 'codex', assignment_kernel: 2, execution_policy: 'local_advisory_v1' };
 const state = { localExecutor: capability, backendLocal: true, backendAuthMode: 'shared_token',
@@ -45,4 +46,15 @@ import { startsFreshComputerConversation } from './composer_intake.mjs';
 test('fresh computer conversation requires empty session, empty saved assignment and idle composer',()=>{
  assert.equal(startsFreshComputerConversation({}),true);
  for(const state of [{sessionId:'old'},{taskNavigationAssignmentId:'old'},{streaming:true}])assert.equal(startsFreshComputerConversation(state),false);
+});
+
+test('fresh explicit UI work can use the desktop-capable owner while ordinary model work stays on the configured backend',()=>{
+ for(const prompt of ['Use Revit UI to adjust the schedule.', 'Remove the header gap using the Revit Appearance dialog.', 'Open the schedule Appearance dialog and inspect its grid settings.', 'Click the ribbon button.']){
+  assert(needsDesktopUiLane(prompt));assert.equal(selectChatSubmissionMode(state,prompt),'computer-run');
+  for(const change of [{sessionId:'saved'}, {taskNavigationAssignmentId:'retained'}, {streaming:true,activeRunKind:'backend'}, {computerUseAvailable:false}])assert.equal(selectChatSubmissionMode({...state,...change},prompt),'backend');
+  assert.throws(()=>selectChatSubmissionMode({...state,backendConfigStatus:'timeout'},prompt),/Reconnect/);
+ }
+ for(const prompt of ['Match the air-device schedule to this office example.', 'Use native API only; do not open the Appearance dialog.', 'Adjust widths without using Revit UI.', "Do not use computer-use; inspect the menu through native API only."]){
+  assert.equal(needsDesktopUiLane(prompt),false);assert.equal(selectChatSubmissionMode(state,prompt),'backend');
+ }
 });

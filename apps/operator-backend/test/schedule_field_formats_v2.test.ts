@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {regularSchedulePresentationRequestV2,regularSchedulePresentationReadbackMatchesV2} from '../src/verification/regular_schedule_presentation_v2.js';
-import {boundedScheduleFieldFormatsV2} from '../src/verification/schedule_field_formats_v2.js';
+import {boundedScheduleFieldFormatsV2,scheduleFieldStylePreservationMatchesV2} from '../src/verification/schedule_field_formats_v2.js';
 function fixture(){
  const field=(id:number,name:string)=>({fieldId:id,isHidden:false,semanticHash:'b'.repeat(64),attributes:{fieldId:id,name,parameterId:-1,parameterUniqueId:null,fieldType:'Instance',isCalculated:false,isCombined:false,heading:name,headingOrientation:'Horizontal',horizontalAlignment:'Center',gridWidthFeet:.2,sheetWidthFeet:.2,style:{preservedStyleHash:'c'.repeat(64)},parts:[]}});
  const before={schema:'operator.regular_schedule_field_definition.v1',complete:true,scheduleId:41,uniqueId:'view:41',categoryId:-2008013,coverage:'native_field_binding_captured_attributes_filters_sort_defaults_parameters_v1',configurationHash:'a'.repeat(64),fieldOrder:[11,12,13],fields:[field(11,'Description'),field(12,'Count'),field(13,'Remarks')]};
@@ -39,4 +39,44 @@ test('format requests refuse ambiguous/unsupported/mixed shapes before automatic
  for(const extra of [{filters:[]},{fieldOrder:[11,12,13]},{appearance:{}},{columnWidths:[]},{dryRun:true}]){
   const f=fixture();assert.equal(regularSchedulePresentationRequestV2({body:{...f.input.body,...extra}}),null);
  }
+});
+function fullStyle(alignment='Left'):any{
+ const properties:Record<string,unknown>={FontVerticalAlignment:'Middle',FontHorizontalAlignment:alignment,IsFontUnderline:false,IsFontItalic:false,IsFontBold:false,
+  BorderRightLineStyle:1,BorderLeftLineStyle:1,BorderBottomLineStyle:1,BorderTopLineStyle:1,TextOrientation:0,TextColor:[0,0,0],TextSize:.0078125,FontName:'Arial',IsReadOnly:false,IsEnabled:true};
+ for(const k of ['BorderLineStyle','TextOrientation','Underline','Italics','Bold','VerticalAlignment','HorizontalAlignment','BorderRightLineStyle','BorderLeftLineStyle','BorderBottomLineStyle','BorderTopLineStyle','FontColor','FontSize','Font'])properties['override:'+k]=false;
+ properties['override:HorizontalAlignment']=alignment==='Center';
+ return {preservedStyleHash:(alignment==='Left'?'a':'b').repeat(64),preservedPropertiesSchema:'operator.table_cell_style_preserved_properties.v1',preservedProperties:properties,
+  gridBackgroundColorRgb:[255,255,255],sheetBackgroundColorRgb:[255,255,255],inactivePhaseShading:false,isOverridden:true,backgroundOverride:false};
+}
+test('native alignment metadata delta requires its complete unchanged style-property neighbors',()=>{
+ const b=fullStyle(),a=fullStyle('Center');assert(scheduleFieldStylePreservationMatchesV2(b,a,{horizontalAlignment:'center'}));
+ for(const [key,value] of Object.entries({FontName:'Other',TextSize:.2,TextColor:[255,0,0],BorderTopLineStyle:99,'override:Bold':true})){
+  const wrong=structuredClone(a);wrong.preservedProperties[key]=value;assert.equal(scheduleFieldStylePreservationMatchesV2(b,wrong,{horizontalAlignment:'Center'}),false,key);
+ }
+ for(const mutate of [(x:any):void=>{delete x.preservedProperties.FontName;},(x:any):void=>{delete x.preservedPropertiesSchema;},(x:any):void=>{x.preservedProperties.FontHorizontalAlignment='Right';},(x:any):void=>{x.gridBackgroundColorRgb=[0,0,0];}]){
+  const wrong=structuredClone(a);mutate(wrong);assert.equal(scheduleFieldStylePreservationMatchesV2(b,wrong,{horizontalAlignment:'Center'}),false);
+ }
+ assert.equal(scheduleFieldStylePreservationMatchesV2(b,a,{}),false,'Unrequested alignment changes are collateral');
+ const hashOnly=structuredClone(b);hashOnly.preservedStyleHash='f'.repeat(64);
+ assert.equal(scheduleFieldStylePreservationMatchesV2(b,hashOnly,{horizontalAlignment:'Left'}),false,'An unexplained hash cannot be excused by asking for a no-op');
+});
+
+test('vertical heading style permits only the requested orientation and its override flag',()=>{
+ const b=fullStyle(),a=structuredClone(b);a.preservedStyleHash='e'.repeat(64);a.preservedProperties.TextOrientation=900;a.preservedProperties['override:TextOrientation']=true;
+ assert(scheduleFieldStylePreservationMatchesV2(b,a,{headingOrientation:'vertical'}));
+ a.preservedProperties.TextOrientation=90;assert.equal(scheduleFieldStylePreservationMatchesV2(b,a,{headingOrientation:'vertical'}),false);
+ a.preservedProperties.TextOrientation=900;a.preservedProperties['override:FontSize']=true;
+ assert.equal(scheduleFieldStylePreservationMatchesV2(b,a,{headingOrientation:'vertical'}),false,'Unrequested overrides must remain unchanged');
+});
+test('full separate native read verifies authorized alignment while rejecting an unexplained hash-only change',()=>{
+ const f:any=fixture();f.applied.definitionBefore.fields[0].attributes.horizontalAlignment='Left';f.applied.definitionBefore.fields[0].attributes.style=fullStyle();
+ f.applied.definitionAfter.fields[0].attributes.style=fullStyle('Center');f.read.definition=structuredClone(f.applied.definitionAfter);
+ assert(regularSchedulePresentationReadbackMatchesV2(f.input,f.applied,f.read));
+ delete f.read.definition.fields[0].attributes.style.preservedProperties;assert.equal(regularSchedulePresentationReadbackMatchesV2(f.input,f.applied,f.read),false);
+});
+test('a later field-order permutation preserves current scalar checks without excusing reorder collateral at this commit',()=>{
+ const f=fixture();f.read.definition.fieldOrder=[13,11,12];f.read.definition.fields=[f.read.definition.fields[2]!,f.read.definition.fields[0]!,f.read.definition.fields[1]!];f.read.presentation.fieldOrder=[13,11,12];
+ assert(regularSchedulePresentationReadbackMatchesV2(f.input,f.applied,f.read));
+ f.applied.definitionAfter.fieldOrder=[13,11,12];f.applied.definitionAfter.fields=[f.applied.definitionAfter.fields[2]!,f.applied.definitionAfter.fields[0]!,f.applied.definitionAfter.fields[1]!];
+ assert.equal(regularSchedulePresentationReadbackMatchesV2(f.input,f.applied,f.read),false,'Formatting call itself must preserve its unrequested order');
 });
