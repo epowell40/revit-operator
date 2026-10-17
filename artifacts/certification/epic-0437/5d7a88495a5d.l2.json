@@ -7549,7 +7549,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUiContextSnapshotTests.cs",
-      "sha256": "sha256:a0d6c0a21167dd9a94485f89fa365fe7ca7134dae18f111864a8ee19f4f8ea5f"
+      "sha256": "sha256:7cdc53165972ea084bf70bbb4f4be7f01822b5aeff66d1c13e8eb32feb251f70"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUiWakeSchedulerTests.cs",
@@ -9910,7 +9910,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Services/RevitUiContextSnapshot.cs",
-      "sha256": "sha256:eb444954cd99bcbcc8dbfbd30b1e50065e0188944ebbc65a93e4aeca36b53e4c"
+      "sha256": "sha256:9f6a1bb152bb4fefa69f487080199e404d4a8718a646dc28d12a04620c799b8e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Tooling/tool_examples.json",
@@ -10081,7 +10081,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:b0faee2f58a2376ae489dc1b65e620419457ec8269b6af7f69b4d281f01f9dab",
+  "inputs_hash": "sha256:8cf1fc91c85af2b82600c97e2b8982d58a3a31b90083830e487433e05103ce9f",
   "result": {
     "passed": true,
     "checks": [
