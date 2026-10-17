@@ -1,4 +1,5 @@
 import {expectedPostconditionValuesV2,observedPostconditionValuesV2}from '../postcondition_verification_v2.js';
+import {scheduleRowHeightComparisonV2}from './schedule_row_heights_v2.js';
 
 export const NATIVE_PROPERTY_COMPARISON_FACT_V2='control.native_property_comparison';
 type Difference={subject:string;expected:string[];observed:string[];values_clipped?:boolean};
@@ -13,6 +14,7 @@ function tokenParts(token:string):[string,string]|null {
  * completion proof. The settlement owner must bind an independently obtained,
  * fresh native result before exposing this as actual mismatch feedback. */
 export function nativePropertyComparisonV2(input:unknown,readInput:unknown,raw:unknown):NativePropertyComparisonV2 {
+ const rowComparison=scheduleRowHeightComparisonV2(input,readInput,raw);if(rowComparison)return rowComparison;
  const apply=record(input),read=record(readInput),body=record(apply.body),rb=record(read.body),payload=record(raw);
  const empty=(state:NativePropertyComparisonV2['state']):NativePropertyComparisonV2=>({state,differences:[],omitted:0});
  if(apply.method!=='POST'||!['/revit/set-parameter','/revit/visibility'].includes(apply.path))return empty('unsupported');

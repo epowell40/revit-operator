@@ -24,7 +24,7 @@ export function parameterReadIsFreshNativeV2(applied: OperationV2, read: Operati
     && opened >= commitAt && completed >= opened);
 }
 export function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2,
-  route: '/revit/native-api-ops'|'/revit/visibility' = '/revit/native-api-ops'): boolean {
+  route: '/revit/native-api-ops'|'/revit/visibility'|'/revit/schedules' = '/revit/native-api-ops'): boolean {
   const commit = applied.result;
   const commitAt = Date.parse(commit?.completed_at ?? "");
   const readOpened = Date.parse(read?.opened_at ?? "");
@@ -131,7 +131,9 @@ export function nativePropertyComparisonControlFactV2(
   const comparisonFresh=verificationSubject?.request_identity?.path==='/revit/set-parameter'
     ?parameterReadIsFreshNativeV2(verificationSubject,operation,result)
     :verificationSubject?.request_identity?.path==='/revit/visibility'
-      &&nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility');
+      ?nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility')
+      :verificationSubject?.request_identity?.path==='/revit/configure-schedule'
+        &&nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/schedules');
   if(snapshot&&operation&&verificationSubject&&comparisonFresh&&deterministicallyTargetBound
     && lease.purpose==='verification'&&lease.fulfillment_role==='verification'
     && result.dispatch_state==='dispatched'&&result.native_transaction_state==='not_applicable'

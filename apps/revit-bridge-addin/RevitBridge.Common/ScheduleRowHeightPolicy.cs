@@ -1,9 +1,30 @@
 using System;
 using System.Text.Json;
+using System.Linq;
 namespace RevitBridge.Common
 {
     public static class ScheduleRowHeightPolicy
     {
+        // Bounded explicit rows outside the standard body. Schedule-wide body
+        // overrides need a different predicate and are not silently certified here.
+        public static bool IsBoundedEdit(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any(p => !new[] { "scheduleId", "rowHeights", "dryRun" }.Contains(p.Name))
+                || !body.TryGetProperty("scheduleId", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0
+                || !body.TryGetProperty("rowHeights", out var rows) || rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() < 1 || rows.GetArrayLength() > 200) return false;
+            var seen = new System.Collections.Generic.HashSet<string>();
+            foreach (var row in rows.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object || row.EnumerateObject().Any(p => !new[] { "section", "rowNumber", "heightFeet" }.Contains(p.Name))
+                    || !row.TryGetProperty("section", out var section) || section.ValueKind != JsonValueKind.String
+                    || !new[] { "header", "summary", "footer" }.Contains(section.GetString()!.Trim().ToLowerInvariant())
+                    || !row.TryGetProperty("rowNumber", out var number) || number.ValueKind != JsonValueKind.Number || !number.TryGetInt32(out var index) || index < 0 || index > 100000
+                    || !seen.Add(section.GetString()!.Trim().ToLowerInvariant() + ":" + index)
+                    || !row.TryGetProperty("heightFeet", out var value) || value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var height)
+                    || double.IsNaN(height) || double.IsInfinity(height) || height <= 0 || height > 10) return false;
+            }
+            return true;
+        }
         // This policy is for regular ViewSchedule, not editable panel-schedule body cells.
         public static bool HasUnsupportedExplicitBodyRow(JsonElement body)
         {

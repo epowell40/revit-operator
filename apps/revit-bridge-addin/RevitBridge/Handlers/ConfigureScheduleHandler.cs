@@ -206,15 +206,24 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            bool scopedPresentation;
-            using (var body = JsonDocument.Parse(jsonData)) scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
+            bool scopedPresentation, scopedRowHeights;
+            using (var body = JsonDocument.Parse(jsonData)) {
+                scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
+                scopedRowHeights = RevitBridge.Common.ScheduleRowHeightPolicy.IsBoundedEdit(body.RootElement);
+            }
             var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
-            object? definitionBefore = scopedPresentation && (hasColumnWidths || hasFieldFormats) ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
+            var rowHeightsBefore = scopedRowHeights ? RegularScheduleRowHeights.Read(schedule) : null;
+            var presentationBefore = scopedRowHeights ? RegularSchedulePresentation.Read(doc, schedule) : null;
+            if (scopedRowHeights && !JsonSerializer.SerializeToElement(rowHeightsBefore).GetProperty("complete").GetBoolean())
+                return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_row_height_preservation", rowHeightsBefore,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            object? definitionBefore = scopedPresentation && (hasColumnWidths || hasFieldFormats || scopedRowHeights) ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
             if (definitionBefore != null && !JsonSerializer.SerializeToElement(definitionBefore).GetProperty("complete").GetBoolean())
                 return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_width_preservation", definitionBefore,
                     transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
             var result = ApplyOperations(app, doc, schedule, p, scopedPresentation && hasFieldFormats);
             if (definitionBefore != null) result["definitionBefore"] = definitionBefore;
+            if (scopedRowHeights) { result["rowHeightsBefore"] = rowHeightsBefore; result["presentationBefore"] = presentationBefore; }
             if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
             result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
             result["dryRun"] = false;
@@ -226,6 +235,7 @@ namespace RevitBridge.Handlers
                 {
                     if (scopedPresentation) result["presentationScopeAfter"] = RegularSchedulePresentationScope.Capture(doc, schedule);
                     result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
+                    if (scopedRowHeights) result["rowHeightsAfter"] = RegularScheduleRowHeights.Read(schedule);
                     if (definitionBefore != null) result["definitionAfter"] = ScheduleCombinedFieldOperations.Read(doc, schedule);
                     result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
                     {

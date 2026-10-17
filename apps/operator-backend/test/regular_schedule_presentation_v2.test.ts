@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { committedRegularSchedulePresentationReadbackPlanV2, regularSchedulePresentationReadbackMatchesV2, regularSchedulePresentationRequestV2 } from '../src/verification/regular_schedule_presentation_v2.js';
 import { postconditionSatisfiedByPayloadV2 } from '../src/postcondition_verification_v2.js';
+import {rowFixture}from './fixtures/schedule-row-height-synthetic.js';
+import {codexAssignmentEvidenceContextV2}from '../src/brains/codex_assignment_evidence.js';
 import { operationTargetSelectorV2, verificationCapabilityAdmissionV2 } from '../src/verification/verification_capability_admission_v2.js';
 
 // Synthetic contract neighbors. The exact retained83 read failure remains in
@@ -56,12 +58,12 @@ test('mixed edits, partial orders and unsafe IDs cannot fall into generic verifi
  assert.deepEqual(operationTargetSelectorV2({operation:apply,value:f.applied}).principal_target_tokens,['id:41','scheduleid:41']);
 });
 // Ordinary dynamic-tool pipeline with durable evidence, not an external grader.
-for(const variant of ['exact','field_formats','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
+for(const variant of ['exact','row_heights','row_height_mismatch','field_formats','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
 test(`ordinary native presentation edit ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-presentation-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try { await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const fixture85=fixture();
+  const fixture85:any=variant.startsWith('row_height')?rowFixture():fixture();
   if(variant==='field_formats'){
    (fixture85.input as any).body={scheduleId:41,fieldFormats:[{field:'Description',heading:'DESCRIPTION',widthFeet:.3},{field:'Count',hidden:true}],dryRun:false};
    const field=(id:number,name:string)=>({fieldId:id,isHidden:false,semanticHash:'b'.repeat(64),attributes:{fieldId:id,name,parameterId:-1,fieldType:'Instance',isCalculated:false,isCombined:false,heading:name,headingOrientation:'Horizontal',horizontalAlignment:'Center',gridWidthFeet:.2,sheetWidthFeet:.2,style:{preservedStyleHash:'c'.repeat(64)},parts:[]}});
@@ -92,6 +94,7 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
     }
 
     if(read){
+      if(variant==='row_height_mismatch')payload.rowHeights.sections[0].rows[0].heightFeet=.036;
       if(variant==='wrong_style')payload.presentation.header.id=99;
       if(variant==='partial')payload.presentation.complete=false;
       if(variant==='wrong_order')payload.presentation.fieldOrder.reverse();
@@ -120,9 +123,14 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/schedules').length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    assert.equal(calls.filter(c=>c.path==='/revit/schedules').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,['exact','field_formats','wide_exact','wide_self'].includes(variant));
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','field_formats','wide_exact','wide_self','unretained_apply'].includes(variant));
+   assert.equal(verified,['exact','row_heights','field_formats','wide_exact','wide_self'].includes(variant));
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','row_heights','field_formats','wide_exact','wide_self','unretained_apply'].includes(variant));
    assert.equal(Object.values(s.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(variant==='row_height_mismatch'){
+    const pending=JSON.parse(codexAssignmentEvidenceContextV2(s)).pending_verification;
+    assert.equal(pending[0].latest_check.state,'mismatch');
+    assert.deepEqual(pending[0].latest_check.differences[0].observed,['heightFeet:0.036']);
+   }
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });

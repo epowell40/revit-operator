@@ -96,6 +96,7 @@ namespace RevitBridge.Handlers
             return new { status = "Ok", action = "presentation", read_only = true,
                 schedule = new { id = scheduleId, uniqueId = schedule.UniqueId, kind = "schedule" },
                 presentation = RegularSchedulePresentation.Read(doc, schedule), scope = Capture(doc, schedule),
+                rowHeights = RegularScheduleRowHeights.Read(schedule),
                 definition = ScheduleCombinedFieldOperations.Read(doc, schedule) };
         }
     }

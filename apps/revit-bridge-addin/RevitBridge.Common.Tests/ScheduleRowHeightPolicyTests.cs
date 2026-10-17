@@ -8,6 +8,16 @@ namespace RevitBridge.Common.Tests
     public class ScheduleRowHeightPolicyTests
     {
         [Theory]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\"Header\",\"rowNumber\":0,\"heightFeet\":0.048}],\"dryRun\":false}", true)]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\" footer \",\"rowNumber\":2,\"heightFeet\":0.1}]}", true)]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\"Body\",\"rowNumber\":0,\"heightFeet\":0.1}]}", false)]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\"Header\",\"heightFeet\":0.1}]}", false)]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\"Header\",\"rowNumber\":0,\"heightFeet\":0.1},{\"section\":\"header\",\"rowNumber\":0,\"heightFeet\":0.2}]}", false)]
+        [InlineData("{\"scheduleId\":\"41\",\"rowHeights\":[]}", false)]
+        [InlineData("{\"scheduleId\":41,\"rowHeights\":[{\"section\":\"Header\",\"rowNumber\":0,\"heightFeet\":0.1}],\"filters\":[]}", false)]
+        public void BoundedRowsReceiveFullPreservationCensus(string json, bool expected)
+        { using var d=JsonDocument.Parse(json);Assert.Equal(expected,ScheduleRowHeightPolicy.IsBoundedEdit(d.RootElement));Assert.Equal(expected,SchedulePresentationContract.IsBoundedPresentationEdit(d.RootElement)); }
+        [Theory]
         [InlineData("{\"rowHeights\":[{\"section\":\"Body\",\"rowNumber\":1,\"heightFeet\":0.0008333333333333334}]}", true)]
         [InlineData("{\"rowHeights\":[{\"rowNumber\":1,\"heightFeet\":0.1}]}", true)]
         [InlineData("{\"rowHeights\":[{\"section\":\" body \",\"rowNumber\":0,\"heightFeet\":0.1}]}", true)]

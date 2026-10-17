@@ -27,6 +27,13 @@ test('checked scalar formats get a new ordinary native read after a disjoint ord
  assert(regularScheduleCheckNeedsRefreshV2(s,s.operations.formats!));assert(operationNeedsReadbackV2(s,s.operations.formats!));
  assert.deepEqual(plan(s),{method:'POST',path:'/revit/schedules',body:{action:'presentation',scheduleId:41}});assert.deepEqual(s,before);
 });
+test('bounded explicit nonbody row height can request fresh scalar formatting evidence',()=>{
+ const s:any=fixture();s.operations.order!.input.body={scheduleId:41,rowHeights:[{section:'Header',rowNumber:0,heightFeet:.048}],dryRun:false};
+ assert(regularScheduleCheckNeedsRefreshV2(s,s.operations.formats!));assert(plan(s));
+ for(const rowHeights of [[{section:'Body',rowNumber:1,heightFeet:.1}],[{section:'Header',heightFeet:.1}],[{section:'Header',rowNumber:0,heightFeet:0}]]){
+  s.operations.order!.input.body={scheduleId:41,rowHeights};assert.equal(plan(s),null);
+ }
+});
 const faults:Record<string,(s:any)=>void>={
  'already current':s=>{delete s.operations.order;},
  'new field intent':s=>{s.operations.order.input.body={scheduleId:41,fieldFormats:[{field:'Description',widthFeet:.4}]};},

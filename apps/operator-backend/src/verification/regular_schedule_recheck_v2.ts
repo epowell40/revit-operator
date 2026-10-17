@@ -4,6 +4,7 @@ import { checkedEditIsCurrentV2 } from './current_postcondition_v2.js';
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
 import { visibilityExpectedValuesV2 } from './visibility_view_contract_v2.js';
 import { boundedScheduleFieldFormatsV2 } from './schedule_field_formats_v2.js';
+import { boundedScheduleRowHeightsV2 } from './schedule_row_heights_v2.js';
 
 const record=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 
@@ -31,8 +32,9 @@ function fieldFormatRefreshIsApplicable(snapshot:AssignmentSnapshotV2,op:Operati
     return other.input.path==='/revit/configure-schedule'&&other.input.method==='POST'
       &&other.request_identity?.path===other.input.path&&typeof other.request_identity.request_signature==='string'&&!!other.request_identity.request_signature
       &&next.scheduleId===body.scheduleId&&(next.dryRun===undefined||next.dryRun===false)
-      &&Object.keys(next).every(k=>['scheduleId','fieldOrder','appearance','dryRun'].includes(k))
-      &&(Object.hasOwn(next,'fieldOrder')||Object.keys(appearance).length>0)
+      &&Object.keys(next).every(k=>['scheduleId','fieldOrder','appearance','rowHeights','dryRun'].includes(k))
+      &&(Object.hasOwn(next,'fieldOrder')||Object.keys(appearance).length>0||Object.hasOwn(next,'rowHeights'))
+      &&(!Object.hasOwn(next,'rowHeights')||!!boundedScheduleRowHeightsV2(next.rowHeights)&&Object.keys(next).every(k=>['scheduleId','rowHeights','dryRun'].includes(k)))
       &&(!Object.hasOwn(next,'fieldOrder')||Array.isArray(next.fieldOrder)&&next.fieldOrder.length>0&&next.fieldOrder.length<=200
         &&next.fieldOrder.every(id=>Number.isSafeInteger(id)&&Number(id)>=0)&&new Set(next.fieldOrder).size===next.fieldOrder.length)
       &&(!Object.hasOwn(next,'appearance')||next.appearance!==null&&typeof next.appearance==='object'&&!Array.isArray(next.appearance))
@@ -91,7 +93,7 @@ export function regularScheduleCheckNeedsRefreshV2(snapshot:AssignmentSnapshotV2
   const b=op.input.body as Record<string,unknown>|undefined;
   return op.request_identity?.path==='/revit/configure-schedule'
     && Boolean(b && (Object.hasOwn(b,'fieldFormats')?fieldFormatRefreshIsApplicable(snapshot,op,b)
-      :['fieldOrder','columnWidths','appearance','combinedField','filters','sortGroup','filterBySheet','isItemized','showGrandTotals'].some(k=>Object.hasOwn(b,k))))
+      :['fieldOrder','columnWidths','appearance','rowHeights','combinedField','filters','sortGroup','filterBySheet','isItemized','showGrandTotals'].some(k=>Object.hasOwn(b,k))))
     && appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)
     && !checkedEditIsCurrentV2(snapshot,op.operation_id);
 }
