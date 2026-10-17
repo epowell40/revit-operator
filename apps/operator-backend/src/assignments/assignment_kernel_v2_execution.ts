@@ -1,9 +1,9 @@
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
-import {nativePropertyComparisonV2,NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
+import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
 import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
-import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,scheduleFilterReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
+import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,scheduleFilterReadIsFreshNativeV2,validateFacts,evidenceInput,explicitMcpEnvelope,observationCommitLimit,nativePropertyComparisonControlFactV2,type AssignmentKernelMcpResultV2} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
@@ -91,19 +91,9 @@ import { generatedParameterPostconditionSatisfiedV2 } from "../verification/gene
 import { duplicatedTypePostconditionSatisfiedV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { createdTagPostconditionSatisfiedV2 } from "../verification/created_tag_postcondition_v2.js";
 
-export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
-
-export type AssignmentKernelMcpResultV2 = Readonly<{
-  schema: typeof ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA;
-  operation_result_v2: OperationResultV2;
-  observation?: Readonly<{
-    raw_payload: unknown;
-    semantic_facts: readonly SemanticFactV2[];
-    target_scope?: Readonly<Record<string, string | number | boolean | null>>;
-    verification_relevance?: readonly string[];
-  }>;
-}>;
+export { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "./native_observation_inputs_v2.js";
+export type { AssignmentKernelMcpResultV2 } from "./native_observation_inputs_v2.js";
 
 export type AssignmentKernelTrustedVerificationV2 = Readonly<{
   schema: "revit-operator.teammate-verification-assertion/v2";
@@ -685,19 +675,6 @@ export function markAssignmentKernelOperationDispatchStartedV2(lease: Assignment
   });
 }
 
-function explicitMcpEnvelope(rawResult: unknown): AssignmentKernelMcpResultV2 {
-  const root = object(rawResult);
-  const structured = object(root.structuredContent ?? root.structured_content);
-  if (structured.schema !== ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA) throw new Error("assignment_kernel_v2_operation_result_missing");
-  if (!structured.operation_result_v2 || typeof structured.operation_result_v2 !== "object") throw new Error("assignment_kernel_v2_operation_result_missing");
-  return structured as unknown as AssignmentKernelMcpResultV2;
-}
-
-function observationCommitLimit(): number {
-  const parsed = Number.parseInt(process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS ?? "", 10);
-  return Number.isSafeInteger(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
-}
-
 function commitInput(
   envelope: AssignmentKernelMcpResultV2,
   result: OperationResultV2,
@@ -810,32 +787,9 @@ function commitInput(
           affected_target_identities: verificationSubject.result?.affected_target_identities }
       ))
   );
-  // Explain a supported scalar read in the same settlement owner that performs
-  // the check. Caller-supplied comparison claims above are stripped. This is
-  // control feedback only; it cannot satisfy a criterion or authorize a write.
-  const comparisonFresh=verificationSubject?.request_identity?.path==='/revit/set-parameter'
-    ?parameterReadIsFreshNativeV2(verificationSubject,operation,result)
-    :verificationSubject?.request_identity?.path==='/revit/visibility'
-      &&nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility');
-  if(snapshot&&operation&&verificationSubject&&comparisonFresh&&deterministicallyTargetBound
-    && lease.purpose==='verification'&&lease.fulfillment_role==='verification'
-    && result.dispatch_state==='dispatched'&&result.native_transaction_state==='not_applicable'
-    && result.receipt_id&&result.native_correlation_id&&result.raw_payload_hash===stableHash(envelope.observation.raw_payload)
-    && sameAssignmentBindingV2(snapshot.current_binding,operation.binding)&&sameAssignmentBindingV2(operation.binding,result.binding)
-    && !snapshot.unresolved_unknown_operation_ids.length
-    && !snapshot.in_flight_operation_ids.some(id=>id!==operation.operation_id)
-    && !Object.values(snapshot.operations).some(other=>other.operation_id!==verificationSubject.operation_id
-      &&other.requested_effect==='apply'&&other.persistent_effect!=='none'
-      &&sameAssignmentBindingV2(other.binding,snapshot.current_binding)
-      &&(!Number.isFinite(Date.parse(other.result?.completed_at??''))||Date.parse(other.result!.completed_at)>Date.parse(operation.opened_at)
-        ||Date.parse(other.result!.completed_at)===Date.parse(operation.opened_at)
-          &&!(Number.isSafeInteger(other.settled_assignment_version)&&Number.isSafeInteger(operation.admitted_assignment_version)
-            &&other.settled_assignment_version!<operation.admitted_assignment_version!)))
-    && !snapshot.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation.operation_id)){
-    const comparison=nativePropertyComparisonV2(verificationSubject.input,operation.input,envelope.observation.raw_payload);
-    if(comparison.state!=='unsupported')semanticFacts.push({fact_id:NATIVE_PROPERTY_COMPARISON_FACT_V2,fact_class:'control',
-      value:JSON.stringify({...comparison,...(comparison.state==='matched'&&!deterministicallySatisfied?{state:'incomplete'}:{}),scope:'native_scalar_properties_only'})});
-  }
+  const comparisonFact = nativePropertyComparisonControlFactV2(snapshot, operation, verificationSubject, result,
+    lease, envelope.observation.raw_payload, deterministicallyTargetBound, deterministicallySatisfied);
+  if (comparisonFact) semanticFacts.push(comparisonFact);
   if (trustedVerification) {
     if (lease.purpose !== "verification"
         || lease.fulfillment_role !== "verification"
