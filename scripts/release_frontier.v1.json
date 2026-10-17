@@ -4555,6 +4555,14 @@
         "dotnet:ExportedImagePathResolverTests",
         "mcp:viewFrameImage.test.ts"
       ]
+    },
+    {
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs",
+        "javascript:package/operator-assistant-ui/native_target_review_image.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ],
+      "id": "independent_review_uses_native_target_pixels_with_document_binding_and_modal_safe_reads"
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4581,6 +4589,8 @@
     "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
     "package/operator-assistant-ui/native_change_observations.test.mjs",
     "package/operator-assistant-ui/visual_work_review.test.mjs",
-    "package/operator-assistant-ui/visual_review_capture.test.mjs"
+    "package/operator-assistant-ui/visual_review_capture.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_target.test.mjs",
+    "package/operator-assistant-ui/native_target_review_image.test.mjs"
   ]
 }

@@ -28,6 +28,8 @@ namespace RevitBridge.Handlers
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new Exception("No active UI document.");
             var doc = uidoc.Document;
+            string? projectUniqueId = null;
+            try { projectUniqueId = doc.ProjectInformation?.UniqueId; } catch { }
             
             View view = null;
             if (p.viewId.HasValue)
@@ -79,6 +81,9 @@ namespace RevitBridge.Handlers
 
             return Task.FromResult<object>(new
             {
+                processId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                documentSessionId = OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                projectFingerprint = OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId),
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                 viewName = view.Name,
                 viewUniqueId = view.UniqueId,

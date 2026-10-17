@@ -59,4 +59,13 @@ Expect-Failure { Get-ReviewCapturePlan $scene } 'revit_not_visible'
 Expect-Failure { Get-ReviewCapturePlan $scene } 'view_rectangle_unavailable'
 $scene=New-Scene;$scene.visual_capture_context.view_rectangle.width=0
 Expect-Failure { Get-ReviewCapturePlan $scene } 'view_rectangle_unavailable'
+$scene=New-Scene;[OperatorReviewWindows]::Foreground=999;[OperatorReviewWindows]::Visible=$false;[OperatorReviewWindows]::Minimized=$true
+# Rendering an exact target needs no foreground viewport; admission still checks
+# the native main-window owner and refuses a disabled modal main window.
+$admission=Get-OperatorReviewNativeReadAdmission $scene
+if ($admission.main_window_enabled -ne $true -or $admission.process_id -ne 123) { throw 'Native read admission failed' };$passed++
+[OperatorReviewWindows]::Enabled=$false
+Expect-Failure { Get-OperatorReviewNativeReadAdmission $scene } 'native_read_blocked_by_modal'
+[OperatorReviewWindows]::Enabled=$true;[OperatorReviewWindows]::Foreign=123
+Expect-Failure { Get-OperatorReviewNativeReadAdmission $scene } 'window_owner_changed'
 Write-Output "PASS $passed exact host capture planner scenarios; no live/UI/provider calls"

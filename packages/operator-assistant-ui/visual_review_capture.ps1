@@ -52,6 +52,16 @@ function Get-ReviewDesktopBounds {
   $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
   return @{x=$screen.X;y=$screen.Y;width=$screen.Width;height=$screen.Height}
 }
+function Get-OperatorReviewNativeReadAdmission($Scene) {
+  # A target-view export does not need foreground pixels or viewport geometry,
+  # but must never queue a Revit API call behind an owned modal dialog.
+  $frame = $Scene.visual_capture_context
+  if ($null -eq $frame -or $frame.main_window_handle -notmatch '^0x[0-9A-Fa-f]{1,16}$') { throw 'visual_review_native_frame_unavailable' }
+  $main = [IntPtr]([Convert]::ToInt64($frame.main_window_handle.Substring(2),16))
+  Assert-ReviewProcess $main $Scene.process_id
+  if (-not [OperatorReviewWindows]::IsWindowEnabled($main)) { throw 'visual_review_native_read_blocked_by_modal' }
+  return @{schema='operator.visual_review_native_read_admission.v1';process_id=$Scene.process_id;main_window_handle=$frame.main_window_handle;main_window_enabled=$true}
+}
 function Get-ReviewCapturePlan($Scene) {
   $frame = $Scene.visual_capture_context
   if ($null -eq $frame -or $frame.main_window_handle -notmatch '^0x[0-9A-Fa-f]{1,16}$' -or -not (Test-ReviewRectangle $frame.main_window_bounds)) { throw 'visual_review_native_frame_unavailable' }
