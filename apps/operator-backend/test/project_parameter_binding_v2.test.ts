@@ -149,7 +149,7 @@ test(`ordinary binding ${variant} uses one guarded read and never replays the co
    await handleCodexDynamicToolCall(runtime,{id:'user-binding-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'binding-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied',JSON.stringify(apply.result));assert.equal(calls.filter(c=>c.body.action==='create').length,1);
-   assert.equal(validations.filter(a=>a.body.action==='detail').length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
+   assert.equal(validations.filter(a=>a.body.action==='detail').length,['unretained_apply','paused_after_commit'].includes(variant)?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.body.action==='detail').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
    assert.equal(verified,variant==='exact');

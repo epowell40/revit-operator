@@ -1560,7 +1560,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:bb2bc2d6d10c9bbbed066e39909d7e16e1506ee1f75c4afdd7f63c476d289f3b"
+      "sha256": "sha256:5126dbe17083525bae5f657567fe2dd0f995cb718fd32279d836be7283d6eb7a"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1609,6 +1609,10 @@
     {
       "path": "apps/operator-backend/src/brains/codex_worker_identity.ts",
       "sha256": "sha256:1836686b63a64f6029359ba5d279e4330ea4a5d7ded603f593ab0e8afca9db20"
+    },
+    {
+      "path": "apps/operator-backend/src/brains/committed_readback_reservations_v2.ts",
+      "sha256": "sha256:d9f0f2fac6650eb1cfd46952b55fa39a9ea12ba7dc042c75d92dba224b8ac07d"
     },
     {
       "path": "apps/operator-backend/src/brains/conversation_intake_model.ts",
@@ -3005,7 +3009,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:1014974a75afeffe6648ae68e54416c2820afb02958cf2f98c16cded38cb0966"
+      "sha256": "sha256:c83cdb75cb285f8dd037ffadbc60091fd43fb1dfc78d09fa0a06c47803e7c93b"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/execution_failure.ts",
@@ -4289,7 +4293,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/safe_committed_read_retry_v2.ts",
-      "sha256": "sha256:2687d1cd7f3a235072348da3af6c81f38bd6aa7bed640d05de7aa234e44d2088"
+      "sha256": "sha256:92968c09d44a67a0d7cabfbc4b24cd4c0538fb0c4d7603732a4eb1df064f1790"
     },
     {
       "path": "apps/operator-backend/src/verification/saved_document_postcondition_v2.ts",
@@ -4941,43 +4945,47 @@
     },
     {
       "path": "apps/operator-backend/test/committed_circuit_readback_v2.test.ts",
-      "sha256": "sha256:927cbfab6101dc0490d92211c655480dd76a6aea52094a8f622d8a8863b5e951"
+      "sha256": "sha256:6b8caa34ee918bd6e88d0e0806536f4bde6d0e1d939772818f7dac3acc8d258a"
     },
     {
       "path": "apps/operator-backend/test/committed_duplicated_type_readback_v2.test.ts",
-      "sha256": "sha256:af5e45cdd7e990633c43f63794b67b1102f1cad0443ca70911f410f9262484dc"
+      "sha256": "sha256:c3c1660739b90effaca82b0f342b92b353014c1852f89f529b2fce89559123a8"
     },
     {
       "path": "apps/operator-backend/test/committed_element_type_readback_v2.test.ts",
-      "sha256": "sha256:5ef6e74c2955816ff0af07c127d7edfa515c3d7f4b51f956d669c7cd31dc0fe7"
+      "sha256": "sha256:1a4b615a79b1fddd148c39cb31db6908617f98bba4b05934ad818f75bcff6ec9"
     },
     {
       "path": "apps/operator-backend/test/committed_model_point_move_readback_plan_v2.test.ts",
-      "sha256": "sha256:3c6fb59bd4af1c9ad246b2aa8bb437e494b4401ee6314faf3c8d88f575cb2541"
+      "sha256": "sha256:387f49fe2c9e1cd75104e2d117fcca43e8a1ce8d426418328921265aaedad136"
     },
     {
       "path": "apps/operator-backend/test/committed_parameter_readback_plan_v2.test.ts",
-      "sha256": "sha256:ccb91f4fdc1106fff2303085f9738eb76c779c3a3b395fc7b6d612aafeae2015"
+      "sha256": "sha256:1ddefc878dfe6bac50a6eb48234a1b8e7626f19a303a19ba5d039f4eb889f60a"
+    },
+    {
+      "path": "apps/operator-backend/test/committed_readback_reservations_v2.test.ts",
+      "sha256": "sha256:1489a7c1cf34e19efabfdbb8533d12b6a46846ddca588d7f6e9d291541d8e255"
     },
     {
       "path": "apps/operator-backend/test/committed_saved_document_readback_plan_v2.test.ts",
-      "sha256": "sha256:0c4ce9dbd5a22de42807fc9d1aeb258698eeb20197977009fe3f9479a2cd4100"
+      "sha256": "sha256:5bcf7ee603c3ea23b3139d1a3e6d5879c61bef567560ced8142eab977fcc78fe"
     },
     {
       "path": "apps/operator-backend/test/committed_schedule_readback_plan_v2.test.ts",
-      "sha256": "sha256:2623aa860cc6b136ba86df599fef5108c6ad9b3eb23ce47fb653dfe3805b4e52"
+      "sha256": "sha256:18aa6ccc1215f8f60ef6431f773cd5f94e71ac66f049bbad0699b5f63275639d"
     },
     {
       "path": "apps/operator-backend/test/committed_sheet_move_readback_plan_v2.test.ts",
-      "sha256": "sha256:0d2bab6cf1608ba046ff4a9aa6822805bad7957ec37ceb912cc0d7932109d800"
+      "sha256": "sha256:423f9d8c386776a65fdb6fe40f52b53e5422ce217fa45386b1eada72f091138f"
     },
     {
       "path": "apps/operator-backend/test/committed_tag_readback_plan_v2.test.ts",
-      "sha256": "sha256:949057e4905b8f9c07c0dfe1975393fd6d5afbe4d5b031573f5dc7c17c850f39"
+      "sha256": "sha256:d57499c2ecdcd6ab037e26877dc1a30e1d754569f437469bf2ebfcb2c593bc18"
     },
     {
       "path": "apps/operator-backend/test/committed_visibility_readback_v2.test.ts",
-      "sha256": "sha256:eeab671720c95df3070c8bd4a52c896603b3b3713504f2b763124682e5509092"
+      "sha256": "sha256:087cbaba4b2d21233ac6c06dbc96f333153bf7339cdb783af6b347bd94aa3209"
     },
     {
       "path": "apps/operator-backend/test/composer_recovery.test.ts",
@@ -5041,7 +5049,7 @@
     },
     {
       "path": "apps/operator-backend/test/created_tag_postcondition_v2.test.ts",
-      "sha256": "sha256:f9f607457a7f733c82781eebf4268cdba3b1e7358d575946b725d83a23c0b1b6"
+      "sha256": "sha256:de980bf1d89dedab7588d0698b29e67acdbd55d4cefdb9716233e4d9cd13d69e"
     },
     {
       "path": "apps/operator-backend/test/created_template_postcondition.test.ts",
@@ -6177,7 +6185,7 @@
     },
     {
       "path": "apps/operator-backend/test/multi_sheet_move_verification_v2.test.ts",
-      "sha256": "sha256:fd3bff34a7756a6016308f928a195c2aac616021d9827d78de8db24e559761bc"
+      "sha256": "sha256:abd31b736585a289606abd4a5801bdad3b049eec7ce9bf2b713e2bb9171a2c89"
     },
     {
       "path": "apps/operator-backend/test/native_annotation_postcondition_v2.test.ts",
@@ -6233,7 +6241,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_schedule_presentation_v2.test.ts",
-      "sha256": "sha256:22549742eddfacddf47464b7d6ce64d8bafd192f56ae6a1f735020656fa08763"
+      "sha256": "sha256:7f15ad13f1d432a3646539aef873035cb61ef58f1bde23240c3ea6314c72bcdd"
     },
     {
       "path": "apps/operator-backend/test/native_tag_repair_settlement.test.ts",
@@ -6621,7 +6629,7 @@
     },
     {
       "path": "apps/operator-backend/test/safe_committed_read_retry_v2.test.ts",
-      "sha256": "sha256:8616444bb7d1e4d6fdb658abbbf54a328910fc69fa8c5935fdf2bbef6c06337d"
+      "sha256": "sha256:97fc1c08bf424628488ea0f5c7b36b0f7e140e93d8f5b2d361fa193cec311893"
     },
     {
       "path": "apps/operator-backend/test/safe_read_attestation_authority.test.ts",
@@ -10117,7 +10125,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:916aba21e5c55a165a16cf9b95b2dc7b456e36874fbe74f09aa1a08a955f24bd",
+  "inputs_hash": "sha256:2dee874c0e85c95fee6f2a7b210716bcdbc4d49300189db8ab905713cae4dd68",
   "result": {
     "passed": true,
     "checks": [
