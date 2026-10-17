@@ -37,8 +37,25 @@ export function retainedWorkReportMessage(toolCall, functionOutput) {
   const sections = [["Work reported (not independently verified)", proposal.claimed_completed],
     ["Remaining work", proposal.remaining_work], ["Uncertainties", proposal.uncertainties]];
   if (!sections.every(([,items]) => Array.isArray(items) && items.every(item => typeof item === "string"))) return null;
-  return "Work report saved for independent review.\n\n" + sections.filter(([,items]) => items.length)
-    .map(([title,items]) => title + ":\n" + items.map(item => "- " + item).join("\n")).join("\n\n");
+  const summary = sections.filter(([,items]) => items.length).map(([title,items]) => {
+    const label = title.replace(" (not independently verified)", "");
+    const shown = []; let characters = 0;
+    for (const item of items.slice(0,2)) {
+      // Keep whole claims, including qualifications at their end. A long
+      // first claim is retained in Details, never replaced by a shorter one.
+      if (characters + item.length > 280) break;
+      shown.push(item); characters += item.length;
+    }
+    if (!shown.length) return `${label}: ${items.length} ${items.length === 1 ? "item" : "items"} in Details.`;
+    const omitted = items.length - shown.length;
+    return `${label}: ${shown.join(" ")}${omitted ? ` (${omitted} more in Details.)` : ""}`;
+  });
+  return ["Work report saved for independent review (not independently verified).",
+    ...(proposal.claimed_completed.length ? [] : ["No completed work was reported."]),
+    ...summary, "Full handoff in Details below.", "## Details",
+    ...sections.filter(([,items]) => items.length).map(([title,items]) =>
+      `### ${title}\n\n` + items.map(item => "- " + item.replace(/\r?\n/g,"\n  ")).join("\n"))
+  ].join("\n\n");
 }
 
 // Responsiveness is necessary for a desktop handoff, never sufficient proof

@@ -13,7 +13,8 @@ function taskState(snapshot: AssignmentSnapshotV2): TaskNavigationState {
         || snapshot.provider_budget_exhausted || snapshot.execution_failure_ids.length)) return "failed";
   if (!snapshot.terminal && snapshot.provider_usage_hold) return snapshot.quiescent ? "waiting_for_usage" : "stopping_after_usage_limit";
   if (!snapshot.quiescent) return "working";
-  if (["awaiting_user_input", "awaiting_user_review"].includes(snapshot.outcome)) return "needs_input";
+  if (snapshot.outcome === "awaiting_user_input") return "needs_input";
+  if (snapshot.outcome === "awaiting_user_review") return "needs_review";
   if (["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome)) return "complete";
   if (["failed", "blocked"].includes(snapshot.outcome)) return "failed";
   return "ready";

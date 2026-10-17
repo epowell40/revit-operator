@@ -374,11 +374,13 @@
     "test/conversation_rendering.test.js",
     "test/sidecar_revit_listener_identity.test.js",
     "test/task_navigation.test.js",
+    "test/task_navigation_review.test.js",
     "test/delegated_assignment_recovery.test.mjs",
     "test/provider_usage_hold_ui.test.js",
     "test/native_change_feedback.test.js",
     "test/visual_work_review.test.js",
-    "test/scoped_helper_projection.test.js"
+    "test/scoped_helper_projection.test.js",
+    "test/work_report.test.js"
   ],
   "dotnet_test_classes": [
     "CadLinkOptionPolicyTests",
@@ -4614,6 +4616,19 @@
         "backend:multi_sheet_move_verification_v2.test.ts",
         "backend:safe_committed_read_retry_v2.test.ts"
       ]
+    },
+    {
+      "id": "saved_review_is_distinct_from_required_input_without_completion_or_control_promotion",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "javascript:package/operator-assistant-ui/task_navigation_review.test.mjs"
+      ]
+    },
+    {
+      "id": "desktop_review_handoff_retains_whole_qualified_claims_in_compact_summary_and_details",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/work_report.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4625,6 +4640,7 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/task_navigation_review.test.mjs",
     "package/operator-assistant-ui/saved_computer_assignment.test.mjs",
     "package/assignment-kernel-v2-contracts/native-affected-targets.test.mjs",
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
@@ -4644,6 +4660,7 @@
     "package/operator-assistant-ui/visual_work_review_target.test.mjs",
     "package/operator-assistant-ui/native_target_review_image.test.mjs",
     "package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
-    "package/operator-assistant-ui/visual_work_review_region.test.mjs"
+    "package/operator-assistant-ui/visual_work_review_region.test.mjs",
+    "package/operator-assistant-ui/work_report.test.mjs"
   ]
 }

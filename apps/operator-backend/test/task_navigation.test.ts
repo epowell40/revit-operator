@@ -7,7 +7,8 @@ import test from "node:test";
 import { listTaskNavigation, listTaskNavigationAsync } from "../src/assignments/task_navigation.js";
 import { readNavigationProjectionAsync } from "../src/assignments/task_navigation_reader.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
-import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { __testOnlyResetGoalListCache, getGoalStoragePath } from "../src/goals/service.js";
@@ -43,6 +44,28 @@ function task(session: string) {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "test-model" } } } } })!;
   return prepared.bindingV2!;
 }
+
+test("canonical review is distinct from a required answer in synchronous and asynchronous task discovery", () => workspace(async () => {
+  conversation("review-status", "Inspect the completed schedule"); const review = task("review-status");
+  appendCurrentAssignmentKernelEventV2({ goal_id: review.assignment_id, binding: getAssignmentKernelSnapshotV2(review.assignment_id)!.current_binding,
+    event_id: "review-status-request", actor: "test", body: { event_type: "review_requested", review_id: "review-status", work_unit_ids: [], reason: "Review the retained work." } });
+  assert.equal(getAssignmentKernelSnapshotV2(review.assignment_id)!.outcome, "awaiting_user_review");
+  conversation("answer-status", "Set the schedule scope"); const answer = task("answer-status");
+  requestAssignmentInputV2({ binding: answer, clarification_id: "scope-question", variable_ids: ["scope_choice"],
+    new_variable_ids: ["scope_choice"], question: "Which equipment should the schedule include?" });
+  assert.equal(getAssignmentKernelSnapshotV2(answer.assignment_id)!.outcome, "awaiting_user_input");
+  const before = [review, answer].map(binding => getAssignmentKernelSnapshotV2(binding.assignment_id));
+  for (const page of [listTaskNavigation(), await listTaskNavigationAsync()]) {
+    assert.equal(page.tasks.find(row => row.session_id === review.session_id)!.state, "needs_review");
+    assert.match(page.tasks.find(row => row.session_id === review.session_id)!.summary, /ready for review/i);
+    assert.equal(page.tasks.find(row => row.session_id === answer.session_id)!.state, "needs_input");
+    assert.match(page.tasks.find(row => row.session_id === answer.session_id)!.summary, /answer is needed/i);
+  }
+  assert.deepEqual([review, answer].map(binding => getAssignmentKernelSnapshotV2(binding.assignment_id)), before, "Discovery never resumes or rewrites the tasks.");
+  controlAssignmentExecutionV2({ binding: review, action: "pause", command_id: "pause-review", expected_command_id: null });
+  assert.equal(listTaskNavigation().tasks.find(row => row.session_id === review.session_id)!.state, "paused");
+  assert.equal((await listTaskNavigationAsync()).tasks.find(row => row.session_id === review.session_id)!.state, "paused");
+}));
 
 test("async history reader preserves canonical byte validation across concurrent reads and same-stat rewrites", () => workspace(async () => {
   conversation("worker-byte-check", "Review the circuit"); const binding=task("worker-byte-check"), file=getGoalStoragePath(binding.assignment_id)!;

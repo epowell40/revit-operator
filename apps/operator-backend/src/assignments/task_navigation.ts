@@ -5,14 +5,14 @@ import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kerne
 import { readNavigationProjection, type NavigationProjection } from "./task_navigation_projection.js";
 import { readNavigationProjectionAsync } from "./task_navigation_reader.js";
 
-export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "ready" | "complete" | "failed" | "unknown" | "loading" | "stopping_after_usage_limit" | "waiting_for_usage";
+export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "needs_review" | "ready" | "complete" | "failed" | "unknown" | "loading" | "stopping_after_usage_limit" | "waiting_for_usage";
 export type TaskNavigationEntry = {
   task_id: string; session_id: string; assignment_id: string | null; title: string;
   state: TaskNavigationState; updated_at: string; summary: string;
 };
 
 const rank = (state: TaskNavigationState) => ["working", "pausing", "stopping_after_usage_limit"].includes(state) ? 0
-  : ["paused", "needs_input", "ready", "unknown", "waiting_for_usage"].includes(state) ? 1 : 2;
+  : ["paused", "needs_input", "needs_review", "ready", "unknown", "waiting_for_usage"].includes(state) ? 1 : 2;
 
 export function ownedNavigationSession(sessionId: string): boolean {
   const context = getRequestContext();
@@ -70,7 +70,8 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | ProjectionReq
       summary: state === "working" ? "Work is in progress." : state === "pausing" ? "Finishing the current operation."
         : state === "stopping_after_usage_limit" ? "Usage limit reached. Waiting for admitted work to settle."
         : state === "waiting_for_usage" ? "Task state is retained. Model changes may be unsaved. Use Resume when usage is available."
-        : state === "paused" ? "Work is saved. Resume when ready." : state === "needs_input" ? "Your input or review is needed."
+        : state === "paused" ? "Work is saved. Resume when ready." : state === "needs_input" ? "An answer is needed to continue."
+        : state === "needs_review" ? "Work is ready for review. Open the conversation for its checks and remaining items."
         : state === "unknown" ? "A result needs checking before continuing." : state === "ready" ? "Saved work is ready to continue."
         : state === "failed" ? "Open the conversation to review what remains." : "Open the conversation to see the result."
     };

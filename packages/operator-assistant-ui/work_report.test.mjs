@@ -39,3 +39,21 @@ test("only retained backend advisory proposal ends the turn with explicitly unve
  assert.equal(retainedWorkReportMessage(call,{output:JSON.stringify({...result,completion_proposal:{...result.completion_proposal,verified:true}})}),null);
  assert.equal(retainedWorkReportMessage(call,{output:JSON.stringify({...result,ok:false})}),null);
 });
+
+test("long desktop reports have a concise unverified summary and lossless Details",()=>{
+ const qualified="Changed M002. "+"Detailed native evidence. ".repeat(25)+"Visual review unavailable; not independently verified.";
+ const proposal={claimed_completed:[qualified,"Saved the new copy."],remaining_work:["Review the titleblock layout."],uncertainties:["Whole-project scope was not checked."]};
+ const report=retainedWorkReportMessage({name:"report_work_for_review"},{output:JSON.stringify({ok:true,verification_policy:"advisory",completion_proposal:{...proposal,verified:false,review_id:"review"}})});
+ assert.ok(report.includes("## Details"));
+ const [summary,details]=report.split("## Details");
+ assert.ok(summary.length<800);assert.match(summary,/not independently verified/);
+ assert.match(summary,/Work reported: 2 items in Details/);assert.ok(!summary.includes("Changed M002."));
+ assert.match(summary,/Remaining work: Review the titleblock layout/);assert.match(summary,/Uncertainties: Whole-project scope was not checked/);
+ for(const item of Object.values(proposal).flat())assert.ok(details.includes(item));
+});
+
+test("a report with no completed work cannot imply completion or hide its open items",()=>{
+ const report=retainedWorkReportMessage({name:"report_work_for_review"},{output:JSON.stringify({ok:true,verification_policy:"advisory",completion_proposal:{claimed_completed:[],remaining_work:["Resolve the arrow target."],uncertainties:["No edit was dispatched."],verified:false,review_id:"review"}})});
+ assert.match(report.split("## Details")[0],/No completed work was reported/);
+ assert.match(report,/Resolve the arrow target/);assert.match(report,/No edit was dispatched/);
+});
