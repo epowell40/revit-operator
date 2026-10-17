@@ -1,4 +1,5 @@
 import { resultSucceeded, mcpResultSucceeded } from "./teammate_result_status.js";
+import { reviewedTeammateNativeAliasRoute } from './teammate_native_aliases.js';
 import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
 import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, reconcileCanonicalOutstandingVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
@@ -498,11 +499,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const tool = `${toolValue || ""}`.trim();
   const args = objectValue(structuredActionBody(argsValue));
   if (tool === "revit_call_tool") return classifyPathCall(args.method, args.path, args.body);
-  // The typed PDF alias exposes the same handler and dry-run semantics as the
-  // generic route. Classify it before the broad export_* observation family;
-  // a real PDF export creates a durable file while dryRun=true is executable
-  // preflight evidence.
-  if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
+  const nativeRoute = reviewedTeammateNativeAliasRoute(tool);
+  if (nativeRoute) return classifyPathCall("POST", nativeRoute, args);
   const target_tokens = targetTokens(args);
   const principal_target_tokens = [...operationTargetSelectorV2({
     operation: { capability_id: tool, tool },

@@ -65,7 +65,7 @@ test('committed category planner preserves binding, settlement, pause and freshn
   const op:any={operation_id:'opv2_'+'a'.repeat(64),binding,input,request_identity:{path:input.path,request_signature:'b'.repeat(64)},
     admission_state:'admitted',dispatch_state:'dispatched',settlement_state:'settled',requested_effect:'apply',persistent_effect:'applied',verification_operation_ids:[],opened_at:'2026-10-13T12:00:00Z'};
   op.result={operation_id:op.operation_id,binding,status:'succeeded',authority:'native-host',native_transaction_state:'committed',persistent_effect:'applied',completed_at:'2026-10-13T12:00:01Z',request_identity:op.request_identity,affected_target_identities:['element_id:42']};
-  const snapshot:any={terminal:false,outcome:'active',current_binding:binding,unresolved_unknown_operation_ids:[],operations:{[op.operation_id]:op},observations:{}};
+  const snapshot:any={terminal:false,outcome:'active',current_binding:binding,unresolved_unknown_operation_ids:[],in_flight_operation_ids:[],input_invalidated_operation_ids:[],operations:{[op.operation_id]:op},observations:{}};
   assert.deepEqual(committedVisibilityReadbackPlanV2(snapshot,op),{method:'POST',path:input.path,body:{action:'get',viewId:42,categoryName:'OST_PlumbingFixtures',includeCategoryState:true,includeLinkedModels:true}});
   for(const mutate of [(s:any,o:any)=>o.result.authority='model',(s:any,o:any)=>o.result.native_transaction_state='pending',
     (s:any,o:any)=>o.result.request_identity={...o.request_identity,request_signature:'bad'},(s:any,o:any)=>o.result.affected_target_identities=[],

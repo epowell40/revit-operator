@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import path from "node:path";
 import { isAllowlisted } from "../src/allowlist.js";
 import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
 
@@ -58,6 +60,19 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.match(markdown, /live_safe=true.*bounded read-only.*useful=true/i);
   assert.match(markdown, /Cross-surface reconciliation/);
   assert.match(markdown, /Shared-handler aliases/);
+});
+
+test("native embedded request contracts are explicit source evidence, never live safety proof",()=>{
+  const root=findRepoRoot(process.cwd()),audit=buildRegistryAudit({repoRoot:root});
+  const candidates=[path.join(root,'apps','revit-bridge-addin'),path.join(root,'revit-bridge-addin')];
+  const addin=candidates.find(p=>fs.existsSync(path.join(p,'RevitBridge.Common','Contracts','conditional-requests.v1.json')))!;
+  const contracts=JSON.parse(fs.readFileSync(path.join(addin,'RevitBridge.Common','Contracts','conditional-requests.v1.json'),'utf8'));
+  assert(Object.keys(contracts).length>0);
+  for(const route of Object.keys(contracts)){
+    const tool=audit.tools.find(t=>t.key==='POST '+route);assert(tool,route);
+    assert.equal(tool.contracts.request_schema_source,'explicit',route);
+    assert.equal(tool.evidence.live_safe,null);assert.equal(tool.evidence.useful,null);
+  }
 });
 
 test("typed MCP wrappers are attributed to the exact method and path", () => {

@@ -18,6 +18,14 @@ function repoFile(rootRelativePath: string, publicRelativePath: string): string 
   return fs.readFileSync(fs.existsSync(publicCandidate) ? publicCandidate : privateCandidate, "utf8");
 }
 
+function explicitRequestBranch(source: string, route: string): string {
+  const start=source.indexOf(`if (string.Equals(p, "${route}", StringComparison.OrdinalIgnoreCase))`);
+  assert(start>=0,`Missing explicit request branch ${route}`);
+  const end=source.indexOf('\n                }',start);
+  assert(end>start,`Missing branch end ${route}`);
+  return source.slice(start,end);
+}
+
 test("Revit ExternalEvent scheduler is single-flight and reports raise failures", () => {
   const source = addinFile(path.join("RevitBridge", "Services", "RevitEventService.cs"));
   assert.match(source, /Interlocked\.CompareExchange\(ref _inFlight, 1, 0\)/);
@@ -153,10 +161,7 @@ test("parameter-query discovery does not require mutually exclusive aliases or o
 
 test("find-elements discovery keeps every project inventory selector optional", () => {
   const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
-  const findElements = schemas.slice(
-    schemas.indexOf('if (string.Equals(p, "/revit/find-elements", StringComparison.OrdinalIgnoreCase))'),
-    schemas.indexOf("// Schedule reads have two conditional shapes.")
-  );
+  const findElements = explicitRequestBranch(schemas,'/revit/find-elements');
   assert.match(findElements, /required: Array\.Empty<string>\(\)/);
   assert.match(findElements, /"includeGeometry", Bool\(\)/);
   assert.match(findElements, /"limit", Int\(minimum: 1, maximum: 5000\)/);
@@ -178,10 +183,7 @@ test("visible-element export discovery publishes the native inventory bound", ()
 
 test("computer-use observation keeps dialog filters optional", () => {
   const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
-  const observe = schemas.slice(
-    schemas.indexOf('if (string.Equals(p, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase))'),
-    schemas.indexOf("// Schedule reads have two conditional shapes."),
-  );
+  const observe = explicitRequestBranch(schemas,'/revit/computer-use-observe');
   assert.match(observe, /required: Array\.Empty<string>\(\)/);
   assert.match(observe, /"titleContains", Str\(\)/);
   assert.match(observe, /"dialogIdContains", Str\(\)/);

@@ -251,7 +251,7 @@ function parseComparedPaths(filePath: string, variableName = "path"): Set<string
   return result;
 }
 
-function parseSchemaPaths(filePath: string): { explicit: Set<string>; reflected: Set<string> } {
+function parseSchemaPaths(filePath: string, conditionalContractsPath: string): { explicit: Set<string>; reflected: Set<string> } {
   const text = read(filePath);
   const reflected = new Set<string>();
   for (const match of text.matchAll(/\{\s*"(\/revit\/[^"\s]+)"\s*,\s*typeof\(/g)) reflected.add(match[1] ?? "");
@@ -260,6 +260,14 @@ function parseSchemaPaths(filePath: string): { explicit: Set<string>; reflected:
   const requestBuilder = start >= 0 ? text.slice(start, end >= 0 ? end : undefined) : "";
   const explicit = new Set<string>();
   for (const match of requestBuilder.matchAll(/string\.Equals\(\s*p\s*,\s*"(\/revit\/[^"\s]+)"/g)) explicit.add(match[1] ?? "");
+  // Native publication returns these embedded contracts before reflection.
+  // Attribute only the actually wired source, not arbitrary resource strings.
+  if (/OperatorConditionalRequestContracts\.TryGet\(p, out var conditionalSchema\)\s*\)\s*return conditionalSchema;/.test(requestBuilder)) {
+    const contracts = JSON.parse(read(conditionalContractsPath)) as Record<string, unknown>;
+    for (const [route, schema] of Object.entries(contracts)) {
+      if (/^\/revit\/[^\s]+$/.test(route) && schema && typeof schema === "object" && !Array.isArray(schema)) explicit.add(route);
+    }
+  }
   return { explicit, reflected };
 }
 
@@ -462,7 +470,8 @@ export function canonicalRegistryDigestSha256(source: string): string {
 function loadCatalog(layout: Layout): Catalog {
   const addinOperator = path.join(layout.addinRoot, "RevitBridge", "Operator");
   const mcp = parseMcpWrappers(layout.mcpRoot);
-  const schemas = parseSchemaPaths(path.join(addinOperator, "OperatorToolIntrospection.cs"));
+  const schemas = parseSchemaPaths(path.join(addinOperator, "OperatorToolIntrospection.cs"),
+    path.join(layout.addinRoot, "RevitBridge.Common", "Contracts", "conditional-requests.v1.json"));
   const manifest = parseManifest(path.join(addinOperator, "OperatorToolManifest.cs"));
   return {
     manifest: manifest.tools,
