@@ -301,7 +301,8 @@
     "native_comparison_feedback_runtime.test.ts",
     "visibility_refresh_runtime.test.ts",
     "visibility_refresh_plan_v2.test.ts",
-    "current_work_packet_verification.test.ts"
+    "current_work_packet_verification.test.ts",
+    "regular_schedule_presentation_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -341,7 +342,8 @@
     "captureViewArguments.test.ts",
     "lib/viewOwnedDetailingAgentProjection.test.ts",
     "lib/category_visibility_scope_schema.test.ts",
-    "lib/family_static_text_scope_schema.test.ts"
+    "lib/family_static_text_scope_schema.test.ts",
+    "lib/supportedToolInventory.test.js"
   ],
   "desktop_tests": [
     "test/cad_attachment.test.js",
@@ -360,7 +362,8 @@
     "test/conversation_rendering.test.js",
     "test/sidecar_revit_listener_identity.test.js",
     "test/task_navigation.test.js",
-    "test/delegated_assignment_recovery.test.mjs"
+    "test/delegated_assignment_recovery.test.mjs",
+    "test/provider_usage_hold_ui.test.js"
   ],
   "dotnet_test_classes": [
     "CadLinkOptionPolicyTests",
@@ -466,7 +469,10 @@
     "ScheduleInventoryWindowTests",
     "ProjectParameterBindingContractTests",
     "OperatorNativeFailureDiagnosticTests",
-    "OperatorNativeOwnedValueTests"
+    "OperatorNativeOwnedValueTests",
+    "SchedulePresentationContractTests",
+    "BoundedNativeSequenceTests",
+    "ParameterValuePreservationDigestTests"
   ],
   "failure_families": [
     {
