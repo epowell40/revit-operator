@@ -56,12 +56,20 @@ test('mixed edits, partial orders and unsafe IDs cannot fall into generic verifi
  assert.deepEqual(operationTargetSelectorV2({operation:apply,value:f.applied}).principal_target_tokens,['id:41','scheduleid:41']);
 });
 // Ordinary dynamic-tool pipeline with durable evidence, not an external grader.
-for(const variant of ['exact','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
+for(const variant of ['exact','field_formats','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
 test(`ordinary native presentation edit ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-presentation-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try { await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const fixture85=fixture();const f={apply_input:fixture85.input,native_read:fixture85.read};
+  const fixture85=fixture();
+  if(variant==='field_formats'){
+   (fixture85.input as any).body={scheduleId:41,fieldFormats:[{field:'Description',heading:'DESCRIPTION',widthFeet:.3},{field:'Count',hidden:true}],dryRun:false};
+   const field=(id:number,name:string)=>({fieldId:id,isHidden:false,semanticHash:'b'.repeat(64),attributes:{fieldId:id,name,parameterId:-1,fieldType:'Instance',isCalculated:false,isCombined:false,heading:name,headingOrientation:'Horizontal',horizontalAlignment:'Center',gridWidthFeet:.2,sheetWidthFeet:.2,style:{preservedStyleHash:'c'.repeat(64)},parts:[]}});
+   const before={schema:'operator.regular_schedule_field_definition.v1',complete:true,scheduleId:41,uniqueId:'view:41',categoryId:-2008013,coverage:'native_field_binding_captured_attributes_filters_sort_defaults_parameters_v1',configurationHash:'a'.repeat(64),fieldOrder:[20,11,12],fields:[field(20,'Description'),field(11,'Count'),field(12,'Remarks')]};
+   const after=structuredClone(before);after.fields[0]!.attributes.heading='DESCRIPTION';after.fields[0]!.attributes.gridWidthFeet=.3;after.fields[0]!.attributes.sheetWidthFeet=.3;after.fields[0]!.semanticHash='d'.repeat(64);after.fields[1]!.isHidden=true;
+   Object.assign(fixture85.applied,{definitionBefore:before,definitionAfter:after});Object.assign(fixture85.read,{definition:structuredClone(after)});
+  }
+  const f={apply_input:fixture85.input,native_read:fixture85.read};
   const goal=createGoal({title:'Pick up the current-rating redline',objective:'Pick up the current-rating redline.',acceptance_criteria:['The requested edit is established.'],status:'active',
     related_session_id:'tag-host-session',created_by:'tag-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'tag-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'tag-host-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
@@ -112,8 +120,8 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/schedules').length,['unretained_apply','paused_after_commit'].includes(variant)?0:1);
    assert.equal(calls.filter(c=>c.path==='/revit/schedules').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,['exact','wide_exact','wide_self'].includes(variant));
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','wide_exact','wide_self','unretained_apply'].includes(variant));
+   assert.equal(verified,['exact','field_formats','wide_exact','wide_self'].includes(variant));
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','field_formats','wide_exact','wide_self','unretained_apply'].includes(variant));
    assert.equal(Object.values(s.operations).filter(o=>o.requested_effect==='apply').length,1);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}

@@ -56,6 +56,7 @@ namespace RevitBridge.Common
 
         public static bool IsBoundedPresentationEdit(JsonElement body)
         {
+            if (ScheduleFieldFormatContract.IsBoundedEdit(body)) return true;
             if (!Validate(body, out _) || !body.TryGetProperty("scheduleId", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var n) || n <= 0) return false;
             if (body.EnumerateObject().Any(p => !new[] { "scheduleId", "fieldOrder", "appearance", "columnWidths", "dryRun" }.Contains(p.Name))) return false;
             var changed = (body.TryGetProperty("fieldOrder", out var order) && order.ValueKind == JsonValueKind.Array)

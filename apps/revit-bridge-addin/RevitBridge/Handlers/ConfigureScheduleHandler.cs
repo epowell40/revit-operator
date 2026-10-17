@@ -174,6 +174,9 @@ namespace RevitBridge.Handlers
                 RegularSchedulePresentation.Preflight(doc, schedule, p.fieldOrder, p.appearance);
                 if (hasColumnWidths && !hasAddFields && !hasCalculatedFields)
                     foreach (var width in p.columnWidths!) ResolveUniqueWidthField(doc, schedule, width.field!);
+                using (var formatBody = JsonDocument.Parse(jsonData))
+                    if (RevitBridge.Common.ScheduleFieldFormatContract.IsBoundedEdit(formatBody.RootElement))
+                        foreach (var format in p.fieldFormats!) ResolveUniqueWidthField(doc, schedule, format.field!);
             }
             catch (ArgumentException ex)
             {
@@ -200,11 +203,11 @@ namespace RevitBridge.Handlers
             bool scopedPresentation;
             using (var body = JsonDocument.Parse(jsonData)) scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
             var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
-            object? definitionBefore = scopedPresentation && hasColumnWidths ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
+            object? definitionBefore = scopedPresentation && (hasColumnWidths || hasFieldFormats) ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
             if (definitionBefore != null && !JsonSerializer.SerializeToElement(definitionBefore).GetProperty("complete").GetBoolean())
                 return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_width_preservation", definitionBefore,
                     transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
-            var result = ApplyOperations(app, doc, schedule, p);
+            var result = ApplyOperations(app, doc, schedule, p, scopedPresentation && hasFieldFormats);
             if (definitionBefore != null) result["definitionBefore"] = definitionBefore;
             if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
             result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
@@ -395,7 +398,7 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static Dictionary<string, object?> ApplyOperations(UIApplication app, Document doc, ViewSchedule schedule, Params p)
+        private static Dictionary<string, object?> ApplyOperations(UIApplication app, Document doc, ViewSchedule schedule, Params p, bool boundedFieldFormats)
         {
             var addResults = new List<object>();
             var filterResults = new List<object>();
@@ -445,7 +448,7 @@ namespace RevitBridge.Handlers
 
                 if (p.fieldFormats != null)
                 {
-                    ApplyFieldFormats(doc, schedule, p.fieldFormats, fieldFormatResults);
+                    ApplyFieldFormats(doc, schedule, p.fieldFormats, fieldFormatResults, boundedFieldFormats);
                 }
 
                 if (p.conditionalFormats != null)
@@ -834,7 +837,7 @@ namespace RevitBridge.Handlers
             }
         }
 
-        private static void ApplyFieldFormats(Document doc, ViewSchedule schedule, List<FieldFormatSpec> fieldFormats, List<object> results)
+        private static void ApplyFieldFormats(Document doc, ViewSchedule schedule, List<FieldFormatSpec> fieldFormats, List<object> results, bool exactNames)
         {
             foreach (var item in fieldFormats)
             {
@@ -845,7 +848,7 @@ namespace RevitBridge.Handlers
                     continue;
                 }
 
-                var field = ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
+                var field = exactNames ? ResolveUniqueWidthField(doc, schedule, fieldName) : ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
                 if (field == null)
                 {
                     results.Add(new { field = fieldName, status = "NotFound" });

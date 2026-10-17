@@ -303,6 +303,7 @@
     "visibility_refresh_plan_v2.test.ts",
     "current_work_packet_verification.test.ts",
     "regular_schedule_presentation_v2.test.ts",
+    "schedule_field_formats_v2.test.ts",
     "advisory_readback_guidance.test.ts"
   ],
   "mcp_tests": [
@@ -471,6 +472,7 @@
     "OperatorNativeFailureDiagnosticTests",
     "OperatorNativeOwnedValueTests",
     "SchedulePresentationContractTests",
+    "ScheduleFieldFormatContractTests",
     "BoundedNativeSequenceTests",
     "ParameterValuePreservationDigestTests",
     "OperatorDelegatedBatchTruthTests"
@@ -4384,6 +4386,10 @@
       ]
     },
     {
+      "id": "bounded_schedule_field_formats_native_census_and_separate_readback",
+      "coverage": ["backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts", "dotnet:ScheduleFieldFormatContractTests"]
+    },
+    {
       "id": "native_scalar_mismatch_feedback_and_corrective_readback_without_proof_promotion",
       "coverage": [
         "backend:native_property_comparison_v2.test.ts",
@@ -4436,3 +4442,4 @@
     "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
   ]
 }
+

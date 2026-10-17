@@ -6,6 +6,7 @@ import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence
 import { canonicalJsonV2, sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
 import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
 import { scheduleCombinedFieldRequestV2, scheduleCombinedFieldReadbackMatchesV2 } from './schedule_combined_field_v2.js';
+import { boundedScheduleFieldFormatsV2, scheduleFieldFormatsMatchV2 } from './schedule_field_formats_v2.js';
 
 const object = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 const positive = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
@@ -13,17 +14,19 @@ const equal = (a: unknown, b: unknown) => canonicalJsonV2(a) === canonicalJsonV2
 const styleKeys = ['titleTextTypeId','headerTextTypeId','bodyTextTypeId'];
 export function isRegularSchedulePresentationEditV2(input: unknown): boolean {
   const w=object(input), b=object(w.body??input), a=object(b.appearance);
-  return Object.hasOwn(b,'columnWidths') || Object.hasOwn(b,'combinedField') || Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
+  return Object.hasOwn(b,'fieldFormats') || Object.hasOwn(b,'columnWidths') || Object.hasOwn(b,'combinedField') || Object.hasOwn(b,'fieldOrder') || styleKeys.some(k=>Object.hasOwn(a,k));
 }
 /** Existing-field order/styles or width-preserving edits. Structural and unsupported mixed changes stay unverified. */
 export function regularSchedulePresentationRequestV2(input: unknown) {
   const w=object(input), b=object(w.body??input), a=object(b.appearance);
   if (!isRegularSchedulePresentationEditV2(input) || !positive(b.scheduleId) || (b.dryRun!==undefined&&b.dryRun!==false)
-      || Object.keys(b).some(k=>!['scheduleId','fieldOrder','appearance','columnWidths','dryRun'].includes(k))
+      || Object.keys(b).some(k=>!['scheduleId','fieldOrder','appearance','columnWidths','fieldFormats','dryRun'].includes(k))
       || (b.appearance!==undefined && (b.appearance===null||typeof b.appearance!=='object'||Array.isArray(b.appearance)))
       || Object.keys(a).some(k=>![...styleKeys,'showTitle','showHeaders'].includes(k))
       || styleKeys.some(k=>a[k]!==undefined&&!positive(a[k]))
       || ['showTitle','showHeaders'].some(k=>a[k]!==undefined&&typeof a[k]!=='boolean')) return null;
+  const formats=Object.hasOwn(b,'fieldFormats')?boundedScheduleFieldFormatsV2(b.fieldFormats):undefined;
+  if(formats===null||(formats&&Object.keys(b).some(k=>!['scheduleId','fieldFormats','dryRun'].includes(k))))return null;
   const widths=b.columnWidths;
   if(widths!==undefined && (!Array.isArray(widths)||!widths.length||widths.length>200||Object.keys(a).length
       ||widths.some((v:unknown)=>{const x=object(v);return Object.keys(x).some(k=>!['field','widthFeet'].includes(k))
@@ -32,7 +35,7 @@ export function regularSchedulePresentationRequestV2(input: unknown) {
   const order=b.fieldOrder;
   if (order!==undefined && (!Array.isArray(order)||!order.length||order.length>200
       || order.some(n=>!Number.isSafeInteger(n)||n<0)||new Set(order).size!==order.length)) return null;
-  return {scheduleId:b.scheduleId,fieldOrder:order as number[]|undefined,appearance:a,columnWidths:widths as Array<{field:string;widthFeet:number}>|undefined};
+  return {scheduleId:b.scheduleId,fieldOrder:order as number[]|undefined,appearance:a,columnWidths:widths as Array<{field:string;widthFeet:number}>|undefined,fieldFormats:formats};
 }
 function matches(wanted:NonNullable<ReturnType<typeof regularSchedulePresentationRequestV2>>, value:unknown) {
   const p=object(value);
@@ -72,7 +75,8 @@ export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appli
     ||typeof s.uniqueId!=='string'||!s.uniqueId||rs.uniqueId!==s.uniqueId||rs.kind!=='schedule'
     ||tx.committed!==true||tx.rolledBack===true||tx.pending===true||object(a.changeTracking).exhaustiveChangeInventory!==true
     || !regularSchedulePresentationScopeMatchesV2(w.scheduleId,s.uniqueId,a,r)
-    ||!matches(w,a.presentationReadback)||!matches(w,r.presentation)||!widthsMatch(w,a,r,s.uniqueId))return false;
+    ||!matches(w,a.presentationReadback)||!matches(w,r.presentation)||!widthsMatch(w,a,r,s.uniqueId)
+    ||(w.fieldFormats&&!scheduleFieldFormatsMatchV2(w.fieldFormats,w.scheduleId,s.uniqueId,a,r)))return false;
   return styleKeys.every(k=>w.appearance[k]===undefined || (()=>{const part=k.replace('TextTypeId','');
     return object(object(a.presentationReadback)[part]).uniqueId===object(object(r.presentation)[part]).uniqueId;})());
 }
