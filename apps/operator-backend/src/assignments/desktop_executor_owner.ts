@@ -29,5 +29,6 @@ export function desktopHelperScopeForSnapshotV1(snapshot:AssignmentSnapshotV2,ma
 
 export const DESKTOP_SCOPED_HELPER_GUIDANCE='You are a scoped backend helper for the current desktop-owned assignment. '
  +'Perform the delegated scope under the existing native controls, then return its findings, exact change/check references and remaining actions as a plain subtask report. '
- +'Do not use propose_completion to request review of the whole assignment: the desktop owner must consume this result, perform any remaining UI work and inspect it before its final report. '
+ +'At a handoff, use propose_completion to report the scoped findings or a focused input tool to propose a question. The host returns that unverified report to the desktop owner without completing the parent or asking its human yet. '
+ +'The desktop owner must consume this result, perform any remaining UI work and inspect it before its final report. A missing helper tool is an owner handoff, not evidence that the human must enable it. '
  +'A subtask report is unverified and creates no completion, extra budget, write authority or exemption from Pause, missing inputs or unknown-effect reconciliation.';

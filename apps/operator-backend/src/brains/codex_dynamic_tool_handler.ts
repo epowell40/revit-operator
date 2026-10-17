@@ -75,7 +75,7 @@ import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
 import { committedReadRetryDecisionV2 } from '../verification/safe_committed_read_retry_v2.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
-import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
+import {DESKTOP_HELPER_RETURN_REASON,peekDesktopHelperReturnV1,retainDesktopHelperReturnV1,desktopHelperReturnMessageV1} from './desktop_helper_return.js';
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -224,6 +224,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       success: false
     };
   }
+  if(peekDesktopHelperReturnV1(runtime,params.turnId)){
+    runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+    return {contentItems:[{type:'inputText',text:'Scoped helper return is retained; no further helper tool was dispatched. The desktop owner must consume the report after provider drain.'}],success:false};
+  }
   const boundArguments = bindCanonicalAssignmentToolArguments(params.tool, params.arguments ?? {}, {
     session_id: sessionId,
     assignment_id: v2Binding?.assignment_id ?? journalContext!.assignmentId,
@@ -269,9 +273,16 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         // The helper's local instruction is not the entire authenticated user
         // request. Do not let its inspection handoff place the desktop owner
         // behind a whole-task review fence. No existing fence is cleared.
-        if(params.tool==='operator_manage_work_plan'&&boundArguments.arguments.action==='propose_completion'
-          &&desktopHelperScopeForSnapshotV1(v2Snapshot,teammateDesktopHelperScopeForOwner(runtime,params.turnId))){
-          return {contentItems:[{type:'inputText',text:'[scoped_backend_handoff_required] '+DESKTOP_SCOPED_HELPER_GUIDANCE}],success:false};
+        const helperReturn=retainDesktopHelperReturnV1({owner:runtime,turn_id:params.turnId,binding:v2Snapshot.current_binding,
+          marker:teammateDesktopHelperScopeForOwner(runtime,params.turnId),tool:String(params.tool),arguments:boundArguments.arguments});
+        if(helperReturn){
+          const text=desktopHelperReturnMessageV1(helperReturn);
+          recordTeammateMcpResult(runtime,teammateGate,{content:[{type:'text',text}]});
+          // Existing post-tool flush delivers the response before interrupting
+          // this helper provider. Nothing changes the parent lifecycle state.
+          runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+          const response={contentItems:[{type:'inputText' as const,text}],success:true};
+          attachCurrentAssignmentContext(response,params.tool,v2Binding.assignment_id);return response;
         }
         let result = await runtime.callTool(params.tool, boundArguments.arguments, {
           turnId: params.turnId,

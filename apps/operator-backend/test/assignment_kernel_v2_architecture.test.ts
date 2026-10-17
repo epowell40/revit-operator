@@ -326,13 +326,16 @@ test("every V2 provider exit records canonical failure or returns already-earned
     "an already-complete Assignment must return its terminal result instead of an infrastructure error");
   assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
     "a normally returned interrupted Codex turn must not bypass V2 settlement");
-  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference)");
+  const progressDecisionAt = brain.indexOf("const progression = prepareCodexAssignmentProgressV2(");
   const progressStopAt = brain.indexOf("if (!progression.prompt) {", progressDecisionAt);
   const progressReturnAt = brain.indexOf("return {", progressStopAt);
   const providerBootstrapAt = brain.indexOf("c = await getClient(workspaceRoot, threadProfile)");
   assert.ok(progressDecisionAt >= 0 && progressStopAt > progressDecisionAt && progressReturnAt > progressStopAt
     && providerBootstrapAt > progressReturnAt,
     "both default and thin turns must admit canonical progress, returning denied work before provider connection or thread bootstrap");
+  assert.match(brain.slice(progressDecisionAt, progressStopAt),
+    /prepareCodexAssignmentProgressV2\(assignmentKernelV2\.binding, thinReference,\s*desktopHelperScopeFromContextV1\(req\.context\)\)/,
+    "progress admission retains the current binding and authenticated helper context");
   assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
     "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
   const startDiagnosticAt = brain.indexOf('recordProviderStartFailureDiagnostic({');

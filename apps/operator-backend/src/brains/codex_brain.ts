@@ -1,5 +1,6 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
 import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
+import {DESKTOP_HELPER_RETURN_REASON,takeDesktopHelperReturnV1,desktopHelperReturnAfterDrainV1,type DesktopHelperReturnV1} from './desktop_helper_return.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -353,7 +354,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       onContinue: () => cb.onProgress?.("Continuing the saved task.") });
     const snapshot = result.stop_reason === THIN_REFERENCE_NO_WORK_STOP
       ? currentCodexAssignmentSnapshotV2(assignment.binding) ?? undefined : result.response.assignment_snapshot_v2;
-    let message = finalCodexAssignmentMessageV2(snapshot ?? null, result.response.assistant_message);
+    let message = finalCodexAssignmentMessageV2(snapshot ?? null, result.response.assistant_message, desktopHelperScopeFromContextV1(req.context));
     if (!snapshot?.terminal && result.stop_reason.startsWith("experiment_")) {
       message += `\n\nThe local experiment reached its ${result.stop_reason === "experiment_turn_limit" ? "provider-turn" : "time"} limit. Completed work and remaining checks are saved.`;
     }
@@ -995,6 +996,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   let providerReceiptReconciliationError: unknown = null;
   let usageHoldError: unknown = null;
   let workTimeExpired=false;
+  let desktopHelperReturn:DesktopHelperReturnV1|null=null;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
     ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
@@ -1054,7 +1056,8 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     reconcileStartedProviderTurn = null;
     providerTurnUsage = modelTelemetry.finish(req.message_id, providerTurnDisposition);
     teammateReceipt = teammateContext && !thinReference ? teammateLoopReceiptForLease(teammateContext) : undefined;
-    await releaseStartedProviderTurn(workTimeExpired);
+    try { await releaseStartedProviderTurn(workTimeExpired); }
+    finally { desktopHelperReturn=mcpRuntime?takeDesktopHelperReturnV1(mcpRuntime,turnId):null; }
   }
 
   if (providerReceiptReconciliationError) {
@@ -1075,6 +1078,20 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}) };
   }
 
+  if(desktopHelperReturn&&assignmentKernelV2&&assignmentControllerStopReason===DESKTOP_HELPER_RETURN_REASON
+    &&providerTurnUsage&&['completed','interrupted'].includes(providerTurnUsage.disposition)
+    &&providerTurnUsage.session_id===req.session_id&&providerTurnUsage.message_id===req.message_id
+    &&providerTurnUsage.turn_id===desktopHelperReturn.turn_id){
+    const snapshot=settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
+    const message=desktopHelperReturnAfterDrainV1(desktopHelperReturn,desktopHelperScopeFromContextV1(req.context),snapshot,assignmentControllerStopReason);
+    if(message){
+      cb.onDone?.(message);
+      return {version:OPERATOR_BACKEND_CONTRACT_VERSION,assistant_message:message,actions:[],
+        desktop_helper_return:desktopHelperReturn,
+        model_call_receipts:modelTelemetry.receipts,provider_turn_usage:providerTurnUsage,
+        ...(snapshot?{assignment_snapshot_v2:snapshot}:{}),...(teammateReceipt?{teammate_loop_receipt:teammateReceipt}:{})};
+    }
+  }
   if (turnCancelled) {
     if (!assignmentKernelV2 && assignmentIdForTurn) {
       cancelAssignmentInFlight(assignmentIdForTurn);

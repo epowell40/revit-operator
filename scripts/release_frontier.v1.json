@@ -4469,6 +4469,13 @@
         "desktop:test/scoped_desktop_handoff.test.js"
       ],
       "id": "scoped_backend_inspection_must_return_to_desktop_owner_without_closing_parent"
+    },
+    {
+      "id": "scoped_helper_input_return_drains_and_exits_inner_runner_without_global_input",
+      "coverage": [
+        "backend:desktop_scoped_handoff.test.ts",
+        "backend:thin_reference_execution.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

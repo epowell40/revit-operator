@@ -155,6 +155,19 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  /** Host-retained helper findings only; never parent completion or approval. */
+  desktop_helper_return?: Readonly<{
+    schema: "operator.desktop-helper-return.v1";
+    binding: import("./domain/assignment-kernel/index.js").AssignmentBindingV2;
+    turn_id: string;
+    source_tool: string;
+    request_hash: string;
+    control_command_id: string | null;
+    report: {kind: "scope_report" | "proposed_question"; claimed_completed: string[];
+      remaining_work: string[]; uncertainties: string[]; question?: string};
+    evidence_ref: import("./evidence/evidence_ref.js").EvidenceRefV1;
+    verified: false;
+  }>;
   /** Provider-call metadata only. Never contains prompts or model output. */
   model_call_receipts?: ModelCallReceipt[];
   provider_turn_usage?: import("@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage").ProviderTurnUsageV1;

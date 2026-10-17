@@ -4,6 +4,7 @@ import * as thinReference from "../src/brains/thin_reference_execution.js";
 import {codexAssignmentTurnTimeLimits,createCodexAssignmentProgressTimeMonitor} from '../src/codex/assignment_timeout.js';
 import {createExecutionDeadlineV2} from '../src/brains/execution_deadline_v2.js';
 import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
+import { desktopHelperScopeFromContextV1 } from "../src/assignments/desktop_executor_owner.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -110,7 +111,7 @@ function actualThinCaller(dependencies: Record<string, unknown>): (request: any,
   const emitted = ts.transpileModule(fn.getText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports: Record<string, any> = {};
   runInNewContext(emitted, { exports, AbortController, setTimeout, clearTimeout, Date, process,
-    codexAssignmentTurnTimeLimits,createCodexAssignmentProgressTimeMonitor,createExecutionDeadlineV2,...thinReference,...dependencies });
+    codexAssignmentTurnTimeLimits,createCodexAssignmentProgressTimeMonitor,createExecutionDeadlineV2,desktopHelperScopeFromContextV1,...thinReference,...dependencies });
   return exports.decideCodexStreaming;
 }
 
