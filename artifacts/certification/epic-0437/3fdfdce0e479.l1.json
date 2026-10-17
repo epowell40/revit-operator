@@ -788,7 +788,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:3c093d4ed8a7097fc6241585934fe81ccc9251cb5eed0537ad39592593bfce53"
+      "sha256": "sha256:2df4d69e0cd5b9fcfea74cd40da2fc0d477fb363aa98acb8623901272685a620"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -3701,7 +3701,7 @@
     },
     {
       "path": "apps/operator-backend/src/postcondition_verification_v2.ts",
-      "sha256": "sha256:36f9ea5b2d63eccfc06f69a4e52b0d97bd2a7d6e6f0ead3df40f9a6730548743"
+      "sha256": "sha256:4015dc05ad8b54eb99c12ec3bd3448f9273562f04516c21f52ecc602748695fa"
     },
     {
       "path": "apps/operator-backend/src/provider_token_cost.ts",
@@ -4176,6 +4176,10 @@
       "sha256": "sha256:3d17e1d8b79e5f50cab3f11928953355f48d5cc4ad843b491c46376f5fd8ef8b"
     },
     {
+      "path": "apps/operator-backend/src/verification/native_phase_filter_v2.ts",
+      "sha256": "sha256:fe874f89a4650b61561de1a4aee52baacf5cca5eb2fb443567a80783190c180a"
+    },
+    {
       "path": "apps/operator-backend/src/verification/native_schedule_presentation_v2.ts",
       "sha256": "sha256:ffd43bc88a03fcf49c44e20e0aba106cb6ef59ebacc8f91c74997b89ee647d4e"
     },
@@ -4281,7 +4285,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/verification_capability_admission_v2.ts",
-      "sha256": "sha256:00751493026d3b50e43234a9a53fdbc63ca9995f73f57c8a78e59222f6fe585c"
+      "sha256": "sha256:a5d6ce4e793f8042648a431865c492bfb34e912f4c479176575be22e64f4792a"
     },
     {
       "path": "apps/operator-backend/src/verification/verification_payload_boundary_v2.ts",
@@ -5976,6 +5980,10 @@
       "sha256": "sha256:c2ffcf191146fb143d62abb7ca3d8c556ff13c349650ef2b7cf0edcd6eac7221"
     },
     {
+      "path": "apps/operator-backend/test/helpers/native_phase_filter_fixture.ts",
+      "sha256": "sha256:7d851da87f0510f0b8195e92adb48bbe4c63fb51b5128175e5fdec9efa1c789e"
+    },
+    {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
       "sha256": "sha256:975414caa32bf2c273900bf588fc41b035c286af99350ea10075f4fc0d8a0e10"
     },
@@ -6110,6 +6118,14 @@
     {
       "path": "apps/operator-backend/test/native_inventory_work_budget_v2.test.ts",
       "sha256": "sha256:a51088507f503a34ed5acaa9408e87d116bede80135720c37419a2280260e56a"
+    },
+    {
+      "path": "apps/operator-backend/test/native_phase_filter_runtime.test.ts",
+      "sha256": "sha256:b8a501edeadda849c0cac3a7a41ba9f13df6f8f318bb2f84d10dddf481319ba6"
+    },
+    {
+      "path": "apps/operator-backend/test/native_phase_filter_v2.test.ts",
+      "sha256": "sha256:1f387dd068b6dd66667ad0b3deb2f599f642ad77eea4b83b7eacffcdaefdb929"
     },
     {
       "path": "apps/operator-backend/test/native_property_kernel_v2.test.ts",
@@ -9917,7 +9933,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:75126f26785bde1208898aa03573ee40dae75e3bdbf97f5755084bdd8dbefbbb",
+  "inputs_hash": "sha256:d0a91f9620984e5ec651f294ee6aaf49011c608ab6e89bed838ff4e425024274",
   "result": {
     "passed": true,
     "checks": [
