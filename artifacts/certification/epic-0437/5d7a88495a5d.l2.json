@@ -8734,7 +8734,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/ExportViewImageHandler.cs",
-      "sha256": "sha256:8b3da94dd19806fad1fdbab4f27329806049fd72d1b91a9ff7b06793defe49d3"
+      "sha256": "sha256:50ba00a09d893f35965c41c760a3109dc0c594274aae07e279a39b5e549e3e8a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/FailureHandlingUtil.cs",
@@ -9474,7 +9474,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportViewImageHandler.cs",
-      "sha256": "sha256:58848a8df91709c6a18852e574a1d587c7b888eb93c38c926a465f2308c8f403"
+      "sha256": "sha256:7949f0e6f5001808a843e444d54ecd0fc96c4cc9de76ed84c892167f8e310e57"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportWarningsReportHandler.cs",
@@ -10081,7 +10081,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:f57a84cc7d4c909e76154afff4d76fc405107436a1c2046ac1e497b8629f22a1",
+  "inputs_hash": "sha256:e35ec2353d7d5f8c065aa58a84f064637e4b1c91f6c6ced6de0ac9881815a1a2",
   "result": {
     "passed": true,
     "checks": [
