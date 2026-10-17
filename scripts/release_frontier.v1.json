@@ -292,7 +292,9 @@
     "project_parameter_binding_v2.test.ts",
     "regular_schedule_column_width_v2.test.ts",
     "assignment_schedule_filter_restoration.test.ts",
-    "schedule_filter_postcondition_v2.test.ts"
+    "schedule_filter_postcondition_v2.test.ts",
+    "native_phase_filter_v2.test.ts",
+    "native_phase_filter_runtime.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4344,6 +4346,13 @@
       "coverage": [
         "backend:assignment_schedule_filter_restoration.test.ts",
         "javascript:package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
+      ]
+    },
+    {
+      "id": "phase_filter_creation_requires_complete_bound_native_status_read_and_kernel_settlement",
+      "coverage": [
+        "backend:native_phase_filter_v2.test.ts",
+        "backend:native_phase_filter_runtime.test.ts"
       ]
     },
     {

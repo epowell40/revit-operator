@@ -17,6 +17,7 @@ import { createdTagRequestV2, decodeNativeCreatedTagReadV2, nativeCreatedTagRead
 import { nativeElementBooleanReadTargetsV1, nativeElementBooleanReadbackV1 } from './native_element_property_readback_v1.js';
 import { isScheduleCellBackgroundEditV2 } from './schedule_cell_appearance_v2.js';
 import {nativeSchedulePresentationRequestV2,nativeSchedulePresentationReadTargetsV2,nativeSchedulePresentationObservedTargetsV2} from './native_schedule_presentation_v2.js';
+import {isNativePhaseFilterEditV2,nativePhaseFilterReadTargetsV2,decodeNativePhaseFilterReadV2}from './native_phase_filter_v2.js';
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -89,7 +90,7 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     contextual_scope_fields: ["sheetId", "sheetElementId"]
   }],
   ["/revit/update-schedule-cell", { semantic_outputs: [], principal_target_fields: ["sourceElementId", "affectedElementIds"], contextual_scope_fields: ["scheduleId"] }],
-  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association", "schedule.presentation_values"] }],
+  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association", "schedule.presentation_values", "phase_filter.presentation"] }],
   ["/revit/connect-existing-mep-branch", {
     semantic_outputs: [], principal_target_fields: ["mainElementId", "branchElementId", "terminalElementId", "createdFittingId"]
   }],
@@ -318,6 +319,8 @@ export function operationTargetSelectorV2(input: Readonly<{
     const value = objectValue(input.value);
     const request={...objectValue(input.operation.arguments??{body:value}),path:'/revit/native-api-ops'};
     const returnedNative=Array.isArray(value.operations)&&value.version==='operator.native_api_ops.v2';
+    const phaseRead=returnedNative?decodeNativePhaseFilterReadV2(request,value):null;
+    const phaseTargets=returnedNative?(phaseRead?[phaseRead.id]:[]):nativePhaseFilterReadTargetsV2(request);
     const booleanTargets=nativeElementBooleanReadTargetsV1(request).filter(token=>!returnedNative
       || nativeElementBooleanReadbackV1(request,value,Number(token.slice(3)),'HasStripedRows','Autodesk.Revit.DB.ViewSchedule')!==undefined);
     const tagTargets = returnedNative
@@ -325,7 +328,7 @@ export function operationTargetSelectorV2(input: Readonly<{
         ?? decodeNativeCreatedTagReadV2(input.operation.arguments, value)?.map(item => `id:${item.id}`) ?? []
       : [...nativeTagPropertyReadTargetsV2(value), ...nativeCreatedTagReadTargetsV2(input.operation.arguments ?? {method:'POST',path:'/revit/native-api-ops',body:value})];
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
-      principal_target_tokens: [...new Set([...tagTargets,...booleanTargets])].sort(), contextual_scope_tokens: [] };
+      principal_target_tokens: [...new Set([...tagTargets,...booleanTargets,...phaseTargets.map(id=>'id:'+id)])].sort(), contextual_scope_tokens: [] };
   }
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
@@ -350,6 +353,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
   if(path==='/revit/native-api-mutation-ops'&&nativeSchedulePresentationRequestV2(apply.arguments))return ['schedule.presentation_values'];
+  if(path==='/revit/native-api-mutation-ops'&&isNativePhaseFilterEditV2(apply.arguments))return ['phase_filter.presentation'];
   if (path === '/revit/configure-schedule' && isRegularSchedulePresentationEditV2(apply.arguments)) return ['schedule.native_presentation'];
   if (path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(apply.arguments)) return ["schedule.cell_appearance"];
   if (path === "/revit/assign-electrical-circuit") return ["electrical.circuit_membership"];
@@ -396,7 +400,8 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
       ?contract.semantic_outputs:['artifact.file_digest'];
   }
   if (pathOf(verification) === "/revit/native-api-ops")
-    return nativeSchedulePresentationReadTargetsV2(verification.arguments).length ? ['schedule.presentation_values']
+    return nativePhaseFilterReadTargetsV2(verification.arguments).length ? ['phase_filter.presentation']
+      : nativeSchedulePresentationReadTargetsV2(verification.arguments).length ? ['schedule.presentation_values']
       : nativeCreatedTagReadTargetsV2(verification.arguments).length ? ["tag.created_subject_association"]
       : nativeTagPropertyReadTargetsV2(verification.arguments).length ? ["tag.property_values"] : [];
   if (pathOf(verification) === "/revit/get-element-summary") {

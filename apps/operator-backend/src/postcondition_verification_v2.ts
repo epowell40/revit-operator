@@ -10,6 +10,7 @@ import { circuitMembershipSatisfiedV2 } from './verification/circuit_membership_
 import { elementTypeSatisfiedV2 } from './verification/element_type_postcondition_v2.js';
 import { nativeElementBooleanReadbackV1 } from './verification/native_element_property_readback_v1.js';
 import { scheduleFilterExpectedValuesV2, scheduleFilterObservedValuesV2 } from './verification/schedule_filter_postcondition_v2.js';
+import {isNativePhaseFilterEditV2}from './verification/native_phase_filter_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -618,6 +619,7 @@ export function postconditionSatisfiedByPayloadV2(
   // and fresh readback. Generic token matching has neither and cannot grant it.
   if (operationPath === "/revit/configure-schedule" && (isScheduleCellBackgroundEditV2(applyInput) || isRegularSchedulePresentationEditV2(applyInput))) return false;
   if (operationPath === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(applyInput)) return false;
+  if (operationPath === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(applyInput)) return false;
   if (operationPath === '/revit/save-as')
     return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")
