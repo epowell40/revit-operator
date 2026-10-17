@@ -106,6 +106,7 @@
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
     "teammate_mutation_intent_binding.test.ts",
+    "opaque_text_input_scope.test.ts",
     "teammate_loop_runtime.test.ts",
     "c111_registered_stage_compat_verification.test.ts",
     "teammate_verification_evidence.test.ts",
@@ -4505,6 +4506,14 @@
         "dotnet:OperatorUiContextSnapshotTests",
         "backend:external_provider_lifecycle.test.ts",
         "backend:desktop_computer_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "ordinary_work_admission_needs_no_ui_keywords_or_unrelated_text_operand",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/composer_intake.test.mjs",
+        "backend:opaque_text_input_scope.test.ts",
+        "backend:teammate_mutation_intent_binding.test.ts"
       ]
     }
   ],

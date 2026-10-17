@@ -167,10 +167,16 @@ export function mutationIntentBlockReason(
 
 export function missingOpaqueMutationInputs(userText: string): string[] {
   const source = comparable(userText);
-  const replacementAction = "(?:replace(?:ment)?|update|correction?|revise|revision|change)";
-  const textArtifact = "(?:text\\s*note|note|annotation|wording|text)";
-  const replacementRequest = new RegExp(`\\b${replacementAction}\\b.{0,180}\\b${textArtifact}\\b`).test(source)
-    || new RegExp(`\\b${textArtifact}\\b.{0,180}\\b${replacementAction}\\b`).test(source);
+  // This anticipates a missing text operand; it is not mutation authority.
+  // Bind the action to a text-content object instead of joining unrelated
+  // clauses (e.g. preserve text sizes + save a Correction.rvt filename).
+  // An actual replace-text operation still authenticates its exact value in
+  // mutationIntentBindingDecision regardless of this intake convenience.
+  const textArtifact = "(?:text\\s*notes?|notes?|annotations?|wording|text)";
+  const modifiers = "(?:(?:the|this|that|these|those|a|an|one|selected|existing|outdated|old|current|approved|issue|project)\\s+){0,6}";
+  const presentation = "(?:['’]s\\s+)?(?:sizes?|fonts?|heights?|colou?rs?|styles?|alignment|widths?|borders?|position|rotation|placement|visibility|formatting|appearance|leaders?)\\b";
+  const replacementRequest = new RegExp(`\\b(?:replace|update|correct|revise|rewrite|reword|edit|change|set)\\s+${modifiers}${textArtifact}\\b(?!\\s*${presentation})`).test(source)
+    || new RegExp(`\\b${textArtifact}\\s+replacement\\b|\\breplacement\\s+${textArtifact}\\b`).test(source);
   if (!replacementRequest) return [];
   if (containsUnresolvedChoice(userText)) return ["replacement_text"];
   const placeholder = source.match(/\b(?:with|to|using)\s+((?:(?:the\s+)?(?:current|correct|approved|latest|new|updated|revised|appropriate)\s+)+(?:issue\s+)?(?:wording|text|language|note|label|name|value))\b/);

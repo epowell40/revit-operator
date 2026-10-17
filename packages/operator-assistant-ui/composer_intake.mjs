@@ -1,12 +1,8 @@
-import { needsPrinterCapableLane } from "./print_execution_policy.mjs";
-
-/** Capability selection, never authorization: UI work needs an owner that can see and operate the application. */
-export function needsDesktopUiLane(userText) {
+/** Respect an explicit tool restriction without requiring users to name UI capabilities for ordinary work. */
+export function excludesComputerUse(userText) {
   const text = String(userText || "");
-  if (/\b(?:native\s+)?api\s+only\b|\bonly\s+use\s+(?:the\s+)?(?:native\s+)?api\b/i.test(text)) return false;
-  if (/\b(?:without|avoid|never|do\s+not|don't)\s+(?:using\s+|use\s+)?(?:the\s+)?(?:desktop\s+(?:input|control)|computer[\s-]?use|(?:revit\s+)?ui|user\s+interface)\b/i.test(text)) return false;
-  return /\b(?:dialog|ribbon|toolbar|menu|user[\s-]+interface)\b/i.test(text)
-    || /\b(?:use|using|via|through)\s+(?:(?:the|revit(?:'s)?)\s+)*(?:ui|desktop)\b/i.test(text);
+  return /\b(?:native\s+)?api\s+only\b|\bonly\s+use\s+(?:the\s+)?(?:native\s+)?api\b/i.test(text)
+    || /\b(?:without|avoid|never|do\s+not|don't)\s+(?:using\s+|use\s+|opening\s+|open\s+)?(?:the\s+)?(?:desktop(?:\s+(?:input|control))?|computer[\s-]?use|(?:revit\s+)?ui|user\s+interface)\b/i.test(text);
 }
 
 /** Capture the exact click before recovery/freshness I/O can yield to another edit. */
@@ -33,11 +29,14 @@ export function selectChatSubmissionMode(state, prompt = "") {
       throw new Error("Reconnect to Operator before sending; its execution configuration is unavailable.");
     }
     // Existing conversations retain their assignment owner and settlement fences.
-    if (!state.sessionId && !state.taskNavigationAssignmentId && !state.streaming
-      && state.computerUseAvailable === true && (needsPrinterCapableLane(prompt) || needsDesktopUiLane(prompt))) return "computer-run";
+    // The working owner can use native tools and see/operate Revit as needed.
+    // Availability selects capability, never a write grant or a new provider.
+    if (startsFreshComputerConversation(state) && state.computerUseAvailable === true
+      && !excludesComputerUse(prompt)) return "computer-run";
     return "backend";
   }
-  return state.computerUseAvailable ? (state.streaming ? "computer-interject" : "computer-run") : "backend";
+  return state.computerUseAvailable && !excludesComputerUse(prompt)
+    ? (state.streaming ? "computer-interject" : "computer-run") : "backend";
 }
 
 /** Freeze New Chat intent at submission; later polling must not select an old session. */
