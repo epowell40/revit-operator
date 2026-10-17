@@ -34,6 +34,7 @@ export type DesktopComputerRelayRequest = {
 
 type DesktopComputerRelayResponse = {
   id: string;
+  status?: string;
   output_text: string;
   output: unknown[];
   model?: string;
@@ -170,6 +171,7 @@ function extractOutputText(response: any): string {
 function simplifyRelayResponse(response: any, modelCallReceipt: ModelCallReceipt): DesktopComputerRelayResponse {
   return {
     id: typeof response?.id === "string" ? response.id : "",
+    status: typeof response?.status === "string" ? response.status : undefined,
     output_text: extractOutputText(response),
     output: Array.isArray(response?.output) ? response.output : [],
     model: typeof response?.model === "string" ? response.model : undefined,

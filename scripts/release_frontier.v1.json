@@ -370,7 +370,8 @@
     "test/task_navigation.test.js",
     "test/delegated_assignment_recovery.test.mjs",
     "test/provider_usage_hold_ui.test.js",
-    "test/native_change_feedback.test.js"
+    "test/native_change_feedback.test.js",
+    "test/visual_work_review.test.js"
   ],
   "dotnet_test_classes": [
     "CadLinkOptionPolicyTests",
@@ -4495,6 +4496,16 @@
         "desktop:test/native_change_feedback.test.js"
       ],
       "id": "desktop_native_change_observations_require_fresh_target_readback_not_actor_or_commit_proof"
+    },
+    {
+      "id": "desktop_visual_review_uses_fresh_actual_pixels_exact_owner_remaining_budget_and_no_native_proof",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "dotnet:OperatorUiContextSnapshotTests",
+        "backend:external_provider_lifecycle.test.ts",
+        "backend:desktop_computer_telemetry.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4519,6 +4530,7 @@
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",
     "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
     "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
-    "package/operator-assistant-ui/native_change_observations.test.mjs"
+    "package/operator-assistant-ui/native_change_observations.test.mjs",
+    "package/operator-assistant-ui/visual_work_review.test.mjs"
   ]
 }

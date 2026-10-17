@@ -69,6 +69,13 @@ namespace RevitBridge.Common.Tests
             Assert.DoesNotContain("ActiveUIDocument", read);
             Assert.DoesNotContain("Selection", read);
             Assert.Contains("Store.ReadJson()", read);
+            // Modal-safe visual review uses immutable document/view identity
+            // plus observed change sequence. It never runs native element reads
+            // or grants postcondition authority from a cached screen identity.
+            Assert.Contains("OperatorNativeDocumentSessionAuthority.GetSessionId(doc)", snapshot);
+            Assert.Contains("RevitDocumentChangeObservations.Read(sessionId)", snapshot);
+            Assert.Contains("id = ElementIdCompat.GetValue(view.Id)", snapshot);
+            Assert.DoesNotContain("RevitDocumentChangeObservations", read);
         }
 
         private static string ReadSource(params string[] segments)

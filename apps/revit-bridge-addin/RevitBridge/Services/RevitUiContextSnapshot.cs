@@ -20,15 +20,19 @@ namespace RevitBridge.Services
                 var uidoc = application.ActiveUIDocument;
                 var doc = uidoc?.Document;
                 var view = doc?.ActiveView;
+                var sessionId = doc == null ? null : OperatorNativeDocumentSessionAuthority.GetSessionId(doc);
                 var value = new
                 {
                     version = application.Application.VersionName,
                     process_id = Process.GetCurrentProcess().Id,
+                    nativeChangeObservations = sessionId == null ? (object?)null : RevitDocumentChangeObservations.Read(sessionId),
                     document = doc == null ? null : new
                     {
                         title = doc.Title,
+                        sessionId,
                         activeView = view == null ? null : new
                         {
+                            id = ElementIdCompat.GetValue(view.Id),
                             name = view.Name,
                             type = view.ViewType.ToString()
                         },
