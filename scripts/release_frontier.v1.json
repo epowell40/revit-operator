@@ -296,7 +296,8 @@
     "native_phase_filter_v2.test.ts",
     "native_phase_filter_runtime.test.ts",
     "visibility_phasing_readback_v2.test.ts",
-    "visibility_phasing_runtime.test.ts"
+    "visibility_phasing_runtime.test.ts",
+    "current_work_packet_verification.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4369,6 +4370,13 @@
       "coverage": [
         "backend:visibility_phasing_readback_v2.test.ts",
         "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "work_packet_pass_requires_current_exact_native_read_not_historical_or_other_read_credit",
+      "coverage": [
+        "backend:current_work_packet_verification.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
       ]
     }
   ],

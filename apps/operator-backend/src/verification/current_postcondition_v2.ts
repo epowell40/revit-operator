@@ -18,44 +18,57 @@ function reviewedTargets(op: AssignmentSnapshotV2['operations'][string], read: A
     ...(op.result?.affected_target_identities ?? [])].flatMap(operationTargetIdentityAliasesV2);
 }
 
-export function checkedEditIsCurrentV2(snapshot: AssignmentSnapshotV2, id: string): boolean {
+function currentSubject(snapshot: AssignmentSnapshotV2, id: string) {
   const op = snapshot.operations[id];
   if (!op || !sameAssignmentBindingV2(op.binding, snapshot.current_binding)
     || snapshot.input_invalidated_operation_ids?.includes(id)
     || snapshot.unresolved_unknown_operation_ids.includes(id)
-    || !appliedOperationHasVerifiedPostconditionV2(snapshot, id)) return false;
-  return op.verification_operation_ids.some(readId => {
-    const read = snapshot.operations[readId];
-    if (!read || !verificationOperationHasVerifiedPostconditionV2(snapshot, readId)
-      || read.verification_of_operation_id !== id || snapshot.input_invalidated_operation_ids?.includes(readId)
-      || !sameAssignmentBindingV2(read.binding, snapshot.current_binding)
-      || read.result?.authority !== 'native-host' || !read.result.raw_payload_hash || !sameAssignmentBindingV2(read.result.binding, snapshot.current_binding)
-      || !read.observation_ids.some(oid => {
-        const observed = snapshot.observations[oid];
-        return observed?.operation_id === readId && observed.authority === 'native-host'
-          && sameAssignmentBindingV2(observed.binding, read.binding) && observed.raw_payload_hash === read.result?.raw_payload_hash
-          && observed.facts.some(f => f.fact_id === 'verification.postcondition_satisfied' && f.fact_class === 'verification' && f.value === true);
-      })) return false;
-    const readAt = Date.parse(read.result.completed_at), targets = new Set(reviewedTargets(op,read));
-    if (!targets.size || !Number.isFinite(readAt) || readAt < Date.parse(op.result?.completed_at ?? '')) return false;
-    return !Object.values(snapshot.operations).some(later => {
-      if (later.operation_id === id || later.requested_effect !== 'apply'
-        || !(['applied','unknown'].includes(later.persistent_effect) || snapshot.in_flight_operation_ids.includes(later.operation_id))
-        || !sameAssignmentBindingV2(later.binding, snapshot.current_binding)) return false;
-      const laterAt = Date.parse(later.result?.completed_at ?? later.opened_at);
-      const unsettled = later.persistent_effect === 'unknown' || snapshot.unresolved_unknown_operation_ids.includes(later.operation_id)
-        || snapshot.in_flight_operation_ids.includes(later.operation_id);
-      // An older opening timestamp does not settle a still-running/unknown
-      // write. It may complete after the read and remains a freshness blocker.
-      if (!unsettled && Number.isFinite(laterAt) && laterAt < readAt) return false;
-      // Equal timestamps need retained ordering; without it, require recheck.
-      if (!unsettled && laterAt === readAt && later.settled_assignment_version !== undefined && read.settled_assignment_version !== undefined
-        && later.settled_assignment_version < read.settled_assignment_version) return false;
-      const footprint = hasCompleteNativeChangeInventoryV2(snapshot,later)
-        ? later.result!.affected_target_identities!.flatMap(operationTargetIdentityAliasesV2)
-        : [later.target.target_id, ...Object.values(later.target.semantic_scope ?? {}), ...(later.result?.affected_target_identities ?? [])]
-          .flatMap(operationTargetIdentityAliasesV2);
-      return !footprint.length || footprint.some(target => targets.has(target));
-    });
+    || !appliedOperationHasVerifiedPostconditionV2(snapshot, id)) return null;
+  return op;
+}
+
+/** One exact read, not any newer check of the same edit. Used by current UI
+ * counts and durable work reports so historical evidence cannot become a pass
+ * merely because its parent acquired a different fresh read later. */
+export function checkedReadIsCurrentV2(snapshot: AssignmentSnapshotV2, readId: string): boolean {
+  const read = snapshot.operations[readId];
+  const id=read?.verification_of_operation_id;
+  const op=id?currentSubject(snapshot,id):null;
+  if(!id||!op)return false;
+  if (!read || !verificationOperationHasVerifiedPostconditionV2(snapshot, readId)
+    || read.verification_of_operation_id !== id || snapshot.input_invalidated_operation_ids?.includes(readId)
+    || !sameAssignmentBindingV2(read.binding, snapshot.current_binding)
+    || read.result?.authority !== 'native-host' || !read.result.raw_payload_hash || !sameAssignmentBindingV2(read.result.binding, snapshot.current_binding)
+    || !read.observation_ids.some(oid => {
+      const observed = snapshot.observations[oid];
+      return observed?.operation_id === readId && observed.authority === 'native-host'
+        && sameAssignmentBindingV2(observed.binding, read.binding) && observed.raw_payload_hash === read.result?.raw_payload_hash
+        && observed.facts.some(f => f.fact_id === 'verification.postcondition_satisfied' && f.fact_class === 'verification' && f.value === true);
+    })) return false;
+  const readAt = Date.parse(read.result.completed_at), appliedAt=Date.parse(op.result?.completed_at??''), targets = new Set(reviewedTargets(op,read));
+  if (!targets.size || !Number.isFinite(readAt) || !Number.isFinite(appliedAt) || readAt < appliedAt) return false;
+  return !Object.values(snapshot.operations).some(later => {
+    if (later.operation_id === id || later.requested_effect !== 'apply'
+      || !(['applied','unknown'].includes(later.persistent_effect) || snapshot.in_flight_operation_ids.includes(later.operation_id))
+      || !sameAssignmentBindingV2(later.binding, snapshot.current_binding)) return false;
+    const laterAt = Date.parse(later.result?.completed_at ?? later.opened_at);
+    const unsettled = later.persistent_effect === 'unknown' || snapshot.unresolved_unknown_operation_ids.includes(later.operation_id)
+      || snapshot.in_flight_operation_ids.includes(later.operation_id);
+    // An older opening timestamp does not settle a still-running/unknown
+    // write. It may complete after the read and remains a freshness blocker.
+    if (!unsettled && Number.isFinite(laterAt) && laterAt < readAt) return false;
+    // Equal timestamps need retained ordering; without it, require recheck.
+    if (!unsettled && laterAt === readAt && later.settled_assignment_version !== undefined && read.settled_assignment_version !== undefined
+      && later.settled_assignment_version < read.settled_assignment_version) return false;
+    const footprint = hasCompleteNativeChangeInventoryV2(snapshot,later)
+      ? later.result!.affected_target_identities!.flatMap(operationTargetIdentityAliasesV2)
+      : [later.target.target_id, ...Object.values(later.target.semantic_scope ?? {}), ...(later.result?.affected_target_identities ?? [])]
+        .flatMap(operationTargetIdentityAliasesV2);
+    return !footprint.length || footprint.some(target => targets.has(target));
   });
+}
+
+export function checkedEditIsCurrentV2(snapshot: AssignmentSnapshotV2, id: string): boolean {
+  const op=currentSubject(snapshot,id);
+  return Boolean(op?.verification_operation_ids.some(readId=>checkedReadIsCurrentV2(snapshot,readId)));
 }

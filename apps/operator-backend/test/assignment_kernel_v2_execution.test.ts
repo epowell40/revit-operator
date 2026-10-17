@@ -2147,7 +2147,8 @@ test("read after committed apply is canonically a verification operation", () =>
 
   // A read succeeded and retained bytes in these neighboring cases, but it did
   // not establish proof for this applied operation.
-  for (const missingProof of ["no_postcondition_fact", "wrong_applied_operation", "missing_forward_link", "unsettled_read"] as const) {
+  for (const missingProof of ["no_postcondition_fact", "wrong_applied_operation", "missing_forward_link", "unsettled_read",
+    "input_invalidated", "later_overlapping_write", "native_hash_mismatch", "rebound_document", "missing_apply_time"] as const) {
     const altered = structuredClone(terminal);
     const read = altered.operations[verificationLease.operation_id]!;
     if (missingProof === "no_postcondition_fact") {
@@ -2155,9 +2156,19 @@ test("read after committed apply is canonically a verification operation", () =>
         .filter(fact => fact.fact_id !== "verification.postcondition_satisfied");
     } else if (missingProof === "wrong_applied_operation") read.verification_of_operation_id = "different-apply";
     else if (missingProof === "missing_forward_link") altered.operations[applyLease.operation_id]!.verification_operation_ids = [];
-    else read.settlement_state = "awaiting_result";
+    else if (missingProof === "unsettled_read") read.settlement_state = "awaiting_result";
+    else if (missingProof === "input_invalidated") altered.input_invalidated_operation_ids = [applyLease.operation_id];
+    else if (missingProof === "native_hash_mismatch") altered.observations[read.observation_ids[0]!]!.raw_payload_hash = "sha256:other-native-bytes";
+    else if (missingProof === "rebound_document") altered.current_binding = { ...altered.current_binding, document_fingerprint: "other-document" };
+    else if (missingProof === "missing_apply_time") altered.operations[applyLease.operation_id]!.result!.completed_at = "";
+    else {
+      const prior = altered.operations[applyLease.operation_id]!;
+      Object.assign(altered.operations, { later: { ...structuredClone(prior), operation_id: "later", verification_operation_ids: [],
+        result: { ...prior.result!, completed_at: new Date(Date.parse(read.result!.completed_at) + 1000).toISOString() } } });
+    }
     const incomplete = generateVerifiedWorkPacketFromKernelV2(goal, altered, null);
     assert.equal(incomplete.trust_presentation.overall, "uncertain_or_missing", missingProof);
+    assert.equal(incomplete.status, "complete_with_issues", missingProof);
     assert.notEqual(incomplete.actions.find(action => action.attempt_id === applyLease.operation_id)?.verification.state, "passed", missingProof);
     assert.notEqual(incomplete.actions.find(action => action.attempt_id === verificationLease.operation_id)?.verification.state, "passed", missingProof);
     assert.ok(incomplete.issues.some(issue => issue.affected_attempt_ids.includes(applyLease.operation_id)), missingProof);
