@@ -76,6 +76,10 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("RevitDocumentChangeObservations.Read(sessionId)", snapshot);
             Assert.Contains("id = ElementIdCompat.GetValue(view.Id)", snapshot);
             Assert.DoesNotContain("RevitDocumentChangeObservations", read);
+            Assert.Contains("visual_capture_context = CaptureFrame(application, uidoc)", snapshot);
+            Assert.Contains("GetWindowRectangle()", snapshot);
+            Assert.Contains("application.MainWindowHandle", snapshot);
+            Assert.DoesNotContain("CaptureFrame(", read);
         }
 
         private static string ReadSource(params string[] segments)

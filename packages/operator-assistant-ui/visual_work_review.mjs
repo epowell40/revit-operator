@@ -48,9 +48,31 @@ function scene(snapshot,viewId,now){
   if(!observation||!view||view.id!==viewId||!bounded(view.name,600)||!bounded(context.document.title,600))throw Error('visual_review_native_scene_unavailable');
   return {process_id:context.process_id,document_session_id:context.document.sessionId,epoch:observation.epoch,through_sequence:observation.throughSequence,
     view_id:view.id,view_name:view.name,view_type:typeof view.type==='string'?view.type:'',document_title:context.document.title,
-    identity_authority:'cached_ui_identity_only',identity_captured_at_utc:snapshot.captured_at_utc,identity_revision:snapshot.revision};
+    identity_authority:'cached_ui_identity_only',identity_captured_at_utc:snapshot.captured_at_utc,identity_revision:snapshot.revision,
+    visual_capture_context:context.visual_capture_context??null};
 }
-const sameScene=(a,b)=>['process_id','document_session_id','epoch','through_sequence','view_id'].every(k=>a[k]===b[k]);
+const sameScene=(a,b)=>['process_id','document_session_id','epoch','through_sequence','view_id'].every(k=>a[k]===b[k])
+  &&JSON.stringify(a.visual_capture_context)===JSON.stringify(b.visual_capture_context);
+
+/** Require host-selected work pixels, never the legacy whole-desktop string.
+ * Window ownership/occlusion are checked by the capture host, not by the actor. */
+export function validateVisualReviewCapture(capture,location,now){
+  const frame=capture?.frame,image=capture?.image_base64,rectangle=frame?.rectangle;
+  if(!object(frame)||frame.schema!=='operator.visual_review_capture.v1'||!['revit_view','revit_dialog'].includes(frame.kind)
+    ||frame.selection_authority!=='native_view_or_owned_modal'||frame.occlusion_check!=='nine_point_screen_grid_not_pixel_exhaustive'
+    ||frame.process_id!==location.process_id||frame.view_id!==location.view_id
+    ||frame.main_window_handle!==location.visual_capture_context?.main_window_handle
+    ||!/^0x[0-9a-f]{1,16}$/i.test(frame.main_window_handle)||!/^0x[0-9a-f]{1,16}$/i.test(frame.foreground_window_handle)
+    ||(frame.kind==='revit_view')!==(frame.main_window_handle===frame.foreground_window_handle)
+    ||!object(rectangle)||!['x','y','width','height'].every(k=>Number.isSafeInteger(rectangle[k]))
+    ||rectangle.width<40||rectangle.height<40||rectangle.width*rectangle.height>24000000
+    ||!Number.isFinite(Date.parse(frame.captured_at_utc))||now-Date.parse(frame.captured_at_utc)>10000||Date.parse(frame.captured_at_utc)>now+1000
+    ||typeof image!=='string'||!image.length||image.length>20_000_000||!/^iVBORw0KGgo[A-Za-z0-9+/=\r\n]+$/.test(image))throw Error('visual_review_focused_capture_invalid');
+  if(frame.kind==='revit_view'&&!['x','y','width','height'].every(k=>rectangle[k]===location.visual_capture_context.view_rectangle?.[k]))throw Error('visual_review_view_frame_mismatch');
+  const bytes=Buffer.from(image,'base64');
+  if(bytes.length<33||bytes.toString('ascii',12,16)!=='IHDR'||bytes.readUInt32BE(16)!==rectangle.width||bytes.readUInt32BE(20)!==rectangle.height)throw Error('visual_review_capture_dimensions_mismatch');
+  return {image,frame};
+}
 
 export function parseVisualWorkReview(response,request){
   if(!object(response)||!safeId(response.id)||response.status!=='completed'||!Array.isArray(response.output)
@@ -80,7 +102,7 @@ export async function reviewCurrentWork(input,host){
   const control=async()=>{await host.assertControl();if(!sameVisualReviewOwner(owner,host.owner()))throw Error('visual_review_owner_changed');};
   try{
     await control();const before=await observed();initial=scene(before,request.view_id,(host.now||Date.now)());
-    await control();const image=await host.capture();if(typeof image!=='string'||!image.length||image.length>20_000_000||!/^iVBORw0KGgo[A-Za-z0-9+/=\r\n]+$/.test(image))throw Error('visual_review_capture_invalid');
+    await control();const {image,frame}=validateVisualReviewCapture(await host.capture(initial),initial,(host.now||Date.now)());raw.capture_frame=frame;
     const saved=await host.retainImage(image);captureRef=saved?.ref;
     if(!captureRef||!safeId(captureRef.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(captureRef.content_hash)||!positive(captureRef.byte_count))throw Error('visual_review_capture_not_retained');
     await control();const bracket=scene(await observed(),request.view_id,(host.now||Date.now)());if(!sameScene(initial,bracket))throw Error('visual_review_scene_changed_during_capture');
@@ -88,12 +110,16 @@ export async function reviewCurrentWork(input,host){
     const userRequest=host.userRequest();if(!bounded(userRequest,12000))throw Error('visual_review_user_request_unavailable');
     let reference=null;if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
     await control();const response=await host.requestResponse({model:settings.model,reasoning_effort:settings.reasoning_effort,instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS,tools:[],
-      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,location:initial,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,limits:'The first image is the fresh current model/dialog. The optional second image is the named user reference. No drafting history or claimed result is provided. Missing reference/zoom must remain uncertain.'})},{type:'input_image',image_url:'data:image/png;base64,'+image,detail:'original'},...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
+      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,location:initial,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,limits:'The first image contains only the host-selected current Revit view or owned modal dialog, not the worker conversation or surrounding desktop. Occlusion screening is a bounded grid, not exhaustive; any visible occlusion, missing reference or insufficient zoom must remain uncertain. The optional second image is the named user reference. No drafting history or claimed result is provided.'})},{type:'input_image',image_url:'data:image/png;base64,'+image,detail:'original'},...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
       ...(host.evidenceScope?{evidence_scope:host.evidenceScope()}:{} )});
     raw.reviewer_response=response;responseId=response?.id??null;await control();const after=scene(await observed(),request.view_id,(host.now||Date.now)());if(!sameScene(initial,after))throw Error('visual_review_scene_changed_during_review');
     if(host.userRequest()!==userRequest)throw Error('visual_review_user_direction_changed');
+    await control();const recheck=validateVisualReviewCapture(await host.capture(after),after,(host.now||Date.now)());
+    raw.capture_recheck={frame:recheck.frame,pixels_unchanged:recheck.image===image};
+    if(recheck.image!==image||frame.kind!==recheck.frame.kind||frame.foreground_window_handle!==recheck.frame.foreground_window_handle
+      ||!['x','y','width','height'].every(k=>frame.rectangle[k]===recheck.frame.rectangle[k]))throw Error('visual_review_visible_frame_changed_during_review');
     const result=parseVisualWorkReview(response,request);
-    return retained({...base,ok:true,request_dispatched:true,...result,location:initial,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
+    return retained({...base,ok:true,request_dispatched:true,...result,location:initial,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
       guidance:result.state==='mismatch'?'Inspect each discrepancy, correct only the confirmed in-scope mismatch, then obtain fresh native readback and another visual review. Do not replay an uncertain write.':result.state==='uncertain'?'Obtain a closer view, relevant source or native attributes for the uncertain checks; do not treat missing evidence as an instruction to repeat edits.':'These visible checks match at this observation. Preserve native/readback and scope requirements; this is not whole-task completion.'});
   }catch(error){return retained({...base,ok:false,request_dispatched:raw.native_identity_observations.length>0,state:'unavailable',checks:[],reason:error instanceof Error?error.message:'visual_review_failed',location:initial,capture:captureRef?{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash}:null,reviewer_response_id:responseId,
     guidance:'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'});}

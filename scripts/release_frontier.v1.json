@@ -4526,6 +4526,14 @@
       ]
     },
     {
+      "id": "visual_review_excludes_worker_conversation_and_desktop_using_exact_native_view_or_owned_modal",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "dotnet:OperatorUiContextSnapshotTests"
+      ]
+    },
+    {
       "id": "scoped_helper_findings_survive_large_wrapper_without_native_authority_promotion",
       "coverage": [
         "backend:scoped_helper_projection.test.ts",
@@ -4556,6 +4564,7 @@
     "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
     "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
     "package/operator-assistant-ui/native_change_observations.test.mjs",
-    "package/operator-assistant-ui/visual_work_review.test.mjs"
+    "package/operator-assistant-ui/visual_work_review.test.mjs",
+    "package/operator-assistant-ui/visual_review_capture.test.mjs"
   ]
 }
