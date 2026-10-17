@@ -65,6 +65,45 @@ namespace RevitBridge.Common.Tests
             }
         }
 
+        [Theory]
+        [InlineData(".png")]
+        [InlineData(" - Sheet - M002 - Notes, Symbols & Schedules.jpg")]
+        [InlineData(" - Floor Plan - L4.JPEG")]
+        public void RequiredExportBindsTheSingleExactTargetArtifact(string suffix)
+        {
+            var dir = CreateTempDir();
+            try
+            {
+                var requested = Path.Combine(dir, "Revit_target_unique");
+                var actual = requested + suffix;
+                File.WriteAllText(actual, "pixels");
+                File.WriteAllText(requested + "Other - Sheet - M000.jpg", "unrelated");
+                var artifact = ExportedImagePathResolver.ReadRequired(requested);
+                Assert.Equal(actual, artifact.Path);
+                Assert.Equal(6, artifact.Bytes);
+                Assert.Equal("6ec9c2b0eb14010746c8bce8939303b382344b296206612eb8a907a37b2b2f37", artifact.Sha256);
+            }
+            finally { Directory.Delete(dir, recursive: true); }
+        }
+
+        [Fact]
+        public void RequiredExportRejectsMissingEmptyAndAmbiguousImagesInsteadOfGuessingNewest()
+        {
+            var dir = CreateTempDir();
+            try
+            {
+                var requested = Path.Combine(dir, "Revit_target_unique");
+                Assert.Throws<InvalidOperationException>(() => ExportedImagePathResolver.ReadRequired(requested));
+                File.WriteAllText(requested + ".jpg", "");
+                Assert.Throws<InvalidOperationException>(() => ExportedImagePathResolver.ReadRequired(requested));
+                File.WriteAllText(requested + ".jpg", "pixels");
+                File.WriteAllText(requested + " - Sheet - M002.jpg", "other");
+                Assert.Throws<InvalidOperationException>(() => ExportedImagePathResolver.ReadRequired(requested));
+                Assert.Throws<FileNotFoundException>(() => ExportedImagePathResolver.ReadRequired(Path.Combine(dir, "missing", "target")));
+            }
+            finally { Directory.Delete(dir, recursive: true); }
+        }
+
         private static string CreateTempDir()
         {
             var dir = Path.Combine(Path.GetTempPath(), "revit-operator-export-path-tests", Guid.NewGuid().ToString("N"));

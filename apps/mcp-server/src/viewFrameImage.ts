@@ -40,9 +40,14 @@ export function captureImageContent(data: unknown, route: "/revit/export-image" 
     && settlement?.effect_state === "none" && settlement.requested_effect === "read"
     && settlement.method === "POST" && settlement.path === route;
   let pixels = valid ? readImage(root.path, IMAGE_LIMIT_BYTES) : {ok:false as const,reason:"Native capture contract or read settlement is missing or unsuccessful"};
-  if (pixels.ok && route === "/revit/capture-screenshare") {
+  // New native target-view exports bind the returned pixels, including when
+  // another view is active. Keep legacy responses readable, but never ignore a
+  // supplied (even malformed or partial) integrity receipt.
+  if (pixels.ok && (route === "/revit/capture-screenshare" || root.sha256 !== undefined || root.bytes !== undefined)) {
     const bytes=Buffer.from(pixels.data,"base64");
-    if (bytes.length !== root.bytes || createHash("sha256").update(bytes).digest("hex") !== root.sha256.toLowerCase())
+    if (typeof root.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(root.sha256)
+      || !Number.isSafeInteger(root.bytes) || root.bytes <= 0 || bytes.length !== root.bytes
+      || createHash("sha256").update(bytes).digest("hex") !== root.sha256.toLowerCase())
       pixels={ok:false,reason:"Capture pixels no longer match the native screenshot receipt"};
   }
   const imageDelivery = pixels.ok ? {available:true} : {available:false,reason:pixels.reason,

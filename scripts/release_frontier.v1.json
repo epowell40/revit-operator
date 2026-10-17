@@ -487,7 +487,8 @@
     "BoundedNativeSequenceTests",
     "ParameterValuePreservationDigestTests",
     "OperatorDelegatedBatchTruthTests",
-    "OperatorDocumentChangeObservationTests"
+    "OperatorDocumentChangeObservationTests",
+    "ExportedImagePathResolverTests"
   ],
   "failure_families": [
     {
@@ -4546,6 +4547,13 @@
       "coverage": [
         "backend:scoped_helper_projection.test.ts",
         "desktop:test/scoped_helper_projection.test.js"
+      ]
+    },
+    {
+      "id": "target_view_exports_resolve_single_suffixed_artifact_and_bind_delivered_pixels",
+      "coverage": [
+        "dotnet:ExportedImagePathResolverTests",
+        "mcp:viewFrameImage.test.ts"
       ]
     }
   ],
