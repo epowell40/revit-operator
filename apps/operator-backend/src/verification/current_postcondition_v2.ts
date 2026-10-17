@@ -70,5 +70,6 @@ export function checkedReadIsCurrentV2(snapshot: AssignmentSnapshotV2, readId: s
 
 export function checkedEditIsCurrentV2(snapshot: AssignmentSnapshotV2, id: string): boolean {
   const op=currentSubject(snapshot,id);
-  return Boolean(op?.verification_operation_ids.some(readId=>checkedReadIsCurrentV2(snapshot,readId)));
+  return Boolean(op?.verification_operation_ids.some(readId=>
+    snapshot.operations[readId]?.verification_of_operation_id===id && checkedReadIsCurrentV2(snapshot,readId)));
 }

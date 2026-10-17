@@ -71,3 +71,14 @@ test('equal timestamps preserve a check only when retained order puts the effect
  const s=fixture();later(s,{settled_assignment_version:2,result:{...s.operations.apply!.result!,completed_at:s.operations.read!.result!.completed_at}});
  assert(checkedEditIsCurrentV2(s,'apply'));assert.equal(action(s).state,'passed');
 });
+test('a stale edit cannot borrow another edit\'s fresh read through a malformed extra forward link',()=>{
+ const s=fixture();later(s);
+ s.operations.other={...structuredClone(s.operations.apply),operation_id:'other',target:{target_id:'id:99'},verification_operation_ids:['other-read'],
+  result:{...s.operations.apply.result,affected_target_identities:['element_id:99']}};
+ s.operations['other-read']={...structuredClone(s.operations.read),operation_id:'other-read',verification_of_operation_id:'other',observation_ids:['other-observation'],
+  result:{...s.operations.read.result,completed_at:'2026-10-16T12:00:05Z'}};
+ s.observations['other-observation']={...structuredClone(s.observations.observation),operation_id:'other-read'};
+ s.operations.apply.verification_operation_ids.push('other-read');
+ assert(checkedEditIsCurrentV2(s,'other'));assert.equal(action(s,'other-read').state,'passed');
+ assert.equal(checkedEditIsCurrentV2(s,'apply'),false);assert.equal(action(s).state,'inconclusive');assert.equal(action(s,'read').state,'inconclusive');
+});
