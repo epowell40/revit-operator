@@ -12,6 +12,7 @@ import {
   recordTeammateMcpResult,
   reconcileTeammateCanonicalSettlementV2,
   teammateLoopIsConversationForOwner,
+  teammateDesktopHelperScopeForOwner,
   teammateLoopSessionIdForOwner
 } from "../teammate_loop_runtime.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
@@ -74,6 +75,7 @@ import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
 import { committedReadRetryDecisionV2 } from '../verification/safe_committed_read_retry_v2.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
+import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -264,6 +266,13 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (v2Snapshot && v2Binding) {
     if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
       try {
+        // The helper's local instruction is not the entire authenticated user
+        // request. Do not let its inspection handoff place the desktop owner
+        // behind a whole-task review fence. No existing fence is cleared.
+        if(params.tool==='operator_manage_work_plan'&&boundArguments.arguments.action==='propose_completion'
+          &&desktopHelperScopeForSnapshotV1(v2Snapshot,teammateDesktopHelperScopeForOwner(runtime,params.turnId))){
+          return {contentItems:[{type:'inputText',text:'[scoped_backend_handoff_required] '+DESKTOP_SCOPED_HELPER_GUIDANCE}],success:false};
+        }
         let result = await runtime.callTool(params.tool, boundArguments.arguments, {
           turnId: params.turnId,
           sessionId,

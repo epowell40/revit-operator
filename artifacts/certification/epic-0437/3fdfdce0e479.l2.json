@@ -2784,8 +2784,12 @@
       "sha256": "sha256:092b1619cf4f6d3a52ade121b4ce3ff92fc85c4f1c19bd4982f2915839fc0f13"
     },
     {
+      "path": "apps/operator-backend/src/desktop_assignment_feedback.ts",
+      "sha256": "sha256:298f12937fc5328ba9c5f8aae47f07350aef3158a84f854fb3583c072655bb22"
+    },
+    {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:2ca5e20b8eacdf9e1cf6fd3ee581fac355119ac806dc25d772aa3b9bc802aa38"
+      "sha256": "sha256:44b84cada4ff263f865c0b82544eab9c331b2c34fdf8ecc472617004dd445403"
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
@@ -5021,7 +5025,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:4e84294849fdf4f6b49bb0f50d4e81730ff2ba8b5bbd725b554aa4572592785e"
+      "sha256": "sha256:20cbdcd4f150c9656af5d97ec33dcc37cb216333b58e836ee59a100c2019492b"
     },
     {
       "path": "apps/operator-backend/test/desktop_response_store.test.ts",
@@ -6141,7 +6145,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_comparison_feedback_runtime.test.ts",
-      "sha256": "sha256:60f42946cd2bda1cd851f47c2b1adc8cb2d65370cfd9a8ee9819c92cae01793b"
+      "sha256": "sha256:9bb9708e18e41ec888f8705fa729f1134ae28bd011297e32c86ca8fef1fcc392"
     },
     {
       "path": "apps/operator-backend/test/native_completion_delivery_recovery.test.ts",
@@ -10029,7 +10033,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:211812aa16777b338c0f768657c55b5c6a8abf294fab3b539987b54716a97500",
+  "inputs_hash": "sha256:0e549ce83613b0275eca39e2125bdb9a13b367943615a06609a4552074763f96",
   "result": {
     "passed": true,
     "checks": [

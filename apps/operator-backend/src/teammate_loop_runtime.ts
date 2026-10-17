@@ -70,6 +70,7 @@ type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
 export type TeammateLoopState = {
+  desktop_helper_scope?:unknown;
   canonical_supervision_only?: boolean;
   key: string;
   contract: TeammateTurnContract;
@@ -1091,6 +1092,7 @@ export function beginTeammateLoopOwner(owner: object, req: ChatRequest, options?
     throw new Error("Canonical-only supervision requires a bound V2 assignment.");
   }
   state.canonical_supervision_only = options?.canonicalSupervisionOnly === true;
+  state.desktop_helper_scope=objectValue(req.context).desktop_helper_scope_v1;
   ingestToolResults(state, req.tool_results);
   const lease = { owner, state, turn_id: null };
   const registry = statesByOwner.get(owner) ?? { unbound: new Set<TeammateLoopOwnerLease>(), by_turn: new Map<string, TeammateLoopOwnerLease>() };
@@ -1142,6 +1144,7 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
 }
 
 export function teammateLoopIsConversationForOwner(owner: object, turnId: unknown): boolean { return ownerState(owner, turnId)?.contract.turn_kind === "conversation"; }
+export function teammateDesktopHelperScopeForOwner(owner:object,turnId:unknown):unknown {return ownerState(owner,turnId)?.desktop_helper_scope;}
 
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown },
   canonicalSnapshot?: AssignmentSnapshotV2 | null): TeammateMcpGate {

@@ -305,7 +305,8 @@
     "regular_schedule_presentation_v2.test.ts",
     "schedule_field_formats_v2.test.ts",
     "schedule_field_refresh_plan_v2.test.ts",
-    "advisory_readback_guidance.test.ts"
+    "advisory_readback_guidance.test.ts",
+    "desktop_scoped_handoff.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4390,19 +4391,34 @@
     },
     {
       "id": "bounded_schedule_field_formats_native_census_and_separate_readback",
-      "coverage": ["backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts", "dotnet:ScheduleFieldFormatContractTests"]
+      "coverage": [
+        "backend:schedule_field_formats_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "dotnet:ScheduleFieldFormatContractTests"
+      ]
     },
     {
       "id": "schedule_field_format_stale_proof_refresh_after_disjoint_presentation_commit",
-      "coverage": ["backend:schedule_field_refresh_plan_v2.test.ts", "backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts"]
+      "coverage": [
+        "backend:schedule_field_refresh_plan_v2.test.ts",
+        "backend:schedule_field_formats_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts"
+      ]
     },
     {
       "id": "schedule_row_failure_cannot_commit_success_and_pending_rollback_stays_unknown",
-      "coverage": ["dotnet:ScheduleRowHeightPolicyTests", "dotnet:OperatorNativeTransportTests", "backend:regular_schedule_presentation_v2.test.ts"]
+      "coverage": [
+        "dotnet:ScheduleRowHeightPolicyTests",
+        "dotnet:OperatorNativeTransportTests",
+        "backend:regular_schedule_presentation_v2.test.ts"
+      ]
     },
     {
       "id": "explicit_desktop_ui_fresh_intake_preserves_existing_backend_assignment_owner",
-      "coverage": ["javascript:package/operator-assistant-ui/composer_intake.test.mjs", "desktop:test/composer_intake.test.js"]
+      "coverage": [
+        "javascript:package/operator-assistant-ui/composer_intake.test.mjs",
+        "desktop:test/composer_intake.test.js"
+      ]
     },
     {
       "id": "native_scalar_mismatch_feedback_and_corrective_readback_without_proof_promotion",
@@ -4446,6 +4462,13 @@
         "backend:desktop_computer_telemetry.test.ts",
         "backend:native_comparison_feedback_runtime.test.ts"
       ]
+    },
+    {
+      "coverage": [
+        "backend:desktop_scoped_handoff.test.ts",
+        "desktop:test/scoped_desktop_handoff.test.js"
+      ],
+      "id": "scoped_backend_inspection_must_return_to_desktop_owner_without_closing_parent"
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4472,4 +4495,3 @@
     "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
   ]
 }
-

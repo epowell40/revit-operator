@@ -20,6 +20,7 @@ import { projectWorkPlan } from '../assignments/work_plan_projection.js';
 import { assignmentBudgetForPrompt } from './assignment_budget_prompt.js';
 import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js';
 import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
+import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -95,7 +96,7 @@ function executionControlContext(snapshot: AssignmentSnapshotV2): string {
   ].join("\n");
 }
 
-export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, concise = false): Readonly<{
+export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, concise = false, desktopHelperScope?:unknown): Readonly<{
   snapshot: AssignmentSnapshotV2;
   prompt: string;
   message: string;
@@ -107,7 +108,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        ADVISORY_HANDOFF_GUIDANCE,
+        desktopHelperScopeForSnapshotV1(progression.snapshot,desktopHelperScope)?DESKTOP_SCOPED_HELPER_GUIDANCE:ADVISORY_HANDOFF_GUIDANCE,
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"
@@ -189,7 +190,7 @@ function advisoryHandoffMessage(proposal: NonNullable<AssignmentSnapshotV2["comp
   ].join("\n\n");
 }
 
-export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string, desktopHelperScope?:unknown): string {
   if (snapshot?.unresolved_unknown_operation_ids.length) {
     return "I could not confirm whether the requested change completed. The task and remaining checks are saved; I need to verify the result before retrying.";
   }
@@ -224,6 +225,13 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
       .filter(question => !question.resolved_at)
       .map(question => question.question.trim()).filter(Boolean);
     if (questions.length) return [...new Set(questions)].join("\n\n");
+  }
+  if(snapshot?.outcome==='active'&&snapshot.quiescent&&!snapshot.provider_budget_exhausted
+    &&!snapshot.progress_blocker&&!snapshot.execution_failure_ids.length
+    &&!snapshot.pending_input_variable_ids.length&&!snapshot.pending_review_ids.length
+    &&!snapshot.in_flight_operation_ids.length&&!snapshot.in_flight_provider_call_ids.length
+    &&desktopHelperScopeForSnapshotV1(snapshot,desktopHelperScope)){
+    return 'Subtask report (unverified; not completion of the assignment).\n\n'+fallback;
   }
   if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
       && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {

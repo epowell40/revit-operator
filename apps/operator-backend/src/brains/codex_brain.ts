@@ -1,4 +1,5 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
+import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -680,7 +681,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         }
       }
       if (assignmentKernelV2) {
-        const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference);
+        const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference,desktopHelperScopeFromContextV1(req.context));
         if (!progression.prompt) {
           const message = progression.message;
           const canonicalAssignmentOutcome = canonicalAssignmentOutcomeForBinding({
@@ -1174,7 +1175,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   const terminalSnapshot = assignmentKernelV2
     ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
     : null;
-  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
+  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText,desktopHelperScopeFromContextV1(req.context));
   if ((assignmentKernelV2 || freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
