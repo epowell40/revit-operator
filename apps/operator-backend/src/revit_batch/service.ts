@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { jobLockOpenWaitKind } from './job_lock_open_error.js';
 import { syncTaskFromRevitBatchJob } from "../tasks/service.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
@@ -330,9 +331,22 @@ function withJobLock<T>(jobId: string, action: () => T): T {
   while (fd === null) {
     try {
       fd = fs.openSync(lockPath, "wx");
-      try {
+    } catch (error) {
+      const waitKind=jobLockOpenWaitKind(error,process.platform);
+      if (!waitKind) throw error;
+      if (Date.now() >= deadline) {
+        if (waitKind==='windows_denial') throw error; // Preserve persistent denial, never bypass permissions.
+        throw new Error(`Timed out waiting for the batch job lock for ${jobId}.`);
+      }
+      // A Windows open denial may be transient contention, but does not let us
+      // read, archive, remove or enter another owner's lock. Retry exclusive OPEN.
+      if (waitKind==='existing' && archiveStaleJobLock(lockPath)) continue;
+      Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 10);
+      continue;
+    }
+    try {
         fs.writeFileSync(fd, JSON.stringify({ token, pid: process.pid, created_at: nowIso() }) + "\n", "utf8");
-      } catch (error) {
+    } catch (error) {
         fs.closeSync(fd);
         fd = null;
         try {
@@ -341,13 +355,6 @@ function withJobLock<T>(jobId: string, action: () => T): T {
           // Preserve the lock-write error.
         }
         throw error;
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") throw error;
-      if (archiveStaleJobLock(lockPath)) continue;
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for the batch job lock for ${jobId}.`);
-      Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 10);
     }
   }
   try {

@@ -472,6 +472,34 @@ test("competing cross-process claims have exactly one winner", async () => {
   assert.equal(stored.items[0].claim.executor_id, winners[0].item.claim.executor_id);
 });
 
+for(const fault of ['transient_open','persistent_open','metadata_write']as const)
+test(`exclusive lock ${fault} preserves acquisition fencing without replaying a batch action`,async()=>{
+ const root=mkWorkspace(),job=createJob();
+ const result=await runChild(root,`
+ const fs=(await import('node:fs')).default,originalOpen=fs.openSync,originalWrite=fs.writeFileSync;
+ let attempts=0,lockFd=null,writes=0,firstError=null,claim=null;const started=Date.now();
+ fs.openSync=function(file,flags,...rest){
+  if(String(file).endsWith('.job.lock')&&flags==='wx'){
+   attempts++;
+   if(${JSON.stringify(fault)}!=='metadata_write'&&(${JSON.stringify(fault)}==='persistent_open'||attempts<=2))throw Object.assign(new Error('retained exclusive-open denial'),{code:'EPERM'});
+   lockFd=originalOpen.call(fs,file,flags,...rest);return lockFd;
+  }return originalOpen.call(fs,file,flags,...rest);
+ };
+ fs.writeFileSync=function(file,...rest){if(file===lockFd){writes++;if(${JSON.stringify(fault)}==='metadata_write')throw Object.assign(new Error('metadata write denied'),{code:'EPERM'});}return originalWrite.call(fs,file,...rest);};
+ try{claim=service.claimNextRevitBatchItem({job_id:${JSON.stringify(job.id)},executor_id:'fault-worker'});}catch(error){firstError={code:error.code,message:error.message};}
+ finally{fs.openSync=originalOpen;fs.writeFileSync=originalWrite;}
+ const stored=service.getRevitBatchJob(${JSON.stringify(job.id)});
+ process.stdout.write(JSON.stringify({attempts,writes,firstError,claim,stored,elapsed:Date.now()-started,platform:process.platform}));
+ `);
+ if(fault==='transient_open'&&process.platform==='win32'){
+  assert.equal(result.firstError,null);assert.equal(result.attempts,3);assert.equal(result.writes,1);assert.equal(result.stored.item_summary.running,1);assert.equal(result.stored.items[0].claim.attempt,1);
+ }else{
+  assert.equal(result.firstError.code,'EPERM');assert.equal(result.claim,null);assert.equal(result.stored.item_summary.running,0);
+  if(fault==='persistent_open'&&process.platform==='win32'){assert(result.attempts>1);assert(result.elapsed>=4900&&result.elapsed<15000);assert.equal(result.writes,0);}
+  else{assert.equal(result.attempts,1);assert.equal(result.writes,fault==='metadata_write'?1:0);}
+ }
+});
+
 test("a genuinely legacy stored claim without fencing metadata remains settleable by its executor", () => {
   const root = mkWorkspace();
   const job = createJob();
