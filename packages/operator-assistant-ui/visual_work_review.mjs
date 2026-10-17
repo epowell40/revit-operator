@@ -19,22 +19,24 @@ export const VISUAL_WORK_REVIEW_TOOL={type:'function',name:'review_current_work'
   'Retain sheet/view location. Target exports exceeding the 24-megapixel review limit get one bounded read-only re-export at a suitable width; actual resolution is reported. If a full export is too small, zoom/navigate to the work and use visible_work. Use for layout, legibility, symbols and visible settings after a useful bounded change or when unsure; use native readback for hidden attributes, membership and dimensions. '+
   'For visible_work open the actual target view/schedule first. Home or an unrelated active screenshot cannot verify background changes; parameter-only work may require native readback without a visual check. '+
   'When reviewing a known defect before editing, check the desired final condition so the discrepancy can become matched after correction; confirming that the defect exists is only a baseline observation. '+
+  'For a correction or preservation recheck, pass the prior review recheck_evidence_id and the same view_id, omitting checks and reference_filename. The host restores the original checks and actual before-image, plus any original user reference; do not rewrite checks to obtain a match. A new document session needs a fresh baseline. '+
   'Read each discrepancy, make an authorized targeted correction, then inspect/review again. Uncertain or unavailable is not a mismatch and never justifies replaying an uncertain write. '+
   'This uses the same model/settings and remaining task budget, not a new allowance. It is supporting visual assessment, not native transaction, engineering or whole-task completion proof.',
-  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work; target_view exports the requested view without activation.'},capture_mode:{type:'string',enum:['visible_work','target_view'],description:'Default visible_work captures current work/editor/dialog. Prefer target_view for sheets and drawings; no screenshot of another active view is substituted.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional target_view export width, default 4000 pixels; one read-only reduction may be needed for the pixel-area limit. Ignored for visible_work. Not a pixel-to-model mapping.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id','checks']}};
+  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work; target_view exports the requested view without activation.'},recheck_evidence_id:{type:'string',description:'Exact recheck_evidence_id from a previous accepted review in this assignment. Omit checks and reference_filename; the host restores original check identities and bound before-image. No local path or actor-supplied image.'},capture_mode:{type:'string',enum:['visible_work','target_view'],description:'Default visible_work captures current work/editor/dialog. Prefer target_view for sheets and drawings; no screenshot of another active view is substituted.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional target_view export width, default 4000 pixels; one read-only reduction may be needed for the pixel-area limit. Ignored for visible_work. Not a pixel-to-model mapping.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id'],anyOf:[{required:['checks']},{required:['recheck_evidence_id']}]}};
 
 export function normalizeVisualReviewRequest(input){
-  if(!object(input)||Object.keys(input).some(k=>!['view_id','checks','reference_filename','capture_mode','image_size'].includes(k))||!positive(input.view_id)
-    ||!Array.isArray(input.checks)||!input.checks.length||input.checks.length>8)throw Error('visual_review_request_invalid');
+  if(!object(input)||Object.keys(input).some(k=>!['view_id','checks','reference_filename','capture_mode','image_size','recheck_evidence_id'].includes(k))||!positive(input.view_id))throw Error('visual_review_request_invalid');
+  const recheck=input.recheck_evidence_id!==undefined;
+  if(recheck?(!safeId(input.recheck_evidence_id)||input.checks!==undefined||input.reference_filename!==undefined):(!Array.isArray(input.checks)||!input.checks.length||input.checks.length>8))throw Error('visual_review_recheck_or_checks_invalid');
   if(input.capture_mode!==undefined&&!['visible_work','target_view'].includes(input.capture_mode))throw Error('visual_review_capture_mode_invalid');
   if(input.image_size!==undefined&&(!Number.isSafeInteger(input.image_size)||input.image_size<1024||input.image_size>6000))throw Error('visual_review_image_size_invalid');
   const reference=input.reference_filename;
   const noReference=reference===undefined||reference===null||(typeof reference==='string'&&reference.length<=240&&!reference.trim());
   if(!noReference&&(!bounded(reference,240)||/[\\/:]/.test(reference)))throw Error('visual_review_reference_filename_invalid');
-  const checks=input.checks.map(c=>{if(!object(c)||Object.keys(c).some(k=>!['id','expected'].includes(k))||!safeId(c.id)||!bounded(c.expected,600))throw Error('visual_review_check_invalid');return{id:c.id,expected:c.expected.trim()};});
+  const checks=(input.checks??[]).map(c=>{if(!object(c)||Object.keys(c).some(k=>!['id','expected'].includes(k))||!safeId(c.id)||!bounded(c.expected,600))throw Error('visual_review_check_invalid');return{id:c.id,expected:c.expected.trim()};});
   if(new Set(checks.map(c=>c.id)).size!==checks.length)throw Error('visual_review_check_ids_not_unique');
-  return {view_id:input.view_id,checks,...(!noReference?{reference_filename:reference}: {}),
-    ...(input.capture_mode!==undefined?{capture_mode:input.capture_mode}:{}),...(input.capture_mode==='target_view'?{image_size:input.image_size??4000}:{})};
+  return {view_id:input.view_id,...(recheck?{recheck_evidence_id:input.recheck_evidence_id}:{checks}),...(!noReference?{reference_filename:reference}: {}),
+    ...(input.capture_mode!==undefined?{capture_mode:input.capture_mode}:{}),...(input.capture_mode==='target_view'?{image_size:input.image_size??4000}:recheck&&input.capture_mode===undefined&&input.image_size!==undefined?{image_size:input.image_size}:{})};
 }
 
 export const VISUAL_WORK_REVIEW_INSTRUCTIONS=
@@ -43,6 +45,7 @@ export const VISUAL_WORK_REVIEW_INSTRUCTIONS=
   'Assess every supplied check by its id. Only use matched when the visible evidence clearly establishes that specific visual condition. '+
   'Use mismatch for a clearly visible discrepancy and describe a targeted correction. Use uncertain for insufficient zoom, occlusion, hidden attributes, missing source/reference, ambiguous intent or engineering correctness you cannot establish from pixels. '+
   'If the requested work target is not visible, mark uncertain even when another view is shown. A matched baseline-inspection question establishes only that observation, never completion of the requested correction. '+
+  'When a historical before-image is supplied, compare it with the current image for requested preservation checks; differences may be intentional corrections. A before-image is an observation, not the desired design or proof that its contents were correct. Do not assume unseen rows, hidden attributes or unchanged pixels outside the supplied scope. '+
   'Do not infer native identity, circuit membership, units, code compliance, preserved data or whole-project completeness from an image. '+
   'If a check does not follow from or conflicts with the user-request excerpt, mark uncertain and explain. '+
   'Return ONLY JSON {"checks":[{"id":"supplied id","status":"matched|mismatch|uncertain","observed":"specific visible evidence or limit","correction":"specific correction for mismatch, otherwise empty or an inspection suggestion"}]}. '+
@@ -71,6 +74,30 @@ function targetScene(context,viewId,owner){
     view_id:viewId,project_fingerprint:context.document.projectIdentity.fingerprint,document_title:context.document.title,active_view_id:context.document.activeView?.id??null,identity_authority:'authorized_native_read'};
 }
 const sameTargetScene=(a,b)=>['process_id','document_session_id','project_fingerprint','epoch','through_sequence','view_id'].every(k=>a[k]===b[k]);
+
+export function validateVisualReviewBaseline(value,request,owner,location,frame){
+  const prior=value?.review,old=prior?.location;
+  if(value?.evidence_ref?.evidence_id!==request.recheck_evidence_id||prior?.schema!=='operator.visual_work_review.v1'||prior.ok!==true
+    ||!['matched','mismatch','uncertain'].includes(prior.state)||prior.authority!=='supporting_visual_assessment'
+    ||prior.native_postcondition_verified!==false||prior.whole_task_verified!==false||!sameVisualReviewOwner(prior.owner,owner)
+    ||!['process_id','document_session_id','epoch','view_id'].every(k=>old?.[k]!==undefined&&old[k]===location[k])
+    ||!Number.isSafeInteger(old.through_sequence)||old.through_sequence<0||old.through_sequence>location.through_sequence
+    ||prior.request?.view_id!==request.view_id||prior.capture?.frame?.kind!==frame.kind
+    ||old.view_unique_id&&location.view_unique_id&&old.view_unique_id!==location.view_unique_id)throw Error('visual_review_baseline_identity_invalid');
+  const checks=normalizeVisualReviewRequest({view_id:request.view_id,checks:prior.request.checks}).checks;
+  const validateImage=(value,expected)=>{
+    const ref=value?.evidence_ref,url=value?.image_url;
+    if(!ref||ref.evidence_id!==expected?.evidence_id||ref.content_hash!==expected.content_hash||!positive(ref.byte_count)||ref.byte_count>5*1024*1024
+      ||!['image/png','image/jpeg'].includes(ref.media_type)||typeof url!=='string'||!url.startsWith('data:'+ref.media_type+';base64,')||url.length>8_000_000)throw Error('visual_review_baseline_pixels_invalid');
+    const encoded=url.slice(url.indexOf(',')+1);if(!/^[A-Za-z0-9+/=\r\n]+$/.test(encoded))throw Error('visual_review_baseline_pixels_invalid');
+    const bytes=Buffer.from(encoded,'base64');if(bytes.length!==ref.byte_count||'sha256:'+createHash('sha256').update(bytes).digest('hex')!==ref.content_hash)throw Error('visual_review_baseline_pixels_invalid');
+    return value;
+  };
+  const capture=validateImage(value.capture,prior.capture);
+  const reference=prior.reference?validateImage(value.reference,prior.reference):null;
+  if(!prior.reference&&value.reference)throw Error('visual_review_baseline_reference_invalid');
+  return {checks,capture,reference,summary:{evidence_id:request.recheck_evidence_id,location:old,capture:{evidence_id:capture.evidence_ref.evidence_id,content_hash:capture.evidence_ref.content_hash},frame:prior.capture.frame}};
+}
 
 /** The host supplies an authorized native export and root-confined image bytes.
  * The actor cannot provide a path, receipt, image, document or observed value. */
@@ -138,10 +165,10 @@ export function parseVisualWorkReview(response,request){
  * provider result or observed native values can enter through the tool schema. */
 export async function reviewCurrentWork(input,host){
   const request=normalizeVisualReviewRequest(input),owner=visualReviewOwner(host.owner());
-  const target=request.capture_mode==='target_view',makeScene=value=>target?targetScene(value,request.view_id,owner):scene(value,request.view_id,(host.now||Date.now)());
-  const same=target?sameTargetScene:sameScene;
+  let target=request.capture_mode==='target_view';const makeScene=value=>target?targetScene(value,request.view_id,owner):scene(value,request.view_id,(host.now||Date.now)());
+  const same=(a,b)=>target?sameTargetScene(a,b):sameScene(a,b);
   const base={schema:'operator.visual_work_review.v1',authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,request,owner};
-  let captureRef=null,initial=null,responseId=null,effectiveWidth=request.image_size,resolutionAdjusted=false;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
+  let captureRef=null,initial=null,responseId=null,effectiveWidth=request.image_size,resolutionAdjusted=false,priorBaseline=null;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
   const observed=async()=>{const value=await (target?host.readTargetContext():host.readContext());raw.native_identity_observations.push(value);return value;};
   const captured=async location=>{
     if(target){
@@ -167,6 +194,15 @@ export async function reviewCurrentWork(input,host){
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
   const control=async()=>{await host.assertControl();if(!sameVisualReviewOwner(owner,host.owner()))throw Error('visual_review_owner_changed');};
   try{
+    if(request.recheck_evidence_id){
+      await control();priorBaseline=await host.readBaseline(request.recheck_evidence_id);
+      if(!sameVisualReviewOwner(priorBaseline?.review?.owner,owner))throw Error('visual_review_baseline_identity_invalid');
+      request.capture_mode??=priorBaseline.review.request?.capture_mode??'visible_work';
+      if(!['visible_work','target_view'].includes(request.capture_mode))throw Error('visual_review_baseline_capture_mode_invalid');
+      target=request.capture_mode==='target_view';
+      if(target){request.image_size??=priorBaseline.review.capture_resolution?.effective_width??priorBaseline.review.request?.image_size??4000;if(!Number.isSafeInteger(request.image_size)||request.image_size<1024||request.image_size>6000)throw Error('visual_review_baseline_image_size_invalid');effectiveWidth=request.image_size;}
+      else delete request.image_size;
+    }
     await control();const before=await observed();initial=makeScene(before);
     await control();const {image,frame,mime}=await captured(initial);raw.capture_frame=frame;
     if(target)Object.assign(initial,{view_name:frame.view_name,view_unique_id:frame.view_unique_id,view_type:frame.view_type,sheet_number:frame.sheet_number});
@@ -176,9 +212,11 @@ export async function reviewCurrentWork(input,host){
     await control();const bracket=makeScene(await observed());if(!same(initial,bracket))throw Error('visual_review_scene_changed_during_capture');
     const settings=host.settings();if(!bounded(settings?.model,200)||!bounded(settings?.reasoning_effort,30))throw Error('visual_review_provider_settings_unavailable');
     const userRequest=host.userRequest();if(!bounded(userRequest,12000))throw Error('visual_review_user_request_unavailable');
-    let reference=null;if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
+    let baseline=null,reference=null;
+    if(request.recheck_evidence_id){await control();baseline=validateVisualReviewBaseline(priorBaseline,request,owner,initial,frame);request.checks=baseline.checks;base.baseline=baseline.summary;reference=baseline.reference;}
+    if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
     await control();const response=await host.requestResponse({model:settings.model,reasoning_effort:settings.reasoning_effort,instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS,tools:[],
-      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,location:initial,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,limits:(target?'The first image is a native full-view export of the exact requested target, which need not be active. It does not show dialogs or provide a pixel-to-model mapping. ':'The first image contains only the host-selected current Revit view or owned modal dialog, not the worker conversation or surrounding desktop. Occlusion screening is a bounded grid, not exhaustive; ')+ 'Any visible occlusion, missing reference or insufficient zoom must remain uncertain. The optional second image is the named user reference. No drafting history or claimed result is provided.'})},{type:'input_image',image_url:'data:'+mime+';base64,'+image,detail:'original'},...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
+      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,location:initial,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,frame},baseline:baseline?.summary??null,reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,limits:(target?'The first image is a native full-view export of the exact requested target, which need not be active. It does not show dialogs or provide a pixel-to-model mapping. ':'The first image contains only the host-selected current Revit view or owned modal dialog, not the worker conversation or surrounding desktop. Occlusion screening is a bounded grid, not exhaustive; ')+ 'Any visible occlusion, missing reference or insufficient zoom must remain uncertain. '+(baseline?'The second image is the historical before-image from the bound prior review, not a desired-result example. Compare visible preservation without assuming hidden data. ':'')+(reference?(baseline?'The third image':'The second image')+' is the original named user reference. ':'')+'No prior reviewer verdict, drafting history or claimed result is provided.'})},{type:'input_image',image_url:'data:'+mime+';base64,'+image,detail:'original'},...(baseline?[{type:'input_image',image_url:baseline.capture.image_url,detail:'original'}]:[]),...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
       ...(host.evidenceScope?{evidence_scope:host.evidenceScope()}:{} )});
     raw.reviewer_response=response;responseId=response?.id??null;await control();const after=makeScene(await observed());if(!same(initial,after))throw Error('visual_review_scene_changed_during_review');
     if(host.userRequest()!==userRequest)throw Error('visual_review_user_direction_changed');
@@ -211,7 +249,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId){
     state:result.state,ok:result.ok,location,
     capture:result.capture?{evidence_id:result.capture.evidence_id,content_hash:result.capture.content_hash,
       kind:result.capture.frame?.kind,width:result.capture.frame?.rectangle?.width??result.capture.frame?.width,height:result.capture.frame?.rectangle?.height??result.capture.frame?.height}:null,
-    reference:result.reference??null,capture_resolution:result.capture_resolution??null,reviewer_response_id:result.reviewer_response_id??null,
+    reference:result.reference??null,baseline:result.baseline??null,recheck_evidence_id:result.ok&&['matched','mismatch','uncertain'].includes(result.state)?evidenceId:null,capture_resolution:result.capture_resolution??null,reviewer_response_id:result.reviewer_response_id??null,
     reason_code:typeof result.reason==='string'?result.reason.match(/(?:^|\n)(visual_review_[a-z0-9_]+)(?=\s|$)/)?.[1]??null:null,
     reason_summary:typeof result.reason==='string'?result.reason.slice(0,500):null,
     reason_complete:typeof result.reason!=='string'||result.reason.length<=500,

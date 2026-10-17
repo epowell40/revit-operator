@@ -2,12 +2,18 @@ import type http from "node:http";
 import { readJson, writeJson } from "../http.js";
 import { getEvidenceContextBudget } from "./model_context_budget.js";
 import { readEvidenceTelemetrySummary, retrieveEvidence, storeEvidence } from "./evidence_store.js";
+import { readVisualReviewBaseline } from "./visual_review_baseline.js";
 
 export async function handleEvidenceHttpRoute(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   url: URL
 ): Promise<boolean> {
+  if(req.method==='POST'&&url.pathname==='/evidence/visual-review-baseline'){
+    try{const body=await readJson(req,100_000);writeJson(res,200,{ok:true,result:readVisualReviewBaseline(body as any)});}
+    catch(error){writeJson(res,400,{error:error instanceof Error?error.message:String(error)});}
+    return true;
+  }
   if (req.method === "POST" && url.pathname === "/evidence/store") {
     try {
       const body = await readJson(req, 32_000_000) as any;

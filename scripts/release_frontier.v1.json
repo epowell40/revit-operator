@@ -310,7 +310,8 @@
     "desktop_scoped_handoff.test.ts",
     "desktop_conversation.test.ts",
     "desktop_conversation_http.test.ts",
-    "scoped_helper_projection.test.ts"
+    "scoped_helper_projection.test.ts",
+    "visual_review_baseline.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4570,6 +4571,14 @@
         "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs",
         "desktop:test/visual_work_review.test.js"
       ]
+    },
+    {
+      "id": "visual_rechecks_restore_bound_before_pixels_and_immutable_checks_without_prior_verdicts",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
+        "backend:visual_review_baseline.test.ts",
+        "desktop:test/visual_work_review.test.js"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4598,6 +4607,7 @@
     "package/operator-assistant-ui/visual_work_review.test.mjs",
     "package/operator-assistant-ui/visual_review_capture.test.mjs",
     "package/operator-assistant-ui/visual_work_review_target.test.mjs",
-    "package/operator-assistant-ui/native_target_review_image.test.mjs"
+    "package/operator-assistant-ui/native_target_review_image.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_recheck.test.mjs"
   ]
 }
