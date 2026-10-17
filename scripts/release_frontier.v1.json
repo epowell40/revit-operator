@@ -342,8 +342,7 @@
     "captureViewArguments.test.ts",
     "lib/viewOwnedDetailingAgentProjection.test.ts",
     "lib/category_visibility_scope_schema.test.ts",
-    "lib/family_static_text_scope_schema.test.ts",
-    "lib/supportedToolInventory.test.js"
+    "lib/family_static_text_scope_schema.test.ts"
   ],
   "desktop_tests": [
     "test/cad_attachment.test.js",
@@ -4329,7 +4328,7 @@
       "id": "cad_link_supported_discovery_after_exact_predispatch_rejection",
       "coverage": [
         "backend:supported_tool_inventory.test.ts",
-        "mcp:lib/supportedToolInventory.test.js",
+        "mcp:lib/supportedToolInventory.test.ts",
         "dotnet:OperatorSupportedToolInventoryTests"
       ]
     },
