@@ -4241,7 +4241,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/regular_schedule_recheck_v2.ts",
-      "sha256": "sha256:e5b2aad79fb98aa75390bb81ac2cc615537e5fc0ec47947143242e1c0ff1b37a"
+      "sha256": "sha256:f638dbd466d26c7a0502d1c88f199533c533899fafa1a0b5bfe8fb16819f211b"
     },
     {
       "path": "apps/operator-backend/src/verification/requested_family_scope_readback_v1.ts",
@@ -6586,6 +6586,10 @@
     {
       "path": "apps/operator-backend/test/schedule_field_formats_v2.test.ts",
       "sha256": "sha256:9bb6b7535696c6eb6ce1c7acacebf4ef69106c0124cfc306b278988058466c6a"
+    },
+    {
+      "path": "apps/operator-backend/test/schedule_field_refresh_plan_v2.test.ts",
+      "sha256": "sha256:d4fbfe52256812aa40c8cd218d29cb5c9c2546c1ada8bbcf32ddc23e434b1827"
     },
     {
       "path": "apps/operator-backend/test/schedule_filter_postcondition_v2.test.ts",
@@ -10001,7 +10005,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:cbc819fa91b760d267dfd70629d7fd63768c27d2ed56300be11e7b0c7a83280d",
+  "inputs_hash": "sha256:4825627afa6850dc1cc0b2f38f392b1e6c10e2b0d4e555017eb16db1062e6861",
   "result": {
     "passed": true,
     "checks": [
