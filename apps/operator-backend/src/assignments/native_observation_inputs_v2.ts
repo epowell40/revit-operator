@@ -21,7 +21,8 @@ export function parameterReadIsFreshNativeV2(applied: OperationV2, read: Operati
     && sameAssignmentBindingV2(commit.binding,result.binding) && Number.isFinite(commitAt) && Number.isFinite(opened) && Number.isFinite(completed)
     && opened >= commitAt && completed >= opened);
 }
-export function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2): boolean {
+export function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2,
+  route: '/revit/native-api-ops'|'/revit/visibility' = '/revit/native-api-ops'): boolean {
   const commit = applied.result;
   const commitAt = Date.parse(commit?.completed_at ?? "");
   const readOpened = Date.parse(read?.opened_at ?? "");
@@ -29,7 +30,7 @@ export function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: Op
   return Boolean(commit?.status === "succeeded" && commit.authority === "native-host"
     && commit.persistent_effect === "applied" && commit.native_transaction_state === "committed"
     && result.status === "succeeded" && result.authority === "native-host" && result.persistent_effect === "none"
-    && result.request_identity?.path === "/revit/native-api-ops"
+    && result.request_identity?.path === route
     && result.request_identity?.request_signature === read?.request_identity?.request_signature
     && sameAssignmentBindingV2(commit.binding, result.binding)
     && Number.isFinite(commitAt) && Number.isFinite(readOpened) && Number.isFinite(readAt)

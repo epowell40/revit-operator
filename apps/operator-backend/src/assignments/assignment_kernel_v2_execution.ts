@@ -21,6 +21,7 @@ import { nativeAnnotationPostconditionSatisfiedV2 } from "../verification/native
 import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
 import {isNativePhaseFilterEditV2,nativePhaseFilterPostconditionSatisfiedV2}from '../verification/native_phase_filter_v2.js';
+import {isVisibilityPhasingEditV2}from '../verification/visibility_view_contract_v2.js';
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
@@ -754,6 +755,11 @@ function commitInput(
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
       && deterministicallyTargetBound
+      && (verificationSubject.request_identity?.path!=='/revit/visibility'||!isVisibilityPhasingEditV2(verificationSubject.input)
+        || (nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility')
+          && result.native_transaction_state==='not_applicable'&&Boolean(result.receipt_id&&result.native_correlation_id)
+          && !snapshot?.unresolved_unknown_operation_ids.length
+          && !snapshot?.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation?.operation_id)))
       && (verificationSubject.request_identity?.path !== "/revit/update-schedule-cell" || scheduleCellReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/set-parameter" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/change-element-type" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))

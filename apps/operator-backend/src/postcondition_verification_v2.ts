@@ -21,7 +21,7 @@ import {isNativePhaseFilterEditV2}from './verification/native_phase_filter_v2.js
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { savedDocumentPostconditionV2 } from './verification/saved_document_postcondition_v2.js';
-import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
+import { visibilityExpectedValuesV2, visibilityObservedValuesV2, isVisibilityPhasingEditV2, visibilityPhasingReadbackMatchesV2 } from "./verification/visibility_view_contract_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
   isExcludedEvidenceContainerV2,
@@ -620,6 +620,8 @@ export function postconditionSatisfiedByPayloadV2(
   if (operationPath === "/revit/configure-schedule" && (isScheduleCellBackgroundEditV2(applyInput) || isRegularSchedulePresentationEditV2(applyInput))) return false;
   if (operationPath === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(applyInput)) return false;
   if (operationPath === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(applyInput)) return false;
+  if(operationPath==='/revit/visibility'&&isVisibilityPhasingEditV2(applyInput))
+    return visibilityPhasingReadbackMatchesV2(applyInput,verificationPayload,contract.verification_input);
   if (operationPath === '/revit/save-as')
     return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")

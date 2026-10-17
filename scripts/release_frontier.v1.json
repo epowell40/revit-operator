@@ -294,7 +294,9 @@
     "assignment_schedule_filter_restoration.test.ts",
     "schedule_filter_postcondition_v2.test.ts",
     "native_phase_filter_v2.test.ts",
-    "native_phase_filter_runtime.test.ts"
+    "native_phase_filter_runtime.test.ts",
+    "visibility_phasing_readback_v2.test.ts",
+    "visibility_phasing_runtime.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4360,6 +4362,13 @@
       "coverage": [
         "backend:schedule_filter_postcondition_v2.test.ts",
         "backend:assignment_schedule_filter_restoration.test.ts"
+      ]
+    },
+    {
+      "id": "view_phase_assignment_requires_separate_exact_fresh_native_get_and_normal_kernel_settlement",
+      "coverage": [
+        "backend:visibility_phasing_readback_v2.test.ts",
+        "backend:visibility_phasing_runtime.test.ts"
       ]
     }
   ],
