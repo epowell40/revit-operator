@@ -1,4 +1,5 @@
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
+import {nativePropertyComparisonV2,NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
 import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
@@ -715,7 +716,8 @@ function commitInput(
   }
   // Inventory completeness is host-derived, never a provider/producer assertion.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
-    .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2);
+    .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2);
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
   if (nativeChangeInventoryCompleteV2(operation, result, envelope.observation.raw_payload)) {
@@ -808,6 +810,32 @@ function commitInput(
           affected_target_identities: verificationSubject.result?.affected_target_identities }
       ))
   );
+  // Explain a supported scalar read in the same settlement owner that performs
+  // the check. Caller-supplied comparison claims above are stripped. This is
+  // control feedback only; it cannot satisfy a criterion or authorize a write.
+  const comparisonFresh=verificationSubject?.request_identity?.path==='/revit/set-parameter'
+    ?parameterReadIsFreshNativeV2(verificationSubject,operation,result)
+    :verificationSubject?.request_identity?.path==='/revit/visibility'
+      &&nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility');
+  if(snapshot&&operation&&verificationSubject&&comparisonFresh&&deterministicallyTargetBound
+    && lease.purpose==='verification'&&lease.fulfillment_role==='verification'
+    && result.dispatch_state==='dispatched'&&result.native_transaction_state==='not_applicable'
+    && result.receipt_id&&result.native_correlation_id&&result.raw_payload_hash===stableHash(envelope.observation.raw_payload)
+    && sameAssignmentBindingV2(snapshot.current_binding,operation.binding)&&sameAssignmentBindingV2(operation.binding,result.binding)
+    && !snapshot.unresolved_unknown_operation_ids.length
+    && !snapshot.in_flight_operation_ids.some(id=>id!==operation.operation_id)
+    && !Object.values(snapshot.operations).some(other=>other.operation_id!==verificationSubject.operation_id
+      &&other.requested_effect==='apply'&&other.persistent_effect!=='none'
+      &&sameAssignmentBindingV2(other.binding,snapshot.current_binding)
+      &&(!Number.isFinite(Date.parse(other.result?.completed_at??''))||Date.parse(other.result!.completed_at)>Date.parse(operation.opened_at)
+        ||Date.parse(other.result!.completed_at)===Date.parse(operation.opened_at)
+          &&!(Number.isSafeInteger(other.settled_assignment_version)&&Number.isSafeInteger(operation.admitted_assignment_version)
+            &&other.settled_assignment_version!<operation.admitted_assignment_version!)))
+    && !snapshot.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation.operation_id)){
+    const comparison=nativePropertyComparisonV2(verificationSubject.input,operation.input,envelope.observation.raw_payload);
+    if(comparison.state!=='unsupported')semanticFacts.push({fact_id:NATIVE_PROPERTY_COMPARISON_FACT_V2,fact_class:'control',
+      value:JSON.stringify({...comparison,...(comparison.state==='matched'&&!deterministicallySatisfied?{state:'incomplete'}:{}),scope:'native_scalar_properties_only'})});
+  }
   if (trustedVerification) {
     if (lease.purpose !== "verification"
         || lease.fulfillment_role !== "verification"

@@ -297,6 +297,8 @@
     "native_phase_filter_runtime.test.ts",
     "visibility_phasing_readback_v2.test.ts",
     "visibility_phasing_runtime.test.ts",
+    "native_property_comparison_v2.test.ts",
+    "native_comparison_feedback_runtime.test.ts",
     "visibility_refresh_runtime.test.ts",
     "current_work_packet_verification.test.ts"
   ],
@@ -4371,6 +4373,13 @@
       "coverage": [
         "backend:visibility_phasing_readback_v2.test.ts",
         "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "native_scalar_mismatch_feedback_and_corrective_readback_without_proof_promotion",
+      "coverage": [
+        "backend:native_property_comparison_v2.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts"
       ]
     },
     {
