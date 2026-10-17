@@ -17,15 +17,17 @@ export const VISUAL_WORK_REVIEW_TOOL={type:'function',name:'review_current_work'
   'Zoom/navigate to the work first and retain its sheet/view location. Use for layout, legibility, symbols and visible settings after a useful bounded change or when unsure; use native readback for hidden attributes, membership and dimensions. '+
   'Read each discrepancy, make an authorized targeted correction, then inspect/review again. Uncertain or unavailable is not a mismatch and never justifies replaying an uncertain write. '+
   'This uses the same model/settings and remaining task budget, not a new allowance. It is supporting visual assessment, not native transaction, engineering or whole-task completion proof.',
-  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact active Revit view/schedule/sheet id containing this work.'},reference_filename:{type:'string',description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id','checks']}};
+  parameters:{type:'object',additionalProperties:false,properties:{view_id:{type:'integer',description:'Exact active Revit view/schedule/sheet id containing this work.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, first obtain an appropriate image/crop through the ordinary source tools.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},required:['view_id','checks']}};
 
 export function normalizeVisualReviewRequest(input){
   if(!object(input)||Object.keys(input).some(k=>!['view_id','checks','reference_filename'].includes(k))||!positive(input.view_id)
     ||!Array.isArray(input.checks)||!input.checks.length||input.checks.length>8)throw Error('visual_review_request_invalid');
-  if(input.reference_filename!==undefined&&(!bounded(input.reference_filename,240)||/[\\/:]/.test(input.reference_filename)))throw Error('visual_review_reference_filename_invalid');
+  const reference=input.reference_filename;
+  const noReference=reference===undefined||reference===null||(typeof reference==='string'&&reference.length<=240&&!reference.trim());
+  if(!noReference&&(!bounded(reference,240)||/[\\/:]/.test(reference)))throw Error('visual_review_reference_filename_invalid');
   const checks=input.checks.map(c=>{if(!object(c)||Object.keys(c).some(k=>!['id','expected'].includes(k))||!safeId(c.id)||!bounded(c.expected,600))throw Error('visual_review_check_invalid');return{id:c.id,expected:c.expected.trim()};});
   if(new Set(checks.map(c=>c.id)).size!==checks.length)throw Error('visual_review_check_ids_not_unique');
-  return {view_id:input.view_id,checks,...(input.reference_filename?{reference_filename:input.reference_filename}: {})};
+  return {view_id:input.view_id,checks,...(!noReference?{reference_filename:reference}: {})};
 }
 
 export const VISUAL_WORK_REVIEW_INSTRUCTIONS=

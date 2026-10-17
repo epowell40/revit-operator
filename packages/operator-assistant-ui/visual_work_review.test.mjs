@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
+import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
@@ -11,6 +11,25 @@ function host(status='matched'){
  const h={owner:()=>owner,assertControl:async()=>{calls.controls++;},readContext:async()=>{calls.contexts++;return snapshot();},capture:async()=>{calls.captures++;return image;},retainImage:async()=>{calls.retained++;return{ref:{evidence_id:'ev1_capture',content_hash:'sha256:'+'a'.repeat(64),byte_count:69}};},settings:()=>({model:'gpt-6.1-sol',reasoning_effort:'medium'}),userRequest:()=> 'Remove the extra gap below the air-device schedule headings and preserve borders.',now:()=>now,evidenceScope:()=>({session_id:binding.session_id,assignment_id:binding.assignment_id}),requestResponse:async body=>{calls.providers.push(body);return response(status);}};
  return {h,calls,setOwner:b=>{owner=b;}};
 }
+
+test('optional absent reference accepts model null or empty output without attachment lookup',async()=>{
+ for(const reference_filename of [undefined,null,'','  \t ']){
+  const input={...request,reference_filename};assert.deepEqual(normalizeVisualReviewRequest(input),request);
+  const {h,calls}=host();h.referenceImage=async()=>{throw Error('No reference requested');};
+  const result=await reviewCurrentWork(input,h);assert.equal(result.state,'matched');assert.equal(result.reference,null);
+  assert.equal(calls.providers.length,1);assert.equal(calls.providers[0].input[0].content.filter(c=>c.type==='input_image').length,1);
+ }
+ assert(VISUAL_WORK_REVIEW_TOOL.parameters.properties.reference_filename.type.includes('null'));
+ assert.match(VISUAL_WORK_REVIEW_TOOL.parameters.properties.reference_filename.description,/null.*no reference|no reference.*null/i);
+});
+
+test('optional absence does not accept invalid types, paths or fake named references',async()=>{
+ for(const reference_filename of [false,0,[],{},' '.repeat(241),'/',String.raw`C:\private.png`,'https://example.test/image.png'])
+  assert.throws(()=>normalizeVisualReviewRequest({...request,reference_filename}),/reference_filename_invalid/);
+ const {h,calls}=host();h.referenceImage=async()=>null;
+ const result=await reviewCurrentWork({...request,reference_filename:'none'},h);
+ assert.equal(result.state,'unavailable');assert.equal(result.reason,'visual_review_reference_unavailable');assert.equal(calls.providers.length,0);
+});
 test('separate review receives fresh actual pixels and location, never drafting history/tools/previous response',async()=>{
  const {h,calls}=host('mismatch'),r=await reviewCurrentWork(request,h);assert.equal(r.state,'mismatch');assert.equal(r.checks[0].correction,'Clear only the blank-row checkbox.');assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);assert.equal(r.authority,'supporting_visual_assessment');assert.equal(calls.contexts,3);assert.equal(calls.captures,1);assert.equal(calls.retained,1);assert.equal(calls.providers.length,1);
  const body=calls.providers[0];assert.equal(body.model,'gpt-6.1-sol');assert.equal(body.reasoning_effort,'medium');assert.deepEqual(body.tools,[]);assert.equal(body.previous_response_id,undefined);assert.equal(body.input.length,1);assert.equal(body.input[0].content[1].image_url,'data:image/png;base64,'+image);assert.equal(body.input[0].content[1].detail,'original');const data=JSON.parse(body.input[0].content[0].text);assert.equal(data.location.view_id,41);assert.equal(data.location.view_name,'AIR DEVICE SCHEDULE');assert.equal(data.location.identity_authority,'cached_ui_identity_only');assert.equal(data.capture.evidence_id,'ev1_capture');assert(!JSON.stringify(body).includes('assistant_message'));

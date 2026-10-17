@@ -4515,6 +4515,13 @@
         "backend:opaque_text_input_scope.test.ts",
         "backend:teammate_mutation_intent_binding.test.ts"
       ]
+    },
+    {
+      "id": "optional_visual_review_reference_absence_is_valid_without_weakening_named_image_identity",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
