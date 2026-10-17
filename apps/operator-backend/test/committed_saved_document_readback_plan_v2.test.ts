@@ -1,3 +1,5 @@
+import {savedCopyHandoffV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -70,6 +72,28 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
    const expectedVerified=['exact','native_session_transition'].includes(variant);
    assert.equal(verified,expectedVerified);assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!expectedVerified);
+   if(variant==='read_schema_rejected'){
+    const before=structuredClone(s),stopped=structuredClone(s);Object.assign(stopped,{terminal:true,outcome:'blocked',terminal_reason:'provider_call_budget_exhausted'});
+    const handoff=deriveTerminalResultV2(stopped);
+    assert.match(handoff.result_summary,/Saved copy: result\.rvt/,'A native save receipt must survive a later verification/budget stop');
+    assert.match(handoff.result_summary,/content verification.*pending/i);assert.equal(handoff.outcome,'blocked');assert(handoff.evidence_refs.includes(s.observations[apply.observation_ids[0]!]!.raw_payload_ref));
+    assert.deepEqual(s,before,'Rendering a partial saved result must not certify it or change lifecycle state');
+    assert(savedCopyHandoffV2(stopped));
+    for(const mutate of [(v:any)=>v.unresolved_unknown_operation_ids=['old-unknown'],(v:any)=>v.in_flight_operation_ids=['pending-native'],
+     (v:any)=>v.current_binding={...v.current_binding,run_id:'foreign'},(v:any)=>v.input_invalidated_operation_ids=[apply.operation_id],
+     (v:any)=>v.operations[apply.operation_id].result.authority='model',(v:any)=>v.operations[apply.operation_id].result.persistent_effect='unknown',
+     (v:any)=>v.operations[apply.operation_id].input.body.filePath='C:/foreign/other.rvt',
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.save_document.native_save_returned=false,
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.outputs[0].stable_read=false,
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.outputs[0].sha256='c'.repeat(64),
+     (v:any)=>v.operations[apply.operation_id].observation_ids=[],
+     (v:any)=>v.observations[apply.observation_ids[0]!].raw_payload_hash='d'.repeat(64),
+     (v:any)=>v.observations[apply.observation_ids[0]!].authority='model',
+     (v:any)=>v.operations['later-edit']={...v.operations[apply.operation_id],operation_id:'later-edit',result:{...v.operations[apply.operation_id].result,completed_at:'2099-01-01T00:00:00Z'}}]){
+      const altered=structuredClone(stopped);mutate(altered);assert.equal(savedCopyHandoffV2(altered),null,'Stale, foreign, invented or unbacked saved-file claims cannot become a partial deliverable');
+    }
+
+   }
    if(expectedVerified){
     assert.equal(committedSavedDocumentReadbackPlanV2(s,apply),null,'Never repeat completed automatic read');
     const plain:any=structuredClone(s);plain.operations[apply.operation_id].verification_operation_ids=[];plain.observations={};plain.operations[apply.operation_id].observation_ids=[];

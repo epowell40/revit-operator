@@ -21,6 +21,7 @@ import { assignmentBudgetForPrompt } from './assignment_budget_prompt.js';
 import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js';
 import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
 import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
+import {createDesktopHelperCallLeaseV1} from './desktop_helper_budget.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -102,6 +103,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
   message: string;
 }> {
   const progression = advanceAssignmentKernelProgressV2({ binding });
+  const helperLease=createDesktopHelperCallLeaseV1(progression.snapshot,desktopHelperScope);
   const prompt = advisoryVerificationV2(progression.snapshot) && progression.decision.decision === "admit_reasoning_turn"
       ? ["CURRENT TASK:", progression.snapshot.spec.source_user_request,
         `Requested effect: ${progression.snapshot.spec.requested_effect}`,
@@ -123,6 +125,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
     snapshot: progression.snapshot,
     prompt: prompt ? [prompt,
       `Host budget status: ${JSON.stringify(assignmentBudgetForPrompt(assignmentWorkBudgetStatusV2(progression.snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString())))}`,
+      ...(helperLease?[`Scoped helper share: ${helperLease.granted_calls} provider calls from the current parent allowance, including your report. Return useful findings and references promptly so the desktop owner can inspect, correct, save and deliver. This is not an additional allowance. A helper-only tool limitation is a handback to that owner, not a reason to exhaust the task or ask the human to operate its tools.`]:[]),
       "For multi-part work, retain a source-linked checklist, group related marks, and check operator_manage_work_plan status after each useful batch. Record completed operations and unresolved questions promptly. A near-limit warning means retain an honest checkpoint, not automatically propose completion. Continue ready independent work when the current remaining budget can cover the next useful batch, verification and final save/handoff; recheck host status after the batch. Stop for a user pause, an actual blocking condition or insufficient remaining resources, not merely because one example or panel succeeded. Do not spend allowance rediscovering completed work. Task counts and assistant claims do not authorize extra budget or prove completion.",
       executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal

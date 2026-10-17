@@ -311,7 +311,9 @@
     "desktop_conversation.test.ts",
     "desktop_conversation_http.test.ts",
     "scoped_helper_projection.test.ts",
-    "visual_review_baseline.test.ts"
+    "visual_review_baseline.test.ts",
+    "desktop_helper_budget.test.ts",
+    "checklist_remaining_presentation.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4588,6 +4590,20 @@
         "javascript:package/operator-assistant-ui/native_target_review_image.test.mjs",
         "dotnet:OperatorViewImageContractTests"
       ]
+    },
+    {
+      "id": "scoped_helper_preserves_parent_call_allowance_and_returns_without_parent_completion_or_native_retry",
+      "coverage": [
+        "backend:desktop_helper_budget.test.ts",
+        "backend:desktop_scoped_handoff.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "backend:committed_saved_document_readback_plan_v2.test.ts",
+        "backend:checklist_remaining_presentation.test.ts"
+      ],
+      "id": "partial_saved_copy_handoff_preserves_native_evidence_without_certifying_content"
     }
   ],
   "dynamic_runtime_test_classes": [

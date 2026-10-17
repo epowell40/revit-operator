@@ -3,6 +3,7 @@ import {readAuthoritativeEvidence,readEvidenceRef} from '../evidence/evidence_st
 import {sameAssignmentBindingV2,type AssignmentSnapshotV2} from '../domain/assignment-kernel/index.js';
 import {appliedOperationHasVerifiedPostconditionV2} from '../domain/assignment-kernel/outcome.js';
 import {verifiedNativeWorkTargetIdentitiesV2} from '../domain/assignment-kernel/verified_work_targets.js';
+import {advisoryVerificationV2} from '../domain/assignment-kernel/execution_policy.js';
 
 const row=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,any>:{};
 const label=(v:unknown)=>typeof v==='string'?v.replace(/[\r\n\u0000-\u001f]/g,' ').trim().slice(0,120):'';
@@ -58,6 +59,6 @@ export function verifiedChangePresentationV2(snapshot:AssignmentSnapshotV2):stri
 export function remainingWorkPresentationV2(snapshot:AssignmentSnapshotV2):string|null {
  const pending=snapshot.work_plan?.items.filter(item=>!item.completed_at)??[];
  if(!pending.length)return null;
- return 'Still unfinished: '+pending.slice(0,3).map(item=>label(item.description)).join('; ')
+ return (advisoryVerificationV2(snapshot)?'Saved checklist status still needs review: ':'Still unfinished: ')+pending.slice(0,3).map(item=>label(item.description)).join('; ')
   +(pending.length>3?`; plus ${pending.length-3} other planned items`:'')+'.';
 }

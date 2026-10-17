@@ -1,4 +1,5 @@
 import {verifiedChangePresentationV2,remainingWorkPresentationV2} from './verified_change_presentation_v2.js';
+import {savedCopyHandoffV2} from './saved_copy_handoff_v2.js';
 import type {
   AssignmentOutcomeV2,
   AssignmentSnapshotV2,
@@ -145,7 +146,9 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     : effects.includes("applied")
       ? " Changes were applied before the task stopped. Check the saved results before retrying."
       : "";
-  const partialSummary = verifiedChangePresentationV2(snapshot) ?? successfulSummary;
+  const savedCopy=!complete?savedCopyHandoffV2(snapshot):null;
+  const partialSummary = [verifiedChangePresentationV2(snapshot) ?? successfulSummary,savedCopy?.text].filter(Boolean).join('\n');
+  const deliveryObservationIds=[...new Set([...supportingObservationIds,...(savedCopy?.observation_ids??[])])].sort();
   const remainingSummary = remainingWorkPresentationV2(snapshot);
   const registrationFailure = !complete ? rejectedRegistrationSummary(snapshot) : null;
   const resultSummary = complete
@@ -161,8 +164,8 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     outcome: snapshot.outcome as TerminalResultV2["outcome"],
     requested_effect: snapshot.spec.requested_effect,
     result_summary: resultSummary,
-    supporting_observation_ids: supportingObservationIds,
-    evidence_refs: supportingObservationIds.map(id => snapshot.observations[id]!.raw_payload_ref),
+    supporting_observation_ids: deliveryObservationIds,
+    evidence_refs: deliveryObservationIds.map(id => snapshot.observations[id]!.raw_payload_ref),
     warnings: snapshot.outcome === "complete_with_issues" && snapshot.terminal_reason
       ? [snapshot.terminal_reason]
       : []

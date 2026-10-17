@@ -17,6 +17,10 @@ const consumedReturns=new WeakSet<object>();
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9._:-]{1,240}$/.test(value);
 const strings=(v:unknown,max:number)=>Array.isArray(v)&&v.length<=max&&v.every(s=>typeof s==='string'&&s.trim()&&s.length<=1000);
 function normalize(tool:string,args:Record<string,unknown>):Report|null{
+ if(tool==='host_desktop_helper_call_yield'){
+  const p=args.report as any;if(!validAdvisoryProposalV1(p))throw Error('desktop_helper_budget_report_invalid');
+  return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties]};
+ }
  if(tool==='operator_manage_work_plan'&&args.action==='propose_completion'){
   const p=args.completionProposal as any;if(!validAdvisoryProposalV1(p))throw Error('desktop_helper_report_invalid');
   return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties]};
@@ -25,6 +29,9 @@ function normalize(tool:string,args:Record<string,unknown>):Report|null{
  if(typeof args.question!=='string'||!args.question.trim()||args.question.length>1200
    ||args.completedWork!==undefined&&!strings(args.completedWork,80))throw Error('desktop_helper_question_invalid');
  return {kind:'proposed_question',claimed_completed:(args.completedWork as string[]|undefined)??[],remaining_work:[],uncertainties:[],question:args.question};
+}
+export function isDesktopHelperReturnRequestV1(tool:string,args:Record<string,unknown>):boolean{
+ try{return tool!=='host_desktop_helper_call_yield'&&normalize(tool,args)!==null;}catch{return false;}
 }
 export function peekDesktopHelperReturnV1(owner:object,turnId:unknown):DesktopHelperReturnV1|null{
  const r=typeof turnId==='string'?pending.get(owner)?.get(turnId):undefined;return r?structuredClone(r):null;

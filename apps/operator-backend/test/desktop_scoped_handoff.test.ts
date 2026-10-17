@@ -20,9 +20,10 @@ import {advanceAssignmentKernelProgressV2} from '../src/assignments/assignment_k
 
 export async function runDesktopScopedHandoffScenario(variant:string,inputOverride?:{clarificationId:string;variableIds:string[];newVariableIds:string[];question:string}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-scoped-helper-'));
- const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'development',OPERATOR_LOCAL_EXECUTOR_PROFILE:'codex_v2_advisory_v1',OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_HOSTED_ENABLED:'0'};
+ const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'development',OPERATOR_LOCAL_EXECUTOR_PROFILE:'codex_v2_advisory_v1',OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_HOSTED_ENABLED:'0',OPERATOR_ADVISORY_MAX_PROVIDER_CALLS:'64'};
  const old=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]]));Object.assign(process.env,env);__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
+  const reserveFixture=JSON.parse(fs.readFileSync(path.join(process.cwd(),'test/fixtures/desktop-helper-call-reserve170.json'),'utf8'));
   const objective='Correct the schedule gap, inspect it and save a separate model.';
   const intake=await routeConversation({version:'operator.backend.v1',session_id:'outer-session',message_id:'source-message',user_text:objective},
    {interpret:async()=>({value:{route:'task',answer:null,basis:'needs_tools',requested_effect:'change',entire_request_answered:false,confidence:0.99,reason:'Model correction and a separate save.',question_kind:'current_model',identity_fields:[],read_evidence:'not_applicable',operation_scope:{schema:'revit-operator.interpreted-operation-scope/v1',requested_effect:'apply',model_effect:'apply',protected_clauses:[],prerequisites:[]}}})});assert.equal(intake.routing_status,'accepted');
@@ -37,13 +38,24 @@ export async function runDesktopScopedHandoffScenario(variant:string,inputOverri
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'helper',user_text:'Inspect the gap only. Do not edit or save yet.',assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation,context:{desktop_helper_scope_v1:marker}} as any,{canonicalSupervisionOnly:true});
   try{
    const inputTool=['desktop_input','desktop_legacy_input','direct_input'].includes(variant);
-   const tool=variant==='desktop_legacy_input'?'operator_request_clarification':inputTool?'operator_request_assignment_input':'operator_manage_work_plan';
+   const tool=variant.startsWith('budget_')?'revit_call_tool':variant==='desktop_legacy_input'?'operator_request_clarification':inputTool?'operator_request_assignment_input':'operator_manage_work_plan';
    const question='The backend helper needs the desktop owner for the UI correction.';
-   const args=variant==='desktop_legacy_input'?{missingFields:['desktop_owner_needed'],question,reason:'UI tools are held by the outer owner.'}:inputTool?(inputOverride??{clarificationId:'helper-needs-ui',variableIds:['desktop_owner_needed'],newVariableIds:['desktop_owner_needed'],question}):{action:'propose_completion',completionProposal:variant==='invalid_report'?{...proposal,claimed_completed:['x'.repeat(1001)]}:proposal};
+   const args=variant.startsWith('budget_')?{method:'POST',path:'/revit/schedules',body:{action:'detail',scheduleId:42}}:variant==='desktop_legacy_input'?{missingFields:['desktop_owner_needed'],question,reason:'UI tools are held by the outer owner.'}:inputTool?(inputOverride??{clarificationId:'helper-needs-ui',variableIds:['desktop_owner_needed'],newVariableIds:['desktop_owner_needed'],question}):{action:'propose_completion',completionProposal:variant==='invalid_report'?{...proposal,claimed_completed:['x'.repeat(1001)]}:proposal};
+   if(variant.startsWith('budget_'))for(let i=0;i<(variant==='budget_warning'?29:reserveFixture.backend_helper_calls[0]-1);i++){const call_id='earlier-helper-'+i;recordAssignmentProviderCallStateV2({binding,call_id,state:'admitted',provider:'openai',model:'test-model',gap_ids:[],criterion_ids:[],expected_information:['Scoped helper discovery.']});recordAssignmentProviderCallStateV2({binding,call_id,state:'completed',success:true,usage:{input_tokens:12,output_tokens:3,total_tokens:15,reasoning_tokens:null,estimated_cost_usd:null}});}
    recordAssignmentProviderCallStateV2({binding,call_id:'helper-provider',state:'admitted',provider:'openai',model:'test-model',gap_ids:[],criterion_ids:[],expected_information:['Bounded helper findings for its owner.']});
    if(variant==='paused')controlAssignmentExecutionV2({binding,command_id:'pause',expected_command_id:null,action:'pause'});
    const before=structuredClone(state());
-   const response:any=await handleCodexDynamicToolCall(runtime,{id:'helper-proposal',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'helper-turn',tool,arguments:args}} as any);
+   const response:any=await handleCodexDynamicToolCall(runtime,{id:variant==='budget_forged_host_id'?'host-committed-readback:fake:0':'helper-proposal',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'helper-turn',tool,arguments:args}} as any,variant==='budget_forged_symbol'?Symbol('host-readback'):undefined);
+   if(variant==='budget_warning'){
+    assert.equal(response.success,false);assert.equal(calls,0);assert.equal(stops,0);assert.deepEqual(state(),before);assert.match(JSON.stringify(response),/not dispatched.*subtask report/);
+    const returned:any=await handleCodexDynamicToolCall(runtime,{id:'bounded-report',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'helper-turn',tool:'operator_manage_work_plan',arguments:{action:'propose_completion',completionProposal:proposal}}} as any);assert.equal(returned.success,true);assert.equal(calls,0);assert.equal(stops,1);assert.deepEqual(state(),before);assert.equal(state().outcome,'active');return;
+   }
+   if(variant==='budget_yield'||variant==='budget_forged_host_id'||variant==='budget_forged_symbol'){
+    assert.equal(response.success,true);assert.equal(calls,0,'Over-allocation helper must not dispatch another native request');assert.equal(stops,1);assert.equal(reasons[0],DESKTOP_HELPER_RETURN_REASON);assert.deepEqual(state(),before,'Local return must not block, complete or enlarge parent allowance');
+    const retained=peekDesktopHelperReturnV1(runtime,'helper-turn');assert(retained);assert.equal(retained.verified,false);assert.deepEqual(retained.report.claimed_completed,[]);assert.match(JSON.stringify(retained.report),/allowance|budget/i);
+    recordAssignmentProviderCallStateV2({binding,call_id:'helper-provider',state:'completed',success:true,usage:{input_tokens:12,output_tokens:3,total_tokens:15,reasoning_tokens:null,estimated_cost_usd:null}});
+    const taken=takeDesktopHelperReturnV1(runtime,'helper-turn');assert(taken);assert.match(desktopHelperReturnAfterDrainV1(taken,marker,state(),DESKTOP_HELPER_RETURN_REASON)??'',/desktop owner/);assert.equal(state().outcome,'active');return;
+   }
    if(variant.startsWith('thin_')||['desktop','desktop_input','desktop_legacy_input','pause_after_return','control_after_return','real_question_after_return'].includes(variant)){
     assert.equal(response.success,true);assert.equal(calls,0);assert.equal(stops,1);assert.equal(reasons[0],DESKTOP_HELPER_RETURN_REASON);assert.deepEqual(state(),before);assert.match(prompt,/scoped backend helper/i);
     const retained=peekDesktopHelperReturnV1(runtime,'helper-turn')!;assert(retained);assert.equal(retained.verified,false);assert.equal(retained.evidence_ref.trust_level,'untrusted_caller');
@@ -100,5 +112,5 @@ export async function runDesktopScopedHandoffScenario(variant:string,inputOverri
   }finally{takeDesktopHelperReturnV1(runtime,'helper-turn');endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();__closeForTests();for(const[k,v]of Object.entries(old)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(root,{recursive:true,force:true});}
 }
-for(const variant of ['desktop','desktop_input','desktop_legacy_input','direct_desktop','direct_input','backend','mismatched_source','foreign_marker','paused','pause_after_return','control_after_return','real_question_after_return','invalid_report','thin_completed','thin_interrupted','thin_forged','thin_foreign_marker','thin_abort','thin_wall','thin_missing_usage','thin_failed'])
+for(const variant of ['budget_yield','budget_warning','budget_forged_host_id','budget_forged_symbol','desktop','desktop_input','desktop_legacy_input','direct_desktop','direct_input','backend','mismatched_source','foreign_marker','paused','pause_after_return','control_after_return','real_question_after_return','invalid_report','thin_completed','thin_interrupted','thin_forged','thin_foreign_marker','thin_abort','thin_wall','thin_missing_usage','thin_failed'])
  test(`scoped backend helper ${variant} cannot finish its desktop parent`,()=>runDesktopScopedHandoffScenario(variant));
