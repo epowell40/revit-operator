@@ -4526,6 +4526,14 @@
       ]
     },
     {
+      "id": "visual_review_feedback_stays_inside_bounded_evidence_envelope_with_whole_scoped_findings",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
       "id": "visual_review_excludes_worker_conversation_and_desktop_using_exact_native_view_or_owned_modal",
       "coverage": [
         "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",

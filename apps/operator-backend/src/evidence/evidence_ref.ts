@@ -74,6 +74,19 @@ export type EvidenceProjectionV1 = {
   connector_graph?: import("./connector_graph_projection.js").ConnectorGraphProjection;
   /** Screened, scoped helper claims for iteration; never native or completion proof. */
   helper_findings?: import("./scoped_helper_projection.js").ScopedHelperFindings;
+  /** Host-attached, model-only supporting review feedback. Never native proof.
+   * Full raw review and images remain in their scoped evidence artifacts. */
+  visual_work_review?: {
+    schema: "operator.visual_work_review_feedback.v1";
+    source_evidence_id: string;
+    authority: "supporting_visual_assessment";
+    native_postcondition_verified: false;
+    whole_task_verified: false;
+    state: string;
+    checks: Array<{ id: string; expected: string; status: string; observed: string; correction: string }>;
+    coverage: { total: number; returned: number; complete: boolean; next_start: number | null };
+    retrieval: { evidence_id: string; checks_path: string; reason_path: string; full_context_path: string };
+  };
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];
