@@ -4,6 +4,7 @@ import { codexAssignmentEvidenceContextV2 } from "../src/brains/codex_assignment
 const binding = { session_id: "s", assignment_id: "a", run_id: "r", generation: 1, principal_id: "p", document_fingerprint: "d" };
 function fixture(): any {
   return { spec: { execution_policy: { mode: "local_advisory_v1" } }, current_binding: binding,
+    unresolved_unknown_operation_ids: [], in_flight_operation_ids: [], input_invalidated_operation_ids: [],
     observations: { o: { observation_id: "o", operation_id: "edit", binding, observed_at: "2026-01-01T00:00:00Z", raw_payload_ref: "evidence:retained" } },
     operations: { edit: { operation_id: "edit", binding, requested_effect: "apply", persistent_effect: "applied", settlement_state: "settled",
       verification_operation_ids: [], capability_id: "operator_revit_request", request_identity: { path: "/revit/duplicate-view" }, target: { target_id: "view:23" },
@@ -23,6 +24,12 @@ test("advisory hints exclude unknown, unsettled, read-only and stale-generation 
     const s=fixture();Object.assign(s.operations.edit,delta);
     assert.deepEqual(JSON.parse(codexAssignmentEvidenceContextV2(s)).pending_verification,[]);
   }
+});
+test("changed intent retains history without prompting restoration of the obsolete edit",()=>{
+  const s=fixture();s.input_invalidated_operation_ids=['edit'];const before=JSON.stringify(s);
+  const index=JSON.parse(codexAssignmentEvidenceContextV2(s));
+  assert.deepEqual(index.pending_verification,[]);assert.equal(index.observations.length,1);
+  assert.match(index.usage,/not a request to restore old intent/);assert.equal(JSON.stringify(s),before);
 });
 test("advisory hints are bounded and require native observation context",()=>{
   const s=fixture();for(let i=0;i<20;i++)s.operations['extra'+i]={...s.operations.edit,operation_id:'extra'+i};
