@@ -1528,7 +1528,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_evidence.ts",
-      "sha256": "sha256:5116329613263b3e7966518349cff68aab7a89dcf6681886de71182afdcfc915"
+      "sha256": "sha256:333f14e67857715d45862ae444850e20da48ab218268b739a665c12dcd981719"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
@@ -1548,7 +1548,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:44be3f54e328f8877d133b87a315a71a5525072c87b648a99bb3dd8b425ab14a"
+      "sha256": "sha256:691d220449f93501975a1531ecb1dd14f582dccca63eff0eac16c77458afb99e"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -4101,7 +4101,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/committed_visibility_readback_plan_v2.ts",
-      "sha256": "sha256:dd4090eb3c56860ae00698666f53ddc7e615f7379018c578f4848fe828fdb239"
+      "sha256": "sha256:451a095a898a1570a09b4f736f7488d73a23342a53c27f331d54b1e5818eb5b4"
     },
     {
       "path": "apps/operator-backend/src/verification/connected_duct_readback_v2.ts",
@@ -4233,7 +4233,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/regular_schedule_recheck_v2.ts",
-      "sha256": "sha256:d20aaeebcc12a654ccd86173f9ca6b33f8e5b02b575e866e56e549537ce9921a"
+      "sha256": "sha256:e5b2aad79fb98aa75390bb81ac2cc615537e5fc0ec47947143242e1c0ff1b37a"
     },
     {
       "path": "apps/operator-backend/src/verification/requested_family_scope_readback_v1.ts",
@@ -6802,6 +6802,10 @@
     {
       "path": "apps/operator-backend/test/visibility_phasing_runtime.test.ts",
       "sha256": "sha256:c00185ff3094cca84b009a091cf8781e8c62ddeb8f65d200c5c3b7f29c44cefd"
+    },
+    {
+      "path": "apps/operator-backend/test/visibility_refresh_runtime.test.ts",
+      "sha256": "sha256:86204b6681447873e7ed831c7277d3da25faa6ef965d46de6e458f2430c7fd59"
     },
     {
       "path": "apps/operator-backend/test/web_research_evidence.test.ts",
@@ -9945,7 +9949,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:8e4627c8a3e2829d1dffefada88388ad02248c1a7381b4a94a05191f6abacfe6",
+  "inputs_hash": "sha256:abdb59d80a45d30816cfde6a217732eecb5efc0b2e95fc4a98b13199eb55129a",
   "result": {
     "passed": true,
     "checks": [
