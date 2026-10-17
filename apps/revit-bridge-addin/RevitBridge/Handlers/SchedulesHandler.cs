@@ -23,6 +23,7 @@ namespace RevitBridge.Handlers
             public bool? requireUniqueQuery { get; set; }
             public int? max { get; set; }
             public bool? includeFields { get; set; }
+            public bool? includeDefinitionSnapshot { get; set; }
             public bool? includeSchedulableFields { get; set; }
             public int? schedulableFieldOffset { get; set; }
             public int? maxSchedulableFields { get; set; }
@@ -215,6 +216,9 @@ namespace RevitBridge.Handlers
                 status = "Ok",
                 action = "detail",
                 schedule = summary,
+                definitionIdentity = RevitBridge.Logic.ScheduleDefinitionIdentitySnapshot.Read(schedule),
+                definitionSnapshot = p.includeDefinitionSnapshot == true
+                    ? RevitBridge.Logic.ScheduleDefinitionIdentitySnapshot.CaptureDefinition(schedule) : null,
                 fields = details,
                 schedulableFields = eligibleFields,
                 filterDefinitions,

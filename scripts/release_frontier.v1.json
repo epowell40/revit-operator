@@ -314,7 +314,9 @@
     "scoped_helper_projection.test.ts",
     "visual_review_baseline.test.ts",
     "desktop_helper_budget.test.ts",
-    "checklist_remaining_presentation.test.ts"
+    "checklist_remaining_presentation.test.ts",
+    "created_schedule_runtime.test.ts",
+    "created_schedule_postcondition_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4628,6 +4630,22 @@
       "id": "desktop_review_handoff_retains_whole_qualified_claims_in_compact_summary_and_details",
       "coverage": [
         "javascript:package/operator-assistant-ui/work_report.test.mjs"
+      ]
+    },
+    {
+      "id": "created_schedule_requires_independent_native_identity_and_retained_preclone_definition",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:created_schedule_postcondition_v2.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorConditionalRequestContractsTests"
+      ]
+    },
+    {
+      "id": "producer_supplied_postcondition_fact_cannot_bypass_host_native_comparison",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:visibility_phasing_runtime.test.ts"
       ]
     }
   ],

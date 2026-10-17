@@ -8286,6 +8286,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "requireUniqueQuery", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeDefinitionSnapshot", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeSchedulableFields", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "schedulableFieldOffset", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxSchedulableFields", out error)) return false;
@@ -8306,6 +8307,14 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (obj.Value.TryGetProperty("includeDefinitionSnapshot", out var definitionSnapshot) && definitionSnapshot.ValueKind == JsonValueKind.True
+                    && (schedulesAction != "detail" || !obj.Value.TryGetProperty("scheduleId", out var snapshotScheduleId)
+                        || snapshotScheduleId.ValueKind != JsonValueKind.Number || !snapshotScheduleId.TryGetInt64(out var snapshotId) || snapshotId <= 0
+                        || obj.Value.TryGetProperty("query", out _) || obj.Value.TryGetProperty("includeFields", out var snapshotFields) && snapshotFields.ValueKind == JsonValueKind.False))
+                {
+                    error = "includeDefinitionSnapshot requires exact scheduleId detail with fields enabled and no query.";
+                    return false;
+                }
                 if (obj.Value.TryGetProperty("max", out var mx) && mx.ValueKind != JsonValueKind.Null)
                 {
                     if (mx.ValueKind != JsonValueKind.Number || !mx.TryGetInt32(out var v))

@@ -83,7 +83,8 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
   ['/revit/project-parameters', {semantic_outputs:['project_parameter.binding'],principal_target_fields:['parameterId']}],
   ["/revit/place-view", {semantic_outputs: [], principal_target_fields: ["id"], contextual_scope_fields: ["sheetId", "viewId"]}],
   ["/revit/create-text", {semantic_outputs: [], principal_target_fields: ["textNoteId"], contextual_scope_fields: ["viewId"]}],
-  ["/revit/schedules", { semantic_outputs: ["schedule.cell_appearance"], principal_target_fields: ["scheduleId", "id"] }],
+  ["/revit/schedules", { semantic_outputs: ["schedule.cell_appearance","schedule.created_definition"], principal_target_fields: ["scheduleId", "id"] }],
+  ["/revit/create-schedule", { semantic_outputs: [], principal_target_fields: ["viewId","scheduleId","id"], contextual_scope_fields: ["sourceScheduleId","sheetId"] }],
   ["/revit/sheets", {
     semantic_outputs: ["sheet.placement_anchors"],
     principal_target_fields: ["placementIds", "instanceId", "viewportId"],
@@ -349,6 +350,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if(path==='/revit/create-schedule')return ['schedule.created_definition'];
   if(path==='/revit/project-parameters')return ['project_parameter.binding'];
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
@@ -389,10 +391,12 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   }
   if (pathOf(verification) === "/revit/schedules") {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args);
+    if(body.action==='detail'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0&&body.includeFields!==false)
+      return ['schedule.created_definition'];
     if(body.action==='presentation'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0
       && Object.keys(body).every(k=>['action','scheduleId'].includes(k)))return ['schedule.native_presentation'];
     return body.action==='cell_styles' && Number.isSafeInteger(body.scheduleId) && Number(body.scheduleId)>0
-      && Array.isArray(body.cells) && body.cells.length>0 && body.cells.length<=64 ? contract.semantic_outputs : [];
+      && Array.isArray(body.cells) && body.cells.length>0 && body.cells.length<=64 ? ['schedule.cell_appearance'] : [];
   }
   if(pathOf(verification)==='/revit/inspect-exported-files'){
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), paths=body.paths;

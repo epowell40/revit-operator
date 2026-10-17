@@ -14,6 +14,8 @@ namespace RevitBridge.Handlers
         {
             if (view.IsPanelScheduleTemplate())
                 return new { status = "InvalidRequest", action = "detail", message = "Use a panel schedule instance, not its shared template." };
+            if (p.includeDefinitionSnapshot == true)
+                return new { status = "InvalidRequest", action = "detail", message = "Definition snapshots apply to regular ViewSchedule definitions, not panel schedule instances." };
             if (p.includeSchedulableFields == true)
                 return new { status = "InvalidRequest", action = "detail", message = "Panel schedules use native template cell bindings, not ViewSchedule schedulable fields. Omit includeSchedulableFields and request includeData." };
             if (!PanelScheduleReadWindow.TryCreate(p.rowOffset, p.columnOffset, p.maxRows, p.maxColumns, out var window, out var error))

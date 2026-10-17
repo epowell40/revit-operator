@@ -615,6 +615,9 @@ export function postconditionSatisfiedByPayloadV2(
   // Binding creation needs retained native identity, full scope and a separate
   // read. Matching a name/value in an echoed request is never sufficient.
   if (operationPath === '/revit/project-parameters') return false;
+  // Creation needs immutable native created identity and, for a clone, the
+  // native source definition captured before the transaction.
+  if (operationPath === '/revit/create-schedule') return false;
   // Cell appearance requires the durable native before/preservation inventory
   // and fresh readback. Generic token matching has neither and cannot grant it.
   if (operationPath === "/revit/configure-schedule" && (isScheduleCellBackgroundEditV2(applyInput) || isRegularSchedulePresentationEditV2(applyInput))) return false;

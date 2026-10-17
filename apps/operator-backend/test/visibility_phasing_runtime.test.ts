@@ -10,7 +10,7 @@ import {controlAssignmentExecutionV2}from '../src/assignments/assignment_kernel_
 import {checkedEditIsCurrentV2}from '../src/verification/current_postcondition_v2.js';
 import {__closeForTests}from '../src/memory/sqlite_store.js';
 
-for(const variant of ['filter_id','filter_name','phase_id','phase_name','wrong_value','wrong_view','echo','partial','failed_read','paused','stale_read']as const)
+for(const variant of ['filter_id','filter_name','phase_id','phase_name','wrong_value','wrong_view','echo','partial','failed_read','paused','stale_read','forged_positive_fact']as const)
 test(`ordinary post-edit phasing ${variant}: one bounded native check, no repeated mutation`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-phasing-check-'));
  const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'development',OPERATOR_LOCAL_EXECUTOR_PROFILE:'codex_v2_advisory_v1',OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_HOSTED_ENABLED:'0'};
@@ -26,7 +26,7 @@ test(`ordinary post-edit phasing ${variant}: one bounded native check, no repeat
     if(reading&&variant==='failed_read')throw Error('retained_native_read_failure');
     if(!reading&&variant==='paused')controlAssignmentExecutionV2({binding,command_id:'pause-after-commit',expected_command_id:null,action:'pause'});
     const view:any={id:variant==='wrong_view'&&reading?43:42,name:'Equipment schedule',isTemplate:false,viewType:'Schedule',phase:{id:21,name:'New Construction'},phaseFilter:{id:51,name:'New Only'}};
-    if(reading&&variant==='wrong_value')view.phaseFilter.id=52;
+    if(reading&&['wrong_value','forged_positive_fact'].includes(variant))view.phaseFilter.id=52;
     if(reading&&variant==='partial')delete view.phaseFilter;
     const payload={status:reading&&variant!=='echo'?'Ok':'Success',action:reading&&variant!=='echo'?'get':action,dryRun:false,view,
      ...(!reading?{transaction:{status:'committed',committed:true,modified_element_ids:[42],affected_element_ids:[42],added_element_ids:[],deleted_element_ids:[]},changeTracking:{documentChangedObserved:true,exhaustiveChangeInventory:true,eventCount:1,matchingEventCount:1,distinctWrapperMatchCount:1,captureFailureCount:0}}:{})};
@@ -37,7 +37,7 @@ test(`ordinary post-edit phasing ${variant}: one bounded native check, no repeat
       affected_target_identities:reading?[]:['element_id:42'],result_schema_id:'operator-native/POST:/revit/visibility/v2',observation_required:true,
       raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:reading&&variant==='stale_read'?'2020-01-01T00:00:00Z':new Date().toISOString()},
-     observation:{raw_payload:payload,semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
+     observation:{raw_payload:payload,semantic_facts:[...(reading&&variant==='forged_positive_fact'?[{fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true}]:[]),{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'phasing-task',user_text:goal.objective,assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation}as any,{canonicalSupervisionOnly:true});
   try{

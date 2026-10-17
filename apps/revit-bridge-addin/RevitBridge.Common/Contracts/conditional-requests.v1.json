@@ -616,6 +616,9 @@
           ],
           "additionalProperties": false
         }
+      },
+      "includeDefinitionSnapshot": {
+        "type": "boolean"
       }
     },
     "required": [],
@@ -720,6 +723,12 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "includeDefinitionSnapshot": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           }
         },
         "required": [
@@ -839,6 +848,80 @@
         "required": [
           "action",
           "scheduleId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detail"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "includeFields": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "includeSchedulableFields": {
+            "type": "boolean"
+          },
+          "schedulableFieldOffset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxSchedulableFields": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "includeData": {
+            "type": "boolean"
+          },
+          "rowOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "columnOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "maxRows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "maxColumns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "includeDefinitionSnapshot": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "requireUniqueQuery": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "scheduleId",
+          "includeDefinitionSnapshot"
         ],
         "additionalProperties": false
       }

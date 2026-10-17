@@ -9,6 +9,22 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorConditionalRequestContractsTests
     {
+        [Fact]
+        public void ScheduleDefinitionSnapshotRequiresExplicitExactTargetWithoutExpandingOrdinaryDetail()
+        {
+            Assert.True(OperatorConditionalRequestContracts.TryGet("/revit/schedules", out var schema));
+            var detail = schema.GetProperty("oneOf").EnumerateArray().Where(mode =>
+                mode.GetProperty("properties").GetProperty("action").GetProperty("enum")[0].GetString() == "detail").ToArray();
+            Assert.Equal(2, detail.Length);
+            var snapshot = Assert.Single(detail, mode => mode.GetProperty("required").EnumerateArray().Any(field => field.GetString() == "includeDefinitionSnapshot"));
+            Assert.Contains("scheduleId", snapshot.GetProperty("required").EnumerateArray().Select(field => field.GetString()));
+            Assert.False(snapshot.GetProperty("properties").TryGetProperty("query", out _));
+            Assert.True(snapshot.GetProperty("properties").GetProperty("includeDefinitionSnapshot").GetProperty("enum")[0].GetBoolean());
+            Assert.True(snapshot.GetProperty("properties").GetProperty("includeFields").GetProperty("enum")[0].GetBoolean());
+            var ordinary = Assert.Single(detail, mode => !mode.GetProperty("required").EnumerateArray().Any(field => field.GetString() == "includeDefinitionSnapshot"));
+            Assert.False(ordinary.GetProperty("properties").GetProperty("includeDefinitionSnapshot").GetProperty("enum")[0].GetBoolean());
+        }
+
         [Theory]
         [InlineData("/revit/rotate-elements", "axis", "endPointX")]
         [InlineData("/revit/export-view-region", "region", "centerX")]

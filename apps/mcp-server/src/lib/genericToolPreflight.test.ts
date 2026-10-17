@@ -592,6 +592,19 @@ test("native published schedule modes admit the exact retained presentation read
  for(const valid of [{},{action:'list',query:''},{action:'list',kind:'all',offset:0,max:100},{action:'detail',scheduleId:1542917,includeSchedulableFields:true,maxSchedulableFields:200},{action:'detail',query:'AIR DEVICE SCHEDULE',includeData:true,maxRows:500,maxColumns:100},{action:'circuits',offset:0,max:500},{action:'circuits',scheduleId:41},{action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:0,column:0}]}])assert.equal(preflightKnownGenericToolBody(contract,valid),null,JSON.stringify(valid));
 });
 
+test('large schedule definition snapshot is opt-in exact-target detail, not an ordinary inventory payload',()=>{
+ const schemas=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const contract={method:'POST',path:'/revit/schedules',request_schema:schemas['/revit/schedules']};
+ for(const good of [{action:'detail',scheduleId:41,includeDefinitionSnapshot:true,includeFields:true,includeData:false,exact:false},
+  {action:'detail',query:'Equipment',includeDefinitionSnapshot:false},{action:'list'},{action:'detail',scheduleId:41}])
+  assert.equal(preflightKnownGenericToolBody(contract,good),null,JSON.stringify(good));
+ for(const bad of [{action:'list',includeDefinitionSnapshot:true},{action:'detail',query:'Equipment',includeDefinitionSnapshot:true},
+  {action:'detail',scheduleId:41,query:'Equipment',includeDefinitionSnapshot:true},{action:'detail',scheduleId:41,includeDefinitionSnapshot:'true'},
+  {action:'detail',scheduleId:41,includeFields:false,includeDefinitionSnapshot:true},{action:'detail',scheduleId:0,includeDefinitionSnapshot:true}]){
+  const result=preflightKnownGenericToolBody(contract,bad);assert.equal(result?.request_dispatched,false,JSON.stringify(bad));assert.equal(result?.outcome_unknown,false);
+ }
+});
+
 
 test('native combined-field fragment admits bounded bindings and keeps legacy and mixed edits separate',()=>{
  const f=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json',import.meta.url),'utf8')).schedule_combined_field;

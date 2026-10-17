@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {retainedCreatedScheduleComparisonV2} from '../verification/created_schedule_postcondition_v2.js';
 import {nativePropertyComparisonV2,NATIVE_PROPERTY_COMPARISON_FACT_V2} from "../verification/native_property_comparison_v2.js";
 import {canonicalJsonV2,sameAssignmentBindingV2,type AssignmentSnapshotV2,type AssignmentBindingV2,type OperationV2,type OperationResultV2,type OperationPurposeV2,type ObservationCommitInputV2,type SemanticFactV2} from '../domain/assignment-kernel/index.js';
 import type {EvidenceStoreInput} from '../evidence/evidence_ref.js';
@@ -132,7 +133,8 @@ export function nativePropertyComparisonControlFactV2(
     ?parameterReadIsFreshNativeV2(verificationSubject,operation,result)
     :verificationSubject?.request_identity?.path==='/revit/visibility'
       ?nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility')
-      :verificationSubject?.request_identity?.path==='/revit/configure-schedule'
+      :['/revit/configure-schedule','/revit/create-schedule'].includes(verificationSubject?.request_identity?.path??'')
+        &&verificationSubject
         &&nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/schedules');
   if(snapshot&&operation&&verificationSubject&&comparisonFresh&&deterministicallyTargetBound
     && lease.purpose==='verification'&&lease.fulfillment_role==='verification'
@@ -149,9 +151,11 @@ export function nativePropertyComparisonControlFactV2(
           &&!(Number.isSafeInteger(other.settled_assignment_version)&&Number.isSafeInteger(operation.admitted_assignment_version)
             &&other.settled_assignment_version!<operation.admitted_assignment_version!)))
     && !snapshot.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation.operation_id)){
-    const comparison=nativePropertyComparisonV2(verificationSubject.input,operation.input,rawPayload);
+    const creation=verificationSubject.request_identity?.path==='/revit/create-schedule';
+    const comparison=creation?retainedCreatedScheduleComparisonV2(snapshot,verificationSubject,operation,rawPayload)
+      :nativePropertyComparisonV2(verificationSubject.input,operation.input,rawPayload);
     if(comparison.state!=='unsupported')return {fact_id:NATIVE_PROPERTY_COMPARISON_FACT_V2,fact_class:'control',
-      value:JSON.stringify({...comparison,...(comparison.state==='matched'&&!deterministicallySatisfied?{state:'incomplete'}:{}),scope:'native_scalar_properties_only'})};
+      value:JSON.stringify({...comparison,...(comparison.state==='matched'&&!deterministicallySatisfied?{state:'incomplete'}:{}),scope:creation?'native_schedule_definition_only':'native_scalar_properties_only'})};
   }
   return null;
 }

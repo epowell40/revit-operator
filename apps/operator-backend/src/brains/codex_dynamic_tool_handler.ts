@@ -70,6 +70,7 @@ import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_po
 import { committedNativeAnnotationReadbackPlanV2 } from "../verification/native_annotation_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
+import { committedCreatedScheduleReadbackPlanV2 } from "../verification/created_schedule_postcondition_v2.js";
 import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { committedNativeSchedulePresentationReadbackPlanV2, committedNativeSchedulePresentationReadbackPlansV2 } from "../verification/native_schedule_presentation_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
@@ -422,6 +423,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedProjectParameterBindingReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedCreatedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)

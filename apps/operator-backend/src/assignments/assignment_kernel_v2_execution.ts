@@ -1,4 +1,5 @@
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
+import {createdSchedulePostconditionSatisfiedV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
@@ -691,10 +692,10 @@ function commitInput(
       throw new Error("assignment_kernel_v2_artifact_receipt_payload_mismatch");
     }
   }
-  // Inventory completeness is host-derived, never a provider/producer assertion.
+  // Proof and inventory completeness are host-derived, never producer claims.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
     .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
-      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2);
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied');
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
   if (nativeChangeInventoryCompleteV2(operation, result, envelope.observation.raw_payload)) {
@@ -765,6 +766,8 @@ function commitInput(
           ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
           ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/create-schedule'
+          ? createdSchedulePostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(verificationSubject.input)
           ? nativePhaseFilterPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"
