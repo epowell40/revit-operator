@@ -43,7 +43,7 @@ foreach ($file in $domainFiles) {
     # Inventory workload consumes the same pure native wire decoder. Its kernel
     # module still verifies retained bytes, binding, receipts and journal order;
     # this exact consumer registration permits no runtime or transport import.
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts") -contains $relative
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
@@ -571,10 +571,22 @@ if (($teammateVerificationRuntime -match 'function\s+explicitVerification') -or
 }
 $postconditionContract = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/postcondition_verification_v2.ts")
 if (($postconditionContract -notmatch 'isExcludedEvidenceContainerV2') -or
-    ($postconditionContract -notmatch 'schedule_filter:') -or
+    ($postconditionContract -notmatch 'import\s+\{\s*scheduleFilterExpectedValuesV2,\s*scheduleFilterObservedValuesV2\s*\}\s+from\s+["'']\./verification/schedule_filter_postcondition_v2\.js["'']') -or
+    ($postconditionContract -notmatch 'scheduleFilterExpectedValuesV2\(scheduleInput\)') -or
+    ($postconditionContract -notmatch 'scheduleFilterObservedValuesV2\(value,\s*contract\.apply_input,\s*contract\.verification_input\)') -or
     ($postconditionContract -notmatch 'Parameter\\\.Set') -or
     ($postconditionContract -notmatch 'args\.length\s*===\s*1')) {
   $violations.Add("Typed postcondition contract no longer excludes echoed control input or binds reviewed native/schedule semantics")
+}
+
+# The strict filter contract was extracted from the general postcondition
+# module. Require its actual consumer calls and native-only, exact-owner,
+# complete-definition boundary rather than an obsolete token in the old file.
+$filterPostcondition = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/verification/schedule_filter_postcondition_v2.ts")
+foreach ($required in @('native_schedule_filters:', "r.status!=='Ok'", "r.action!=='detail'", 'id(schedule.id)!==wanted.scheduleId', 'r.filterDefinitionsComplete!==true', 'remaining.splice(at,1)', 'wanted.replace&&remaining.length')) {
+  if ($filterPostcondition.IndexOf($required, [System.StringComparison]::Ordinal) -lt 0) {
+    $violations.Add("Typed native schedule filter postcondition lost reviewed boundary: $required")
+  }
 }
 
 # Native affected identities are result truth. Verification matching, Work

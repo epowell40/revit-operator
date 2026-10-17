@@ -472,7 +472,8 @@
     "OperatorNativeOwnedValueTests",
     "SchedulePresentationContractTests",
     "BoundedNativeSequenceTests",
-    "ParameterValuePreservationDigestTests"
+    "ParameterValuePreservationDigestTests",
+    "OperatorDelegatedBatchTruthTests"
   ],
   "failure_families": [
     {
@@ -4401,6 +4402,13 @@
       "coverage": [
         "backend:current_work_packet_verification.test.ts",
         "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "native_delegated_batch_failure_never_enters_success_outbox_or_loses_document_fence",
+      "coverage": [
+        "dotnet:OperatorDelegatedBatchTruthTests",
+        "backend:revit_batch_service.test.ts"
       ]
     }
   ],

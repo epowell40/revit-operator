@@ -939,6 +939,7 @@ export function hasAvailableRevitBatchWork(input: {
     if (job.session_id ? job.session_id !== sessionId : !!owner) return false;
     if (job.executor_kind && job.executor_kind !== executorKind) return false;
     if (TERMINAL_JOB_STATUSES.has(job.status)) return false;
+    if (job.result?.reconciliation_required === true || job.items.some(item => item.reconciliation_required === true)) return false;
     if (CLAIMABLE_JOB_STATUSES.has(job.status) && job.items.some(item => item.status === "pending")) return true;
     // Expired claims require the existing fenced reconciliation path, including
     // paused/cancelling jobs. An unexpired in-flight item needs no new native read.
@@ -968,6 +969,7 @@ export function claimNextRevitBatchItem(input: ClaimNextRevitBatchItemInput): Js
       }
       let job = reconcileExpiredClaims(current);
       if (!CLAIMABLE_JOB_STATUSES.has(job.status)) return null;
+      if (job.result?.reconciliation_required === true || job.items.some(item => item.reconciliation_required === true)) return null;
       if (job.executor_kind && job.executor_kind !== executorKind) return null;
       const nextItem = job.items.find((item) => item.status === "pending");
       if (!nextItem) {
@@ -1119,9 +1121,14 @@ function settleClaim(jobId: string, itemId: string, executorId: string, claimTok
         error: failed ? clip(payload.error, 500) || "Batch item failed." : ""
       };
     });
+    const reconcile = nextItems.some(item => item.reconciliation_required === true);
+    const pauseRemaining = reconcile && nextItems.some(item => item.status === 'pending' || item.status === 'running');
     let next = saveJob({
       ...job,
-      status: job.status === "cancelling" || job.status === "pausing" || job.status === "paused" ? job.status : "running",
+      status: pauseRemaining ? (nextItems.some(item => item.status === 'running') ? 'pausing' : 'paused')
+        : job.status === "cancelling" || job.status === "pausing" || job.status === "paused" ? job.status : "running",
+      pause_requested: pauseRemaining || job.pause_requested,
+      result: reconcile ? { ...(job.result || {}), reconciliation_required: true } : job.result,
       items: nextItems
     });
     next = appendEvent(
@@ -1139,6 +1146,18 @@ function settleClaim(jobId: string, itemId: string, executorId: string, claimTok
 }
 
 export function completeRevitBatchItem(input: CompleteRevitBatchItemInput): JsonMap {
+  // Request acceptance is not work success. Older executors can post a failed
+  // terminal envelope to /complete; preserve failure and mutation uncertainty
+  // through the same fenced settlement owner instead of recording success.
+  const terminal = asObject(input.result);
+  if (terminal.ok === false) {
+    const effect = ["none", "applied", "unknown"].includes(String(terminal.effect_state)) ? terminal.effect_state : "unknown";
+    const failedResult = { ...terminal, effect_state: effect,
+      retryable: effect === "none" && terminal.retryable !== false && terminal.reconciliation_required !== true,
+      reconciliation_required: effect !== "none" || terminal.reconciliation_required === true };
+    return settleClaim(input.job_id, input.item_id, input.executor_id, settlementToken(input.claim_token, input.result), true,
+      { error: clip(terminal.error, 500) || "Delegate reported unsuccessful work.", result: failedResult }, input.access);
+  }
   return settleClaim(input.job_id, input.item_id, input.executor_id, settlementToken(input.claim_token, input.result), false, { result: input.result }, input.access);
 }
 

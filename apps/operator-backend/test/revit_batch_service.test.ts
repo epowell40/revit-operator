@@ -23,6 +23,50 @@ import {
 
 type AnyMap = Record<string, any>;
 
+for (const effect of ['none','applied','unknown']) test(`a false delegate completion settles failed with ${effect} effect truth and cannot be replayed as success`,()=>{
+  mkWorkspace();const access=boundAccess('alice','false-complete','executor-a',fingerprintA),job=createBoundJob(access);
+  const claim=claimNextRevitBatchItem({job_id:job.id,executor_id:'executor-a',access}) as AnyMap;
+  const result={ok:false,error:'Native delegate stopped',terminal_reason:'max_rounds_exhausted',effect_state:effect,
+    retryable:effect==='none',reconciliation_required:effect!=='none'};
+  const input={job_id:job.id,item_id:'item-1',executor_id:'executor-a',claim_token:claim.claim_token,result,access};
+  assert.throws(()=>completeRevitBatchItem({...input,claim_token:'stale'}),/Stale or invalid/);
+  const settled=completeRevitBatchItem(input) as AnyMap;
+  assert.equal(settled.item.status,'failed');assert.equal(settled.item.error,result.error);
+  assert.equal(settled.item.effect_state,effect);assert.equal(settled.item.retryable,effect==='none');
+  assert.equal(settled.item.reconciliation_required,effect!=='none');
+  assert.equal((completeRevitBatchItem(input) as AnyMap).idempotent,true);
+  assert.throws(()=>completeRevitBatchItem({...input,result:{ok:true}}),/different outcome or payload/);
+  if(effect!=='none')assert.throws(()=>retryFailedRevitBatchItems(job.id,access),/reconciliation/);
+});
+
+test('a nested failed result is not a top-level delegate failure',()=>{
+  mkWorkspace();const job=createJob(),claim=claimNextRevitBatchItem({job_id:job.id,executor_id:'worker-a'}) as AnyMap;
+  const settled=completeRevitBatchItem({job_id:job.id,item_id:'item-1',executor_id:'worker-a',claim_token:claim.claim_token,
+    result:{ok:true,items:[{ok:false}]}}) as AnyMap;
+  assert.equal(settled.item.status,'succeeded');
+});
+
+test('failed completion with missing effect truth remains nonretryable and requires reconciliation',()=>{
+  mkWorkspace();const job=createJob(),claim=claimNextRevitBatchItem({job_id:job.id,executor_id:'worker-a'}) as AnyMap;
+  const settled=completeRevitBatchItem({job_id:job.id,item_id:'item-1',executor_id:'worker-a',claim_token:claim.claim_token,
+    result:{ok:false,retryable:true}}) as AnyMap;
+  assert.equal(settled.item.status,'failed');assert.equal(settled.item.effect_state,'unknown');
+  assert.equal(settled.item.retryable,false);assert.equal(settled.item.reconciliation_required,true);
+  assert.throws(()=>retryFailedRevitBatchItems(job.id),/reconciliation/);
+});
+
+test('a possible prior effect fences the remaining batch instead of silently claiming the next mutation',()=>{
+  mkWorkspace();const access=boundAccess('alice','reconcile-batch','executor-a',fingerprintA),job=createBoundJob(access,['item-1','item-2']);
+  const claim=claimNextRevitBatchItem({job_id:job.id,executor_id:'executor-a',access}) as AnyMap;
+  const settled=completeRevitBatchItem({job_id:job.id,item_id:'item-1',executor_id:'executor-a',claim_token:claim.claim_token,access,
+    result:{ok:false,effect_state:'unknown',retryable:false,reconciliation_required:true}}) as AnyMap;
+  assert.equal(settled.item.status,'failed');assert.equal(settled.job.status,'paused');
+  assert.equal(hasAvailableRevitBatchWork({session_id:access.session_id!,owner:access.owner}),false);
+  assert.equal((claimNextRevitBatchItem({job_id:job.id,executor_id:'executor-a',access}) as AnyMap).item,null);
+  assert.throws(()=>resumeRevitBatchJob(job.id,access),/reconciliation/);
+  assert.equal((getRevitBatchJob(job.id,access) as AnyMap).items[1].status,'pending');
+});
+
 test("idle batch availability is owner/session scoped and never claims or reconciles work", () => {
   const root = mkWorkspace();
   const access = boundAccess("alice", "session-idle", "executor-a", fingerprintA);
