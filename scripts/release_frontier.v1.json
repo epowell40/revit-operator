@@ -283,6 +283,7 @@
     "openai_brain_redline_targeting.test.ts",
     "saved_document_postcondition_v2.test.ts",
     "committed_saved_document_readback_plan_v2.test.ts",
+    "committed_readback_reservations_v2.test.ts",
     "category_visibility_scope_v1.test.ts",
     "family_static_text_scope_v1.test.ts",
     "requested_family_scope_readback_v1.test.ts",
@@ -4604,6 +4605,15 @@
         "backend:checklist_remaining_presentation.test.ts"
       ],
       "id": "partial_saved_copy_handoff_preserves_native_evidence_without_certifying_content"
+    },
+    {
+      "id": "finite_native_readbacks_drain_at_paid_call_limit_without_new_provider_calls_or_control_bypass",
+      "coverage": [
+        "backend:committed_saved_document_readback_plan_v2.test.ts",
+        "backend:committed_readback_reservations_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts",
+        "backend:safe_committed_read_retry_v2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

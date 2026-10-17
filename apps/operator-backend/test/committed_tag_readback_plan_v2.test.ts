@@ -86,7 +86,7 @@ test(`ordinary dynamic tag edit ${variant} triggers one separate guarded read wi
    const apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/tag-elements').length,1);
    assert.equal(response.success,true,'failed read must not relabel committed edit as failure');
-   assert.equal(validations.filter(a=>a.path==='/revit/native-api-ops').length,['paused_after_commit','invalid_condition'].includes(variant)?0:1);
+   assert.equal(validations.filter(a=>a.path==='/revit/native-api-ops').length,['paused_after_commit','invalid_condition'].includes(variant)?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/native-api-ops').length,['read_schema_rejected','paused_after_commit','invalid_condition'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
    const shouldVerify=['exact','Attached','padded_free'].includes(variant);

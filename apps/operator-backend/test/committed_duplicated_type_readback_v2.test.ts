@@ -42,7 +42,7 @@ test(`committed duplicate type ${variant}: automatic separate native read retain
    const response:any=await handleCodexDynamicToolCall(runtime,{id:'user-duplicate-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'duplicate-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!;const apply=Object.values(s.operations).find(o=>o.persistent_effect==='applied')!;
    assert.equal(response.success,true);assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/duplicate-type-and-swap-instance').length,1);
-   const planned=!['paused','partial_apply'].includes(variant);assert.equal(validations.filter(c=>c.path==='/revit/get-parameters').length,planned?1:0);
+   const planned=!['paused','partial_apply'].includes(variant);assert.equal(validations.filter(c=>c.path==='/revit/get-parameters').length,planned?(variant==='schema_rejected'?1:2):0);
    assert.equal(calls.filter(c=>c.path==='/revit/get-parameters').length,planned&&variant!=='schema_rejected'?1:0);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(fact=>fact.fact_id==='verification.postcondition_satisfied'&&fact.value===true)));
    const expectedPass=variant==='exact'||variant==='replaced_instance';assert.equal(verified,expectedPass);assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!expectedPass);

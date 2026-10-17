@@ -1,7 +1,7 @@
 import {canonicalJsonV2,sameAssignmentBindingV2,type AssignmentSnapshotV2,type OperationV2} from '../domain/assignment-kernel/index.js';
 
 type Input={planning:AssignmentSnapshotV2|null;beforeRead:AssignmentSnapshotV2|null;afterRead:AssignmentSnapshotV2|null;
- applyOperationId:string;plan:unknown;response:unknown;retryAttempt:number};
+ applyOperationId:string;plan:unknown;response:unknown;retryAttempt:number;reservedReadOperationId?:string};
 const obj=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,any>:{};
 const stableApply=(op:OperationV2)=>({binding:op.binding,input:op.input,request_identity:op.request_identity,
  admission_state:op.admission_state,dispatch_state:op.dispatch_state,settlement_state:op.settlement_state,
@@ -36,8 +36,13 @@ export function committedReadRetryDecisionV2(input:Input):{retry:boolean;reason:
    if(!prior||canonicalJsonV2(stableApply(prior))!==canonicalJsonV2(stableApply(op)))return {retry:false,reason:'intervening_apply'};
   }
   const added=Object.values(afterRead.operations).filter(op=>!beforeRead.operations[op.operation_id]);
-  if(added.length!==1)return {retry:false,reason:'ambiguous_new_operations'};
-  const read=added[0]!,result=read.result;
+  const reservedId=input.reservedReadOperationId,prior=reservedId?beforeRead.operations[reservedId]:undefined;
+  const reserved=prior&&added.length===0&&prior.requested_effect==='read'&&prior.fulfillment_role==='verification'
+    &&prior.verification_of_operation_id===applyOperationId&&prior.settlement_state==='open'&&prior.dispatch_state==='not_dispatched'
+    &&!prior.result&&prior.observation_ids.length===0?afterRead.operations[reservedId!]:undefined;
+  if(reservedId&&!reserved||!reserved&&added.length!==1)return {retry:false,reason:'ambiguous_new_operations'};
+  const read=reserved??added[0]!,result=read.result;
+  if(reserved&&canonicalJsonV2({input:prior!.input,identity:prior!.request_identity,binding:prior!.binding})!==canonicalJsonV2({input:read.input,identity:read.request_identity,binding:read.binding}))return {retry:false,reason:'reserved_read_changed'};
   if(read.requested_effect!=='read'||read.fulfillment_role!=='verification'
     ||read.verification_of_operation_id!==applyOperationId||read.admission_state!=='admitted'
     ||read.settlement_state!=='settled'||read.dispatch_state!=='not_dispatched'

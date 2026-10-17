@@ -8,12 +8,14 @@ import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_ker
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
 import {beginTeammateLoopOwner,endTeammateLoopOwner} from '../src/teammate_loop_runtime.js';
 import {handleCodexDynamicToolCall} from '../src/brains/codex_dynamic_tool_handler.js';
+import {recordCompletedAssignmentProviderReceiptV2,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from '../src/assignments/assignment_kernel_v2_progress.js';
+import {defaultAssignmentWorkBudgetV2} from '../src/assignments/assignment_work_allowance_v2.js';
 import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 
-for(const representation of ['box','projection'] as const)for(const kind of ['single','multi'] as const)for(const variant of ['exact','wrong_z','missing_z','wrong_owner','read_failure','paused_after_first_read'] as const)
+for(const representation of ['box','projection'] as const)for(const kind of ['single','multi'] as const)for(const variant of ['exact','wrong_z','missing_z','wrong_owner','read_failure','paused_after_first_read','last_provider_call'] as const)
 test(`ordinary ${representation} ${kind}-sheet move ${variant}: separate guarded reads close only complete native batch`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'sheet-multi-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
@@ -21,9 +23,13 @@ test(`ordinary ${representation} ${kind}-sheet move ${variant}: separate guarded
   const f=representation==='box'?sheetMove79Fixture(kind,true):viewportProjectionFixture(kind),calls:any[]=[],earlyCredit:boolean[]=[];
   const goal=createGoal({title:'Align the sheet groups',objective:'Align the sheet groups.',acceptance_criteria:['The requested move is verified.'],status:'active',related_session_id:'sheet-session',created_by:'sheet-principal',work_budget:{requested_effect:'apply',document_fingerprint:'sheet-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'sheet-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
+  const limit=defaultAssignmentWorkBudgetV2(getAssignmentKernelSnapshotV2(goal.id)!,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls;
+  function receipt(i:number){const s=getAssignmentKernelSnapshotV2(goal.id)!;recordCompletedAssignmentProviderReceiptV2({binding,call_id:'fixture:'+i,provider:'test-only',model:'test-no-provider',reasoning_effort:'medium',gap_ids:deriveProgressGapsV2(s).map(g=>g.gap_id),criterion_ids:s.spec.criteria.map(c=>c.criterion_id),expected_information:['Inspect exact moved owners'],admitted_at:s.spec.created_at,provider_duration_ms:0,usage:{input_tokens:1,output_tokens:0,total_tokens:1,reasoning_tokens:0,estimated_cost_usd:null},success:true});}
+  if(variant==='last_provider_call')for(let i=0;i<limit-1;i++)receipt(i);
   const hasPass=(s:any,op:any)=>op.verification_operation_ids.some((id:string)=>s.operations[id].observation_ids.some((oid:string)=>s.observations[oid].facts.some((f:any)=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)));
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},async validateToolArguments(){},async callTool(_tool:string,args:any,context:any){
    calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const read=args.path==='/revit/sheets';
+   if(!read&&variant==='last_provider_call')receipt(limit-1);
    const snapshot=getAssignmentKernelSnapshotV2(goal.id)!;
    const subject=Object.values(snapshot.operations).find(o=>o.persistent_effect==='applied');
    if(read&&subject)earlyCredit.push(hasPass(snapshot,subject));
@@ -50,10 +56,12 @@ test(`ordinary ${representation} ${kind}-sheet move ${variant}: separate guarded
    assert(earlyCredit.every(x=>!x),'partial owner reads never pass the batch');
    const expectedReadCount=variant==='paused_after_first_read'?1:f.actual_sheets.length;
    assert.equal(calls.filter(c=>c.path==='/revit/sheets').length,expectedReadCount);
-   const shouldPass=variant==='exact'||(kind==='single'&&variant==='paused_after_first_read');
+   const shouldPass=variant==='exact'||variant==='last_provider_call'||(kind==='single'&&variant==='paused_after_first_read');
    assert.equal(hasPass(s,apply),shouldPass);
    assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!shouldPass);
    assert.deepEqual(s.unresolved_unknown_operation_ids,[]);
+   assert.deepEqual(s.in_flight_operation_ids,[],'Pause/failure must retire every undispatched reserved check');
+   if(variant==='last_provider_call'){assert.equal(Object.keys(s.provider_calls).length,limit);assert.equal(defaultAssignmentWorkBudgetV2(s,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,limit);}
    if(variant==='exact'){
     const last=apply.verification_operation_ids.map(id=>s.operations[id]!).filter(o=>o.result).sort((a,b)=>Date.parse(a.result!.completed_at)-Date.parse(b.result!.completed_at)).at(-1)!;
     const actual=f.actual_sheets.find((p:any)=>p.sheetId===(last.input.body as any).sheetId);

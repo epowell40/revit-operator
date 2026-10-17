@@ -18,6 +18,23 @@ function fixture(){
  const failure={schema:'revit-operator.revit-bridge-failure.v1',ok:false,bridge_code:'CERTIFICATION_DIRECT_AUTHORIZATION_UNAVAILABLE',phase:'certification_native_direct_admission',status:503,retryable:true,request_dispatched:false,outcome_unknown:false,method:plan.method,path:plan.path,correlation_id:'native-correlation'};
  return {planning,beforeRead:structuredClone(planning),afterRead,applyOperationId:'apply',plan,response:{success:false,contentItems:[{type:'inputText',text:JSON.stringify(failure)}]},retryAttempt:0,failure};
 }
+
+for(const variant of ['exact','wrong_id','prior_dispatched','prior_write','prior_subject','prior_observed','prior_identity','prior_binding','changed_result_input','extra_operation'] as const)
+test(`pre-admitted read retry retains original guards: ${variant}`,()=>{
+ const f:any=fixture(),prior=structuredClone(f.afterRead.operations['failed-read']);
+ delete prior.result;delete prior.settled_assignment_version;prior.settlement_state='open';
+ f.beforeRead.operations['failed-read']=prior;f.beforeRead.assignment_version=5;f.reservedReadOperationId='failed-read';
+ if(variant==='wrong_id')f.reservedReadOperationId='foreign';
+ if(variant==='prior_dispatched')prior.dispatch_state='dispatched';
+ if(variant==='prior_write')prior.requested_effect='apply';
+ if(variant==='prior_subject')prior.verification_of_operation_id='foreign';
+ if(variant==='prior_observed')prior.observation_ids=['old'];
+ if(variant==='prior_identity')prior.request_identity.request_signature='foreign';
+ if(variant==='prior_binding')prior.binding.run_id='foreign';
+ if(variant==='changed_result_input')f.afterRead.operations['failed-read'].input={...f.plan,body:{changed:true}};
+ if(variant==='extra_operation')f.afterRead.operations.other={...prior,operation_id:'foreign'};
+ assert.equal(committedReadRetryDecisionV2(f).retry,variant==='exact');
+});
 test('one native-confirmed pre-dispatch read retry; original failed receipt remains unchanged',()=>{
  const f=fixture(),old=JSON.stringify(f),proposal={...f.afterRead.operations['failed-read'],operation_id:'new-read'};
  assert.equal(committedReadRetryDecisionV2(f).retry,true);

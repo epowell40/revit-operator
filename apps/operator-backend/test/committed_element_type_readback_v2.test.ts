@@ -88,7 +88,7 @@ test(`committed type change ${variant}: separate guarded native read cannot eras
         assert.equal(apply.result?.persistent_effect, 'applied');
         assert.equal(response.success, true);
         assert.equal(calls.filter(c => c.path === '/revit/change-element-type').length, 1);
-        assert.equal(validations.filter(c => c.path === '/revit/get-parameters').length, variant === 'paused' ? 0 : 1);
+        assert.equal(validations.filter(c => c.path === '/revit/get-parameters').length, variant === 'paused' ? 0 : variant==='schema_rejected'?1:2);
         assert.equal(calls.filter(c => c.path === '/revit/get-parameters').length, ['schema_rejected', 'paused'].includes(variant) ? 0 : 1);
         if (!['schema_rejected', 'paused'].includes(variant)) {
           assert.deepEqual(calls.find(c => c.path === '/revit/get-parameters').body.elementIds, ids);
