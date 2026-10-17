@@ -4121,7 +4121,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/current_postcondition_v2.ts",
-      "sha256": "sha256:70ce1e6aa441f64a3e236a6c7f3c6190a6df5ea1e55644a6fb45ffee361ed7db"
+      "sha256": "sha256:f0d294bac132ce228e8c42ef2cf9b9cbf90eb38d155715072bdd6d09bde372f3"
     },
     {
       "path": "apps/operator-backend/src/verification/duplicated_type_postcondition_v2.ts",
@@ -4993,7 +4993,7 @@
     },
     {
       "path": "apps/operator-backend/test/current_work_packet_verification.test.ts",
-      "sha256": "sha256:4cfdedd187ad998777c4987b7c731a51fd348020bef2428dc2b77978355079ca"
+      "sha256": "sha256:dbd787f418e05246469701bf87e437233e719c9cf7580829d5d95c86b016076b"
     },
     {
       "path": "apps/operator-backend/test/deferred_proposal_admission.test.ts",
@@ -9945,7 +9945,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:26e9bcbd92964371404b2cc281fe18e873ed54ddac5625ca17196dcb319369a2",
+  "inputs_hash": "sha256:8e4627c8a3e2829d1dffefada88388ad02248c1a7381b4a94a05191f6abacfe6",
   "result": {
     "passed": true,
     "checks": [
