@@ -309,7 +309,8 @@
     "advisory_readback_guidance.test.ts",
     "desktop_scoped_handoff.test.ts",
     "desktop_conversation.test.ts",
-    "desktop_conversation_http.test.ts"
+    "desktop_conversation_http.test.ts",
+    "scoped_helper_projection.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -372,7 +373,8 @@
     "test/delegated_assignment_recovery.test.mjs",
     "test/provider_usage_hold_ui.test.js",
     "test/native_change_feedback.test.js",
-    "test/visual_work_review.test.js"
+    "test/visual_work_review.test.js",
+    "test/scoped_helper_projection.test.js"
   ],
   "dotnet_test_classes": [
     "CadLinkOptionPolicyTests",
@@ -4521,6 +4523,13 @@
       "coverage": [
         "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
         "desktop:test/visual_work_review.test.js"
+      ]
+    },
+    {
+      "id": "scoped_helper_findings_survive_large_wrapper_without_native_authority_promotion",
+      "coverage": [
+        "backend:scoped_helper_projection.test.ts",
+        "desktop:test/scoped_helper_projection.test.js"
       ]
     }
   ],

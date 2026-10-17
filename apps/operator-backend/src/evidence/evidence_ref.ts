@@ -72,6 +72,8 @@ export type EvidenceProjectionV1 = {
   tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
   /** Observed native topology presentation; raw evidence remains authoritative. */
   connector_graph?: import("./connector_graph_projection.js").ConnectorGraphProjection;
+  /** Screened, scoped helper claims for iteration; never native or completion proof. */
+  helper_findings?: import("./scoped_helper_projection.js").ScopedHelperFindings;
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];

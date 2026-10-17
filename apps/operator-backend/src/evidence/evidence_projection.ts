@@ -2,6 +2,7 @@ import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRef
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
 import { projectParameterTable } from "./parameter_table_projection.js";
+import { projectScopedHelperFindings } from "./scoped_helper_projection.js";
 import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
@@ -338,6 +339,10 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     candidate = projectionBytes(expanded) <= maxBytes ? expanded : { ...base,
       diagnostics: ["connector_graph omitted: item byte budget; raw connector rows remain retrievable", ...base.diagnostics], truncated: true };
   }
+  const helperBase = { ...base, key_counts: {}, key_facts: {}, diagnostics: [], target_scope: ref.target_scope,
+    effect_state: null, before_hash: null, after_hash: null };
+  const helperFindings = projectScopedHelperFindings(ref, raw, maxBytes - projectionBytes(helperBase) - 64);
+  if (helperFindings) candidate = { ...helperBase, helper_findings: helperFindings, truncated: true };
   while (projectionBytes(candidate) > maxBytes) {
     const facts = Object.entries(candidate.key_facts);
     const counts = Object.entries(candidate.key_counts);

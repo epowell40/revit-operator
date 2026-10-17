@@ -139,6 +139,6 @@ export function modelEvidenceEnvelope(projections: EvidenceProjectionV1[], omitt
     schema: MODEL_EVIDENCE_ENVELOPE_SCHEMA,
     evidence_projections: projections.map(modelEvidenceProjection),
     omitted,
-    retrieval: "Read inline_payload first; retrieve only missing fields/images. resultItems use raw_payload paths for native keys, or source=deterministic_projection with [key_counts or key_facts, exact literal key] for summaries. Preserve paging/scope limits; never reconstruct IDs or split literal keys."
+    retrieval: "Read inline_payload and scoped helper_findings first; helper findings are unverified claims, not native proof. Retrieve only missing fields/images. resultItems use raw_payload paths for native keys, or source=deterministic_projection with [key_counts or key_facts, exact literal key] for summaries. Preserve paging/scope limits; never reconstruct IDs or split literal keys."
   };
 }
