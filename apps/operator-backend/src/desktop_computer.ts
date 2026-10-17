@@ -19,6 +19,8 @@ import { appendEvidenceTelemetry } from "./evidence/evidence_store.js";
 import { localExecutorCapability, type LocalExecutorCapabilityV1 } from "./assignments/local_advisory_policy.js";
 import { executeExternalProviderCallV2 } from "./assignments/external_provider_lifecycle.js";
 import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
+import {assignmentKernelV2ForBinding} from './assignments/assignment_kernel_v2_factory.js';
+import {desktopAssignmentFeedbackInputV2} from './desktop_assignment_feedback.js';
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -228,6 +230,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   binding: AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 }): Promise<DesktopComputerRelayResponse> {
   const request = rawBody && typeof rawBody === "object" ? rawBody as Record<string, unknown> : {};
   const messageId = request.message_id;
+  let providerBody:unknown=rawBody;
   if (messageId !== undefined && (typeof messageId !== "string" || !messageId.length || messageId.length > 256 || /[\u0000-\u001f]/.test(messageId)))
     throw new Error("desktop_provider_message_identity_invalid");
   const usage = (receipt: ModelCallReceipt) => messageId === undefined ? undefined : parseProviderResponseUsageV1({
@@ -236,7 +239,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   });
   const invoke = async () => {
     try {
-      const result = await relayDesktopComputerResponse(rawBody);
+      const result = await relayDesktopComputerResponse(providerBody);
       const observed = usage(result.model_call_receipt);
       return { ...result, ...(observed ? { provider_response_usage: observed } : {}) };
     } catch (error) {
@@ -251,6 +254,10 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   assertModelReasoningEffort(model, reasoning);
   assertBoundedModelEvidencePayload(body.input);
   if (!resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
+  const resolved=assignmentKernelV2ForBinding(binding);
+  if(!resolved)throw new Error('desktop_assignment_feedback_binding_stale');
+  providerBody={...request,input:desktopAssignmentFeedbackInputV2(body.input,resolved.snapshot)};
+  assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
   return executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
     invoke, receipt: result => result.model_call_receipt,
     errorReceipt: getDesktopComputerProviderErrorReceipt });

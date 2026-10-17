@@ -22,9 +22,12 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bound-desktop-relay-"));
   let goalId = "";
   let requests = 0;
+  let upstreamRequest: any;
   const server = http.createServer((request, response) => {
-    request.resume();
+    const chunks: Buffer[] = [];
+    request.on('data',chunk=>chunks.push(Buffer.from(chunk)));
     request.on("end", () => {
+      upstreamRequest=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       requests++;
       const snapshot = getAssignmentKernelSnapshotV2(goalId)!;
       assert.equal(snapshot.in_flight_provider_call_ids.length, 1);
@@ -47,6 +50,8 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a" },
       { ...binding, kernelVersion: 2 });
     assert.equal(requests, 1);
+    assert.match(JSON.stringify(upstreamRequest.input), /operator.desktop-assignment-feedback.v1/);
+    assert.match(JSON.stringify(upstreamRequest.input), /Inspect PDF/);
     assert.equal(result.model_call_receipt.call_id, "bound-upstream");
     assert.deepEqual(result.provider_response_usage, {
       schema: "revit-operator.provider-response-usage/v1", session_id: binding.session_id,

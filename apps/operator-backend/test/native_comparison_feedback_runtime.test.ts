@@ -9,6 +9,7 @@ import {canonicalJsonV2,AssignmentJournalV2}from '../src/domain/assignment-kerne
 import {controlAssignmentExecutionV2}from '../src/assignments/assignment_kernel_v2_controls.js';
 import {checkedEditIsCurrentV2}from '../src/verification/current_postcondition_v2.js';
 import {codexAssignmentEvidenceContextV2}from '../src/brains/codex_assignment_evidence.js';
+import {desktopAssignmentFeedbackInputV2}from '../src/desktop_assignment_feedback.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../src/verification/native_property_comparison_v2.js';
 import {__closeForTests}from '../src/memory/sqlite_store.js';
 
@@ -58,6 +59,13 @@ test(`integral comparison feedback ${variant}: native mismatch is not missing pr
    if(variant!=='filter_id'&&variant!=='paused'){
     const index=JSON.parse(codexAssignmentEvidenceContextV2(s)),pending=index.pending_verification.find((x:any)=>x.operation_id===apply.operation_id);
     assert(pending);if(variant==='wrong_value')assert.equal(pending.latest_check.state,'mismatch');
+    const originalInput=[{role:'user',content:'Continue the correction'}];
+    const outer=desktopAssignmentFeedbackInputV2(originalInput,s) as any[];
+    assert.equal(originalInput.length,1,'host feedback never mutates the caller conversation');
+    const outerText=outer.at(-1).content[0].text;
+    const outerFeedback=JSON.parse(outerText.slice(outerText.indexOf('\n')+1));
+    assert.deepEqual(outerFeedback.native_feedback.pending_verification,index.pending_verification,'outer worker receives the same current host-derived discrepancy, not a second checker');
+    assert.equal(outerFeedback.binding.assignment_id,binding.assignment_id);
     if(variant==='partial')assert.equal(pending.latest_check.state,'incomplete');
     if(variant==='wrong_view'||variant==='stale_read')assert.equal(pending.latest_check.state,'unavailable');
    }

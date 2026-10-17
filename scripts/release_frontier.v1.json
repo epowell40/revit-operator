@@ -348,6 +348,7 @@
     "lib/family_static_text_scope_schema.test.ts"
   ],
   "desktop_tests": [
+    "test/saved_computer_owner.test.js",
     "test/cad_attachment.test.js",
     "test/server_smoke.test.js",
     "test/sidecar_supporting_receipt.test.js",
@@ -4431,6 +4432,20 @@
         "dotnet:OperatorDelegatedBatchTruthTests",
         "backend:revit_batch_service.test.ts"
       ]
+    },
+    {
+      "id": "saved_desktop_owner_and_pause_survive_cold_continuation_without_unbound_input",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/saved_computer_assignment.test.mjs",
+        "desktop:test/saved_computer_owner.test.js"
+      ]
+    },
+    {
+      "id": "desktop_provider_receives_current_shared_native_discrepancy_feedback",
+      "coverage": [
+        "backend:desktop_computer_telemetry.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4442,6 +4457,7 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/saved_computer_assignment.test.mjs",
     "package/assignment-kernel-v2-contracts/native-affected-targets.test.mjs",
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
     "package/operator-assistant-ui/session_start.test.mjs",
