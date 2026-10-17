@@ -1,5 +1,5 @@
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
-import {createdSchedulePostconditionSatisfiedV2} from '../verification/created_schedule_postcondition_v2.js';
+import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
 import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
@@ -766,7 +766,7 @@ function commitInput(
           ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
           ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
-        : verificationSubject.request_identity?.path === '/revit/create-schedule'
+        : verificationSubject.request_identity?.path === '/revit/create-schedule' || isNativeScheduleDuplicateV2(snapshot!,verificationSubject)
           ? createdSchedulePostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(verificationSubject.input)
           ? nativePhaseFilterPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)

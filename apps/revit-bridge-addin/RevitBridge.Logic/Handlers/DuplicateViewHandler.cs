@@ -32,12 +32,17 @@ namespace RevitBridge.Logic.Handlers
                 transaction = OperatorNativeTransactionReceipt.NotStarted()
             });
 
-            return Task.FromResult<object>(NativeSingleTransaction.Execute(app, doc, "Duplicate View", createdElements =>
+            var sourceViewType = view.ViewType.ToString();
+            var sourceDefinitionBefore = view is ViewSchedule sourceSchedule
+                ? ScheduleDefinitionIdentitySnapshot.CaptureDefinition(sourceSchedule) : null;
+            long createdViewId = 0;
+            var response = NativeSingleTransaction.Execute(app, doc, "Duplicate View", createdElements =>
             {
                 var option = request.withDetailing ? ViewDuplicateOption.WithDetailing : ViewDuplicateOption.Duplicate;
                 var newId = view.Duplicate(option);
                 var copy = doc.GetElement(newId) as View
                     ?? throw new InvalidOperationException("Duplicate did not return a view.");
+                createdViewId = ElementIdCompat.GetValue(newId);
                 // A conflicting name rolls the copy back instead of silently
                 // changing the requested deliverable name.
                 if (!string.IsNullOrEmpty(request.newName)) copy.Name = request.newName;
@@ -55,7 +60,24 @@ namespace RevitBridge.Logic.Handlers
                     ["sourceViewId"] = request.viewId,
                     ["withDetailing"] = request.withDetailing
                 };
-            }));
+            });
+            response["sourceViewType"] = sourceViewType;
+            if (sourceDefinitionBefore != null)
+            {
+                response["sourceDefinitionBefore"] = sourceDefinitionBefore;
+                OperatorNativeTransactionExecution.ReadCommitted(response, () =>
+                {
+                    var copy = doc.GetElement(ElementIdCompat.Create(createdViewId)) as ViewSchedule
+                        ?? throw new InvalidOperationException("Duplicated schedule unavailable after commit.");
+                    return new Dictionary<string, object?>
+                    {
+                        ["created"] = true,
+                        ["definitionIdentity"] = ScheduleDefinitionIdentitySnapshot.Read(copy)
+                    };
+                });
+                response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Success");
+            }
+            return Task.FromResult<object>(response);
         }
     }
 }

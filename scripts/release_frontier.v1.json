@@ -4642,6 +4642,14 @@
       ]
     },
     {
+      "id": "schedule_clone_natural_duplicate_view_path_needs_retained_definition_and_independent_read",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:created_schedule_postcondition_v2.test.ts",
+        "backend:view_owned_detailing_v2.test.ts"
+      ]
+    },
+    {
       "id": "producer_supplied_postcondition_fact_cannot_bypass_host_native_comparison",
       "coverage": [
         "backend:created_schedule_runtime.test.ts",

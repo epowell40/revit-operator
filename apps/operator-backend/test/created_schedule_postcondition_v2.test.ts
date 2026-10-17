@@ -74,3 +74,12 @@ test('linked and sheet filtering requests compare actual native settings',()=>{
   if(field==='includeLinkedFiles')f.payload.definitionIdentity.includeLinkedFiles=true;else f.payload.settings.filterBySheet=true;
   assert.equal(check(f).state,'matched');}
 });
+
+test('general duplicate-view schedule copies require the same retained native definition proof',()=>{
+ const f=fixture(true);f.input={method:'POST',path:'/revit/duplicate-view',body:{viewId:41,newName:'Equipment Review',withDetailing:false}} as any;
+ Object.assign(f.apply,{sourceViewId:41,sourceViewType:'Schedule'});
+ assert.equal(check(f).state,'matched');
+ (f.input.body as any).withDetailing=true;assert.notEqual(check(f).state,'matched');(f.input.body as any).withDetailing=false;
+ f.payload.definitionSnapshot.definition.tableStyles[0]!.values.FontName='Different';assert.equal(check(f).state,'mismatch');
+ delete (f.apply as any).sourceDefinitionBefore;assert.notEqual(check(f).state,'matched');
+});

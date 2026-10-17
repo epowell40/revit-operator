@@ -11,7 +11,13 @@ const body=(v:unknown)=>{const r=row(v);return row(r.body??v);};
 const kinds:Record<string,string>={regular:'regular',material_takeoff:'material_takeoff',material:'material_takeoff',takeoff:'material_takeoff',key:'key',key_schedule:'key',keynote_legend:'keynote_legend',keynote:'keynote_legend',legend:'keynote_legend',multi_category:'multi_category',multicategory:'multi_category',sheet_list:'sheet_list',view_list:'view_list',clone:'clone'};
 const allowed=['name','scheduleName','category','categoryName','kind','sourceScheduleId','sourceQuery','sourceExact','fields','addFields','includeLinkedFiles','reuseIfExists','dryRun','filterBySheet','placeOnActiveSheet','placeOnActiveSheetX','placeOnActiveSheetY','placeOnSheet'];
 function request(v:unknown){
- const b=body(v),kind=kinds[label(b.kind??'regular').replace(/[- ]/g,'_')],name=b.name??b.scheduleName,fields=b.addFields??b.fields??[];
+ let b=body(v);const path=row(v).path;
+ if(path==='/revit/duplicate-view'){
+  if(!id(b.viewId)||b.withDetailing===true||b.withDetailing!==undefined&&typeof b.withDetailing!=='boolean'
+   ||Object.keys(b).some(k=>!['viewId','newName','withDetailing'].includes(k)))return null;
+  b={name:b.newName,kind:'clone',sourceScheduleId:b.viewId};
+ }else if(path!==undefined&&path!=='/revit/create-schedule')return null;
+ const kind=kinds[label(b.kind??'regular').replace(/[- ]/g,'_')],name=b.name??b.scheduleName,fields=b.addFields??b.fields??[];
  if(!kind||typeof name!=='string'||!name.trim()||name.length>240||Object.keys(b).some(k=>!allowed.includes(k))
   ||b.dryRun===true||!Array.isArray(fields)||fields.length>200||fields.some(f=>typeof f!=='string'||!f.trim()||f.length>240)
   ||['category','categoryName','sourceQuery'].some(k=>b[k]!==undefined&&(typeof b[k]!=='string'||!b[k].trim()))
@@ -40,6 +46,7 @@ function signature(v:unknown){const r=row(v),d=row(r.definition);return r.schema
 function committed(input:unknown,payload:unknown,affected:readonly string[]){
  const wanted=request(input),a=row(payload),tx=row(a.transaction),meta=identity(a.definitionIdentity);
  if(!wanted||!meta||a.status!=='Success'||a.success!==true||a.applied!==true||a.created!==true||a.viewId!==meta.id
+  ||row(input).path==='/revit/duplicate-view'&&(a.sourceViewType!=='Schedule'||a.sourceViewId!==wanted.body.sourceScheduleId)
   ||tx.status!=='committed'||tx.committed!==true||tx.pending===true||tx.rolled_back===true||a.dryRun===true
   ||!Array.isArray(tx.added_element_ids)||!tx.added_element_ids.includes(meta.id)||!Array.isArray(tx.deleted_element_ids)||tx.deleted_element_ids.length
   ||!affected.includes('element_id:'+meta.id))return null;
@@ -109,6 +116,10 @@ function retained(snapshot:AssignmentSnapshotV2,op:OperationV2){for(const id of 
  if(!o||o.authority!=='native-host'||o.operation_id!==op.operation_id||o.raw_payload_hash!==op.result?.raw_payload_hash||!sameAssignmentBindingV2(o.binding,op.binding))continue;
  try{const ref=readEvidenceRef(o.raw_payload_ref.replace(/^evidence:/,''));if(ref.byte_count>2_000_000)continue;const p=JSON.parse(readAuthoritativeEvidence(ref,{...op.binding,attempt_id:op.operation_id}).toString('utf8'));if(payloadDigestV2(p).digest===op.result?.raw_payload_hash)return p;}catch{/* Never replay a write to replace missing evidence. */}
  }return null;}
+/** Route from retained native type, never a model-supplied schedule assertion. */
+export function isNativeScheduleDuplicateV2(s:AssignmentSnapshotV2,op:OperationV2){
+ return op.request_identity?.path==='/revit/duplicate-view'&&row(retained(s,op)).sourceViewType==='Schedule';
+}
 /** Diagnostics only; normal settlement still owns proof, freshness and scope. */
 export function retainedCreatedScheduleComparisonV2(s:AssignmentSnapshotV2,op:OperationV2,read:OperationV2,payload:unknown){
  return createdScheduleReadbackComparisonV2(op.input,retained(s,op),read.input,payload,op.result?.affected_target_identities??[]);
@@ -116,7 +127,7 @@ export function retainedCreatedScheduleComparisonV2(s:AssignmentSnapshotV2,op:Op
 export function committedCreatedScheduleReadbackPlanV2(s:AssignmentSnapshotV2,op:OperationV2){
  if(s.terminal||s.outcome!=='active'||s.completion_proposal||s.execution_control?.state==='paused'||s.unresolved_unknown_operation_ids.length
   ||s.input_invalidated_operation_ids?.includes(op.operation_id)||!sameAssignmentBindingV2(s.current_binding,op.binding)
-  ||op.request_identity?.path!=='/revit/create-schedule'||op.input.method!=='POST'||op.input.path!==op.request_identity.path
+  ||!op.request_identity||!['/revit/create-schedule','/revit/duplicate-view'].includes(op.request_identity.path??'')||op.input.method!=='POST'||op.input.path!==op.request_identity.path
   ||op.persistent_effect!=='applied'||op.settlement_state!=='settled'||op.result?.authority!=='native-host'||op.result.native_transaction_state!=='committed'
   ||op.verification_operation_ids.length)return null;
  const c=committed(op.input,retained(s,op),op.result.affected_target_identities??[]);
@@ -125,7 +136,7 @@ export function committedCreatedScheduleReadbackPlanV2(s:AssignmentSnapshotV2,op
 }
 export function createdSchedulePostconditionSatisfiedV2(s:AssignmentSnapshotV2,op:OperationV2,result:OperationResultV2,payload:unknown):boolean {
  const read=s.operations[result.operation_id],commit=op.result;
- if(!read||!commit||op.request_identity?.path!=='/revit/create-schedule'||op.input.path!==op.request_identity.path||op.input.method!=='POST'
+ if(!read||!commit||!op.request_identity||!['/revit/create-schedule','/revit/duplicate-view'].includes(op.request_identity.path??'')||op.input.path!==op.request_identity.path||op.input.method!=='POST'
   ||op.requested_effect!=='apply'||op.admission_state!=='admitted'||op.dispatch_state!=='dispatched'||op.settlement_state!=='settled'||op.persistent_effect!=='applied'
   ||s.unresolved_unknown_operation_ids.length||s.input_invalidated_operation_ids?.some(id=>id===op.operation_id||id===read.operation_id)
   ||!sameAssignmentBindingV2(op.binding,s.current_binding)||!sameAssignmentBindingV2(commit.binding,op.binding)||commit.operation_id!==op.operation_id
