@@ -932,7 +932,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/native_observation_inputs_v2.ts",
-      "sha256": "sha256:675de0683770e2b8a42fc550a8f79c7c8a1541f5a193bbaccc2f38f46b649fdf"
+      "sha256": "sha256:8bde837c479e00b081f3f275a91a66cf9fa294d200b3a5a6f88bf18befa68a5a"
     },
     {
       "path": "apps/operator-backend/src/assignments/noop_completion.ts",
@@ -3792,8 +3792,12 @@
       "sha256": "sha256:2b09b10b297b369f4c7f6f15316b573063ca22adf53079925b7621ae3e7dc958"
     },
     {
+      "path": "apps/operator-backend/src/revit_batch/job_lock_open_error.ts",
+      "sha256": "sha256:62dcce6c6d6f02809bb468c0d709fe571d158f03f4eec660fa0b3b5150e407ac"
+    },
+    {
       "path": "apps/operator-backend/src/revit_batch/service.ts",
-      "sha256": "sha256:e0ed7d95f64e0fdcd903dae2564754ccc30ea3c6a3c8de96cda258a91c7994cd"
+      "sha256": "sha256:4b769e7fb83d2950778e7114b38156fe015bc020150287c8d46d1ad20337cb63"
     },
     {
       "path": "apps/operator-backend/src/revit_batch/tool_result_normalization.ts",
@@ -4185,7 +4189,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/native_property_comparison_v2.ts",
-      "sha256": "sha256:d6cf261fe7629f0b5a98f736c3393106518d54d30c70c19f1809c9159ab00481"
+      "sha256": "sha256:4b3f17f80ceb0cdbaf1c9eebac70fd5a618a3c1e5f3fc7f0319799ea29f13a3e"
     },
     {
       "path": "apps/operator-backend/src/verification/native_schedule_presentation_v2.ts",
@@ -4237,11 +4241,11 @@
     },
     {
       "path": "apps/operator-backend/src/verification/regular_schedule_presentation_v2.ts",
-      "sha256": "sha256:718afdf12f486c0fa48294037bcee885b6c298b6e47e80c86e14d61016ce37b9"
+      "sha256": "sha256:4b4967af9d3e835fc8c40080e7722c572ba19323df09c848fb0cb1eb41fca84c"
     },
     {
       "path": "apps/operator-backend/src/verification/regular_schedule_recheck_v2.ts",
-      "sha256": "sha256:f638dbd466d26c7a0502d1c88f199533c533899fafa1a0b5bfe8fb16819f211b"
+      "sha256": "sha256:a54e1b2456da85808daf971f418a4379a8f10886eb17661323a48a3f229432c3"
     },
     {
       "path": "apps/operator-backend/src/verification/requested_family_scope_readback_v1.ts",
@@ -4278,6 +4282,10 @@
     {
       "path": "apps/operator-backend/src/verification/schedule_filter_postcondition_v2.ts",
       "sha256": "sha256:e8c929a5312496da5151f693e0f318cca4356002c2f08f7ec2d2f535fe72c212"
+    },
+    {
+      "path": "apps/operator-backend/src/verification/schedule_row_heights_v2.ts",
+      "sha256": "sha256:7c8fa59c8a472268497c3556d58b96fc97fa149b7321337d39cb87b7e9e6f159"
     },
     {
       "path": "apps/operator-backend/src/verification/sheet_move_postcondition_v2.ts",
@@ -5836,6 +5844,10 @@
       "sha256": "sha256:358bfb4a3a1dedf247bc66839b941e376f2891cfd1d911044472dada461ea905"
     },
     {
+      "path": "apps/operator-backend/test/fixtures/schedule-row-height-synthetic.ts",
+      "sha256": "sha256:2070c992ed12a78eae289a6cfcbb3428c334deb90908760ab536d5eab97ce112"
+    },
+    {
       "path": "apps/operator-backend/test/fixtures/schedule_cell_readback_v2.ts",
       "sha256": "sha256:28160ca881a9d3e7e4f46170994b038fa77a60db3753cc98d81e17fd0a81e552"
     },
@@ -6030,6 +6042,10 @@
     {
       "path": "apps/operator-backend/test/inventory_scope_completion.test.ts",
       "sha256": "sha256:491aa024b4450eeedf5e744373efdeab3e3216d095a2ffbcab544e8bb39195ee"
+    },
+    {
+      "path": "apps/operator-backend/test/job_lock_open_error.test.ts",
+      "sha256": "sha256:620b6bd3baf517644b2b5da99133de29c083e5d78812648ce23d86886cf6ad97"
     },
     {
       "path": "apps/operator-backend/test/jsonl_atomic_append.test.ts",
@@ -6437,7 +6453,7 @@
     },
     {
       "path": "apps/operator-backend/test/regular_schedule_presentation_v2.test.ts",
-      "sha256": "sha256:58f779e71102bb80380607be89fd52a8303999e8575810dd4387fdd6e45cf5dc"
+      "sha256": "sha256:660ac9fb62a8eaa2f012eb6d34acb2adcaa97899eddcf02bc81a37a869cf4134"
     },
     {
       "path": "apps/operator-backend/test/rename_view_plan_receipt.test.ts",
@@ -6477,7 +6493,7 @@
     },
     {
       "path": "apps/operator-backend/test/revit_batch_service.test.ts",
-      "sha256": "sha256:e41f6d38967294fea8a16109f925b2888f01ca1066e370042081244fedea8b42"
+      "sha256": "sha256:e95a52292f29cec13fd2a7be75b904773710d856f169957747d6ec034b6455d7"
     },
     {
       "path": "apps/operator-backend/test/revit_context_policy.test.ts",
@@ -6589,7 +6605,7 @@
     },
     {
       "path": "apps/operator-backend/test/schedule_field_refresh_plan_v2.test.ts",
-      "sha256": "sha256:d4fbfe52256812aa40c8cd218d29cb5c9c2546c1ada8bbcf32ddc23e434b1827"
+      "sha256": "sha256:a540e82381af8ba3e90c0e3f62e61b6f6b542277625007d20b91fc68f2084c62"
     },
     {
       "path": "apps/operator-backend/test/schedule_filter_postcondition_v2.test.ts",
@@ -6598,6 +6614,10 @@
     {
       "path": "apps/operator-backend/test/schedule_read_runtime.test.ts",
       "sha256": "sha256:07f1598aaa88a6164daaf6beb982b5825ade1bdb822caae6c127a8638c71f300"
+    },
+    {
+      "path": "apps/operator-backend/test/schedule_row_heights_v2.test.ts",
+      "sha256": "sha256:ab87d2664bc4f4ea883b56c33807945c45bce84cc9ab3c6f4b4113f6c5c8ad5c"
     },
     {
       "path": "apps/operator-backend/test/schedule_value_replacement_runtime.test.ts",
@@ -7629,7 +7649,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleRowHeightPolicyTests.cs",
-      "sha256": "sha256:2d42dc5557a8cb5aa496fb7eb5d15d76e2772d2937d120f1a8e7a61baff3ac91"
+      "sha256": "sha256:ef9b0ad02f605e4b75e25cb56632bead0f45028ead27987dbd0f98e4cdd0011a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ScheduleSettlementTests.cs",
@@ -8366,11 +8386,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/SchedulePresentationContract.cs",
-      "sha256": "sha256:3291b1dd200de8f325b166c49a17a575cd7a05d9be73595f0104ccf35afe767b"
+      "sha256": "sha256:bd2c23828b86782be696ecaf5d46fcb77e8ce59febddf3108919e20098148d0b"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleRowHeightPolicy.cs",
-      "sha256": "sha256:ddc702c145f59cd23fa0e1b7fcd05481c50866ff428af6b4ef520dd75cbc9f80"
+      "sha256": "sha256:aabdb93536b1915f21d5a5262986f932ac478d81892ef95dff582b24e14c1495"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ScheduleValueReplacementPolicy.cs",
@@ -9318,7 +9338,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ConfigureScheduleHandler.cs",
-      "sha256": "sha256:0edc8f3b2e062e5c31306a0fc59341a21d9c8805b6f1948d5bbed6a9b03a5cee"
+      "sha256": "sha256:bffcae4b35cedcd25b0d59aee2b4b0523152d42fde9522a36c5490c0945cfcd1"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ContextHandler.cs",
@@ -9582,7 +9602,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RegularSchedulePresentationScope.cs",
-      "sha256": "sha256:1f1b668957e98ff7b81a8ba8351829a658e3afe8b3b99b413a7ea1a549bf2618"
+      "sha256": "sha256:bb0899ae45328d3b1851f6b7e81f3d0a8f57d342a8f2add802b2d7397c85ef8e"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RegularScheduleRowHeights.cs",
+      "sha256": "sha256:5c3e59a5bc1d89b8c0076d2405518c4ba88c0e162c206435f7fc1a983d41bccf"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RenumberRoomsHandler.cs",
@@ -10005,7 +10029,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:4825627afa6850dc1cc0b2f38f392b1e6c10e2b0d4e555017eb16db1062e6861",
+  "inputs_hash": "sha256:211812aa16777b338c0f768657c55b5c6a8abf294fab3b539987b54716a97500",
   "result": {
     "passed": true,
     "checks": [
