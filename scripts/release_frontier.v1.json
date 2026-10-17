@@ -304,6 +304,7 @@
     "current_work_packet_verification.test.ts",
     "regular_schedule_presentation_v2.test.ts",
     "schedule_field_formats_v2.test.ts",
+    "schedule_field_refresh_plan_v2.test.ts",
     "advisory_readback_guidance.test.ts"
   ],
   "mcp_tests": [
@@ -4389,6 +4390,10 @@
     {
       "id": "bounded_schedule_field_formats_native_census_and_separate_readback",
       "coverage": ["backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts", "dotnet:ScheduleFieldFormatContractTests"]
+    },
+    {
+      "id": "schedule_field_format_stale_proof_refresh_after_disjoint_presentation_commit",
+      "coverage": ["backend:schedule_field_refresh_plan_v2.test.ts", "backend:schedule_field_formats_v2.test.ts", "backend:regular_schedule_presentation_v2.test.ts"]
     },
     {
       "id": "schedule_row_failure_cannot_commit_success_and_pending_rollback_stays_unknown",
