@@ -173,7 +173,7 @@ export function missingOpaqueMutationInputs(userText: string): string[] {
   // An actual replace-text operation still authenticates its exact value in
   // mutationIntentBindingDecision regardless of this intake convenience.
   const textArtifact = "(?:text\\s*notes?|notes?|annotations?|wording|text)";
-  const modifiers = "(?:(?:the|this|that|these|those|a|an|one|selected|existing|outdated|old|current|approved|issue|project)\\s+){0,6}";
+  const modifiers = "(?:(?:the|this|that|these|those|a|an|one|selected|existing|outdated|old|current|approved|issue|project|revit)\\s+){0,6}";
   const presentation = "(?:['’]s\\s+)?(?:sizes?|fonts?|heights?|colou?rs?|styles?|alignment|widths?|borders?|position|rotation|placement|visibility|formatting|appearance|leaders?)\\b";
   const replacementRequest = new RegExp(`\\b(?:replace|update|correct|revise|rewrite|reword|edit|change|set)\\s+${modifiers}${textArtifact}\\b(?!\\s*${presentation})`).test(source)
     || new RegExp(`\\b${textArtifact}\\s+replacement\\b|\\breplacement\\s+${textArtifact}\\b`).test(source);

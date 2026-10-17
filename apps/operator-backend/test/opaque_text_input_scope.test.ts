@@ -22,6 +22,7 @@ test("graphical work and output filenames cannot invent a replacement-text input
 test("actual text-content requests still require an authenticated desired value", () => {
   for (const prompt of [
     "Replace the outdated selected note with the current issue wording without creating a duplicate.",
+    "Replace Revit TextNote element 1478627 with the approved wording.",
     "Update the selected note to the approved wording.",
     "Correct the selected TextNote using the current wording.",
     "Revise the note.", "Rewrite the annotation.",
