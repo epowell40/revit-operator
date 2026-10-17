@@ -3137,11 +3137,11 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_projection.ts",
-      "sha256": "sha256:447f5ae93ee1fc10d9769de759a24f29059f5848057d3d74a0348b6336052b26"
+      "sha256": "sha256:33be68c86b44102470c99ac7a4f4d2aa9aee0839077279fc772d7a9b385895fc"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
-      "sha256": "sha256:5a5284cdb3039e2f5804a9fdbf84a898b6c416322c952ab97a5478eba64ff9cf"
+      "sha256": "sha256:4a15c43fbb0a4f727bfd1dc7560044af6f621374c0e6b066d20158f90cc6faf2"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_store.ts",
@@ -3153,11 +3153,15 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
-      "sha256": "sha256:8f82568ad51b9f7fd4c0d46a403f4a9b12e00d6b2e6f2c8d2db470bbcb891dde"
+      "sha256": "sha256:90970c237b2988678c407eef81eb884b3048f632ca0d1c1761319aeced77d589"
     },
     {
       "path": "apps/operator-backend/src/evidence/parameter_table_projection.ts",
       "sha256": "sha256:308cd82413c5452044e2d4c6d622f265f34eee85b85cc5291f4be254239b464c"
+    },
+    {
+      "path": "apps/operator-backend/src/evidence/scoped_helper_projection.ts",
+      "sha256": "sha256:20437ea3ae453a870550ac4528df149ea71585bd363a534f10eea4dda969a559"
     },
     {
       "path": "apps/operator-backend/src/evidence/structured_payload.ts",
@@ -5045,7 +5049,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_conversation_http.test.ts",
-      "sha256": "sha256:3dce7f2f109c23f36fdb756539755a83c0e71bbf3f7949925db7ecad02b94186"
+      "sha256": "sha256:dfc03af63c4f9b07dd8a1b62de9595007ce2bfb26ddf0c4e06018bea59e8834b"
     },
     {
       "path": "apps/operator-backend/test/desktop_response_store.test.ts",
@@ -6654,6 +6658,10 @@
     {
       "path": "apps/operator-backend/test/schedule_value_replacement_runtime.test.ts",
       "sha256": "sha256:ac6066b9e4674230bb978699d88735f11ff443c402e90160c09ddf18402906bd"
+    },
+    {
+      "path": "apps/operator-backend/test/scoped_helper_projection.test.ts",
+      "sha256": "sha256:9d26cca24854c1cb04a351091c9b85587f694ad580f8d0b999ccd4c65f35875f"
     },
     {
       "path": "apps/operator-backend/test/semantic_operation_scope.test.ts",
@@ -10073,7 +10081,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:f491400da4101f90db02c128748fc3ca2c00b263316fe307ad4d870052ef0249",
+  "inputs_hash": "sha256:b0faee2f58a2376ae489dc1b65e620419457ec8269b6af7f69b4d281f01f9dab",
   "result": {
     "passed": true,
     "checks": [
