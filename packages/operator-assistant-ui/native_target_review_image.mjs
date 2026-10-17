@@ -14,7 +14,7 @@ export function readNativeTargetReviewImage(native,captureRoots,hooks={}){
   try{
     const receipt=native?.canonical_attempt_settlement;
     if(receipt?.method!=='POST'||receipt.path!=='/revit/export-image'||receipt.requested_effect!=='read'||receipt.effect_state!=='none'
-      ||!Number.isSafeInteger(native.viewId)||native.viewId<=0||native.exportMode!=='full_view'
+      ||!Number.isSafeInteger(native.viewId)||native.viewId<=0||!['full_view','visible_region'].includes(native.exportMode)
       ||typeof native.path!=='string'||!path.isAbsolute(native.path)||!Number.isSafeInteger(native.bytes)||native.bytes<=0||native.bytes>5*1024*1024
       ||typeof native.sha256!=='string'||!/^[a-f0-9]{64}$/.test(native.sha256))throw Error('native_image_receipt_invalid');
     const file=path.resolve(native.path),roots=captureRoots.map(root=>path.resolve(root));

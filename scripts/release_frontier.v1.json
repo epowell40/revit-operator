@@ -489,7 +489,8 @@
     "ParameterValuePreservationDigestTests",
     "OperatorDelegatedBatchTruthTests",
     "OperatorDocumentChangeObservationTests",
-    "ExportedImagePathResolverTests"
+    "ExportedImagePathResolverTests",
+    "NativeApiSearchScoreTests"
   ],
   "failure_families": [
     {
@@ -4579,6 +4580,14 @@
         "backend:visual_review_baseline.test.ts",
         "desktop:test/visual_work_review.test.js"
       ]
+    },
+    {
+      "id": "native_focused_visual_review_binds_active_viewport_and_pixels_without_tooltip_or_full_sheet_fallback",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_region.test.mjs",
+        "javascript:package/operator-assistant-ui/native_target_review_image.test.mjs",
+        "dotnet:OperatorViewImageContractTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4608,6 +4617,7 @@
     "package/operator-assistant-ui/visual_review_capture.test.mjs",
     "package/operator-assistant-ui/visual_work_review_target.test.mjs",
     "package/operator-assistant-ui/native_target_review_image.test.mjs",
-    "package/operator-assistant-ui/visual_work_review_recheck.test.mjs"
+    "package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_region.test.mjs"
   ]
 }

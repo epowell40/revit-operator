@@ -1,0 +1,12 @@
+{
+  "schema": "operator.visual-review-frame-drift.v1",
+  "source": "Retained disposable Snowdon candidate169 images; no private source pixels.",
+  "reason": "visual_review_visible_frame_changed_during_review",
+  "native_full_view_pairs": [
+    {"size": [4000,2857],"changed_pixels":423,"changed_bbox":[3936,2624,3960,2648]},
+    {"size": [5739,4099],"changed_pixels":540,"changed_bbox":[5656,3768,5680,3800]}
+  ],
+  "screen_pair": {"size":[1029,765],"changed_pixels":11386,"changed_bbox":[596,468,885,508],"observed":"Schedule Graphics tooltip appeared/disappeared over the work"},
+  "requested_mode": "native_visible_region",
+  "limits": "Focused native capture is an explicit observed viewport, not a difference mask or native whole-task proof. Actual native image equality and viewport identity remain required."
+}

@@ -8,7 +8,18 @@ test('host-native capture reader returns hash-bound actual bytes only from captu
 test('foreign paths, symlink escapes, malformed receipts and changed files never become reviewer pixels',()=>{const f=fixture();try{
  const outside=path.join(f.root,'outside');fs.mkdirSync(outside);const external=path.join(outside,'image.png');fs.writeFileSync(external,pixels);
  const link=path.join(f.captures,'escape');fs.symlinkSync(outside,link,process.platform==='win32'?'junction':'dir');
- for(const bad of [{...f.native,path:external},{...f.native,path:path.join(link,'image.png')},{...f.native,path:'relative.png'},{...f.native,bytes:0},{...f.native,bytes:10_000_000},{...f.native,sha256:'a'.repeat(64)},{...f.native,canonical_attempt_settlement:{...f.native.canonical_attempt_settlement,effect_state:'unknown'}},{...f.native,exportMode:'visible_region'}])assert.equal(readNativeTargetReviewImage(bad,[f.captures]).available,false);
+ for(const bad of [{...f.native,path:external},{...f.native,path:path.join(link,'image.png')},{...f.native,path:'relative.png'},{...f.native,bytes:0},{...f.native,bytes:10_000_000},{...f.native,sha256:'a'.repeat(64)},{...f.native,canonical_attempt_settlement:{...f.native.canonical_attempt_settlement,effect_state:'unknown'}},{...f.native,exportMode:'actor_region'}])assert.equal(readNativeTargetReviewImage(bad,[f.captures]).available,false);
  fs.appendFileSync(f.file,'changed');assert.equal(readNativeTargetReviewImage(f.native,[f.captures]).available,false);
 }finally{f.dispose();}});
 test('file replacement between approval/open/read is refused even with identical bytes',()=>{for(const key of ['afterResolve','afterOpen']){const f=fixture();try{const r=readNativeTargetReviewImage(f.native,[f.captures],{[key]:()=>{fs.renameSync(f.file,f.file+'.old');fs.writeFileSync(f.file,pixels);}});assert.equal(r.available,false);assert.match(r.reason,/identity_changed/);}finally{f.dispose();}}});
+
+test('native visible-region transport accepts bound bytes and retains capture-root, hash, settlement and file identity guards',()=>{
+ const f=fixture();try{
+  const native={...f.native,exportMode:'visible_region'};
+  assert.equal(readNativeTargetReviewImage(native,[f.captures]).image_base64,pixels.toString('base64'));
+  const outside=path.join(f.root,'foreign.png');fs.writeFileSync(outside,pixels);
+  for(const bad of [{...native,path:outside},{...native,sha256:'b'.repeat(64)},{...native,canonical_attempt_settlement:{...native.canonical_attempt_settlement,effect_state:'unknown'}}])assert.equal(readNativeTargetReviewImage(bad,[f.captures]).available,false);
+  const swapped=readNativeTargetReviewImage(native,[f.captures],{afterOpen:()=>{fs.renameSync(f.file,f.file+'.old');fs.writeFileSync(f.file,pixels);}});
+  assert.equal(swapped.available,false);assert.match(swapped.reason,/identity_changed/);
+ }finally{f.dispose();}
+});

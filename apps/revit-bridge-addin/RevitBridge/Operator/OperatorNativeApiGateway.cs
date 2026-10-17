@@ -1542,15 +1542,7 @@ namespace RevitBridge.Operator
 
         private static int Score(NativeApiMemberDescriptor m, string q)
         {
-            var s = 0;
-            var tokens = q.Split(new[] { ' ', '\t', '\r', '\n', '/', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
-            if (m.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 80;
-            if (m.TypeName.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 60;
-            if (m.Signature.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 50;
-            foreach (var t in tokens) { if (m.SearchText.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0) s += 8; }
-            s += m.Priority / 3;
-            if (m.Callable) s += 4;
-            return s;
+            return NativeApiSearchScore.Compute(q, m.Name, m.TypeName, m.Signature, m.SearchText, m.Priority, m.Callable);
         }
 
         private static bool IsMutatingHint(string name)
