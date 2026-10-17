@@ -3,6 +3,7 @@ import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from 
 import { assignmentDirections, steerAssignment } from "./task_steering.js";
 import { listTaskNavigationAsync } from "./task_navigation.js";
 import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
+import {retainDesktopReviewConversationV1} from './desktop_conversation.js';
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { recoverAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -302,6 +303,10 @@ export async function handleAssignmentHttpRoute(
         item_id: body?.item_id as string, reason: body?.reason as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
         operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number,
         followup: body?.followup as any, followup_start: body?.followup_start as number });
+      if(body?.action==='propose_completion'){
+        const snapshot=getAssignmentKernelSnapshotV2(binding.assignment_id);
+        if(snapshot)retainDesktopReviewConversationV1(snapshot.current_binding);
+      }
       writeJson(res, 200, result);
     } catch (error) { writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
     return true;

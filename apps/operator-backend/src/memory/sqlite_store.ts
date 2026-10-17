@@ -422,7 +422,7 @@ export function getRecentMessages(sessionId: string, limit: number, requireAvail
 }
 
 export type ConversationDisplay = {
-  source?: "ui_context" | "assistant_intake";
+  source?: "ui_context" | "assistant_intake" | "desktop_executor";
   message_id: string;
   text: string;
   attachments?: Array<{ id: string; name: string }>;

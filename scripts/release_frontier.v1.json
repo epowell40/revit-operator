@@ -306,7 +306,9 @@
     "schedule_field_formats_v2.test.ts",
     "schedule_field_refresh_plan_v2.test.ts",
     "advisory_readback_guidance.test.ts",
-    "desktop_scoped_handoff.test.ts"
+    "desktop_scoped_handoff.test.ts",
+    "desktop_conversation.test.ts",
+    "desktop_conversation_http.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -4475,6 +4477,13 @@
       "coverage": [
         "backend:desktop_scoped_handoff.test.ts",
         "backend:thin_reference_execution.test.ts"
+      ]
+    },
+    {
+      "id": "desktop_human_conversation_and_review_are_distinct_from_internal_helper_turns",
+      "coverage": [
+        "backend:desktop_conversation.test.ts",
+        "backend:desktop_conversation_http.test.ts"
       ]
     }
   ],
