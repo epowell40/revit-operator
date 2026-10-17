@@ -891,6 +891,10 @@
       "sha256": "sha256:8ab992e1e22890da149a13c1323150c1ecf1464f5be263f00bf5f4d72a86d26e"
     },
     {
+      "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
+      "sha256": "sha256:4b99a8bf2a3a4552f81b01a74965f0c1032993feae076bd9909ea91d738b7b91"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts",
       "sha256": "sha256:5b40d69b572ce10af1120a69bca9f4e271e933417e63df27f9d7f854acb19cc4"
     },
@@ -1532,11 +1536,11 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
-      "sha256": "sha256:2eae7c9643f783462ecbca8d3cc03c63af0c5fb324ac4c4dafcf711ae54521ad"
+      "sha256": "sha256:ddfd6711b4623b8a9e1f25140530bfbf7f9064e983ee2603804724e859e43f14"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:2f360ddc44461d50b993700493470e1b0e57370dd950106610a8ca949de76013"
+      "sha256": "sha256:325f7d3ef5bf8af2710e3f9b9959f26fc3e5919f0832dcac2dcae41f14ad8407"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
@@ -1548,7 +1552,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:691d220449f93501975a1531ecb1dd14f582dccca63eff0eac16c77458afb99e"
+      "sha256": "sha256:2a81984365af37e24782e8a92096c47b6ef5c49fa5451cd74ba371172545e270"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -3889,7 +3893,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:94fc3afe0ba57393e33e216703d9063fe17cf444a1f7163093322ca9b23dd40b"
+      "sha256": "sha256:4f9a5b864fb1701401fc25456eea35b707b5a86e85685289d1440f9097d134ff"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
@@ -5030,6 +5034,10 @@
     {
       "path": "apps/operator-backend/test/desktop_response_store.test.ts",
       "sha256": "sha256:c949f1982104b129ab7d25fce4f85c4e8f42afe3374de4877f0b6417228585ca"
+    },
+    {
+      "path": "apps/operator-backend/test/desktop_scoped_handoff.test.ts",
+      "sha256": "sha256:259423a26b065265d325b8b60b02873928ceeda53eec5866780ca41525b975e9"
     },
     {
       "path": "apps/operator-backend/test/detailing_model_projection.test.ts",
@@ -10033,7 +10041,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:0e549ce83613b0275eca39e2125bdb9a13b367943615a06609a4552074763f96",
+  "inputs_hash": "sha256:c3c974d263562f7d27b486177ee5baf9b87c1fbd36c7b70a95965f2f366f97e6",
   "result": {
     "passed": true,
     "checks": [
