@@ -1,6 +1,7 @@
 import {mergeEvaluation,projectWorkUnitCriteria} from './criterion_projection.js';
 import { isCanonicalNativeAffectedTargetSetV2 } from '@revitoperator/assignment-kernel-v2-contracts';
-import { defaultAssignmentWorkBudgetV2 } from "./effective_work_budget.js";
+import { defaultAssignmentWorkBudgetV2, allocateAuthenticatedFollowupV1 } from "./effective_work_budget.js";
+import { USER_FOLLOWUP_ALLOCATION_V1 } from './user_followup_allocation.js';
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { preDispatchReadRetryV2 } from './pre_dispatch_read_retry.js';
 import { recordWorkPlanLocationV2 } from './work_plan_location.js';
@@ -48,7 +49,7 @@ const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
 /** Rechecked under the journal lock. Saving a direction may precede resolution;
  * only that command's own pending input may survive a crash-prefix preflight. */
 export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnapshotV2, reviewId: string,
-  continuation: AdvisoryCheckpointContinuationV1, now: string, preparingDirection = false): void {
+  continuation: AdvisoryCheckpointContinuationV1, now: string, preparingDirection = false, allocateNewWork = false): void {
   kernelAssertV2(advisoryVerificationV2(snapshot) && !snapshot.terminal, "advisory_continuation_not_enabled", "An open advisory task is required.");
   kernelAssertV2(Boolean(continuation) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(continuation.command_id)
     && typeof continuation.direction_text === "string" && continuation.direction_text.trim().length > 0 && continuation.direction_text.length <= 8000
@@ -65,9 +66,10 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
   kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0, "advisory_continuation_reconciliation_required", "Unknown effects cannot be released by a follow-up.");
   kernelAssertV2(snapshot.pending_input_variable_ids.every(id => preparingDirection && id === continuation.direction_variable_id),
     "advisory_continuation_input_pending", "Other execution-critical answers are still required.");
-  kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && snapshot.execution_failure_ids.length === 0,
+  kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && !snapshot.provider_usage_hold && snapshot.execution_failure_ids.length === 0,
     "advisory_continuation_execution_blocked", "A checkpoint cannot clear execution failure or budget stops.");
-  const budget = advisoryWorkBudget(snapshot);
+  const candidate = allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,continuation.command_id,now) : snapshot;
+  const budget = advisoryWorkBudget(candidate);
   kernelAssertV2(Object.keys(snapshot.provider_calls).length < budget.max_provider_calls
     && Object.keys(snapshot.operations).length < budget.max_operations
     && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < budget.max_total_tokens
@@ -78,7 +80,7 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
     kernelAssertV2(input?.variable_id === continuation.direction_variable_id && Boolean(input.resolved_at)
       && snapshot.input_values[continuation.direction_variable_id] === continuation.direction_text,
       "advisory_continuation_direction_not_saved", "The authenticated follow-up must be saved before releasing its checkpoint.");
-    kernelAssertV2(deriveAssignmentOutcomeV2({ ...snapshot, completion_proposal: undefined, pending_review_ids: [] }) === "active",
+    kernelAssertV2(deriveAssignmentOutcomeV2({ ...candidate, completion_proposal: undefined, pending_review_ids: [] }) === "active",
       "advisory_continuation_execution_blocked", "The task still has unresolved execution prerequisites.");
   }
 }
@@ -1054,12 +1056,13 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         break;
       case "review_resolved":
         kernelAssertV2(snapshot.pending_review_ids.includes(event.review_id), "review_resolution_unknown", "Review resolution does not match a pending review.");
-        if (event.decision === "continue_advisory_checkpoint_v1") {
+        if (event.decision === "continue_advisory_checkpoint_v1" || event.decision === USER_FOLLOWUP_ALLOCATION_V1) {
           kernelAssertV2(event.actor === "authenticated-user", "advisory_continuation_authority_invalid", "Only an authenticated user can continue a checkpoint.");
-          assertAdvisoryCheckpointContinuationV1(snapshot, event.review_id, event.continuation!, event.occurred_at);
+          const allocateNewWork = event.decision === USER_FOLLOWUP_ALLOCATION_V1;
+          assertAdvisoryCheckpointContinuationV1(snapshot, event.review_id, event.continuation!, event.occurred_at, false, allocateNewWork);
           // The immutable proposal remains in its original review_requested event.
           // Only the pending projection changes; identity, controls and usage do not.
-          snapshot = { ...snapshot, completion_proposal: undefined };
+          snapshot = { ...(allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,event.continuation!.command_id,event.occurred_at) : snapshot), completion_proposal: undefined };
         } else kernelAssertV2(event.continuation === undefined, "advisory_continuation_decision_invalid", "Continuation requires its versioned decision.");
         snapshot = { ...snapshot, pending_review_ids: snapshot.pending_review_ids.filter((id) => id !== event.review_id) };
         break;

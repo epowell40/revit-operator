@@ -43,6 +43,8 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
         verified_distinct_targets: allowance.verified_targets,
         earned_credit_unit: 'distinct_verified_targets_v1' }),
       progress_extension_enabled: Boolean(snapshot.spec.execution_policy?.progress_allowance),
+      ...(snapshot.user_followup_allocation ? {authenticated_user_followup:snapshot.user_followup_allocation,
+        followup_basis:'Explicit saved user direction at a settled checkpoint; bounded by frozen resource ceilings. Not verified progress; cumulative usage is preserved.'} : {}),
       basis: allowance.verified_targets === undefined
         ? "Creation-time source workload plus distinct committed native edits with recognized readback; no agent completion claims."
         : "Creation-time source workload plus distinct principal targets checked after native commit; repeated targets and collateral earn no credit. No agent completion claims." },

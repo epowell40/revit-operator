@@ -26,6 +26,7 @@ import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_wor
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { requestAssignmentInputV2, supplyAssignmentInputResultV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { assertAdvisoryCheckpointContinuationV1 } from "../src/domain/assignment-kernel/reducer.js";
+import { USER_FOLLOWUP_ALLOCATION_V1 } from '../src/domain/assignment-kernel/user_followup_allocation.js';
 import { createAssignmentKernelV2ModelReceiptRecorder } from "../src/assignments/assignment_kernel_v2_provider_budget.js";
 import { localThinReferenceLimits, runThinReferenceTurns } from "../src/brains/thin_reference_execution.js";
 import { getThinReferenceCodexProfile } from "../src/brains/codex_turn_profile.js";
@@ -302,10 +303,11 @@ test("work-plan and provider prompt expose the same host-owned remaining allowan
   assert.deepEqual(f.state().spec.execution_policy,before);
   assert.equal(f.state().outcome,"active");
 }));
-async function fixture(advisory: boolean | "installation", fn: (f: ReturnType<typeof setup>) => unknown | Promise<unknown>) {
+async function fixture(advisory: boolean | "installation" | "progress", fn: (f: ReturnType<typeof setup>) => unknown | Promise<unknown>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-advisory-"));
   const env = { OPERATOR_WORKSPACE_ROOT: root, REVIT_OPERATOR_MODE: advisory === "installation" ? "development" : "local",
-    OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS: advisory === true ? "experiment" : "",
+    OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS: advisory === true || advisory === "progress" ? "experiment" : "",
+    OPERATOR_LOCAL_PROGRESS_ALLOWANCE: advisory === "progress" ? "verified_native_changes_v1" : process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE ?? "",
     OPERATOR_LOCAL_EXECUTOR_PROFILE: advisory === "installation" ? "codex_v2_advisory_v1" : "",
     OPERATOR_ASSIGNMENT_KERNEL_V2: "1", OPERATOR_BRAIN: "codex", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_HOSTED_ENABLED: "0" };
   const old = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -468,7 +470,7 @@ function checkpointCommand(f: ReturnType<typeof setup>, id = "checkpoint-followu
 }
 
 for (const prefix of ["receipt", "requested", "supplied", "chat"] as const)
-test(`checkpoint continuation recovers the ${prefix} crash prefix without duplicate direction or changed history`, () => fixture(true, async f => {
+test(`checkpoint continuation recovers the ${prefix} crash prefix without duplicate direction or changed history`, () => fixture("progress", async f => {
   manageAssignmentWorkPlan({binding:f.binding,action:"propose_completion",completion_proposal:proposal});
   const command=checkpointCommand(f), variable="user_direction_"+createHash("sha256").update(command.command_id).digest("hex").slice(0,32);
   appendEvent(f.binding.session_id,"user","task.steering",{command_id:command.command_id,binding:f.binding,text:command.text,
@@ -486,7 +488,36 @@ test(`checkpoint continuation recovers the ${prefix} crash prefix without duplic
   assert.equal(events.filter(e=>e.event_type==="review_resolved").length,1);
   assert.equal(events.filter(e=>e.event_type==="input_requested").length,1);
   assert.equal(events.filter(e=>e.event_type==="input_supplied").length,1);
+  assert.equal(f.state().user_followup_allocation?.command_id,command.command_id);
+  assert.equal(defaultAssignmentWorkBudgetV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,64);
 }));
+
+test("authenticated new work receives a bounded allocation without resetting usage or stockpiling idle directions", async () => {
+  const previous=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;
+  process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE="verified_native_changes_v1";
+  try { await fixture(true, async f => {
+    for(let i=0;i<55;i++)recordCompletedAssignmentProviderReceiptV2({binding:f.binding,call_id:`prior-${i}`,provider:"fixture",model:"fixture",
+      reasoning_effort:null,gap_ids:[],criterion_ids:[],expected_information:["Retained settled usage"],admitted_at:new Date().toISOString(),provider_duration_ms:0,
+      usage:{input_tokens:100,cached_input_tokens:80,cache_write_input_tokens:0,output_tokens:1,total_tokens:101,reasoning_tokens:null,estimated_cost_usd:null},success:true});
+    manageAssignmentWorkPlan({binding:f.binding,action:"propose_completion",completion_proposal:proposal});
+    const before=structuredClone(f.state()), command=checkpointCommand(f,"fresh-work");
+    assert.equal(defaultAssignmentWorkBudgetV2(before,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,64);
+    await steerAssignment(command);
+    const after=f.state(), budget=defaultAssignmentWorkBudgetV2(after,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+    assert.equal(budget.max_provider_calls,119,"55 consumed plus one base64 allocation, within frozen256 ceiling");
+    assert.deepEqual(after.provider_calls,before.provider_calls);assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.spec,before.spec);
+    assert.equal(assignmentWorkBudgetStatusV2(after,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString()).resources.provider_calls.remaining,64);
+    await steerAssignment(command);assert.equal(f.state().assignment_version,after.assignment_version);
+    __testOnlyResetGoalListCache();assert.deepEqual(f.state(),after,"durable journal replay retains the exact allocation");
+    controlAssignmentExecutionV2({binding:f.binding,action:'pause',command_id:'pause-after-direction',expected_command_id:null});
+    controlAssignmentExecutionV2({binding:f.binding,action:'resume',command_id:'plain-resume',expected_command_id:'pause-after-direction'});
+    assert.deepEqual(f.state().user_followup_allocation,after.user_followup_allocation,'Plain Resume cannot mint an allocation');
+    assert.deepEqual(defaultAssignmentWorkBudgetV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),budget);
+    manageAssignmentWorkPlan({binding:f.binding,action:"propose_completion",completion_proposal:proposal});
+    await steerAssignment(checkpointCommand(f,"second-idle-direction"));
+    assert.equal(defaultAssignmentWorkBudgetV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,119,"idle new direction cannot accumulate credit");
+  }); } finally { if(previous===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=previous; }
+});
 
 test("checkpoint follow-up rejects stale control/document/review and conflicting retries without releasing work", () => fixture(true, async f => {
   manageAssignmentWorkPlan({binding:f.binding,action:"propose_completion",completion_proposal:proposal});
@@ -513,6 +544,8 @@ test("versioned review resolution preserves legacy replay and requires authentic
   assert.equal(legacy.outcome,"awaiting_user_review");assert.ok(legacy.completion_proposal);
   assert.throws(()=>make().append(event("operator-work-plan","continue_advisory_checkpoint_v1")),/authenticated user/);
   assert.throws(()=>make().append(event("authenticated-user","continue_advisory_checkpoint_v1")),/saved user direction/);
+  assert.throws(()=>make().append(event("operator-work-plan",USER_FOLLOWUP_ALLOCATION_V1)),/authenticated user/);
+  assert.throws(()=>make().append(event("authenticated-user",USER_FOLLOWUP_ALLOCATION_V1)),/saved user direction/);
 }));
 
 test("checkpoint continuation guards failure, unknown, unsettled work, remaining input and every immutable budget at reducer boundary", () => fixture(true, f => {
@@ -521,7 +554,7 @@ test("checkpoint continuation guards failure, unknown, unsettled work, remaining
   const continuation={command_id:command.command_id,expected_control_command_id:null,document_fingerprint:command.checkpoint.document_fingerprint,
     direction_variable_id:"user_direction_"+"a".repeat(32),direction_text:command.text};
   const rejects=(change:(s:AssignmentSnapshotV2)=>void,pattern:RegExp)=>{const state=structuredClone(snapshot);change(state);
-    assert.throws(()=>assertAdvisoryCheckpointContinuationV1(state,command.checkpoint.review_id,continuation,new Date().toISOString(),true),pattern);};
+    for(const allocate of [false,true])assert.throws(()=>assertAdvisoryCheckpointContinuationV1(state,command.checkpoint.review_id,continuation,new Date().toISOString(),true,allocate),pattern);};
   rejects(s=>{s.unresolved_unknown_operation_ids=["unknown"];},/Unknown effects/);
   rejects(s=>{s.in_flight_operation_ids=["native"];},/settle/);
   rejects(s=>{s.in_flight_provider_call_ids=["provider"];},/settle/);
@@ -529,6 +562,7 @@ test("checkpoint continuation guards failure, unknown, unsettled work, remaining
   rejects(s=>{s.execution_failure_ids=["failure"];},/failure/);
   rejects(s=>{s.progress_blocker={code:"stopped"} as any;},/failure/);
   rejects(s=>{s.provider_budget_exhausted={} as any;},/failure/);
+  rejects(s=>{s.provider_usage_hold={} as any;},/failure/);
   rejects(s=>{s.spec.execution_policy!.max_provider_calls=1;s.provider_calls={used:{} as any};},/usage limits/);
   rejects(s=>{s.spec.execution_policy!.max_operations=1;s.operations={used:{} as any};},/usage limits/);
   rejects(s=>{s.spec.execution_policy!.max_total_tokens=1;s.provider_calls={used:{usage:{total_tokens:1}} as any};},/usage limits/);

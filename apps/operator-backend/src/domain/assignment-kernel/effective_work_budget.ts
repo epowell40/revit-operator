@@ -6,12 +6,14 @@ import { sameAssignmentBindingV2 } from "./identity.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "./outcome.js";
 import { readyNativeRollbackPreviewV2 } from "./progress/ready_native_preview.js";
 import {nativeInventoryPlanningV1} from './native_inventory_workload.js';
+import { applyUserFollowupAllocationV1, allocateUserFollowupV1, userFollowupLimitV1 } from './user_followup_allocation.js';
 
 // One pure derivation for execution, telemetry and checkpoint admission.
-// Frozen policy and durable usage remain immutable; only checked work earns credit.
+// Frozen policy and usage remain immutable. Checked progress and authenticated
+// new work are distinct, journal-derived allocations within the same ceilings.
 /** A retained plan permits one bounded planning window. Only independently
- * verified, distinct native changes earn more work. Usage is never reset. */
-export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; verified_targets?: number; source_planning_units?:number;source_planning_items?:number; provider_calls: number } {
+ * verified, distinct native changes earn progress credit. Usage is never reset. */
+function earnedAssignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { broad: boolean; verified_changes: number; verified_targets?: number; source_planning_units?:number;source_planning_items?:number; provider_calls: number } {
   const policy = advisoryVerificationV2(snapshot) ? snapshot.spec.execution_policy : undefined;
   const targetCredits = policy?.progress_allowance?.credit_unit === 'distinct_verified_targets_v1';
   if (policy && (!policy.progress_allowance || snapshot.spec.requested_effect !== "apply"))
@@ -61,19 +63,31 @@ export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2): { bro
     : Math.min(256, 64 + verified * 8) };
 }
 
+export function assignmentWorkAllowanceV2(snapshot: AssignmentSnapshotV2) {
+  const earned = earnedAssignmentWorkAllowanceV2(snapshot);
+  return {...earned,provider_calls:userFollowupLimitV1(snapshot,'max_provider_calls',earned.provider_calls)};
+}
+
+export function allocateAuthenticatedFollowupV1(snapshot: AssignmentSnapshotV2, commandId: string, now: string) {
+  const policy = snapshot.spec.execution_policy!;
+  const ordinary = {...policy,max_reasoning_turns:policy.max_provider_calls,max_equivalent_operations:0,max_no_progress_epochs:0,max_reconciliation_attempts:0};
+  const earned = defaultAssignmentWorkBudgetV2({...snapshot,user_followup_allocation:undefined},ordinary);
+  return allocateUserFollowupV1(snapshot,commandId,now,earned,defaultAssignmentWorkBudgetV2(snapshot,ordinary));
+}
+
 export function defaultAssignmentWorkBudgetV2(snapshot: AssignmentSnapshotV2, ordinary: AssignmentProgressBudgetV2): AssignmentProgressBudgetV2 {
   const policy = snapshot.spec.execution_policy;
-  const allowance = assignmentWorkAllowanceV2(snapshot);
+  const allowance = earnedAssignmentWorkAllowanceV2(snapshot);
   if (advisoryVerificationV2(snapshot) && policy) {
     const credit = Math.min(24, allowance.verified_targets ?? allowance.verified_changes), ceiling = policy.progress_allowance;
     const sourceUnits=allowance.source_planning_units??1;
-    return { ...ordinary, max_provider_calls: allowance.provider_calls, max_reasoning_turns: allowance.provider_calls,
+    return applyUserFollowupAllocationV1(snapshot, { ...ordinary, max_provider_calls: allowance.provider_calls, max_reasoning_turns: allowance.provider_calls,
       max_operations: ceiling ? Math.min(ceiling.max_operations, policy.max_operations*sourceUnits + credit * 32) : policy.max_operations,
       max_total_tokens: ceiling ? Math.min(ceiling.max_total_tokens, policy.max_total_tokens*sourceUnits + credit * 1_000_000) : policy.max_total_tokens,
       // Only new policies explicitly freeze a time ceiling. Old clocks and all
       // cumulative receipts stay unchanged, including across restart/Resume.
       max_wall_clock_ms: ceiling?.max_wall_clock_ms === undefined ? policy.max_wall_clock_ms
-        : Math.min(ceiling.max_wall_clock_ms,policy.max_wall_clock_ms*sourceUnits + credit*5*60_000) };
+        : Math.min(ceiling.max_wall_clock_ms,policy.max_wall_clock_ms*sourceUnits + credit*5*60_000) });
   }
   if (!allowance.broad) return allowance.provider_calls > ordinary.max_provider_calls
     ? { ...ordinary, max_provider_calls: allowance.provider_calls,
