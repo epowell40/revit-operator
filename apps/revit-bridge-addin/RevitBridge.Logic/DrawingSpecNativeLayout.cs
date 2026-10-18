@@ -28,7 +28,7 @@ namespace RevitBridge.Logic
 
     public static class DrawingSpecNativeLayout
     {
-        public const string RendererVersion = "operator.drawing-spec-native-layout.v2";
+        public const string RendererVersion = "operator.drawing-spec-native-layout.v3";
         // Caller owns one settled native transaction and creates each continuation view exactly once.
         // This renderer creates editable native text; it does not place views on sheets or issue verification facts.
         public static DrawingSpecNativeLayoutResult Render(Document document, IReadOnlyList<DrawingSpecRichParagraph> paragraphs,

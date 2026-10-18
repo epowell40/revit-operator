@@ -126,7 +126,7 @@ namespace RevitBridge.Logic
                 nativeCreated.Add(ElementIdCompat.GetValue(type.Id));
                 type.get_Parameter(BuiltInParameter.TEXT_FONT).Set(style.FontFamily);
                 type.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(style.PointSize / 864);
-                type.get_Parameter(BuiltInParameter.TEXT_COLOR).Set(DrawingSpecNativeTextFormatting.ColorValue(style.Color));
+                type.get_Parameter(BuiltInParameter.LINE_COLOR).Set(DrawingSpecNativeTextFormatting.ColorValue(style.Color));
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).Set(0);
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_ITALIC).Set(0);
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_UNDERLINE).Set(0);
@@ -135,7 +135,7 @@ namespace RevitBridge.Logic
             }
             if (!string.Equals(type.get_Parameter(BuiltInParameter.TEXT_FONT).AsString(), style.FontFamily, StringComparison.OrdinalIgnoreCase) ||
                 Math.Abs(type.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble() * 864 - style.PointSize) > .000001 ||
-                type.get_Parameter(BuiltInParameter.TEXT_COLOR).AsInteger() != DrawingSpecNativeTextFormatting.ColorValue(style.Color) ||
+                type.get_Parameter(BuiltInParameter.LINE_COLOR).AsInteger() != DrawingSpecNativeTextFormatting.ColorValue(style.Color) ||
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).AsInteger() != 0 || type.get_Parameter(BuiltInParameter.TEXT_STYLE_ITALIC).AsInteger() != 0 ||
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_UNDERLINE).AsInteger() != 0 || Math.Abs(type.get_Parameter(BuiltInParameter.TEXT_WIDTH_SCALE).AsDouble() - 1) > .000001 ||
                 type.get_Parameter(BuiltInParameter.TEXT_BACKGROUND).AsInteger() != 1)

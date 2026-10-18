@@ -27,7 +27,7 @@ namespace RevitBridge.Logic
             var type = note.TextNoteType;
             var family = type.get_Parameter(BuiltInParameter.TEXT_FONT)?.AsString();
             var pointSize = (type.get_Parameter(BuiltInParameter.TEXT_SIZE)?.AsDouble() ?? 0) * 864;
-            var color = type.get_Parameter(BuiltInParameter.TEXT_COLOR)?.AsInteger();
+            var color = type.get_Parameter(BuiltInParameter.LINE_COLOR)?.AsInteger();
             if (!string.Equals(family, style.FontFamily, StringComparison.OrdinalIgnoreCase) || Math.Abs(pointSize - style.PointSize) > .000001 || color != ColorValue(style.Color))
                 throw new InvalidOperationException("Native text type does not match the source fragment font/size/color. Use a dedicated type without changing unrelated project text.");
             var text = paragraph.NativeText.Substring(start, length);
@@ -82,7 +82,7 @@ namespace RevitBridge.Logic
                     ownerViewId = ElementIdCompat.GetValue(note.OwnerViewId), text, ranges = captured,
                     font = type.get_Parameter(BuiltInParameter.TEXT_FONT)?.AsString(),
                     textSizeFt = type.get_Parameter(BuiltInParameter.TEXT_SIZE)?.AsDouble(),
-                    color = type.get_Parameter(BuiltInParameter.TEXT_COLOR)?.AsInteger(),
+                    color = type.get_Parameter(BuiltInParameter.LINE_COLOR)?.AsInteger(),
                     typeId = ElementIdCompat.GetValue(type.Id),
                     widthPaperFt = note.Width, heightPaperFt = note.Height,
                     anchorModelFt = new { x = anchor.X, y = anchor.Y, z = anchor.Z },
