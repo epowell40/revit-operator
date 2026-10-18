@@ -3,6 +3,17 @@ import { EventEmitter } from "node:events";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
+
+test('retained evidence reaches the actual Codex adapter as one image, never base64 prose',async()=>{
+ const {retainedImageDelivery}=await import(pathToFileURL(path.resolve('../mcp-server/dist/lib/retainedImageDelivery.js')).href);
+ const bytes=Buffer.from('retained pixel bytes'),hash='sha256:'+createHash('sha256').update(bytes).digest('hex');
+ const ref={evidence_id:'ev1_'+'a'.repeat(32),session_id:'image-session',assignment_id:null,media_type:'image/png',byte_count:bytes.length,content_hash:hash,trust_level:'untrusted_caller'};
+ const result=retainedImageDelivery({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection:{media_type:'image/png',data_base64:bytes.toString('base64')},complete:true}},
+  {evidenceId:ref.evidence_id,sessionId:ref.session_id});
+ const delivered=adaptMcpToolCallResultToDynamicResponse(result,{tool:'operator_retrieve_evidence',projections:[{evidence_id:ref.evidence_id} as any],omitted:0});
+ assert.equal(delivered.success,true);assert.deepEqual(delivered.contentItems.filter(c=>c.type==='inputImage'),[{type:'inputImage',imageUrl:'data:image/png;base64,'+bytes.toString('base64')}]);
+ const text=delivered.contentItems.filter(c=>c.type==='inputText').map(c=>(c as any).text).join('\n');assert(!text.includes(bytes.toString('base64')));assert(text.includes(ref.content_hash));assert(text.includes('untrusted_caller'));
+});
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
 
 test("one-shot capture pixels pass from the actual MCP presenter to Codex in the same result",async()=>{

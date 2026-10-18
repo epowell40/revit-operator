@@ -2,6 +2,8 @@ export const EVIDENCE_REF_SCHEMA = "revit-operator.evidence-ref.v1" as const;
 export const EVIDENCE_PROJECTION_SCHEMA = "revit-operator.evidence-projection.v1" as const;
 export const EVIDENCE_RETRIEVAL_SCHEMA = "revit-operator.evidence-retrieval.v1" as const;
 export const EVIDENCE_TELEMETRY_SCHEMA = "revit-operator.evidence-telemetry.v1" as const;
+// Same decoded-image bound as native MCP captures; text selections stay at1MiB.
+export const MAX_RETAINED_IMAGE_BYTES_V1 = 5 * 1024 * 1024;
 
 export type EvidenceTrustLevel =
   | "untrusted_caller"
@@ -140,6 +142,8 @@ export type EvidenceRetrievalResult = {
   selection: unknown;
   returned_bytes: number;
   complete: boolean;
+  image_byte_count?: number;
+  image_byte_limit?: number;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
     has_more: boolean; next_start: number | null; byte_limited: boolean; requested_rows_complete: boolean;
     source_rows_exhausted: boolean; fields?: string[]; row_projection?: "selected_fields" };

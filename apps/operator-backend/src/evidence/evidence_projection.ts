@@ -1,4 +1,4 @@
-import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
+import { EVIDENCE_PROJECTION_SCHEMA, MAX_RETAINED_IMAGE_BYTES_V1, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
 import { projectParameterTable } from "./parameter_table_projection.js";
@@ -322,7 +322,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
         "JSON payload arrays: payload.<array>",
         "inventory.* summary fields; pages: pagination.next_start; absent fields: missing_fields"
       ],
-      max_bytes: 1_048_576
+      max_bytes: ref.media_type.startsWith("image/") ? MAX_RETAINED_IMAGE_BYTES_V1 : 1_048_576
     },
     truncated: extracted.omitted
   } satisfies Omit<EvidenceProjectionV1, "projected_bytes">;

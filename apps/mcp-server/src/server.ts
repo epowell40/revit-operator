@@ -6,6 +6,7 @@ import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { categoryVisibilityScopeSchemaV1 } from './lib/category_visibility_scope_schema.js';
 import { familyStaticTextScopeSchemaV1 } from './lib/family_static_text_scope_schema.js';
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import {retainedImageDelivery,MAX_RETAINED_IMAGE_BYTES} from './lib/retainedImageDelivery.js';
 import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
 import * as path from "path";
@@ -1001,8 +1002,8 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256), fields: z.array(z.string()).min(1).max(64).optional() }).describe("One bounded array page. Optional fields selects columns relative to each row and returns row_index, values keyed by the exact path, and missing_fields; projected pages are always partial. Mutually exclusive with every other selector.").optional(),
     textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
-    image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),
-    maxBytes: z.number().int().min(64).max(1_048_576).optional()
+    image: z.literal(true).describe("Return one exact retained image as pixels with its original scope/hash, not base64 text or current-state proof. Mutually exclusive with every other selector.").optional(),
+    maxBytes: z.number().int().min(64).max(MAX_RETAINED_IMAGE_BYTES).describe("Image: decoded file bytes, default/max5MiB. Text/JSON: existing default16KiB/max1MiB. Explicit smaller image budgets are respected.").optional()
   },
   async (args) => {
     try {
@@ -1028,6 +1029,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
         ...selectorRequest,
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
+      if(args.image===true)return retainedImageDelivery(result,args);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };

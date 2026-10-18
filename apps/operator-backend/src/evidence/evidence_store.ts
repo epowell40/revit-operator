@@ -12,6 +12,7 @@ import {
   EVIDENCE_REF_SCHEMA,
   EVIDENCE_RETRIEVAL_SCHEMA,
   EVIDENCE_TELEMETRY_SCHEMA,
+  MAX_RETAINED_IMAGE_BYTES_V1,
   type EvidenceRefV1,
   type EvidenceRetrievalRequest,
   type EvidenceRetrievalResult,
@@ -422,7 +423,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   const purpose = safeBounded(request.purpose, 300, "purpose", true);
   if (/^(?:all|all evidence|everything|dump all evidence)$/i.test(purpose)) throw new Error("Focused evidence retrieval purpose is required.");
   const selector = parseEvidenceRetrievalSelectorV1(request);
-  const maxBytes = Math.max(64, Math.min(Number.isSafeInteger(request.max_bytes) ? request.max_bytes! : 16_384, 1_048_576));
+  const image = selector.kind === "image";
+  const limit = image ? MAX_RETAINED_IMAGE_BYTES_V1 : 1_048_576;
+  const maxBytes = Math.max(64, Math.min(Number.isSafeInteger(request.max_bytes) ? request.max_bytes! : image ? limit : 16_384, limit));
   const ref = readRef(request.evidence_id);
   assertScope(ref, request);
   const bytes = readSettledEvidenceBytes(ref);
@@ -435,7 +438,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   const selectable = retrievalRoot(parsed);
   if (selector.kind === "image") {
     if (!ref.media_type.startsWith("image/")) throw new Error("Selected evidence is not an image.");
-    if (bytes.length > maxBytes) throw new Error("Selected image exceeds the authorized retrieval byte limit.");
+    if (bytes.length > maxBytes) throw new Error(`Selected image exceeds the authorized retrieval byte limit (${bytes.length} decoded bytes; requested limit ${maxBytes}; maximum ${limit}). Use a smaller scoped capture or explicitly request a sufficient image budget.`);
     selection = { media_type: ref.media_type, data_base64: bytes.toString("base64") };
     complete = true;
   } else if (selector.kind === "text_range") {
@@ -475,7 +478,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     selection = selectExactEvidenceTargetsV1(semanticPayload, selector.target_subset).selection;
   }
   const selectedBytes = Buffer.byteLength(JSON.stringify(selection), "utf8");
-  if (selectedBytes > maxBytes) throw new Error(`Focused evidence selection exceeds ${maxBytes}-byte limit.`);
+  // Base64 is an HTTP transport encoding. Image budgets count decoded pixels'
+  // file bytes; serialized byte telemetry still records its actual overhead.
+  if (!image && selectedBytes > maxBytes) throw new Error(`Focused evidence selection exceeds ${maxBytes}-byte limit.`);
   appendEvidenceTelemetry({
     session_id: ref.session_id,
     assignment_id: ref.assignment_id,
@@ -490,6 +495,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     estimated_model_tokens_avoided: null
   });
   return { schema: EVIDENCE_RETRIEVAL_SCHEMA, evidence_ref: ref, selection, returned_bytes: selectedBytes, complete,
+    ...(image ? { image_byte_count: bytes.length, image_byte_limit: maxBytes } : {}),
     ...(pagination ? { pagination } : {}), ...(missingFields ? { missing_fields: missingFields, selection_origins: selectionOrigins } : {}) };
 }
 
