@@ -4,6 +4,49 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/import-excel-output",
+      "examples": [
+        {
+          "name": "Import the chosen output tab using the actual inspected source digest",
+          "request": {
+            "sourcePath": "artifacts/uploads/table.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "viewName": "Ventilation Table",
+            "layout": {
+              "repeatHeaderRows": 3
+            }
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "partIndex": 0,
+            "calculationPerformed": false,
+            "sheetsPlaced": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-import",
+      "examples": [
+        {
+          "name": "Read one entire native part against original source, not just a list or producer verdict",
+          "request": {
+            "sourcePath": "artifacts/uploads/table.xlsx",
+            "manifestElementId": 123,
+            "partIndex": 0
+          },
+          "expected_response_shape": {
+            "schema": "operator.xlsx_import_inspection.v1",
+            "read_only": true,
+            "completeNativePartRead": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-excel-source",
       "examples": [
         {

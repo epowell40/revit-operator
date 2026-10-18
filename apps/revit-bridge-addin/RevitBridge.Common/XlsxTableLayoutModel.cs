@@ -71,7 +71,7 @@ namespace RevitBridge.Common
         public string ValueState { get; set; } = "blank";
         public string SourceDataType { get; set; } = "n";
         public string? SourceRichTextXml { get; set; }
-        public int StyleIndex => Style.Index;
+        public int StyleIndex { get => Style.Index; set => Style = new XlsxTableCellStyle { Index = value }; }
         [System.Text.Json.Serialization.JsonIgnore]
         public XlsxTableCellStyle Style { get; set; } = new XlsxTableCellStyle();
     }

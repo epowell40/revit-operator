@@ -1,4 +1,5 @@
 import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
+import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -767,6 +768,8 @@ function commitInput(
           ? regularSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/import-drawing-spec'
           ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/import-excel-output'
+          ? excelTableImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : deletionRequestV2(verificationSubject.input)
           ? deletedElementsPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/project-parameters"

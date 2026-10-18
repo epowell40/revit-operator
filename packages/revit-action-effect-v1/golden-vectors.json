@@ -390,6 +390,30 @@
       "path": "/revit/unclassified-future-command",
       "body": {},
       "expected_effect": "apply"
+    },
+    {
+      "id": "excel_import_inspection_read",
+      "method": "POST",
+      "path": "/revit/inspect-excel-import",
+      "body": {
+        "manifestElementId": 123,
+        "partIndex": 0
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "excel_import_inspection_lookalike_apply",
+      "method": "POST",
+      "path": "/revit/inspect-excel-import-other",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "excel_output_import_apply",
+      "method": "POST",
+      "path": "/revit/import-excel-output",
+      "body": {},
+      "expected_effect": "apply"
     }
   ]
 }

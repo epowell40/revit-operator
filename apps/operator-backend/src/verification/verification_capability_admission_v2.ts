@@ -1,4 +1,5 @@
 import { drawingSpecInspectionReadIdV2 } from './drawing_spec_import_v2.js';
+import {excelTableInspectionReadIdV2,EXCEL_TABLE_PART_SEMANTIC_V2} from './excel_table_import_v2.js';
 import {deletionRequestV2,deletionReadTargetsV2,nativeAbsentElementIdsV2,DELETION_SEMANTIC_OUTPUT_V2}from './deletion_contract_v2.js';
 import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
 import { projectParameterBindingReadIdV2 } from './project_parameter_binding_v2.js';
@@ -82,6 +83,8 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ['/revit/import-excel-output',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
+  ['/revit/inspect-excel-import',{semantic_outputs:[EXCEL_TABLE_PART_SEMANTIC_V2],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
   ['/revit/import-drawing-spec',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewIds']}],
   ['/revit/inspect-drawing-spec',{semantic_outputs:['drawing_spec.source_text_format_and_bounds'],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewIds']}],
   ['/revit/project-parameters', {semantic_outputs:['project_parameter.binding'],principal_target_fields:['parameterId']}],
@@ -364,6 +367,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if(deletionRequestV2({...objectValue(apply.arguments),path}))return [DELETION_SEMANTIC_OUTPUT_V2];
   if(path==='/revit/create-schedule')return ['schedule.created_definition'];
   if(path==='/revit/import-drawing-spec')return ['drawing_spec.source_text_format_and_bounds'];
+  if(path==='/revit/import-excel-output')return [EXCEL_TABLE_PART_SEMANTIC_V2];
   if(path==='/revit/project-parameters')return ['project_parameter.binding'];
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
@@ -396,6 +400,7 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
   if(pathOf(verification)==='/revit/inspect-drawing-spec')return drawingSpecInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
+  if(pathOf(verification)==='/revit/inspect-excel-import')return excelTableInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if(pathOf(verification)==='/revit/project-parameters')return projectParameterBindingReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if (pathOf(verification) === '/revit/find-text-notes') {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), ids=body.elementIds;
@@ -482,6 +487,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
   if(deletionRequestV2({...objectValue(apply.arguments),path:pathOf(apply)}))return ' The host attempts a separate read of the complete retained deletion set, including dependent IDs. Native GetElement reads are batched at sixteen operations; every returned element must explicitly be null. Missing/truncated results, a parent-only check, the apply-local deletionVerified flag and screenshots cannot establish the full absence postcondition. Preserve an unverified committed change and obtain fresh scoped readback; never repeat its deletion merely to verify it. This structural check does not certify that the selected objects were the correct user targets.';
   if(pathOf(apply)==='/revit/import-drawing-spec')return ' Inspect the returned manifestElementId with POST /revit/inspect-drawing-spec and the same sourcePath. Its complete source/native check is separate from the paged note details. Inspect reported source ranges, expected runs and actual native identities to correct known mismatches; do not repeat an uncertain import. Source text/character-format/bounds checks do not establish visual fidelity or sheet placement.';
+  if(pathOf(apply)==='/revit/import-excel-output')return ' Inspect the returned manifestElementId AND exact partIndex with POST /revit/inspect-excel-import and the same sourcePath. This verifies only that source/native table part, not all parts, sheet placement, visual fidelity or engineering values. Continue remainingPartIndices using the fresh importSnapshotSha256; never duplicate a committed part or retry an uncertain mutation. Review actual work-area visuals and save/reopen separately.';
   if(pathOf(apply)==='/revit/save-as')return ' Verify the exact output from the native Save As receipt with one separate POST /revit/inspect-exported-files, paths=[the saved RVT/RFA path]. Only the actual active saved document is eligible. Compare stable byte size/SHA256 and saved_document path, native session/project identity and is_modified=false; unknown, changing or dirty state remains unverified. This confirms a saved artifact, not completion of all model-content or visual tasks. Do not save again solely to verify or ask the user to reopen a successfully saved model.';
   if (pathOf(apply) === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
     return " Verify the repaired existing tag with a separate POST /revit/native-api-ops read: Document.GetElement(ElementId) for repairExistingTagId, then read OwnerViewId plus every requested HasLeader, TagHeadPosition and LeaderEndCondition property from that exact IndependentTag handle. The fresh owner view and all requested values must match the admitted edit; the apply result cannot verify itself. Leader-end or elbow edits need reference-bound readback and remain unverified by this property check. Do not repeat a committed edit to verify it.";

@@ -1,4 +1,5 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
+import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
 import {committedDeletedElementsReadbackPlansV2}from '../verification/deleted_elements_postcondition_v2.js';
 import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
@@ -423,6 +424,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedRegularSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDrawingSpecImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedExcelTableImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedProjectParameterBindingReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)

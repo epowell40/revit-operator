@@ -4,6 +4,14 @@
   "native_routes": [
     {
       "method": "POST",
+      "path": "/revit/inspect-excel-import"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-excel-output"
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-excel-source"
     },
     {

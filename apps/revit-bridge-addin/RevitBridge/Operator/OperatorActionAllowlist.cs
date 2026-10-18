@@ -161,6 +161,8 @@ namespace RevitBridge.Operator
                     "/revit/import-drawing-spec",
                     "/revit/inspect-drawing-spec",
                     "/revit/inspect-excel-source",
+                    "/revit/import-excel-output",
+                    "/revit/inspect-excel-import",
                     "/revit/import-excel-table",
                     "/revit/export-elements-xlsx",
                     "/revit/import-elements-xlsx-updates",

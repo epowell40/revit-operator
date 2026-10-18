@@ -5296,6 +5296,18 @@ namespace RevitBridge.Operator
                 { error = ex.Message; return false; }
             }
 
+            if (string.Equals(path, "/revit/import-excel-output", StringComparison.OrdinalIgnoreCase) || string.Equals(path, "/revit/inspect-excel-import", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (string.Equals(path, "/revit/import-excel-output", StringComparison.OrdinalIgnoreCase)) XlsxTableImportRequest.Parse(body?.GetRawText() ?? "null");
+                    else XlsxTableInspectionRequest.Parse(body?.GetRawText() ?? "null");
+                    return true;
+                }
+                catch (Exception ex) when (ex is ArgumentException || ex is JsonException || ex is InvalidOperationException)
+                { error = ex.Message;return false; }
+            }
+
             if (string.Equals(path, "/revit/inspect-drawing-spec", StringComparison.OrdinalIgnoreCase))
             {
                 try { DrawingSpecInspectionRequest.Parse(body?.GetRawText() ?? "null"); return true; }

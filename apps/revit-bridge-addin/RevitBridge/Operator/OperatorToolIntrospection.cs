@@ -295,6 +295,8 @@ namespace RevitBridge.Operator
                 { "/revit/import-drawing-spec", typeof(RevitBridge.Handlers.ImportDrawingSpecHandler.Params) },
                 { "/revit/inspect-drawing-spec", typeof(RevitBridge.Common.DrawingSpecInspectionRequest) },
                 { "/revit/inspect-excel-source", typeof(RevitBridge.Common.XlsxSourceInspectionRequest) },
+                { "/revit/import-excel-output", typeof(RevitBridge.Common.XlsxTableImportRequest) },
+                { "/revit/inspect-excel-import", typeof(RevitBridge.Common.XlsxTableInspectionRequest) },
                 { "/revit/import-excel-table", typeof(RevitBridge.Handlers.ImportExcelTableHandler.Params) },
                 { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
                 { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },
