@@ -24,6 +24,8 @@ import { nativeAnnotationPostconditionSatisfiedV2 } from "../verification/native
 import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
 import {isNativePhaseFilterEditV2,nativePhaseFilterPostconditionSatisfiedV2}from '../verification/native_phase_filter_v2.js';
+import {deletionRequestV2}from '../verification/deletion_contract_v2.js';
+import {deletedElementsPostconditionSatisfiedV2}from '../verification/deleted_elements_postcondition_v2.js';
 import {isVisibilityPhasingEditV2}from '../verification/visibility_view_contract_v2.js';
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
@@ -765,6 +767,8 @@ function commitInput(
           ? regularSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/import-drawing-spec'
           ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : deletionRequestV2(verificationSubject.input)
+          ? deletedElementsPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/project-parameters"
           ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
@@ -821,6 +825,9 @@ function commitInput(
     // The native sheet comparator checked every requested placement. The
     // read's containing sheet is not itself the edited deliverable. Keep
     // this platform mapping here; the generic domain consumes only the fact.
+    const deletion=verificationSubject&&deletionRequestV2(verificationSubject.input);
+    if(deletion)semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',
+      value:deletion.ids.length<=256?deletion.ids.map(id=>'element_id:'+id):[],cardinality:'many'});
     if (verificationSubject && ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")) {
       // Matching succeeded against retained authoritative commit evidence, not
       // this read's contextual sheet/view identity. A single created/moved

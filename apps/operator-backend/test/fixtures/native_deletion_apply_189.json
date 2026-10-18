@@ -1,0 +1,277 @@
+{
+  "source": "Retained native wire from disposable Autodesk Snowdon sample; bindings, paths and user text omitted",
+  "applied": {
+    "version": "operator.native_api_mutation_ops.v1",
+    "ok": true,
+    "read_only": false,
+    "ephemeral_handles": true,
+    "transaction": {
+      "mode": "commit",
+      "status": "committed",
+      "committed": true,
+      "dry_run": false,
+      "readback_phase": "inside_transaction_after_regenerate",
+      "scope_observation": "dynamic_model_updater_then_failure_preprocessor_at_transaction_boundary",
+      "scope_enforcement": "failure_processing_allowed_commit",
+      "scope_observer_executions": 1,
+      "scope_baseline": "complete_native_document_ids_before_transaction",
+      "scope_baseline_element_count": 20914,
+      "max_affected_elements": 20,
+      "allow_create": true,
+      "allowed_existing_element_ids": [
+        1722844,
+        1722845,
+        1722846,
+        1722847,
+        1722848,
+        1722849,
+        1722850,
+        1722851,
+        1722852,
+        1722853,
+        1722859,
+        1722860,
+        1722861,
+        1722862,
+        1722863,
+        1722864,
+        1722865,
+        1722866,
+        1722867,
+        1722868
+      ],
+      "existing_scope_matched": true,
+      "scope_discovery_only": false,
+      "unexpected_existing_element_ids": [],
+      "commit_allowed_existing_element_ids": [
+        1722844,
+        1722845,
+        1722846,
+        1722847,
+        1722848,
+        1722849,
+        1722850,
+        1722851,
+        1722852,
+        1722853,
+        1722859,
+        1722860,
+        1722861,
+        1722862,
+        1722863,
+        1722864,
+        1722865,
+        1722866,
+        1722867,
+        1722868
+      ],
+      "added_element_ids": [
+        1722847,
+        1722862
+      ],
+      "modified_element_ids": [],
+      "deleted_element_ids": [
+        1722844,
+        1722845,
+        1722846,
+        1722847,
+        1722848,
+        1722849,
+        1722850,
+        1722851,
+        1722852,
+        1722853,
+        1722859,
+        1722860,
+        1722861,
+        1722862,
+        1722863,
+        1722864,
+        1722865,
+        1722866,
+        1722867,
+        1722868
+      ],
+      "affected_element_count": 20,
+      "transient_created_ids": []
+    },
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 2,
+    "mutation_operation_count": 2,
+    "geometry_cleanup_errors": [],
+    "duration_ms": 40,
+    "operations": [
+      {
+        "id": "del600",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.Delete(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "ICollection<ElementId> Document.Delete(ElementId elementId)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "target_identity": null,
+        "duration_ms": 2,
+        "result_preview": {
+          "type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.ElementId, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+          "deferred_enumeration": true
+        }
+      },
+      {
+        "id": "del601",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.Delete(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "ICollection<ElementId> Document.Delete(ElementId elementId)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "target_identity": null,
+        "duration_ms": 1,
+        "result_preview": {
+          "type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.ElementId, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+          "deferred_enumeration": true
+        }
+      }
+    ],
+    "results": {
+      "del600": {
+        "count": 10,
+        "items": [
+          {
+            "id": 1722844
+          },
+          {
+            "id": 1722845
+          },
+          {
+            "id": 1722846
+          },
+          {
+            "id": 1722847
+          },
+          {
+            "id": 1722848
+          },
+          {
+            "id": 1722849
+          },
+          {
+            "id": 1722850
+          },
+          {
+            "id": 1722851
+          },
+          {
+            "id": 1722852
+          },
+          {
+            "id": 1722853
+          }
+        ],
+        "limit": 50,
+        "hasMore": false,
+        "truncated": false,
+        "complete": true,
+        "total": 10
+      },
+      "del601": {
+        "count": 10,
+        "items": [
+          {
+            "id": 1722859
+          },
+          {
+            "id": 1722860
+          },
+          {
+            "id": 1722861
+          },
+          {
+            "id": 1722862
+          },
+          {
+            "id": 1722863
+          },
+          {
+            "id": 1722864
+          },
+          {
+            "id": 1722865
+          },
+          {
+            "id": 1722866
+          },
+          {
+            "id": 1722867
+          },
+          {
+            "id": 1722868
+          }
+        ],
+        "limit": 50,
+        "hasMore": false,
+        "truncated": false,
+        "complete": true,
+        "total": 10
+      }
+    }
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/native-api-mutation-ops",
+    "body": {
+      "operations": [
+        {
+          "id": "del600",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.Delete(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1722844
+          ]
+        },
+        {
+          "id": "del601",
+          "op": "call",
+          "target": "doc",
+          "memberId": "method:Autodesk.Revit.DB.Document.Delete(Autodesk.Revit.DB.ElementId)",
+          "args": [
+            1722859
+          ]
+        }
+      ],
+      "returns": [
+        "del600",
+        "del601"
+      ],
+      "transaction": {
+        "mode": "commit",
+        "name": "Remove confirmed hidden redundant titleblocks on M600 M601",
+        "maxAffectedElements": 20,
+        "allowCreate": true,
+        "allowedExistingElementIds": [
+          1722844,
+          1722845,
+          1722846,
+          1722847,
+          1722848,
+          1722849,
+          1722850,
+          1722851,
+          1722852,
+          1722853,
+          1722859,
+          1722860,
+          1722861,
+          1722862,
+          1722863,
+          1722864,
+          1722865,
+          1722866,
+          1722867,
+          1722868
+        ]
+      }
+    }
+  }
+}

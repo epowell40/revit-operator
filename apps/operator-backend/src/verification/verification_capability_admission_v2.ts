@@ -1,4 +1,5 @@
 import { drawingSpecInspectionReadIdV2 } from './drawing_spec_import_v2.js';
+import {deletionRequestV2,deletionReadTargetsV2,nativeAbsentElementIdsV2,DELETION_SEMANTIC_OUTPUT_V2}from './deletion_contract_v2.js';
 import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
 import { projectParameterBindingReadIdV2 } from './project_parameter_binding_v2.js';
 /**
@@ -94,7 +95,8 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     contextual_scope_fields: ["sheetId", "sheetElementId"]
   }],
   ["/revit/update-schedule-cell", { semantic_outputs: [], principal_target_fields: ["sourceElementId", "affectedElementIds"], contextual_scope_fields: ["scheduleId"] }],
-  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association", "schedule.presentation_values", "phase_filter.presentation"] }],
+  ["/revit/native-api-ops", { semantic_outputs: ["tag.property_values", "tag.created_subject_association", "schedule.presentation_values", "phase_filter.presentation",DELETION_SEMANTIC_OUTPUT_V2] }],
+  ['/revit/delete',{semantic_outputs:[],principal_target_fields:['ids','requestedIds']}],
   ["/revit/connect-existing-mep-branch", {
     semantic_outputs: [], principal_target_fields: ["mainElementId", "branchElementId", "terminalElementId", "createdFittingId"]
   }],
@@ -273,6 +275,8 @@ export function operationTargetSelectorV2(input: Readonly<{
       principal_target_tokens:Number.isSafeInteger(id)&&Number(id)>0?['id:'+id,'parameterid:'+id]:[],contextual_scope_tokens:[]};
   }
   if(pathOf(input.operation)==='/revit/native-api-mutation-ops'){
+    const deletion=deletionRequestV2({...objectValue(input.operation.arguments??{body:input.value}),path:pathOf(input.operation)});
+    if(deletion)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:deletion.ids.map(id=>'id:'+id).sort(),contextual_scope_tokens:[]};
     const g=nativeSchedulePresentationRequestV2(input.operation.arguments??input.value,input.value);
     if(g)return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:g.scheduleIds.map(id=>'id:'+id),contextual_scope_tokens:[]};
     if(nativeSchedulePresentationRequestV2(input.operation.arguments??input.value))return {schema:OPERATION_TARGET_SELECTOR_V2_SCHEMA,source:'reviewed_capability_contract',principal_target_tokens:[],contextual_scope_tokens:[]};
@@ -332,7 +336,8 @@ export function operationTargetSelectorV2(input: Readonly<{
         ?? decodeNativeCreatedTagReadV2(input.operation.arguments, value)?.map(item => `id:${item.id}`) ?? []
       : [...nativeTagPropertyReadTargetsV2(value), ...nativeCreatedTagReadTargetsV2(input.operation.arguments ?? {method:'POST',path:'/revit/native-api-ops',body:value})];
     return { schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA, source: "reviewed_capability_contract",
-      principal_target_tokens: [...new Set([...tagTargets,...booleanTargets,...phaseTargets.map(id=>'id:'+id)])].sort(), contextual_scope_tokens: [] };
+      principal_target_tokens: [...new Set([...tagTargets,...booleanTargets,...phaseTargets.map(id=>'id:'+id),
+        ...(returnedNative?nativeAbsentElementIdsV2(request,value):deletionReadTargetsV2(request)).map(id=>'id:'+id)])].sort(), contextual_scope_tokens: [] };
   }
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
@@ -353,6 +358,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
+  if(deletionRequestV2({...objectValue(apply.arguments),path}))return [DELETION_SEMANTIC_OUTPUT_V2];
   if(path==='/revit/create-schedule')return ['schedule.created_definition'];
   if(path==='/revit/import-drawing-spec')return ['drawing_spec.source_text_format_and_bounds'];
   if(path==='/revit/project-parameters')return ['project_parameter.binding'];
@@ -412,7 +418,8 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
     return nativePhaseFilterReadTargetsV2(verification.arguments).length ? ['phase_filter.presentation']
       : nativeSchedulePresentationReadTargetsV2(verification.arguments).length ? ['schedule.presentation_values']
       : nativeCreatedTagReadTargetsV2(verification.arguments).length ? ["tag.created_subject_association"]
-      : nativeTagPropertyReadTargetsV2(verification.arguments).length ? ["tag.property_values"] : [];
+      : nativeTagPropertyReadTargetsV2(verification.arguments).length ? ["tag.property_values"]
+      : deletionReadTargetsV2(verification.arguments).length ? [DELETION_SEMANTIC_OUTPUT_V2] : [];
   if (pathOf(verification) === "/revit/get-element-summary") {
     const args = objectValue(verification.arguments), body = objectValue(args.body ?? args);
     return body.includeElectricalCircuitMembership === true ? contract.semantic_outputs
@@ -468,6 +475,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if(deletionRequestV2({...objectValue(apply.arguments),path:pathOf(apply)}))return ' The host attempts a separate read of the complete retained deletion set, including dependent IDs. Native GetElement reads are batched at sixteen operations; every returned element must explicitly be null. Missing/truncated results, a parent-only check, the apply-local deletionVerified flag and screenshots cannot establish the full absence postcondition. Preserve an unverified committed change and obtain fresh scoped readback; never repeat its deletion merely to verify it. This structural check does not certify that the selected objects were the correct user targets.';
   if(pathOf(apply)==='/revit/import-drawing-spec')return ' Inspect the returned manifestElementId with POST /revit/inspect-drawing-spec and the same sourcePath. Its complete source/native check is separate from the paged note details. Inspect reported source ranges, expected runs and actual native identities to correct known mismatches; do not repeat an uncertain import. Source text/character-format/bounds checks do not establish visual fidelity or sheet placement.';
   if(pathOf(apply)==='/revit/save-as')return ' Verify the exact output from the native Save As receipt with one separate POST /revit/inspect-exported-files, paths=[the saved RVT/RFA path]. Only the actual active saved document is eligible. Compare stable byte size/SHA256 and saved_document path, native session/project identity and is_modified=false; unknown, changing or dirty state remains unverified. This confirms a saved artifact, not completion of all model-content or visual tasks. Do not save again solely to verify or ask the user to reopen a successfully saved model.';
   if (pathOf(apply) === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))

@@ -1,4 +1,5 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
+import {committedDeletedElementsReadbackPlansV2}from '../verification/deleted_elements_postcondition_v2.js';
 import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
 import { committedRegularSchedulePresentationReadbackPlanV2 } from "../verification/regular_schedule_presentation_v2.js";
@@ -436,7 +437,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;
       const readPlans=readPlan?[readPlan]:(current?.operations[lease.operation_id]
-        ? committedNativeSchedulePresentationReadbackPlansV2(current,current.operations[lease.operation_id]!)
+        ? committedDeletedElementsReadbackPlansV2(current,current.operations[lease.operation_id]!)
+          ?? committedNativeSchedulePresentationReadbackPlansV2(current,current.operations[lease.operation_id]!)
           ?? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
       const batch=current&&readPlans.length?await reserveCommittedReadbacksV2({runtime,parent:boundRequest,snapshot:current,subjectId:typedRead?.operation_id??lease.operation_id,plans:readPlans}):{entries:[]};
       checkpointAssignmentKernelProgressV2({runtime,turn_id:params.turnId,before:v2Snapshot,after:epoch,operation_id:lease.operation_id,progress_already_recorded:true});
