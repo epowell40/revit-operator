@@ -28,6 +28,7 @@ namespace RevitBridge.Logic
 
     public static class DrawingSpecNativeLayout
     {
+        public const string RendererVersion = "operator.drawing-spec-native-layout.v2";
         // Caller owns one settled native transaction and creates each continuation view exactly once.
         // This renderer creates editable native text; it does not place views on sheets or issue verification facts.
         public static DrawingSpecNativeLayoutResult Render(Document document, IReadOnlyList<DrawingSpecRichParagraph> paragraphs,
@@ -41,7 +42,7 @@ namespace RevitBridge.Logic
                 if (!views.TryGetValue(index, out var view))
                 {
                     view = pageView(index);
-                    if (view.Document != document || view.IsTemplate || view.ViewType != ViewType.DraftingView)
+                    if (!document.Equals(view.Document) || view.IsTemplate || view.ViewType != ViewType.DraftingView)
                         throw new InvalidOperationException("Drawing specifications require non-template drafting views in the same document.");
                     views.Add(index, view);
                 }

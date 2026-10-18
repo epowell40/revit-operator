@@ -34,7 +34,8 @@ namespace RevitBridge.Logic
             measurementView = view ?? throw new ArgumentNullException(nameof(view));
             this.baseType = baseType ?? throw new ArgumentNullException(nameof(baseType));
             this.nativeCreated = nativeCreated ?? throw new ArgumentNullException(nameof(nativeCreated));
-            if (!document.IsModifiable || view.Document != document || baseType.Document != document)
+            // Revit may return distinct managed wrappers for the same open native document.
+            if (!document.IsModifiable || !document.Equals(view.Document) || !document.Equals(baseType.Document))
                 throw new InvalidOperationException("Text metrics require the owned active native transaction and document.");
             fonts = InstalledFonts();
         }
@@ -84,7 +85,7 @@ namespace RevitBridge.Logic
         public TextNote Create(View target, XYZ anchorModelFt, DrawingSpecRichParagraph paragraph, int start, int length)
         {
             CheckBound();
-            if (target.Document != document || !document.IsModifiable) throw new InvalidOperationException("Wrong target document or missing owned transaction.");
+            if (!document.Equals(target.Document) || !document.IsModifiable) throw new InvalidOperationException("Wrong target document or missing owned transaction.");
             var spans = paragraph.Slice(start, length);
             if (spans.Count == 0 || paragraph.NativeText.Substring(start, length).All(char.IsWhiteSpace))
                 throw new InvalidOperationException("Whitespace belongs in an explicit measured layout span, not a fabricated text-note receipt.");
