@@ -139,6 +139,6 @@ export function modelEvidenceEnvelope(projections: EvidenceProjectionV1[], omitt
     schema: MODEL_EVIDENCE_ENVELOPE_SCHEMA,
     evidence_projections: projections.map(modelEvidenceProjection),
     omitted,
-    retrieval: "Read inline_payload, scoped helper_findings and visual_work_review first; helper claims and visual assessments are not native or whole-task proof. Honor coverage and retrieve missing whole fields/checks/images. resultItems use raw_payload paths for native keys, or source=deterministic_projection with [key_counts or key_facts, exact literal key] for summaries. Preserve paging/scope limits; never reconstruct IDs or split literal keys."
+    retrieval: "Read inline_payload, scoped helper_findings and visual_work_review first; helper/visual claims are not native or whole-task proof. Honor coverage/paging/scope; retrieve missing whole fields/checks/images. resultItems: raw_payload paths for native keys; source=deterministic_projection with [key_counts or key_facts, exact literal key] for summaries. Never reconstruct IDs or split literal keys."
   };
 }

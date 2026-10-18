@@ -4,6 +4,34 @@ import { getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/mod
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 import { assignmentBudgetForPrompt } from "./assignment_budget_prompt.js";
 
+// Only host-attached block objects may be consolidated. A native/source result
+// that happens to resemble an index must never acquire host provenance.
+const attachedObservationContexts = new WeakSet<object>();
+function combineAttachedObservationContext(response: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>, text: string): boolean {
+  try {
+    const incoming = JSON.parse(text);
+    if (!["revit-operator.model-observation-index/v2", "revit-operator.advisory-observation-index/v1"].includes(incoming?.schema)
+      || !Array.isArray(incoming.observations)) return false;
+    const { observations, ...metadata } = incoming;
+    for (const item of response.contentItems) {
+      if (item.type !== "inputText" || !attachedObservationContexts.has(item)) continue;
+      const prior = JSON.parse(item.text);
+      const { observations: previous, ...priorMetadata } = prior;
+      // Budget, warnings, coverage, unknown effects and pending checks must all
+      // agree exactly. Differing control snapshots remain separate and visible.
+      if (!Array.isArray(previous) || JSON.stringify(metadata) !== JSON.stringify(priorMetadata)) continue;
+      const seen = new Set<string>();
+      item.text = JSON.stringify({ ...metadata, observations: [...previous, ...observations].filter(observation => {
+        const key = JSON.stringify(observation);
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      }) });
+      return true;
+    }
+  } catch { /* Unfamiliar/malformed context is preserved verbatim. */ }
+  return false;
+}
+
 /** Code mode joins text blocks with newlines. Keep a retrieved JSON selection
  * and its host observation metadata in one parseable object. Never change the
  * selection itself or turn a plain error / image response into a success. */
@@ -13,6 +41,11 @@ export function attachDynamicObservationContext(
   observationContext: string | null
 ): void {
   if (!observationContext) return;
+  // Nested execution/readback responses can already carry this exact index.
+  // Keep one byte-identical text block; never merge or discard a newer index,
+  // source text containing a quoted index, images, or the underlying result.
+  if (response.contentItems.some(item => item.type === "inputText" && item.text === observationContext)) return;
+  if (combineAttachedObservationContext(response, observationContext)) return;
   if (tool === "operator_retrieve_evidence" && response.success && response.contentItems.length === 1) {
     const item = response.contentItems[0]!;
     if (item.type === "inputText") {
@@ -29,7 +62,9 @@ export function attachDynamicObservationContext(
       } catch { /* Preserve the original correction contract below. */ }
     }
   }
-  response.contentItems.push({ type: "inputText", text: observationContext });
+  const item = { type: "inputText" as const, text: observationContext };
+  attachedObservationContexts.add(item);
+  response.contentItems.push(item);
 }
 
 function parseToolArguments(value: unknown): any {
