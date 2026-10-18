@@ -42,9 +42,12 @@ export function deletionClosureV2(input:unknown,payload:unknown,affected:readonl
   const deleted=tx.deleted_element_ids;
   if(tx.status!=='committed'||tx.committed!==true||tx.dry_run===true||tx.pending===true||tx.rolled_back===true
     ||!ids(deleted)||!deleted.length||g.ids.some(id=>!deleted.includes(id))
-    ||!ids(tx.modified_element_ids)||tx.modified_element_ids.length||!ids(tx.added_element_ids)
-    ||tx.added_element_ids.some((id:number)=>!deleted.includes(id))
-    ||JSON.stringify([...affected].sort())!==JSON.stringify(deleted.map(id=>'element_id:'+id).sort()))return null;
+    ||!ids(tx.modified_element_ids)||!ids(tx.added_element_ids))return null;
+  // Revit can modify surviving neighbors while deleting an element. Bind the
+  // complete footprint, but certify only absence of the deleted set. Surviving
+  // neighbor attributes and new objects require their own postconditions.
+  const footprint=[...new Set([...deleted,...tx.modified_element_ids,...tx.added_element_ids])];
+  if(footprint.length>4096||JSON.stringify([...affected].sort())!==JSON.stringify(footprint.map(id=>'element_id:'+id).sort()))return null;
   if(!g.native){
     if(!ordinaryInventoryComplete||p.status!=='Deleted'||!equalSet(p.requestedIds,g.ids)||!equalSet(p.impactedIds,deleted)
       ||p.requestedCount!==g.ids.length||p.impactedCount!==deleted.length
@@ -60,8 +63,9 @@ export function deletionClosureV2(input:unknown,payload:unknown,affected:readonl
       ||!equalSet(tx.allowed_existing_element_ids,g.transaction.allowedExistingElementIds)
       ||!equalSet(tx.commit_allowed_existing_element_ids,g.transaction.allowedExistingElementIds)
       ||tx.max_affected_elements!==g.transaction.maxAffectedElements||tx.allow_create!==g.transaction.allowCreate
-      ||tx.affected_element_count!==deleted.length||deleted.length>tx.max_affected_elements
-      ||deleted.some(id=>!g.transaction.allowedExistingElementIds.includes(id)))return null;
+      ||tx.affected_element_count!==footprint.length||footprint.length>tx.max_affected_elements
+      ||[...deleted,...tx.modified_element_ids].some(id=>!g.transaction.allowedExistingElementIds.includes(id))
+      ||tx.added_element_ids.some((id:number)=>!g.transaction.allowCreate&&!g.transaction.allowedExistingElementIds.includes(id)))return null;
     const union=new Set<number>();
     for(const [i,s]of g.steps.entries()){
       const n=row(p.operations[i]);if(n.id!==s.id||n.op!==s.op||n.error||n.ok===false)return null;

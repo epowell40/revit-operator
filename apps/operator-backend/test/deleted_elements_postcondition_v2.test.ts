@@ -60,3 +60,12 @@ test('ordinary delete requires its complete canonical inventory and exact reques
     const p=structuredClone(payload);mutate(p);assert.equal(deletionClosureV2(input,p,affected,true),null);
   }
 });
+
+test('known in-scope collateral does not prevent a scoped absence check or become verified itself',()=>{
+  const f=structuredClone(wire);
+  f.input.body.transaction.allowedExistingElementIds.push(9001);f.input.body.transaction.maxAffectedElements=21;
+  f.applied.transaction.allowed_existing_element_ids.push(9001);f.applied.transaction.commit_allowed_existing_element_ids.push(9001);
+  f.applied.transaction.modified_element_ids=[9001];f.applied.transaction.affected_element_count=21;f.applied.transaction.max_affected_elements=21;
+  assert.deepEqual(deletionClosureV2(f.input,f.applied,[...affected,'element_id:9001']),targets,'Only deleted targets are checked; surviving neighbor is outside this proof');
+  assert.equal(deletionClosureV2(f.input,f.applied,affected),null,'Collateral cannot disappear from the canonical affected footprint');
+});
