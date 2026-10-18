@@ -21,19 +21,24 @@ async function workspace(fn:()=>unknown){
   try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only',{OPERATOR_API_BASE_URL:'http://127.0.0.1:7007'})},fn);}
   finally{__testOnlyResetGoalListCache();__closeForTests();for(const[k,v]of Object.entries(old)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(root,{recursive:true,force:true});}
 }
-for(const variant of ['exact','ordinary_exact','missing_chunk','survivor','read_before_commit','wrong_native_scope']as const)
+for(const variant of ['exact','ordinary_exact','known_collateral','missing_chunk','survivor','read_before_commit','wrong_native_scope']as const)
 test(`kernel deletion proof requires the complete fresh native closure: ${variant}`,()=>workspace(()=>{
   const goal=createGoal({title:'Delete redundant hidden instances',objective:'Remove the two confirmed hidden duplicates and preserve unrelated work.',acceptance_criteria:['The two duplicates are absent.'],status:'active',related_session_id:'delete-session',created_by:'local-host',work_budget:{requested_effect:'apply',document_fingerprint:'a'.repeat(64)}});
   createAssignmentKernelForGoalV2({goal,run_id:'delete-run'});const state=()=>getAssignmentKernelSnapshotV2(goal.id)!;
-  const input=variant==='ordinary_exact'?{method:'POST',path:'/revit/delete',body:{ids:[1722844,1722859]}}:wire.input;
+  const input=variant==='ordinary_exact'?{method:'POST',path:'/revit/delete',body:{ids:[1722844,1722859]}}:structuredClone(wire.input);
+  if(variant==='known_collateral'){input.body.transaction.allowedExistingElementIds.push(9000001);input.body.transaction.maxAffectedElements=21;}
   const edit=openAssignmentKernelOperationV2({snapshot:state(),provider_turn_id:'turn',controller_request_id:'apply',capability_id:'revit_call_tool',classified_effect:'apply',target_tokens:[],arguments:input});
   function settle(lease:typeof edit,payload:any,editing:boolean){
     markAssignmentKernelOperationDispatchStartedV2(lease);const op=state().operations[lease.operation_id]!;
     const result={schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding:lease.binding,status:'succeeded',dispatch_state:'dispatched',persistent_effect:editing?'applied':'none',native_transaction_state:editing?'committed':'not_applicable',authority:'native-host',
-      result_schema_id:'operator-native/POST:'+op.request_identity!.path+'/v2',observation_required:true,affected_target_identities:editing?wire.applied.transaction.deleted_element_ids.map((id:number)=>'element_id:'+id):[],receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:op.request_identity,completed_at:new Date().toISOString(),raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex')};
+      result_schema_id:'operator-native/POST:'+op.request_identity!.path+'/v2',observation_required:true,affected_target_identities:editing?[...new Set<number>([...payload.transaction.deleted_element_ids,...payload.transaction.modified_element_ids,...payload.transaction.added_element_ids])].map(id=>'element_id:'+id).sort():[],receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:op.request_identity,completed_at:new Date().toISOString(),raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex')};
     settleAssignmentKernelOperationV2(lease,{content:[],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:result,observation:{raw_payload:payload,semantic_facts:[{fact_id:editing?'task.result_available':'verification.result_available',fact_class:editing?'domain':'verification',value:true}],verification_relevance:['task_result']}}});
   }
   let applied=structuredClone(wire.applied);if(variant==='wrong_native_scope')applied.transaction.scope_observer_executions=0;
+  if(variant==='known_collateral'){
+    applied.transaction.allowed_existing_element_ids.push(9000001);applied.transaction.commit_allowed_existing_element_ids.push(9000001);
+    applied.transaction.modified_element_ids=[9000001];applied.transaction.max_affected_elements=21;applied.transaction.affected_element_count=21;
+  }
   if(variant==='ordinary_exact'){
     const ids:number[]=wire.applied.transaction.deleted_element_ids;
     applied={status:'Deleted',requestedCount:2,requestedIds:input.body.ids,impactedCount:ids.length,impactedIds:ids,
@@ -57,8 +62,8 @@ test(`kernel deletion proof requires the complete fresh native closure: ${varian
     settle(last,lastPayload,false);
     if(index===0)assert.equal(checkedEditIsCurrentV2(state(),edit.operation_id),false,'One completed chunk is not the full deletion closure');
   }
-  const snapshot=state();assert.equal(checkedEditIsCurrentV2(snapshot,edit.operation_id),['exact','ordinary_exact'].includes(variant));
-  if(['exact','ordinary_exact'].includes(variant)){
+  const snapshot=state();assert.equal(checkedEditIsCurrentV2(snapshot,edit.operation_id),['exact','ordinary_exact','known_collateral'].includes(variant));
+  if(['exact','ordinary_exact','known_collateral'].includes(variant)){
     assert.deepEqual(verifiedNativeWorkTargetIdentitiesV2(snapshot,edit.operation_id),['element_id:1722844','element_id:1722859'],'Dependent IDs earn no additional work credit');
     const proof=(s:typeof snapshot)=>deletedElementsPostconditionSatisfiedV2(s,s.operations[edit.operation_id]!,s.operations[last.operation_id]!.result!,lastPayload);
     assert.equal(proof(snapshot),true);
