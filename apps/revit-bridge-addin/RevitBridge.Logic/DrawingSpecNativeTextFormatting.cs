@@ -11,7 +11,7 @@ namespace RevitBridge.Logic
     // The importing handler must own native settlement, allocation and independent post-commit readback.
     public static class DrawingSpecNativeTextFormatting
     {
-        public static void Apply(TextNote note, DrawingSpecRichParagraph paragraph, int start, int length)
+        public static void Apply(TextNote note, DrawingSpecRichParagraph paragraph, int start, int length, DrawingSpecNativeFontProfile profile)
         {
             if (note == null || paragraph == null || length < 1 || length > 29999) throw new ArgumentException("A native text note and bounded nonempty fragment are required.");
             var spans = paragraph.Slice(start, length);
@@ -26,9 +26,10 @@ namespace RevitBridge.Logic
                 throw new InvalidOperationException("Unsupported source vertical alignment.");
             var type = note.TextNoteType;
             var family = type.get_Parameter(BuiltInParameter.TEXT_FONT)?.AsString();
-            var pointSize = (type.get_Parameter(BuiltInParameter.TEXT_SIZE)?.AsDouble() ?? 0) * 864;
+            var nativeSize = type.get_Parameter(BuiltInParameter.TEXT_SIZE)?.AsDouble() ?? 0;
             var color = type.get_Parameter(BuiltInParameter.LINE_COLOR)?.AsInteger();
-            if (!string.Equals(family, style.FontFamily, StringComparison.OrdinalIgnoreCase) || Math.Abs(pointSize - style.PointSize) > .000001 || color != ColorValue(style.Color))
+            if (profile == null || !string.Equals(profile.FontFamily, style.FontFamily, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(family, style.FontFamily, StringComparison.OrdinalIgnoreCase) || Math.Abs(nativeSize - profile.NativeSizeFeet(style.PointSize)) > .000000001 || color != ColorValue(style.Color))
                 throw new InvalidOperationException("Native text type does not match the source fragment font/size/color. Use a dedicated type without changing unrelated project text.");
             var text = paragraph.NativeText.Substring(start, length);
             if (text.IndexOf('\n') >= 0 || text.IndexOf('\f') >= 0) throw new InvalidOperationException("Split explicit breaks before constructing native formatted text.");

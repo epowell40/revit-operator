@@ -28,12 +28,12 @@ namespace RevitBridge.Logic
 
     public static class DrawingSpecNativeLayout
     {
-        public const string RendererVersion = "operator.drawing-spec-native-layout.v3";
+        public const string RendererVersion = "operator.drawing-spec-native-layout.v4";
         // Caller owns one settled native transaction and creates each continuation view exactly once.
         // This renderer creates editable native text; it does not place views on sheets or issue verification facts.
         public static DrawingSpecNativeLayoutResult Render(Document document, IReadOnlyList<DrawingSpecRichParagraph> paragraphs,
             DrawingSpecFlowGeometry geometry, TextNoteType baseType, Func<int, View> pageView, ISet<long> nativeCreated,
-            double startXInches, double startYInches)
+            double startXInches, double startYInches, IReadOnlyDictionary<string, DrawingSpecNativeFontProfile> fonts)
         {
             if (!document.IsModifiable || paragraphs.Count == 0) throw new InvalidOperationException("Native spec layout requires the owned transaction and nonempty source inventory.");
             var views = new Dictionary<int, View>();
@@ -48,7 +48,7 @@ namespace RevitBridge.Logic
                 }
                 return view;
             }
-            var metrics = new DrawingSpecNativeTextMetrics(document, Page(0), baseType, nativeCreated);
+            var metrics = new DrawingSpecNativeTextMetrics(document, Page(0), baseType, nativeCreated, fonts);
             var byId = paragraphs.ToDictionary(p => p.SourceId);
             var inline = new Dictionary<(string, int, int, double), DrawingSpecInlinePlan>();
             DrawingSpecInlinePlan Lines(DrawingSpecRichParagraph paragraph, int start, int length, double width)

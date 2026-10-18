@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing.Text;
 using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
@@ -22,13 +21,13 @@ namespace RevitBridge.Logic
         private readonly ISet<long> nativeCreated;
         private readonly Dictionary<string, ElementId> types = new Dictionary<string, ElementId>();
         private readonly Dictionary<string, DrawingSpecTextMeasurement> cache = new Dictionary<string, DrawingSpecTextMeasurement>();
-        private readonly HashSet<string> fonts;
+        private readonly IReadOnlyDictionary<string, DrawingSpecNativeFontProfile> fonts;
         private readonly Stopwatch elapsed = Stopwatch.StartNew();
         private int probes;
         public int NativeProbeCount => probes;
         public int CacheEntries => cache.Count;
 
-        public DrawingSpecNativeTextMetrics(Document document, View view, TextNoteType baseType, ISet<long> nativeCreated)
+        public DrawingSpecNativeTextMetrics(Document document, View view, TextNoteType baseType, ISet<long> nativeCreated, IReadOnlyDictionary<string, DrawingSpecNativeFontProfile> fonts)
         {
             this.document = document ?? throw new ArgumentNullException(nameof(document));
             measurementView = view ?? throw new ArgumentNullException(nameof(view));
@@ -37,22 +36,7 @@ namespace RevitBridge.Logic
             // Revit may return distinct managed wrappers for the same open native document.
             if (!document.IsModifiable || !document.Equals(view.Document) || !document.Equals(baseType.Document))
                 throw new InvalidOperationException("Text metrics require the owned active native transaction and document.");
-            fonts = InstalledFonts();
-        }
-
-        public static void ValidateSourceFonts(IEnumerable<DrawingSpecRichParagraph> paragraphs)
-        {
-            var available = InstalledFonts();
-            foreach (var family in paragraphs.SelectMany(p => p.Spans.Select(s => s.Style.FontFamily).Append(p.DefaultStyle.FontFamily)).Distinct(StringComparer.OrdinalIgnoreCase))
-                if (!available.Contains(family)) throw new InvalidOperationException("Source font is not installed: " + family);
-        }
-
-        private static HashSet<string> InstalledFonts()
-        {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var installed = new InstalledFontCollection())
-                foreach (var family in installed.Families) using (family) names.Add(family.Name);
-            return names;
+            this.fonts = fonts ?? throw new ArgumentNullException(nameof(fonts));
         }
 
         public DrawingSpecTextMeasurement Measure(DrawingSpecRichParagraph paragraph, int start, int length)
@@ -90,7 +74,7 @@ namespace RevitBridge.Logic
             if (spans.Count == 0 || paragraph.NativeText.Substring(start, length).All(char.IsWhiteSpace))
                 throw new InvalidOperationException("Whitespace belongs in an explicit measured layout span, not a fabricated text-note receipt.");
             var note = TextNote.Create(document, target.Id, anchorModelFt, paragraph.NativeText.Substring(start, length), ResolveType(spans[0].Style));
-            DrawingSpecNativeTextFormatting.Apply(note, paragraph, start, length);
+            DrawingSpecNativeTextFormatting.Apply(note, paragraph, start, length, fonts[spans[0].Style.FontFamily]);
             nativeCreated.Add(ElementIdCompat.GetValue(note.Id));
             return note;
         }
@@ -103,7 +87,7 @@ namespace RevitBridge.Logic
             var note = TextNote.Create(document, measurementView.Id, XYZ.Zero, paragraph.NativeText.Substring(start, count), ResolveType(style));
             try
             {
-                DrawingSpecNativeTextFormatting.Apply(note, paragraph, start, count);
+                DrawingSpecNativeTextFormatting.Apply(note, paragraph, start, count, fonts[style.FontFamily]);
                 document.Regenerate();
                 probes++;
                 return new DrawingSpecTextMeasurement { WidthInches = note.Width * 12, HeightInches = note.Height * 12 };
@@ -113,9 +97,11 @@ namespace RevitBridge.Logic
 
         private ElementId ResolveType(DrawingSpecCharacterStyle style)
         {
-            if (!fonts.Contains(style.FontFamily)) throw new InvalidOperationException("Source font is not installed: " + style.FontFamily);
+            if (!fonts.ContainsKey(style.FontFamily)) throw new InvalidOperationException("Source font is not installed: " + style.FontFamily);
             if (style.TrackingPoints != 0) throw new InvalidOperationException("Explicit source tracking requires individual glyph spacing before native note creation.");
-            string key = Typography(style);
+            var profile = fonts[style.FontFamily];
+            double nativeSize = profile.NativeSizeFeet(style.PointSize);
+            string key = DrawingSpecNativeLayout.RendererVersion + "|" + profile.Signature + "|" + Typography(style);
             if (types.TryGetValue(key, out var cached)) return cached;
             string name;
             using (var hash = SHA256.Create()) name = "Operator Spec " + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(key))).Replace("-", "").Substring(0, 20);
@@ -125,7 +111,7 @@ namespace RevitBridge.Logic
                 type = (TextNoteType)baseType.Duplicate(name);
                 nativeCreated.Add(ElementIdCompat.GetValue(type.Id));
                 type.get_Parameter(BuiltInParameter.TEXT_FONT).Set(style.FontFamily);
-                type.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(style.PointSize / 864);
+                type.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(nativeSize);
                 type.get_Parameter(BuiltInParameter.LINE_COLOR).Set(DrawingSpecNativeTextFormatting.ColorValue(style.Color));
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).Set(0);
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_ITALIC).Set(0);
@@ -134,7 +120,7 @@ namespace RevitBridge.Logic
                 type.get_Parameter(BuiltInParameter.TEXT_BACKGROUND).Set(1); // Transparent fragments do not mask adjacent source glyphs.
             }
             if (!string.Equals(type.get_Parameter(BuiltInParameter.TEXT_FONT).AsString(), style.FontFamily, StringComparison.OrdinalIgnoreCase) ||
-                Math.Abs(type.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble() * 864 - style.PointSize) > .000001 ||
+                Math.Abs(type.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble() - nativeSize) > .000000001 ||
                 type.get_Parameter(BuiltInParameter.LINE_COLOR).AsInteger() != DrawingSpecNativeTextFormatting.ColorValue(style.Color) ||
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_BOLD).AsInteger() != 0 || type.get_Parameter(BuiltInParameter.TEXT_STYLE_ITALIC).AsInteger() != 0 ||
                 type.get_Parameter(BuiltInParameter.TEXT_STYLE_UNDERLINE).AsInteger() != 0 || Math.Abs(type.get_Parameter(BuiltInParameter.TEXT_WIDTH_SCALE).AsDouble() - 1) > .000001 ||

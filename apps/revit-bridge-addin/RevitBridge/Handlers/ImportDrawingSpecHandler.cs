@@ -50,10 +50,11 @@ namespace RevitBridge.Handlers
                 part.Xml != null && XDocument.Parse(part.Xml).Descendants(XName.Get("t", "http://schemas.openxmlformats.org/wordprocessingml/2006/main")).Any(t => t.Value.Length > 0)))
                 throw new InvalidOperationException("Running matter or footnotes need explicit placement support; no content was silently omitted.");
             var baseType = ResolveType(document, p.textTypeName);
+            var baseFont = DrawingSpecNativeFontProfile.Capture(baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString());
             var paragraphs = source.Blocks.Where(b => b.Kind == "paragraph").Select(b => DrawingSpecRichParagraph.Build(b,
-                baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString(), baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble() * 864)).ToArray();
+                baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString(), baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble()))).ToArray();
             if (!paragraphs.Any(item => !string.IsNullOrWhiteSpace(item.SourceText))) throw new InvalidOperationException("Specification has no body content.");
-            DrawingSpecNativeTextMetrics.ValidateSourceFonts(paragraphs);
+            var fonts = DrawingSpecNativeFontProfile.CaptureAll(paragraphs);
             if (paragraphs.Any(item => item.NativeText.Length > 1000000)) throw new InvalidOperationException("An individual source paragraph exceeds the bounded native layout limit; split it explicitly before import. No content was truncated.");
             var blockById = source.Blocks.ToDictionary(b => b.SourcePath);
             var sourceBlockManifest = JsonSerializer.Serialize(paragraphs.Select(item => new
@@ -73,14 +74,14 @@ namespace RevitBridge.Handlers
             string name = !string.IsNullOrWhiteSpace(p.viewName) ? p.viewName!.Trim() : target?.Name ?? "Drawing Spec " + Path.GetFileNameWithoutExtension(path);
             if (name.Length > 110) throw new ArgumentException("Specification view name exceeds110characters; no name was silently truncated.");
             string importKey = JsonSerializer.Serialize(new { filename = Path.GetFileName(path), viewId = p.viewId, name });
-            string inputHash = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(new { source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, geometry, x, y, p.textTypeName }));
+            string inputHash = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(new { source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, fonts = fonts.Values.Select(f => f.Signature).ToArray(), geometry, x, y, p.textTypeName }));
             var prior = DrawingSpecNativeImportState.Find(document, importKey);
             if (prior != null && (prior.InputSha256 != inputHash || prior.SourceSha256 != source.SourceSha256))
                 throw new InvalidOperationException("Imported source/settings changed. Retain the prior result for managed-update reconciliation; do not duplicate or overwrite it.");
             if (prior != null && DrawingSpecNativeImportState.CurrentSnapshotHash(document, prior) != prior.NativeStateSha256)
                 throw new InvalidOperationException("Imported native content changed since its saved manifest. Reconcile those edits before repeating the import.");
             var plan = new { sourcePath = p.sourcePath, sourceSha256 = source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, paragraphs = paragraphs.Length,
-                geometry, startXInches = x, startYInches = y, viewName = name,
+                geometry, fontProfiles = fonts.Values.ToArray(), startXInches = x, startYInches = y, viewName = name,
                 sourceWarnings = source.Warnings, sheetsPlaced = false, independentVerificationComplete = false };
             if (p.dryRun == true || prior != null)
                 return new { status = p.dryRun == true ? "Dry Run" : "Success", dryRun = p.dryRun == true,
@@ -102,7 +103,7 @@ namespace RevitBridge.Handlers
                     var view = ViewDrafting.Create(document, family.Id); view.Name = pageName; view.Scale = 1;
                     created.Add(ElementIdCompat.GetValue(view.Id)); return view;
                 }
-                var layout = DrawingSpecNativeLayout.Render(document, paragraphs, geometry, baseType, Page, created, x, y);
+                var layout = DrawingSpecNativeLayout.Render(document, paragraphs, geometry, baseType, Page, created, x, y, fonts);
                 stored = new DrawingSpecStoredImport { ImportKey = importKey, SourceSha256 = source.SourceSha256, InputSha256 = inputHash,
                     ViewIds = layout.ViewIds, Notes = layout.Notes, LayoutSpansJson = JsonSerializer.Serialize(layout.LayoutSpans),
                     SourceBlocksJson = sourceBlockManifest, SourceWarnings = source.Warnings.Select(w => w.Code + ":" + w.SourcePath).ToList() };
