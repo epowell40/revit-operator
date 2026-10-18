@@ -1680,7 +1680,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/redline_package_guidance.ts",
-      "sha256": "sha256:7cee8a38fcffc18364b93aee9b6b574ec56fbc2f5f4e31c4f3100c582b185fed"
+      "sha256": "sha256:4b7148c3104ed268c8eb57a439a6fa33aa4996b1141a5bed606fe8cfba7171df"
     },
     {
       "path": "apps/operator-backend/src/brains/redline_target_grounding_runtime.ts",
@@ -2837,7 +2837,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:ae8a65a1555e13af4e3ecf62b759d718b2546d68f9fa34bc1c12389c33edf223"
+      "sha256": "sha256:af9b5bdf7a57aa5b85a42bd8554560ac813c6ee3bbf96ae3acf05356a7892e97"
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
@@ -4933,7 +4933,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
-      "sha256": "sha256:e1aa860f78f300b825fb47f1f13fa070575c87abbd166d8c75a0676f57df4c2c"
+      "sha256": "sha256:4dee133e2a1ff937686508d68c30b1f9e3b33b8b1013e03800c5dd3203a442b2"
     },
     {
       "path": "apps/operator-backend/test/codex_cold_resume_recovery.test.ts",
@@ -5141,7 +5141,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:0c3db1ae2e717b476fc4dfd43b53c94606828b4c894e50852bee4942546c509d"
+      "sha256": "sha256:7f75a00c0826a364e1c6446df21dd0e1af611a4b217a42e78003b1fa77073820"
     },
     {
       "path": "apps/operator-backend/test/desktop_conversation.test.ts",
@@ -7340,6 +7340,10 @@
       "sha256": "sha256:1ceeef197acd0865ae2ffd8c3094ce16de032fbbd81e0ebd1c433754ce14657f"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/revision-cloud-overload-unsettled204.json",
+      "sha256": "sha256:c82af82040bab41bcacdeb1c28442dbf565759d0778e95093940f2ae51119ca3"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/scope-information-detail-curves-unsettled.json",
       "sha256": "sha256:0169e8003586fdeb7f37e08164d78e253781c2104abd27c0020fb987cb5b4dcf"
     },
@@ -7816,8 +7820,12 @@
       "sha256": "sha256:117f9fa1e87492c81432b5f39ebd13468fb72f57d0c678f28a54b2610062ea7d"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevisionCloudSettlementTests.cs",
+      "sha256": "sha256:59b61c176c9879c2c1d8606046bc0d597f2879c17ed2e5562f2c0b419963c607"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj",
-      "sha256": "sha256:2430f8ab7a6e17ddf6666f4364a708c854984806db92146acdfeef6638410f4c"
+      "sha256": "sha256:6480d93ef13a5fce0258abbf74ac90e092d5b34de7031999b0071299943bf377"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/RevitRerouteOperationContractTests.cs",
@@ -7944,6 +7952,10 @@
       "sha256": "sha256:3de549491beb28cef0403732baf7c4f45f68a8fd4af75a67de004c4103ea722c"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/TextNoteOrientationReadbackTests.cs",
+      "sha256": "sha256:e663ee300965e54bd656beabe5c901de217d46392a7e19d84cbf427a7ee1eb4f"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/TextNoteTypeLookupTests.cs",
       "sha256": "sha256:147fa48650338cd9be379b405754e339b4e504644d78750be1db15edb3173d15"
     },
@@ -7961,7 +7973,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ViewOwnedDetailingInventoryContractTests.cs",
-      "sha256": "sha256:e6d02eac0d64fce9a0016596256d5280162535766da8d4b95008f11fdfff39cb"
+      "sha256": "sha256:637923076f1d0e275d3d6ebd3cf8beb01bd494030bd7988e15d44bd9840d5c2d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ViewQueryPolicyTests.cs",
@@ -8737,6 +8749,10 @@
       "sha256": "sha256:8b50b7b8d19802a461dbd914a2378dd19c85c218b65cffa6af5311eedb6c0c9c"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/TextNoteOrientationReadback.cs",
+      "sha256": "sha256:3297fd5013a61c7fc850ce958bd75134944f2cf75bfd6b0050e7ff4880120a3b"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/TextNoteTextCanonicalizer.cs",
       "sha256": "sha256:2887a4a27c6aed744f770b8878db32b72c57e42ff009e198d84f748d3c1a262d"
     },
@@ -8758,7 +8774,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ViewOwnedDetailingInventoryContract.cs",
-      "sha256": "sha256:d8a8e5fd134ac9dea80de40113949a9014416da489258793d01a01f0104ca729"
+      "sha256": "sha256:2fe86c2089406a987146826bbd58b3269195714898d499b21e014211e96eb130"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ViewOwnedDetailingSemanticSignature.cs",
@@ -8994,7 +9010,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Drafting/CreateRevisionCloudHandler.cs",
-      "sha256": "sha256:f55270b2cc942e8ab1257dbc66f7eff757dfd007b3f6da188389112e823fcb47"
+      "sha256": "sha256:3daa085e78b90475c46083ba557baa6f4dad4c2b6eb85a63a6e24ffe66543b9d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Drafting/DraftingPoints.cs",
@@ -9442,7 +9458,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/RotateElementsHandler.cs",
-      "sha256": "sha256:5dd4899988f7f25959a2ec7aa9bcfbf73cfb72c308617a4d87ecb20b215f9642"
+      "sha256": "sha256:48301545971bc3d4f1ac5bc7e5da74f6913231ffad25bd6adfda80202ce70f25"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ActivateViewHandler.cs",
@@ -9798,7 +9814,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateTextNoteHandler.cs",
-      "sha256": "sha256:c731ada5555cb7ad57ed5f3150e18407306ce91d5c63bedfcb02c1f6281628f8"
+      "sha256": "sha256:acb136d00bd482a9c3a73a2d94e9bbc3b77d9cf405fe2b10c487f139c9078245"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateViewHandler.cs",
@@ -10469,7 +10485,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:5152f56cd7a339acbe13e6219c937e37d3cda2262ab128155de812c3fe71ecb6",
+  "inputs_hash": "sha256:4664b354b99bbfd1f8ead5e2739862ab4418ea906b497742404908800e689588",
   "result": {
     "passed": true,
     "checks": [
