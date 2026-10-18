@@ -4501,7 +4501,7 @@
     {
       "coverage": [
         "backend:desktop_scoped_handoff.test.ts",
-        "desktop:test/scoped_desktop_handoff.test.js"
+        "backend:thin_reference_execution.test.ts"
       ],
       "id": "scoped_backend_inspection_must_return_to_desktop_owner_without_closing_parent"
     },
