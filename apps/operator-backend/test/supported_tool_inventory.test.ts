@@ -16,6 +16,14 @@ const manifest = fs.readFileSync(path.join(apps, "revit-bridge-addin/RevitBridge
 const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*"(GET|POST)",\s*"([^"]+)"/g)]
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
+test("Excel source inspection is admitted without exposing the unqualified legacy writer",()=>{
+  assert.equal(isSupportedToolRoute('POST','/revit/inspect-excel-source'),true);
+  assert.equal(isAllowlisted('POST','/revit/inspect-excel-source'),true);
+  assert.equal(isSupportedNativeTransport('POST','/revit/inspect-excel-source'),true);
+  assert.equal(isSupportedToolRoute('GET','/revit/inspect-excel-source'),false);
+  assert.equal(isSupportedToolRoute('POST','/revit/import-excel-table'),false);
+});
+
 test("source-bound Word inspection is supported without exposing adjacent routes",()=>{
   assert.equal(isSupportedToolRoute('POST','/revit/inspect-drawing-spec'),true);
   assert.equal(isAllowlisted('POST','/revit/inspect-drawing-spec'),true);
@@ -59,8 +67,8 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 });
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
-  assert.equal(implemented.length, 218);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 113);
+  assert.equal(implemented.length, 219);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 114);
   assert.equal(isSupportedToolRoute("POST", "/revit/locate-elements"), true);
   assert.equal(isSupportedToolRoute("GET", "/revit/locate-elements"), false);
   assert.equal(isAllowlisted("POST", "/revit/locate-elements"), true);

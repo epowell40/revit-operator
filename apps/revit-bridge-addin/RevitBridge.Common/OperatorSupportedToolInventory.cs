@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:0ea2819e80bf7c12d97dcd9585a01723a63727c8c326fa003cc5221e2a369608";
+        public const string InventoryHash = "sha256:2bacb472d97e8ccdfd2944070b83d1f33553843b886f067b35ca3c26823acd16";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
