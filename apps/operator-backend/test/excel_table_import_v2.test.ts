@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';
 import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
@@ -55,6 +56,9 @@ test('retained native first and continuation parts prove content without claimin
   ]){const v=structuredClone(f);change(v);if(JSON.stringify(v)===JSON.stringify(f))continue;assert.equal(excelTableImportReadbackMatchesV2(v.input,v.applied,v.readInput,v.read,v.affected),false);}
  }
 });
+const native199Contract=JSON.parse(fs.readFileSync('test/fixtures/excel-inspection-contract-199.json','utf8')).contract;
+const {preflightKnownGenericToolBody}=await import(pathToFileURL(path.resolve('../mcp-server/dist/lib/genericToolPreflight.js')).href);
+const canonicalInspection=(input:any)=>({...input,body:{...input.body,action:'inspect',section:'summary'}});
 for(const variant of ['exact','retained_first_part','retained_continuation','wrong_source','wrong_part','bad_native_format','unretained_apply','paused_after_commit','read_failure'] as const)
 test(`ordinary Excel part ${variant} schedules one separate authoritative check without replay`,async()=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'operator-excel-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
@@ -64,7 +68,7 @@ test(`ordinary Excel part ${variant} schedules one separate authoritative check 
    status:'active',related_session_id:'excel-session',created_by:'excel-principal',work_budget:{requested_effect:'apply',document_fingerprint:'excel-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'excel-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
-   async validateToolArguments(_tool:string,args:any){if(args.path===f.readInput.path)assert.deepEqual(args,f.readInput);},
+   async validateToolArguments(_tool:string,args:any){if(args.path===f.readInput.path){assert.equal(preflightKnownGenericToolBody(native199Contract,args.body),null,'Use the actual native-published contract, including required_fields, before a check can dispatch.');assert.deepEqual(args,canonicalInspection(f.readInput));}},
    async callTool(_tool:string,args:any,context:any){
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const isRead=args.path===f.readInput.path;
     if(isRead&&variant==='read_failure')throw Error('native-part-read-failed');

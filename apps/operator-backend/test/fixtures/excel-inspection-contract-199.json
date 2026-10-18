@@ -1,0 +1,207 @@
+{
+  "notice": "Exact candidate199 native-published contract that incorrectly promoted the first alternative action requirement. Transport source path is anonymized; no workbook content included. Full exact failure remains in private local evidence.",
+  "contract": {
+    "method": "POST",
+    "path": "/revit/inspect-excel-import",
+    "required_fields": [
+      "action"
+    ],
+    "request_schema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list"
+              ]
+            },
+            "pageOffset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "inspect"
+              ]
+            },
+            "sourcePath": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 520
+            },
+            "manifestElementId": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "section": {
+              "type": "string",
+              "enum": [
+                "summary"
+              ]
+            },
+            "pageOffset": {
+              "type": "integer",
+              "enum": [
+                0
+              ]
+            },
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "expectedInspectionSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "sourcePath",
+            "manifestElementId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "inspect"
+              ]
+            },
+            "sourcePath": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 520
+            },
+            "manifestElementId": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "section": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "notes",
+                "cells",
+                "borders",
+                "issues"
+              ]
+            },
+            "pageOffset": {
+              "type": "integer",
+              "enum": [
+                0
+              ]
+            },
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "expectedInspectionSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 499
+            }
+          },
+          "required": [
+            "sourcePath",
+            "manifestElementId",
+            "partIndex"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "inspect"
+              ]
+            },
+            "sourcePath": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 520
+            },
+            "manifestElementId": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "section": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "notes",
+                "cells",
+                "borders",
+                "issues"
+              ]
+            },
+            "pageOffset": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "expectedInspectionSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 499
+            }
+          },
+          "required": [
+            "sourcePath",
+            "manifestElementId",
+            "partIndex",
+            "pageOffset",
+            "expectedInspectionSnapshotSha256"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "read": {
+    "sourcePath": "uploads/table.xlsx",
+    "manifestElementId": 1733048,
+    "partIndex": 0,
+    "pageSize": 1
+  }
+}

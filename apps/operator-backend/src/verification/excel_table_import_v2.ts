@@ -90,7 +90,7 @@ function settled(s:AssignmentSnapshotV2,op:OperationV2){
 }
 export function committedExcelTableImportReadbackPlanV2(s:AssignmentSnapshotV2,op:OperationV2){
  if(s.terminal||s.outcome!=='active'||s.completion_proposal||s.execution_control?.state==='paused'||op.verification_operation_ids.length)return null;
- const c=settled(s,op);return c?{method:'POST',path:readRoute,body:{sourcePath:c.wanted.sourcePath,manifestElementId:c.applied.manifestElementId,partIndex:c.applied.partIndex,pageSize:1}}:null;
+ const c=settled(s,op);return c?{method:'POST',path:readRoute,body:{action:'inspect',sourcePath:c.wanted.sourcePath,manifestElementId:c.applied.manifestElementId,partIndex:c.applied.partIndex,section:'summary',pageSize:1}}:null;
 }
 /** One independently inspected table view is the deliverable, not its thousands
  * of text fragments, managed storage records, or incidental modified owners. */

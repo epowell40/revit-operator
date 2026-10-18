@@ -1743,42 +1743,9 @@ namespace RevitBridge.Operator
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
 
-                    // If schema is oneOf(null, object) pick the object branch for field summaries.
-                    if (root.ValueKind == JsonValueKind.Object && !root.TryGetProperty("properties", out _)
-                        && root.TryGetProperty("oneOf", out var oneOf) && oneOf.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var branch in oneOf.EnumerateArray())
-                        {
-                            if (branch.ValueKind == JsonValueKind.Object &&
-                                branch.TryGetProperty("type", out var t) &&
-                                t.ValueKind == JsonValueKind.String &&
-                                string.Equals(t.GetString(), "object", StringComparison.OrdinalIgnoreCase))
-                            {
-                                root = branch;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object)
-                    {
-                        var all = props.EnumerateObject().Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                        var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        if (root.TryGetProperty("required", out var reqEl) && reqEl.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var r in reqEl.EnumerateArray())
-                            {
-                                if (r.ValueKind == JsonValueKind.String) required.Add(r.GetString() ?? "");
-                            }
-                        }
-
-                        foreach (var r in required.Where(x => !string.IsNullOrWhiteSpace(x))) req.Add(r);
-                        foreach (var f in all)
-                        {
-                            if (string.IsNullOrWhiteSpace(f)) continue;
-                            if (!required.Contains(f)) opt.Add(f);
-                        }
-                    }
+                    var fields = OperatorRequestSchemaSummary.Summarize(root);
+                    req.AddRange(fields.RequiredFields);
+                    opt.AddRange(fields.OptionalFields);
                 }
                 catch
                 {

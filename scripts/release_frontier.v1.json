@@ -514,7 +514,8 @@
     "DrawingSpecManagedUpdateTests",
     "DrawingSpecInspectionTests",
     "DrawingSpecInlineFlowTests",
-    "DrawingSpecColumnFlowTests"
+    "DrawingSpecColumnFlowTests",
+    "OperatorRequestSchemaSummaryTests"
   ],
   "failure_families": [
     {
@@ -4695,6 +4696,14 @@
       "coverage": [
         "backend:verification_capability_admission_v2.test.ts",
         "backend:created_tag_postcondition_v2.test.ts"
+      ]
+    },
+    {
+      "id": "conditional_request_summary_does_not_promote_one_alternatives_fields_globally",
+      "coverage": [
+        "dotnet:OperatorRequestSchemaSummaryTests",
+        "mcp:lib/excelOutputContracts.test.ts",
+        "backend:excel_table_import_v2.test.ts"
       ]
     }
   ],

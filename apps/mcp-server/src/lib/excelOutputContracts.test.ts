@@ -27,3 +27,19 @@ test('Excel part summary and paged details are distinct from import discovery an
  assert.equal(isSupportedNativeTool('GET','/revit/inspect-excel-import'),false);
  assert.equal(isSupportedNativeTool('POST','/revit/inspect-excel-import-other'),false);
 });
+
+
+test('retained199 native field summary refusal and corrected inspection preserve full schema validation',()=>{
+ const f=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/excel-inspection-contract-199.json',import.meta.url),'utf8'));
+ const failure=preflightKnownGenericToolBody(f.contract,f.read);
+ assert.equal(failure?.request_dispatched,false);assert.deepEqual(failure?.missing_required_fields,['action']);
+ assert.equal(failure?.input_schema_digest,'bda40721f225fbbd028f3957913f2bd70101c60186235022a1cc3d0d116be332');
+ const explicit={...f.read,action:'inspect',section:'summary'};
+ assert.equal(preflightKnownGenericToolBody(f.contract,explicit),null);
+ // Native summary now intersects alternative requirements; full oneOf stays unchanged.
+ const corrected={...f.contract,required_fields:[]};
+ assert.equal(preflightKnownGenericToolBody(corrected,f.read),null);
+ for(const read of [{...explicit,partIndex:500},{...explicit,sourcePath:''},{...explicit,pageSize:101},
+  {...explicit,action:'list'},{...explicit,unexpected:true},{...explicit,section:'notes',partIndex:undefined}])
+  assert.equal(preflightKnownGenericToolBody(corrected,read)?.request_dispatched,false);
+});
