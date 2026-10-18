@@ -4689,6 +4689,13 @@
         "backend:native_comparison_feedback_runtime.test.ts",
         "backend:excel_table_import_v2.test.ts"
       ]
+    },
+    {
+      "id": "created_tag_association_context_not_a_deletion_or_changed_target",
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:created_tag_postcondition_v2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

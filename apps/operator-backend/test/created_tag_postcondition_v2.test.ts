@@ -136,7 +136,7 @@ test(`ordinary ${tagKind} ${typeSelection} tag creation ${variant}: independent 
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(response.success,true);assert.equal(apply.persistent_effect,'applied');assert.equal(calls.filter(a=>a.path==='/revit/tag-elements').length,1);
    const planned=!['paused','partial_apply','missing_created_inventory'].includes(variant);
-   assert.equal(validations.filter(a=>a.path==='/revit/native-api-ops').length,planned?(variant==='schema_rejected'?1:2):0);
+   assert.equal(validations.filter(a=>a.path==='/revit/native-api-ops').length,planned?(variant==='schema_rejected'?1:2):0,'Reservation and dispatch each validate the read; schema refusal stops before reservation.');
    assert.equal(calls.filter(a=>a.path==='/revit/native-api-ops').length,planned&&variant!=='schema_rejected'?1:0);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
    assert.equal(verified,variant==='exact');assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),variant!=='exact');

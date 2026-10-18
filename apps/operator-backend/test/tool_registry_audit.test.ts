@@ -8,8 +8,11 @@ import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, render
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 217);
+  assert.equal(audit.tools.length, 221);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
+  for(const route of ["/revit/import-drawing-spec","/revit/inspect-drawing-spec","/revit/import-excel-output","/revit/inspect-excel-import"]){
+    const tool=audit.tools.find(tool=>tool.path===route);assert(tool,route);assert.equal(tool.evidence.live_safe,null);assert.equal(tool.evidence.useful,null);
+  }
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
   assert.ok(audit.tools.every(tool => tool.evidence.live_safe === null));
   assert.ok(audit.tools.every(tool => tool.evidence.useful === null));
