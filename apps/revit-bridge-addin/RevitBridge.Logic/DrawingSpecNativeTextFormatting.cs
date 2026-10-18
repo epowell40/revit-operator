@@ -94,7 +94,7 @@ namespace RevitBridge.Logic
             string.Equals(a.FontFamily, b.FontFamily, StringComparison.OrdinalIgnoreCase) && a.PointSize == b.PointSize &&
             ColorValue(a.Color) == ColorValue(b.Color) && a.TrackingPoints == b.TrackingPoints;
 
-        private static int ColorValue(string color)
+        internal static int ColorValue(string color)
         {
             if (color == "auto") return 0;
             if (color.Length != 6 || !int.TryParse(color, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var rgb))

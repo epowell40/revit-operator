@@ -158,6 +158,43 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void TabStopsAccumulateAcrossStylesAndDirectClearOverridesOnlyItsPosition()
+        {
+            var styles = "<w:style w:styleId='Base'><w:pPr><w:tabs><w:tab w:val='left' w:pos='720'/><w:tab w:val='left' w:pos='1440'/></w:tabs></w:pPr></w:style>" +
+                "<w:style w:styleId='Derived'><w:basedOn w:val='Base'/><w:pPr><w:tabs><w:tab w:val='center' w:pos='2160'/></w:tabs></w:pPr></w:style>";
+            var body = "<w:p><w:pPr><w:pStyle w:val='Derived'/><w:tabs><w:tab w:val='clear' w:pos='720'/><w:tab w:val='right' w:pos='2880'/></w:tabs></w:pPr><w:r><w:t>tabbed text</w:t></w:r></w:p>";
+            var result = DocxDrawingSpecSourceReader.Read(Package(body, styles));
+            var tabs = XElement.Parse(result.Blocks[0].PropertiesXml).Element(W + "tabs")!.Elements(W + "tab").ToDictionary(t => (string)t.Attribute(W + "pos")!, t => (string)t.Attribute(W + "val")!);
+            Assert.Equal(4, tabs.Count);
+            Assert.Equal("clear", tabs["720"]);
+            Assert.Equal("left", tabs["1440"]);
+            Assert.Equal("center", tabs["2160"]);
+            Assert.Equal("right", tabs["2880"]);
+        }
+
+        [Fact]
+        public void DocumentDefaultTabsAndHangingCompatibilityAreSourceBound()
+        {
+            var settings = "<w:settings xmlns:w='" + Ns + "'><w:defaultTabStop w:val='360'/><w:compat><w:noTabHangIndent/></w:compat></w:settings>";
+            var result = DocxDrawingSpecSourceReader.Read(Package("<w:p/>", extra: new[] { ("word/settings.xml", settings) }));
+            Assert.Equal(.25, result.DefaultTabStopInches);
+            Assert.False(result.ImplicitHangingTab);
+            Assert.Equal(.25, result.Blocks[0].DefaultTabStopInches);
+            Assert.False(DrawingSpecRichParagraph.Build(result.Blocks[0], "Arial", 12).ImplicitHangingTab);
+        }
+
+        [Fact]
+        public void EmptyParagraphUsesItsSourceParagraphMarkFontRatherThanTheProjectFallback()
+        {
+            var body = "<w:p><w:pPr><w:rPr><w:rFonts w:ascii='Times New Roman'/><w:sz w:val='2'/></w:rPr></w:pPr></w:p>";
+            var source = DocxDrawingSpecSourceReader.Read(Package(body));
+            var paragraph = DrawingSpecRichParagraph.Build(source.Blocks[0], "Fallback", 20);
+            Assert.Equal("Times New Roman", paragraph.DefaultStyle.FontFamily);
+            Assert.Equal(1d, paragraph.DefaultStyle.PointSize);
+            Assert.Empty(paragraph.NativeText);
+        }
+
+        [Fact]
         public void CyclicStyleInheritanceDuplicatePartsAndExternalEntitiesAreRejected()
         {
             var styles = "<w:style w:styleId='Loop'><w:basedOn w:val='Loop'/></w:style>";

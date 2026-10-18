@@ -95,7 +95,17 @@ namespace RevitBridge.Common
             {
                 var old = target.Element(child.Name);
                 if (old == null) target.Add(new XElement(child));
-                else if (child.Name == W + "tabs") old.ReplaceWith(new XElement(child));
+                else if (child.Name == W + "tabs")
+                {
+                    // Tab definitions are cumulative across the style hierarchy; same-position entries override.
+                    // Retain explicit clear entries so the flow renderer also suppresses that default stop.
+                    foreach (var tab in child.Elements(W + "tab"))
+                    {
+                        var position = (string?)tab.Attribute(W + "pos");
+                        foreach (var inherited in old.Elements(W + "tab").Where(t => (string?)t.Attribute(W + "pos") == position).ToArray()) inherited.Remove();
+                        old.Add(new XElement(tab));
+                    }
+                }
                 else Merge(old, child);
             }
         }

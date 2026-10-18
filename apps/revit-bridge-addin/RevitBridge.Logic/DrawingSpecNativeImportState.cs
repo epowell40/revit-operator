@@ -1,0 +1,81 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.ExtensibleStorage;
+using RevitBridge.Common;
+
+namespace RevitBridge.Logic
+{
+    public sealed class DrawingSpecStoredImport
+    {
+        public string ImportKey { get; set; } = "";
+        public string SourceSha256 { get; set; } = "";
+        public string InputSha256 { get; set; } = "";
+        public string NativeStateSha256 { get; set; } = "";
+        public List<long> ViewIds { get; set; } = new List<long>();
+        public List<DrawingSpecNativeNoteRecord> Notes { get; set; } = new List<DrawingSpecNativeNoteRecord>();
+        public List<string> SourceWarnings { get; set; } = new List<string>();
+        public string LayoutSpansJson { get; set; } = "";
+        public string SourceBlocksJson { get; set; } = "";
+        public long StorageId { get; set; }
+        public DrawingSpecNativeLayoutResult Layout()
+        {
+            var result = new DrawingSpecNativeLayoutResult(); result.ViewIds.AddRange(ViewIds); result.Notes.AddRange(Notes); return result;
+        }
+    }
+
+    public static class DrawingSpecNativeImportState
+    {
+        private static readonly Guid SchemaId = new Guid("15153d5f-2f23-4f2e-9ba6-5cde8c857178");
+        public static DrawingSpecStoredImport? Find(Document document, string importKey)
+        {
+            var schema = Schema.Lookup(SchemaId);
+            if (schema == null) return null;
+            if (schema.SchemaName != "OperatorDrawingSpecImportV1" || schema.GetField("StateJson")?.ValueType != typeof(string))
+                throw new InvalidOperationException("Drawing-spec storage schema collision.");
+            var matches = new List<DrawingSpecStoredImport>();
+            foreach (var storage in new FilteredElementCollector(document).OfClass(typeof(DataStorage)).Cast<DataStorage>())
+            {
+                var entity = storage.GetEntity(schema);
+                if (!entity.IsValid()) continue;
+                var value = entity.Get<string>(schema.GetField("StateJson"));
+                if (value.Length > 8 * 1024 * 1024) throw new InvalidOperationException("Drawing-spec stored manifest is too large.");
+                var state = JsonSerializer.Deserialize<DrawingSpecStoredImport>(value)
+                    ?? throw new InvalidOperationException("Invalid stored drawing-spec manifest.");
+                if (state.ImportKey == importKey) { state.StorageId = ElementIdCompat.GetValue(storage.Id); matches.Add(state); }
+            }
+            return matches.SingleOrDefault(); // Never silently pick one of multiple ownership records.
+        }
+
+        public static void Store(Document document, DrawingSpecStoredImport state, ISet<long> created)
+        {
+            if (!document.IsModifiable) throw new InvalidOperationException("Missing owned native transaction.");
+            if (state.StorageId != 0 || Find(document, state.ImportKey) != null) throw new InvalidOperationException("Existing source import must be reconciled, not overwritten or duplicated.");
+            var json = JsonSerializer.Serialize(state);
+            if (json.Length > 8 * 1024 * 1024) throw new InvalidOperationException("Drawing-spec manifest limit exceeded; no partial import should commit.");
+            var schema = Schema.Lookup(SchemaId);
+            if (schema == null)
+            {
+                var builder = new SchemaBuilder(SchemaId);
+                builder.SetSchemaName("OperatorDrawingSpecImportV1");
+                builder.SetReadAccessLevel(AccessLevel.Public); builder.SetWriteAccessLevel(AccessLevel.Public);
+                builder.AddSimpleField("StateJson", typeof(string)); schema = builder.Finish();
+            }
+            var storage = DataStorage.Create(document);
+            storage.Name = "Operator Drawing Specifications " + Hash(state.ImportKey).Substring(0, 16);
+            var entity = new Entity(schema); entity.Set(schema.GetField("StateJson"), json); storage.SetEntity(entity);
+            state.StorageId = ElementIdCompat.GetValue(storage.Id); created.Add(state.StorageId);
+        }
+
+        public static string CurrentSnapshotHash(Document document, DrawingSpecStoredImport state) =>
+            Hash(JsonSerializer.Serialize(DrawingSpecNativeLayout.ReadSnapshot(document, state.Layout())));
+        public static string Hash(string value)
+        {
+            using (var hash = SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant();
+        }
+    }
+}

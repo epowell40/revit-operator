@@ -55,6 +55,18 @@ namespace RevitBridge.Common
                 var document = ParseXml(main);
                 if (document.Root?.Name != W + "document") throw new InvalidOperationException("Unsupported WordprocessingML namespace.");
                 var body = document.Root.Element(W + "body") ?? throw new InvalidOperationException("DOCX has no document body.");
+                if (parts.TryGetValue("word/settings.xml", out var settingsBytes))
+                {
+                    var settings = ParseXml(settingsBytes).Root!;
+                    var tab = DocxSourceStyles.Val(settings.Element(W + "defaultTabStop"));
+                    if (tab != null)
+                    {
+                        if (!int.TryParse(tab, out var twips) || twips <= 0) throw new InvalidOperationException("Invalid document default tab stop.");
+                        manifest.DefaultTabStopInches = twips / 1440d;
+                    }
+                    var noHangingTab = settings.Element(W + "compat")?.Element(W + "noTabHangIndent");
+                    manifest.ImplicitHangingTab = noHangingTab == null || new[] { "0", "false", "off" }.Contains(DocxSourceStyles.Val(noHangingTab));
+                }
                 var styles = new DocxSourceStyles(parts.TryGetValue("word/styles.xml", out var styleBytes) ? ParseXml(styleBytes) : null);
                 var numbering = new DocxSourceNumbering(parts.TryGetValue("word/numbering.xml", out var numberBytes) ? ParseXml(numberBytes) : null);
                 int index = 0;
@@ -76,6 +88,7 @@ namespace RevitBridge.Common
         private static DrawingSpecBlock ReadBlock(XElement source, string path, DrawingSpecSourceManifest manifest, DocxSourceStyles styles, DocxSourceNumbering numbering)
         {
             var block = new DrawingSpecBlock { SourcePath = path, Kind = source.Name.LocalName,
+                DefaultTabStopInches = manifest.DefaultTabStopInches, ImplicitHangingTab = manifest.ImplicitHangingTab,
                 ContentSha256 = Hash(Encoding.UTF8.GetBytes(source.ToString(SaveOptions.DisableFormatting))),
                 PropertiesXml = source.ToString(SaveOptions.DisableFormatting) };
             if (source.Name == W + "p")
@@ -87,6 +100,10 @@ namespace RevitBridge.Common
                 if (block.NumberingDefinitionXml != null)
                     properties = styles.Paragraph(source, XElement.Parse(block.NumberingDefinitionXml).Element(W + "pPr"));
                 block.PropertiesXml = properties.ToString(SaveOptions.DisableFormatting);
+                var paragraphMarkRun = new XElement(W + "r");
+                var markProperties = source.Element(W + "pPr")?.Element(W + "rPr");
+                if (markProperties != null) paragraphMarkRun.Add(new XElement(markProperties));
+                block.DefaultRunPropertiesXml = styles.Run(source, paragraphMarkRun).ToString(SaveOptions.DisableFormatting);
                 var text = new StringBuilder();
                 foreach (var run in source.Descendants(W + "r").Where(r => r.Ancestors(W + "p").FirstOrDefault() == source))
                 {

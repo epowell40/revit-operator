@@ -9,6 +9,8 @@ namespace RevitBridge.Common
         public string SourceSha256 { get; set; } = "";
         public bool NativeLayoutQualified { get; } = false;
         public bool BodyTextComplete { get; set; } = true;
+        public double DefaultTabStopInches { get; set; } = .5;
+        public bool ImplicitHangingTab { get; set; } = true;
         public List<DrawingSpecBlock> Blocks { get; } = new List<DrawingSpecBlock>();
         public List<DrawingSpecSourcePart> Parts { get; } = new List<DrawingSpecSourcePart>();
         public List<DrawingSpecWarning> Warnings { get; } = new List<DrawingSpecWarning>();
@@ -31,6 +33,8 @@ namespace RevitBridge.Common
 
     public sealed class DrawingSpecBlock
     {
+        public double DefaultTabStopInches { get; set; } = .5;
+        public bool ImplicitHangingTab { get; set; } = true;
         public string SourcePath { get; set; } = "";
         public string ContentSha256 { get; set; } = "";
         public string Kind { get; set; } = "";
@@ -41,6 +45,7 @@ namespace RevitBridge.Common
         public string? NumberingDefinitionXml { get; set; }
         public int? NumberingLevel { get; set; }
         public string PropertiesXml { get; set; } = "";
+        public string? DefaultRunPropertiesXml { get; set; }
         public List<DrawingSpecRun> Runs { get; } = new List<DrawingSpecRun>();
         public List<DrawingSpecBlock> Children { get; } = new List<DrawingSpecBlock>();
     }

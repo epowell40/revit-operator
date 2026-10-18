@@ -5,7 +5,7 @@ const DEFAULT_SKILLS: MacroSkill[] = [
     id: "import_drawing_spec",
     name: "Import Drawing Spec (Word/Text)",
     description:
-      "Import a .docx or .txt spec from Workspace into a drafting view as multi-column text notes (8.5x11-style columns).",
+      "Import complete Word/Text drawing specifications as editable multi-column native text, preserving supported source formatting. Overflow creates continuation drafting views; place and visually review those views on sheets separately.",
     inputs: [
       {
         name: "sourcePath",
