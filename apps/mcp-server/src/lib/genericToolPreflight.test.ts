@@ -8,6 +8,22 @@ import {
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
 
+test('managed Word update uses the real native revision contract at MCP preflight',()=>{
+ const schema=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/import-drawing-spec'];
+ const contract={method:'POST',path:'/revit/import-drawing-spec',request_schema:schema};
+ const request={action:'update',sourcePath:'artifacts/specs/Revised.docx',manifestElementId:30,expectedSourceSha256:'a'.repeat(64),expectedNativeSnapshotSha256:'b'.repeat(64),columnWidthInches:8};
+ assert.equal(preflightKnownGenericToolBody(contract,request),null);
+ assert.equal(preflightKnownGenericToolBody(contract,{sourcePath:'artifacts/specs/Original.docx'}),null);
+ for(const body of [ {...request,expectedNativeSnapshotSha256:undefined},{...request,viewId:20},{...request,expectedSourceSha256:'short'},
+  {...request,action:'import'},{...request,manifestElementId:0},{...request,force:true},{...request,action:undefined}])
+  assert.equal(preflightKnownGenericToolBody(contract,JSON.parse(JSON.stringify(body)))?.request_dispatched,false,JSON.stringify(body));
+ const inspection=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/inspect-drawing-spec'];
+ const read={method:'POST',path:'/revit/inspect-drawing-spec',request_schema:inspection};
+ assert.equal(preflightKnownGenericToolBody(read,{action:'list',pageSize:5}),null);
+ assert.equal(preflightKnownGenericToolBody(read,{sourcePath:request.sourcePath,manifestElementId:30}),null);
+ assert.equal(preflightKnownGenericToolBody(read,{action:'list',manifestElementId:30})?.request_dispatched,false);
+});
+
 test("retained family placement accepts a string map while invalid map entries stay pre-dispatch", () => {
   const retained = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/unit403-place-families-map-rejected.json", import.meta.url), "utf8"));
   const map = { type: "object", additionalProperties: { type: "string" } };
@@ -567,4 +583,94 @@ test('C44 nullable inventory body reports the actual limit while retaining paren
  }
  const numeric=preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{oneOf:[{type:'null'},{type:'number',maximum:2}]}},3)!;
  assert(numeric.validation_issues?.some(i=>i.expected_constraint.maximum===2));
+});
+
+
+test("native published schedule modes admit the exact retained presentation read through real MCP preflight",()=>{
+ const contracts=JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json",import.meta.url),"utf8"));
+ const retained=JSON.parse(readFileSync(new URL("../../src/lib/fixtures/schedule-presentation-predispatch118.json",import.meta.url),"utf8"));
+ const schema=contracts['/revit/schedules'],contract={method:'POST',path:'/revit/schedules',required_fields:[],request_schema:schema};
+ assert.equal(retained.failure.request_dispatched,false);assert.equal(retained.failure.outcome_unknown,false);
+ assert.deepEqual(retained.failure.validation_issues[0].expected_constraint.allowed_values,['list','detail']);
+ assert.equal(preflightKnownGenericToolBody(contract,retained.request.body),null);
+ for(const invalid of [
+  {action:'presentation'}, {action:'presentation',query:'air'},
+  ...[0,-1,1.5,true,'1542917'].map(scheduleId=>({action:'presentation',scheduleId})),
+  ...[{query:'air'},{includeFields:true},{cells:[]},{max:10},{dryRun:false},{fieldOrder:[11]}].map(extra=>({...retained.request.body,...extra})),
+  {action:'unknown',scheduleId:1542917},{action:'detail'},
+  {action:'circuits',kind:'panel'}, {action:'circuits',max:501},
+  {action:'cell_styles',scheduleId:1542917,cells:[]},
+  {action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:-1,column:0}]}
+ ]){
+  const failure=preflightKnownGenericToolBody(contract,invalid);
+  assert.equal(failure?.request_dispatched,false,JSON.stringify(invalid));assert.equal(failure?.outcome_unknown,false);
+ }
+ for(const valid of [{},{action:'list',query:''},{action:'list',kind:'all',offset:0,max:100},{action:'detail',scheduleId:1542917,includeSchedulableFields:true,maxSchedulableFields:200},{action:'detail',query:'AIR DEVICE SCHEDULE',includeData:true,maxRows:500,maxColumns:100},{action:'circuits',offset:0,max:500},{action:'circuits',scheduleId:41},{action:'cell_styles',scheduleId:1542917,cells:[{section:'Body',row:0,column:0}]}])assert.equal(preflightKnownGenericToolBody(contract,valid),null,JSON.stringify(valid));
+});
+
+test('large schedule definition snapshot is opt-in exact-target detail, not an ordinary inventory payload',()=>{
+ const schemas=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const contract={method:'POST',path:'/revit/schedules',request_schema:schemas['/revit/schedules']};
+ for(const good of [{action:'detail',scheduleId:41,includeDefinitionSnapshot:true,includeFields:true,includeData:false,exact:false},
+  {action:'detail',query:'Equipment',includeDefinitionSnapshot:false},{action:'list'},{action:'detail',scheduleId:41}])
+  assert.equal(preflightKnownGenericToolBody(contract,good),null,JSON.stringify(good));
+ for(const bad of [{action:'list',includeDefinitionSnapshot:true},{action:'detail',query:'Equipment',includeDefinitionSnapshot:true},
+  {action:'detail',scheduleId:41,query:'Equipment',includeDefinitionSnapshot:true},{action:'detail',scheduleId:41,includeDefinitionSnapshot:'true'},
+  {action:'detail',scheduleId:41,includeFields:false,includeDefinitionSnapshot:true},{action:'detail',scheduleId:0,includeDefinitionSnapshot:true}]){
+  const result=preflightKnownGenericToolBody(contract,bad);assert.equal(result?.request_dispatched,false,JSON.stringify(bad));assert.equal(result?.outcome_unknown,false);
+ }
+});
+
+
+test('native combined-field fragment admits bounded bindings and keeps legacy and mixed edits separate',()=>{
+ const f=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json',import.meta.url),'utf8')).schedule_combined_field;
+ const legacy={type:'object',additionalProperties:false,properties:{scheduleId:{type:'integer'},query:{type:'string'},fieldOrder:{type:'array',items:{type:'integer'}}}};
+ const schema={type:'object',properties:{...legacy.properties,combinedField:f.properties.combinedField,dryRun:{type:'boolean'}},additionalProperties:false,oneOf:[legacy,f]};
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/configure-schedule',request_schema:schema},body);
+ const good={scheduleId:41,combinedField:{name:'Basis of Design',sourceFieldIds:[0,12],separator:' / ',hideSourceFields:true,index:0,widthFeet:.12},dryRun:false};
+ assert.equal(check(good),null);assert.equal(check({query:'Air devices',fieldOrder:[0,12]}),null);
+ for(const bad of [{...good,query:'air'},{...good,fieldOrder:[0,12]},{...good,dryRun:null},
+  ...[{sourceFieldIds:[]},{sourceFieldIds:[0]},{sourceFieldIds:[0,0]},{sourceFieldIds:[0,-1]},{sourceFieldIds:[0,1.2]},
+    {sourceFieldIds:[0,1,2,3,4,5,6,7,8]},{name:''},{widthFeet:0},{widthFeet:6},{index:201},{index:1.2},{hideSourceFields:null},{separator:null},{invented:true}]
+    .map(extra=>({...good,combinedField:{...good.combinedField,...extra}}))])assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
+
+
+test('uniqueItems uses bounded JSON equality without confusing object order or scalar types',()=>{
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{type:'array',uniqueItems:true}},body);
+ assert.equal(check([1,'1',null,false,{},[]]),null);
+ for(const v of [[0,-0],[null,null],[{a:1,b:2},{b:2,a:1}],[[1,2],[1,2]]])assert.equal(check(v)?.request_dispatched,false);
+ let deep:any=0;for(let i=0;i<30;i++)deep=[deep];assert.equal(check([deep])?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
+ assert.equal(check(Array(100_001).fill(1).map((v,i)=>i))?.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
+});
+
+test('project-parameter discovery publishes separate bounded instance creation and exact identity reads',()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/project-parameters',request_schema:contracts['/revit/project-parameters']},body);
+ const create={action:'create',name:'Office Instance Note',categoryNames:['Air Terminals'],instanceBinding:true,dataType:'text'};
+ for(const good of [{},{action:'list',query:'Office',max:5000},{action:'detail',parameterId:42},create,{...create,instanceBinding:false}])
+  assert.equal(check(good),null,JSON.stringify(good));
+ for(const bad of [{action:'detail'}, {action:'detail',parameterId:'42'}, {action:'detail',parameterId:0},
+  {action:'detail',parameterId:42,instanceBinding:true}, {...create,parameterId:42}, {...create,instanceBinding:null},
+  {...create,categoryNames:[]}, {...create,dataType:'airflow'}, {...create,rebindIfExists:true}, {action:'list',max:5001}, {action:'list',name:'Note'}])
+  assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
+
+
+test("Excel source inspection requires selection and source-bound continuation without enabling mutations",()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-excel-source',request_schema:contracts['/revit/inspect-excel-source']},body);
+ const sourcePath='vent.xlsx',sheetName='Ventilation Schedule',expectedSourceSha256='a'.repeat(64);
+ for(const good of [{sourcePath},{sourcePath,section:'worksheets'},{sourcePath,sheetName},{sourcePath,sheetName,section:'cells',pageSize:100},
+  {sourcePath,sheetName,section:'cells',pageOffset:100,expectedSourceSha256}]) assert.equal(check(good),null,JSON.stringify(good));
+ for(const bad of [{},{sourcePath,section:'cells'},{sourcePath,sheetName,section:'cells',pageOffset:100},
+  {sourcePath,sheetName,pageSize:101},{sourcePath,sheetName,apply:true},{sourcePath,sheetName,expectedSourceSha256:'x'},
+  {sourcePath,sheetName:'',section:'cells'},{sourcePath,sheetName,section:'unknown'}]) assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
+
+test("Word inspection preflight retains source and page identity and rejects invented apply or clipping",()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-drawing-spec',request_schema:contracts['/revit/inspect-drawing-spec']},body);
+ assert.equal(check({sourcePath:'spec.docx',manifestElementId:7,pageSize:20,pageOffset:0}),null);
+ for(const body of [{manifestElementId:7},{sourcePath:'spec.docx',manifestElementId:0},{sourcePath:'spec.docx',manifestElementId:7,pageSize:101},{sourcePath:'spec.docx',manifestElementId:7,apply:true}])assert.equal(check(body)?.request_dispatched,false);
 });

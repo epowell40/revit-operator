@@ -8,6 +8,8 @@ import type { AssignmentBindingV2, AssignmentSnapshotV2, ProgressDecisionV2 } fr
 import { decideAssignmentProgressV2, sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { getRequestContext } from "../request_context.js";
+import { desktopHelperScopeFromContextV1 } from "../assignments/desktop_executor_owner.js";
+import { DESKTOP_HELPER_RETURN_REASON, desktopHelperReturnAfterDrainV1 } from "./desktop_helper_return.js";
 
 export type ThinReferenceLimits = Readonly<{ max_turns: number; max_wall_ms: number }>;
 
@@ -168,11 +170,16 @@ export async function runThinReferenceTurns(input: Readonly<{
   invoke: (request: ChatRequest, turn: number) => Promise<ChatResponse>;
   onContinue?: (turn: number) => void;
   now?: () => number;
+  remainingWallMs?: () => number;
 }>): Promise<ThinReferenceRunResult> {
   const key = JSON.stringify(input.binding);
   if (activeAssignments.has(key)) throw new Error("thin_reference_assignment_already_running");
   activeAssignments.add(key);
   const now = input.now ?? Date.now, started = now();
+  const wallExpired = () => {
+    if (!input.remainingWallMs) return now() - started >= input.limits.max_wall_ms;
+    try { const left=input.remainingWallMs(); return !Number.isFinite(left)||left<=0; } catch { return true; }
+  };
   let turns = 0, stopReason = "not_started", emptyCompletedTurns = 0;
   let lastTurnStart: AssignmentSnapshotV2 | null = null, lastDirections: string | null = null;
   let response: ChatResponse = { version: "operator.backend.v1", assistant_message: "Task stopped before another provider turn. Its progress is saved.", actions: [] };
@@ -181,7 +188,7 @@ export async function runThinReferenceTurns(input: Readonly<{
   try {
     while (true) {
       if (input.signal.aborted) { stopReason = input.signal.reason === "experiment_wall_limit" ? "experiment_wall_limit" : "request_interrupted"; break; }
-      if (now() - started >= input.limits.max_wall_ms) { stopReason = "experiment_wall_limit"; break; }
+      if (wallExpired()) { stopReason = "experiment_wall_limit"; break; }
       const current = input.inspect();
       response = { ...response, assignment_snapshot_v2: current.snapshot };
       if (!sameAssignmentBindingV2(current.snapshot.current_binding, input.binding)) { stopReason = "assignment_binding_changed"; break; }
@@ -214,6 +221,24 @@ export async function runThinReferenceTurns(input: Readonly<{
       response = await input.invoke(request, ++turns);
       for (const receipt of response.model_call_receipts ?? []) receipts.set(receipt.call_id, receipt);
       if (response.provider_turn_usage) providerTurns.push(response.provider_turn_usage);
+      // An intentionally drained helper turn returns to the desktop owner,
+      // while the parent task stays active. Preserve actual usage (including
+      // interruption); never start another backend turn for this subtask.
+      if (response.desktop_helper_return && !input.signal.aborted && !wallExpired()
+          && !response.actions.length && response.provider_turn_usage
+          && response.provider_turn_usage.session_id === input.request.session_id
+          && response.provider_turn_usage.message_id === input.request.message_id
+          && response.provider_turn_usage.turn_id === response.desktop_helper_return.turn_id
+          && ["completed", "interrupted"].includes(response.provider_turn_usage.disposition)) {
+        const settled = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
+        const message = sameAssignmentBindingV2(response.desktop_helper_return.binding, input.binding)
+          && desktopHelperReturnAfterDrainV1(response.desktop_helper_return,
+            desktopHelperScopeFromContextV1(input.request.context), settled, DESKTOP_HELPER_RETURN_REASON);
+        if (message) {
+          response = {...response, assistant_message: message, assignment_snapshot_v2: settled!};
+          stopReason = DESKTOP_HELPER_RETURN_REASON; break;
+        }
+      }
       // Errors, interruptions and lost acknowledgements are not new work.
       if (response.provider_turn_usage?.disposition !== "completed") {
         // The work-plan proposal intentionally interrupts the provider after
@@ -224,7 +249,7 @@ export async function runThinReferenceTurns(input: Readonly<{
         response = { ...response, assignment_snapshot_v2: settled ?? undefined };
         stopReason = input.signal.aborted
           ? input.signal.reason === "experiment_wall_limit" ? "experiment_wall_limit" : "request_interrupted"
-          : now() - started >= input.limits.max_wall_ms ? "experiment_wall_limit"
+          : wallExpired() ? "experiment_wall_limit"
           : settled ? incompleteProviderStopReason(settled, input.binding, response.provider_turn_usage?.disposition)
           : "assignment_binding_changed";
         break;

@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 
 namespace RevitBridge.Handlers
@@ -13,13 +14,16 @@ namespace RevitBridge.Handlers
     {
         public sealed class Params
         {
-            public string? action { get; set; } // list (default) | detail
+            public string? action { get; set; } // list (default) | detail | circuits
+            public string? kind { get; set; } // list: regular (default) | panel | all
+            public int? offset { get; set; }
             public long? scheduleId { get; set; }
             public string? query { get; set; }
             public bool? exact { get; set; }
             public bool? requireUniqueQuery { get; set; }
             public int? max { get; set; }
             public bool? includeFields { get; set; }
+            public bool? includeDefinitionSnapshot { get; set; }
             public bool? includeSchedulableFields { get; set; }
             public int? schedulableFieldOffset { get; set; }
             public int? maxSchedulableFields { get; set; }
@@ -28,6 +32,7 @@ namespace RevitBridge.Handlers
             public int? columnOffset { get; set; }
             public int? maxRows { get; set; }
             public int? maxColumns { get; set; }
+            public List<RevitBridge.Common.ScheduleCellLocator>? cells { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -47,9 +52,28 @@ namespace RevitBridge.Handlers
             }
 
             var action = (p.action ?? "list").Trim().ToLowerInvariant();
+            if (action == "presentation")
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.SchedulePresentationContract.ValidateRead(body.RootElement, out var error)) throw new ArgumentException(error);
+                return Task.FromResult(RegularSchedulePresentationScope.Read(doc, p.scheduleId!.Value));
+            }
+            if (action == "cell_styles")
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCellAppearanceContract.Validate(body.RootElement, false, out var error))
+                        throw new ArgumentException(error);
+                return Task.FromResult(ScheduleCellAppearanceOperations.Read(doc, p.scheduleId!.Value, p.cells!));
+            }
             if (action == "detail")
             {
                 return Task.FromResult<object>(BuildDetail(doc, p));
+            }
+            if (action == "circuits")
+            {
+                if (!string.IsNullOrWhiteSpace(p.query) || p.kind != null)
+                    throw new ArgumentException("Circuit inventory uses optional scheduleId for a panel; query/kind are list selectors.");
+                return Task.FromResult(RevitBridge.Logic.Handlers.ProjectElectricalCircuitInventory.Read(doc, p.offset ?? 0, p.max, p.scheduleId));
             }
 
             return Task.FromResult<object>(BuildList(doc, p));
@@ -59,9 +83,14 @@ namespace RevitBridge.Handlers
         {
             var q = (p.query ?? "").Trim();
             var exact = p.exact ?? false;
-            var max = p.max.HasValue && p.max.Value > 0 ? Math.Min(p.max.Value, 2000) : 200;
-
-            var schedules = CollectSchedules(doc)
+            if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate(p.kind, p.offset, p.max, out var page, out var error))
+                return new { status = "InvalidRequest", action = "list", message = error };
+            var candidates = new List<View>();
+            if (page!.Kind != "panel") candidates.AddRange(CollectSchedules(doc));
+            if (page.Kind != "regular") candidates.AddRange(new FilteredElementCollector(doc)
+                .OfClass(typeof(PanelScheduleView)).Cast<PanelScheduleView>()
+                .Where(view => !view.IsPanelScheduleTemplate()));
+            var schedules = candidates
                 .Where(s =>
                 {
                     if (string.IsNullOrWhiteSpace(q)) return true;
@@ -70,19 +99,48 @@ namespace RevitBridge.Handlers
                     return n.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
                 })
                 .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-                .Take(max)
+                .ThenBy(s => RevitBridge.Common.ElementIdCompat.GetValue(s.Id))
                 .ToList();
-
-            var items = schedules.Select(s => BuildScheduleSummary(doc, s)).ToList();
+            var items = schedules.Skip(page.Offset).Take(page.Max)
+                .Select(s => BuildInventorySummary(doc, s)).ToList();
             return new
             {
+                schema = "operator.schedule_inventory.v1",
                 status = "Ok",
                 action = "list",
+                kind = page.Kind,
+                offset = page.Offset,
+                max = page.Max,
+                matched = schedules.Count,
                 returned = items.Count,
+                complete = page.Complete(schedules.Count),
+                hasMore = page.HasMore(schedules.Count),
+                nextOffset = page.NextOffset(schedules.Count),
                 query = string.IsNullOrWhiteSpace(q) ? null : q,
                 exact,
                 items
             };
+        }
+
+        private static object BuildInventorySummary(Document doc, View view)
+        {
+            if (view is PanelScheduleView panel)
+            {
+                var ownerId = panel.GetPanel();
+                return new
+                {
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(panel.Id),
+                    uniqueId = panel.UniqueId,
+                    name = panel.Name,
+                    viewType = panel.ViewType.ToString(),
+                    kind = "panel_schedule",
+                    isTemplate = false,
+                    panelElementId = RevitBridge.Common.ElementIdCompat.GetValue(ownerId),
+                    panelUniqueId = doc.GetElement(ownerId)?.UniqueId,
+                    templateElementId = RevitBridge.Common.ElementIdCompat.GetValue(panel.GetTemplate())
+                };
+            }
+            return BuildScheduleSummary(doc, (ViewSchedule)view);
         }
 
         private static object BuildDetail(Document doc, Params p)
@@ -99,6 +157,11 @@ namespace RevitBridge.Handlers
                     message = "scheduleId must be a positive integer when provided."
                 };
             }
+
+            // Panel schedules are TableViews, not ViewSchedules. An explicit ID
+            // keeps natural-name regular schedule lookup backward compatible.
+            if (p.scheduleId.HasValue && doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.scheduleId.Value)) is PanelScheduleView panelSchedule)
+                return PanelScheduleDetail.Read(doc, panelSchedule, p);
 
             if (!p.scheduleId.HasValue && (p.requireUniqueQuery == true || p.includeSchedulableFields == true) && !string.IsNullOrWhiteSpace(q))
             {
@@ -153,6 +216,9 @@ namespace RevitBridge.Handlers
                 status = "Ok",
                 action = "detail",
                 schedule = summary,
+                definitionIdentity = RevitBridge.Logic.ScheduleDefinitionIdentitySnapshot.Read(schedule),
+                definitionSnapshot = p.includeDefinitionSnapshot == true
+                    ? RevitBridge.Logic.ScheduleDefinitionIdentitySnapshot.CaptureDefinition(schedule) : null,
                 fields = details,
                 schedulableFields = eligibleFields,
                 filterDefinitions,
@@ -160,6 +226,7 @@ namespace RevitBridge.Handlers
                 sortGroupDefinitions,
                 sortGroupDefinitionsComplete,
                 appearance,
+                presentation = RegularSchedulePresentation.Read(doc, schedule),
                 settings,
                 table
             };
@@ -281,6 +348,27 @@ namespace RevitBridge.Handlers
             }
 
             return definitions;
+        }
+
+        internal static object ReadPresentationScopeState(Document doc, ViewSchedule schedule)
+        {
+            var fields = BuildFieldDetails(doc, schedule);
+            var raw = JsonSerializer.SerializeToElement(fields);
+            if (fields.Count != schedule.Definition.GetFieldCount() || raw.EnumerateArray().Any(field =>
+                !field.TryGetProperty("fieldId", out _) || !field.GetProperty("widths").GetProperty("complete").GetBoolean()))
+                throw new InvalidOperationException("Unrequested schedule field inventory is incomplete.");
+            var filters = BuildFilterDefinitions(doc, schedule, out var filtersComplete);
+            var sort = BuildSortGroupDefinitions(doc, schedule, out var sortComplete);
+            var presentation = RegularSchedulePresentation.Read(doc, schedule);
+            if (!filtersComplete || !sortComplete || !JsonSerializer.SerializeToElement(presentation).GetProperty("complete").GetBoolean())
+                throw new InvalidOperationException("Unrequested schedule configuration cannot be fully observed.");
+            var parameters = schedule.Parameters.Cast<Parameter>().OrderBy(p => RevitBridge.Common.ElementIdCompat.GetValue(p.Id)).ThenBy(p => p.Definition.Name)
+                .Select(p => new { id = RevitBridge.Common.ElementIdCompat.GetValue(p.Id), name = p.Definition.Name, storage = p.StorageType.ToString(),
+                    value = !p.HasValue ? null : p.StorageType == StorageType.String ? (object?)p.AsString()
+                        : p.StorageType == StorageType.Double ? p.AsDouble() : p.StorageType == StorageType.Integer ? p.AsInteger()
+                        : p.StorageType == StorageType.ElementId ? RevitBridge.Common.ElementIdCompat.GetValue(p.AsElementId()) : null }).ToArray();
+            return new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), uniqueId = schedule.UniqueId, schedule.Name,
+                fields, filters, sort, presentation, appearance = BuildAppearance(schedule), settings = BuildSettings(schedule), parameters };
         }
 
         private static object BuildAppearance(ViewSchedule schedule)
@@ -435,9 +523,11 @@ namespace RevitBridge.Handlers
             return new
             {
                 id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id),
+                uniqueId = schedule.UniqueId,
                 name = schedule.Name,
                 viewType = schedule.ViewType.ToString(),
                 kind = "schedule",
+                isTemplate = schedule.IsTemplate,
                 categoryId,
                 categoryName,
                 fieldCount
@@ -463,6 +553,8 @@ namespace RevitBridge.Handlers
                     fields.Add(new
                     {
                         index = i,
+                        fieldId = field.FieldId.IntegerValue,
+                        widths = ReadFieldWidths(field),
                         name,
                         heading,
                         headingOrientation,
@@ -475,6 +567,7 @@ namespace RevitBridge.Handlers
                     fields.Add(new
                     {
                         index = i,
+                        readable = false,
                         name = (string?)null,
                         heading = (string?)null,
                         headingOrientation = (string?)null,
@@ -485,6 +578,12 @@ namespace RevitBridge.Handlers
             }
 
             return fields;
+        }
+
+        private static object ReadFieldWidths(ScheduleField field)
+        {
+            try { return new { complete = true, sheetColumnWidthFeet = field.SheetColumnWidth, gridColumnWidthFeet = field.GridColumnWidth }; }
+            catch (Exception ex) { return new { complete = false, error = ex.Message }; }
         }
 
         private static bool IsTitleblockRevisionSchedule(ViewSchedule schedule)

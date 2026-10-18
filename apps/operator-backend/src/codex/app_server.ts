@@ -525,7 +525,7 @@ export class CodexAppServer {
     return this.requestTyped<TurnSteerParams, TurnSteerResponse>("turn/steer", params);
   }
 
-  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
+  waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; remainingWorkMs?:()=>number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     return this.turnCompletions.wait(opts);
   }
 

@@ -1,0 +1,45 @@
+{
+  "description": "Retained118 automatic presentation read refused before dispatch. No model write or binding included.",
+  "request": {
+    "method": "POST",
+    "path": "/revit/schedules",
+    "body": {
+      "action": "presentation",
+      "scheduleId": 1542917
+    }
+  },
+  "failure": {
+    "schema": "revit-operator.mcp-pre-dispatch-failure.v1",
+    "ok": false,
+    "code": "mcp_request_validation_failed",
+    "phase": "request_validation",
+    "retryable": true,
+    "request_dispatched": false,
+    "outcome_unknown": false,
+    "method": "POST",
+    "path": "/revit/schedules",
+    "invalid_fields": [
+      "body.action"
+    ],
+    "input_schema_id": "operator-native/POST:/revit/schedules/input/v1",
+    "input_schema_digest": "5077c7f385bf831ff7afda0e9ef8fc9976b5938d61c71c2d0b93512a0598f501",
+    "validation_issues": [
+      {
+        "field_path": "body.action",
+        "expected_type": "enum",
+        "actual_type": "string",
+        "safe_correction_eligibility": "provider_corrected_arguments_required",
+        "correction_action": "provider_resubmit",
+        "expected_constraint": {
+          "kind": "enum",
+          "allowed_values": [
+            "list",
+            "detail"
+          ]
+        },
+        "message": "body.action must be one of \"list\", \"detail\""
+      }
+    ],
+    "error": "POST /revit/schedules violates the published tool contract: body.action must be one of \"list\", \"detail\". Inspect the exact tool contract and retry with a corrected request."
+  }
+}

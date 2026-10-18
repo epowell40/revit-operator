@@ -204,6 +204,57 @@ test("document support read never completes a live model-read criterion and obey
   } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); runtime.endAssignmentKernelV2Lease(v2); }
 }));
 
+test("uploaded text specifications reach the model turn without granting model proof, pause bypass or foreign scope", () => workspace(async root => {
+  const { prepared, binding } = start("Fill the circuit sizing notes using the uploaded assumptions and verify them.");
+  const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "design-basis.json",
+    data_base64: Buffer.from('{"code_edition":"NEC 2023","minimum_raceway_trade_inches":0.75}').toString("base64") });
+  const foreign = storeAttachmentUpload({ session_id: "foreign", filename: "design-basis.json", data_base64: Buffer.from('foreign').toString("base64") });
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const auth = runtime.beginBackendAuthLease("controls-session", createOperatorBackendAuth("shared_token", "test-only"));
+  const v2 = runtime.beginAssignmentKernelV2Lease(binding);
+  runtime.bindAssignmentKernelV2LeaseTurn(v2, "model-text-turn");
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session",
+    user_text: "Fill the circuit sizing notes using the uploaded assumptions and verify them." } as any);
+  const request = { id: "support-text", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "model-text-turn",
+    tool: "operator_read_attachment", arguments: { attachment_id: attachment.id, mode: "text" } } } as any;
+  try {
+    const before = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    const response: any = await handleCodexDynamicToolCall(runtime, request);
+    assert.equal(response.success, true, JSON.stringify(response).slice(0, 400));
+    assert.match(JSON.stringify(response), /NEC 2023/);
+    assert.equal(response.contentItems.filter((item: any) => item.type === "inputImage").length, 0);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before, "source references cannot complete circuit model criteria");
+    const foreignRead = { ...request, params: { ...request.params, arguments: { attachment_id: foreign.id, mode: "text" } } };
+    assert.equal((await handleCodexDynamicToolCall(runtime, foreignRead) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before);
+    controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-text-docs", expected_command_id: null });
+    const paused = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), paused);
+  } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); runtime.endAssignmentKernelV2Lease(v2); }
+  assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, false, "ended owner cannot read uploaded text");
+}));
+
+test("an independent text reference turn cannot resume a paused model assignment", () => workspace(async root => {
+  const { prepared, binding } = start();
+  controlAssignmentExecutionV2({ binding, action: "pause", command_id: "pause-model-before-text", expected_command_id: null });
+  const before = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+  const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "notes.csv",
+    data_base64: Buffer.from('circuit,reference\n20,2#12\n').toString("base64") });
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const auth = runtime.beginBackendAuthLease("controls-session", createOperatorBackendAuth("shared_token", "test-only"));
+  const owner = beginTeammateLoopOwner(runtime, { version: "operator.backend.v1", session_id: "controls-session",
+    user_text: "Inspect the uploaded table only. Do not change the model." } as any);
+  const request = { id: "independent-text", method: "item/tool/call", params: { namespace: "revit_operator", turnId: "text-reference-turn",
+    tool: "operator_read_attachment", arguments: { attachment_id: attachment.id, mode: "text" } } } as any;
+  try {
+    assert.equal((await handleCodexDynamicToolCall(runtime, request) as any).success, true);
+    for (const tool of ["revit_get_context", "revit_set_parameters"])
+      assert.equal((await handleCodexDynamicToolCall(runtime, { ...request, params: { ...request.params, tool } }) as any).success, false);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(prepared.assignmentId), before);
+  } finally { endTeammateLoopOwner(owner); runtime.endBackendAuthLease(auth); }
+}));
+
 test("output PDF inspection never completes a model criterion and obeys pause", () => workspace(async root => {
   const { prepared, binding } = start("Review the attached checklist and check the open model against it.");
   const attachment = storeAttachmentUpload({ session_id: "controls-session", filename: "checklist.pdf", data_base64: attachmentPdf().toString("base64") });

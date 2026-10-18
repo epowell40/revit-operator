@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.ApplicationServices;
@@ -17,7 +18,7 @@ namespace RevitBridge.Handlers
 
         public sealed class Params
         {
-            public string? action { get; set; } // list (default) | create | validate_required
+            public string? action { get; set; } // list (default) | detail | create | validate_required
             public string? name { get; set; } // create
             public string[]? categoryNames { get; set; } // create
             public bool? instanceBinding { get; set; } // create (default true)
@@ -29,6 +30,7 @@ namespace RevitBridge.Handlers
             public string? query { get; set; } // list
             public int? max { get; set; } // list
             public bool? dryRun { get; set; } // create
+            public long? parameterId { get; set; } // exact detail read
             public string[]? requiredParameters { get; set; } // validate_required
             public string[]? requiredParameterNames { get; set; } // validate_required alias
         }
@@ -44,12 +46,21 @@ namespace RevitBridge.Handlers
             if (doc.IsFamilyDocument) throw new InvalidOperationException("project-parameters is only supported in project documents.");
 
             var action = NormalizeAction(p.action);
+            if (action == "detail" || action == "create")
+            {
+                using var body = JsonDocument.Parse(jsonData);
+                string error;
+                var valid = action == "detail" ? ProjectParameterBindingContract.ValidateDetail(body.RootElement, out error)
+                    : ProjectParameterBindingContract.ValidateCreate(body.RootElement, out error);
+                if (!valid) throw new ArgumentException(error);
+            }
             return action switch
             {
+                "detail" => Task.FromResult<object>(ProjectParameterBindingOperations.Detail(doc, p.parameterId!.Value)),
                 "list" => Task.FromResult<object>(ListProjectParameters(doc, p)),
                 "create" => Task.FromResult<object>(CreateProjectParameter(app, doc, p)),
                 "validate_required" => Task.FromResult<object>(ValidateRequiredParameters(doc, p)),
-                _ => throw new InvalidOperationException("project-parameters.action must be list, create, or validate_required.")
+                _ => throw new InvalidOperationException("project-parameters.action must be list, detail, create, or validate_required.")
             };
         }
 
@@ -61,6 +72,7 @@ namespace RevitBridge.Handlers
             if (max > 5000) max = 5000;
 
             var items = new List<object>();
+            var truncated = false;
             var iterator = doc.ParameterBindings.ForwardIterator();
             iterator.Reset();
             while (iterator.MoveNext())
@@ -71,6 +83,7 @@ namespace RevitBridge.Handlers
                 var name = (def.Name ?? "").Trim();
                 if (name.Length == 0) continue;
                 if (query.Length > 0 && name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (items.Count >= max) { truncated = true; break; }
 
                 var binding = iterator.Current as ElementBinding;
                 var categories = EnumerateCategoryNames(binding)
@@ -78,16 +91,21 @@ namespace RevitBridge.Handlers
                     .ToList();
 
                 var isInstance = iterator.Current is InstanceBinding;
+                var parameter = def is InternalDefinition native ? doc.GetElement(native.Id) as ParameterElement : null;
                 items.Add(new
                 {
+                    id = parameter == null ? (long?)null : ElementIdCompat.GetValue(parameter.Id),
+                    uniqueId = parameter?.UniqueId,
+                    guid = (parameter as SharedParameterElement)?.GuidValue.ToString("D"),
                     name,
                     isInstance,
+                    dataTypeId = def.GetDataType().TypeId,
+                    groupTypeId = def.GetGroupTypeId().TypeId,
                     parameterGroup = GetParameterGroupLabel(def),
                     categories,
                     categoryCount = categories.Count
                 });
 
-                if (items.Count >= max) break;
             }
 
             return new
@@ -95,6 +113,7 @@ namespace RevitBridge.Handlers
                 status = "Ok",
                 action = "list",
                 count = items.Count,
+                truncated,
                 max,
                 query = query.Length == 0 ? null : query,
                 items
@@ -117,6 +136,8 @@ namespace RevitBridge.Handlers
             var visible = p.visible ?? true;
             var userModifiable = p.userModifiable ?? true;
             var rebindIfExists = p.rebindIfExists ?? false;
+            if (rebindIfExists) return new { status = "Blocked", error = "Existing bindings are preserved; create a distinct instance parameter rather than converting a type binding or replacing categories.",
+                transaction = OperatorNativeTransactionReceipt.NotStarted() };
             var dryRun = p.dryRun ?? false;
 
             var unresolved = new List<string>();
@@ -130,144 +151,24 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException(reason);
             }
 
-            if (TryFindBindingByName(doc, name, out var existingDefinition, out _))
-            {
-                if (!rebindIfExists)
-                {
-                    return new
-                    {
-                        status = "AlreadyExists",
-                        action = "create",
-                        message = "A project parameter with this name already exists. Set rebindIfExists=true to update binding/categories.",
-                        parameter = new
-                        {
-                            name = existingDefinition?.Name ?? name,
-                            parameterGroup = GetParameterGroupLabel(existingDefinition)
-                        }
-                    };
-                }
+            if (unresolved.Count > 0 || unsupported.Count > 0)
+                return new { status = "Blocked", error = "Every requested category must resolve and support bound parameters; no partial binding was created.",
+                    unresolvedCategories = unresolved, unsupportedCategories = unsupported, transaction = OperatorNativeTransactionReceipt.NotStarted() };
+            var ownFile = Path.Combine(WorkspacePaths.GetWorkspaceRoot(), "config", "operator_shared_parameters.txt");
+            var originalSelection = uiapp.Application.SharedParametersFilename ?? "";
+            var beforeFileHash = FileHash(ownFile);
+            object ExternalEffect() => new { path = ownFile, sha256Before = beforeFileHash, sha256After = FileHash(ownFile),
+                selectionRestored = (uiapp.Application.SharedParametersFilename ?? "") == originalSelection,
+                scope = "operator_owned_shared_definition_file", rollbackScope = "Definition-file changes are outside the model transaction and may persist after model rollback." };
+            var resolution = new { dataTypeToken = dataTypeLabel, groupToken = (p.parameterGroup ?? "identity_data").Trim().ToLowerInvariant(),
+                categoryRequests = categoryNames.OrderBy(n => n, StringComparer.Ordinal).Select(requested => new {
+                    requested, id = ElementIdCompat.GetValue(ResolveCategory(doc, requested)!.Id) }).ToArray() };
+            var result = ProjectParameterBindingOperations.Create(uiapp, doc, name, categories, isInstance, dataType, parameterGroup,
+                visible, userModifiable, dryRun,
+                () => EnsureSharedParameterDefinition(uiapp.Application, name, dataType, visible, userModifiable, out _), ExternalEffect);
+            if (result is Dictionary<string, object?> receipt) receipt["requestResolution"] = resolution;
+            return result;
 
-                var rebindPlan = BuildCreatePlan(
-                    name,
-                    categories,
-                    unresolved,
-                    unsupported,
-                    isInstance,
-                    parameterGroup,
-                    dataTypeLabel,
-                    visible,
-                    userModifiable,
-                    rebindIfExists,
-                    existing: true);
-
-                if (dryRun)
-                {
-                    return new
-                    {
-                        status = "Dry Run",
-                        action = "create",
-                        dryRun = true,
-                        mode = "rebind_existing",
-                        plan = rebindPlan
-                    };
-                }
-
-                var binding = BuildBinding(uiapp.Application, categories, isInstance);
-                var ok = false;
-                using (var tx = new Transaction(doc, "Rebind Project Parameter"))
-                {
-                    tx.Start();
-                    ok = doc.ParameterBindings.ReInsert(existingDefinition, binding, parameterGroup);
-                    if (ok) tx.Commit();
-                    else tx.RollBack();
-                }
-
-                if (!ok) throw new InvalidOperationException("Failed to rebind existing project parameter.");
-
-                return new
-                {
-                    status = "Success",
-                    action = "create",
-                    mode = "rebind_existing",
-                    parameter = new
-                    {
-                        name,
-                        isInstance,
-                        parameterGroup = parameterGroup.TypeId,
-                        dataType = dataTypeLabel,
-                        categoryCount = categories.Count,
-                        categories = categories.Select(x => x.Name).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList()
-                    },
-                    unresolvedCategories = unresolved,
-                    unsupportedCategories = unsupported
-                };
-            }
-
-            var createPlan = BuildCreatePlan(
-                name,
-                categories,
-                unresolved,
-                unsupported,
-                isInstance,
-                parameterGroup,
-                dataTypeLabel,
-                visible,
-                userModifiable,
-                rebindIfExists,
-                existing: false);
-
-            if (dryRun)
-            {
-                return new
-                {
-                    status = "Dry Run",
-                    action = "create",
-                    dryRun = true,
-                    mode = "create_new",
-                    plan = createPlan
-                };
-            }
-
-            var definition = EnsureSharedParameterDefinition(uiapp.Application, name, dataType, visible, userModifiable, out var sharedParameterFile);
-            var elementBinding = BuildBinding(uiapp.Application, categories, isInstance);
-
-            var inserted = false;
-            using (var tx = new Transaction(doc, "Create Project Parameter"))
-            {
-                tx.Start();
-                inserted = doc.ParameterBindings.Insert(definition, elementBinding, parameterGroup);
-                if (!inserted && rebindIfExists)
-                {
-                    inserted = doc.ParameterBindings.ReInsert(definition, elementBinding, parameterGroup);
-                }
-
-                if (inserted) tx.Commit();
-                else tx.RollBack();
-            }
-
-            if (!inserted)
-                throw new InvalidOperationException("Failed to bind project parameter. A conflicting parameter definition may already exist.");
-
-            return new
-            {
-                status = "Success",
-                action = "create",
-                mode = "create_new",
-                parameter = new
-                {
-                    name,
-                    isInstance,
-                    parameterGroup = parameterGroup.TypeId,
-                    dataType = dataTypeLabel,
-                    categoryCount = categories.Count,
-                    categories = categories.Select(x => x.Name).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
-                    visible,
-                    userModifiable
-                },
-                sharedParameterFile,
-                unresolvedCategories = unresolved,
-                unsupportedCategories = unsupported
-            };
         }
 
         private static object ValidateRequiredParameters(Document doc, Params p)
@@ -371,36 +272,6 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static object BuildCreatePlan(
-            string name,
-            List<Category> categories,
-            List<string> unresolved,
-            List<string> unsupported,
-            bool isInstance,
-            ForgeTypeId parameterGroup,
-            string dataType,
-            bool visible,
-            bool userModifiable,
-            bool rebindIfExists,
-            bool existing)
-        {
-            return new
-            {
-                name,
-                mode = existing ? "rebind_existing" : "create_new",
-                categoryCount = categories.Count,
-                categories = categories.Select(x => x.Name).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
-                isInstance,
-                parameterGroup = parameterGroup.TypeId,
-                dataType,
-                visible,
-                userModifiable,
-                rebindIfExists,
-                unresolvedCategories = unresolved,
-                unsupportedCategories = unsupported
-            };
-        }
-
         private static List<Category> ResolveCategories(
             Document doc,
             HashSet<string> requested,
@@ -459,21 +330,7 @@ namespace RevitBridge.Handlers
             return null;
         }
 
-        private static ElementBinding BuildBinding(Application app, IEnumerable<Category> categories, bool isInstance)
-        {
-            var set = app.Create.NewCategorySet();
-            foreach (var c in categories)
-            {
-                if (c == null) continue;
-                set.Insert(c);
-            }
-
-            return isInstance
-                ? (ElementBinding)app.Create.NewInstanceBinding(set)
-                : app.Create.NewTypeBinding(set);
-        }
-
-        private static Definition EnsureSharedParameterDefinition(
+        private static OperatorNativeOwnedValue<ExternalDefinition> EnsureSharedParameterDefinition(
             Application app,
             string name,
             ForgeTypeId dataType,
@@ -482,15 +339,10 @@ namespace RevitBridge.Handlers
             out string sharedParameterFile)
         {
             var originalPath = app.SharedParametersFilename ?? "";
-            var usingTemporaryPath = false;
-            sharedParameterFile = originalPath;
-
-            if (string.IsNullOrWhiteSpace(sharedParameterFile) || !File.Exists(sharedParameterFile))
-            {
-                sharedParameterFile = EnsureOperatorSharedParameterFile();
-                app.SharedParametersFilename = sharedParameterFile;
-                usingTemporaryPath = true;
-            }
+            // Never append an Operator-created definition to the user's selected
+            // office standards file. The temporary selection is always restored.
+            sharedParameterFile = EnsureOperatorSharedParameterFile();
+            app.SharedParametersFilename = sharedParameterFile;
 
             try
             {
@@ -499,7 +351,9 @@ namespace RevitBridge.Handlers
                     throw new InvalidOperationException("Unable to open shared parameter file for project-parameter creation.");
 
                 var existing = FindDefinitionByName(file, name);
-                if (existing != null) return existing;
+                if (existing != null)
+                    return new OperatorNativeOwnedValue<ExternalDefinition>(existing as ExternalDefinition
+                        ?? throw new InvalidOperationException("Expected one shared external definition."), file);
 
                 var group = file.Groups.get_Item(OperatorSharedParamGroupName) ?? file.Groups.Create(OperatorSharedParamGroupName);
                 var options = new ExternalDefinitionCreationOptions(name, dataType)
@@ -509,15 +363,24 @@ namespace RevitBridge.Handlers
                     Description = "Created by RevitOperator /revit/project-parameters."
                 };
 
-                return group.Definitions.Create(options);
+                var definitions = group.Definitions;
+                var definition = definitions.Create(options) as ExternalDefinition
+                    ?? throw new InvalidOperationException("Expected one shared external definition.");
+                // The definition's native ExternalParam pointer borrows its owner.
+                // Preserve the entire creation chain through census and insertion.
+                return new OperatorNativeOwnedValue<ExternalDefinition>(definition, file, group, definitions, options);
             }
             finally
             {
-                if (usingTemporaryPath)
-                {
-                    app.SharedParametersFilename = originalPath;
-                }
+                app.SharedParametersFilename = originalPath;
             }
+        }
+
+        private static string? FileHash(string path)
+        {
+            if (!File.Exists(path)) return null;
+            using var stream = File.OpenRead(path); using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
         }
 
         private static string EnsureOperatorSharedParameterFile()
@@ -560,26 +423,6 @@ namespace RevitBridge.Handlers
                 }
             }
             return null;
-        }
-
-        private static bool TryFindBindingByName(Document doc, string name, out Definition definition, out ElementBinding? binding)
-        {
-            var iter = doc.ParameterBindings.ForwardIterator();
-            iter.Reset();
-            while (iter.MoveNext())
-            {
-                var def = iter.Key;
-                if (def == null) continue;
-                if (!string.Equals((def.Name ?? "").Trim(), name, StringComparison.OrdinalIgnoreCase)) continue;
-
-                definition = def;
-                binding = iter.Current as ElementBinding;
-                return true;
-            }
-
-            definition = null!;
-            binding = null;
-            return false;
         }
 
         private static List<string> EnumerateCategoryNames(ElementBinding? binding)

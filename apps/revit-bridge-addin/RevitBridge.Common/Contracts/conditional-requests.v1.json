@@ -500,5 +500,1741 @@
       "parameterNames"
     ],
     "additionalProperties": false
+  },
+  "/revit/schedules": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "detail",
+          "circuits",
+          "cell_styles",
+          "presentation"
+        ]
+      },
+      "scheduleId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "query": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "exact": {
+        "type": "boolean"
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "regular",
+          "panel",
+          "all"
+        ]
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100000
+      },
+      "max": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2000
+      },
+      "requireUniqueQuery": {
+        "type": "boolean"
+      },
+      "includeFields": {
+        "type": "boolean"
+      },
+      "includeSchedulableFields": {
+        "type": "boolean"
+      },
+      "schedulableFieldOffset": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "maxSchedulableFields": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      },
+      "includeData": {
+        "type": "boolean"
+      },
+      "rowOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      },
+      "columnOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      },
+      "maxRows": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500
+      },
+      "maxColumns": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cells": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "items": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "type": "string",
+              "enum": [
+                "Header",
+                "Body",
+                "Summary",
+                "Footer"
+              ]
+            },
+            "row": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "section",
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "includeDefinitionSnapshot": {
+        "type": "boolean"
+      }
+    },
+    "required": [],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "regular",
+              "panel",
+              "all"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detail"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "requireUniqueQuery": {
+            "type": "boolean"
+          },
+          "includeFields": {
+            "type": "boolean"
+          },
+          "includeSchedulableFields": {
+            "type": "boolean"
+          },
+          "schedulableFieldOffset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxSchedulableFields": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "includeData": {
+            "type": "boolean"
+          },
+          "rowOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "columnOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "maxRows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "maxColumns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "includeDefinitionSnapshot": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "scheduleId"
+            ]
+          },
+          {
+            "required": [
+              "query"
+            ]
+          }
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "circuits"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "cell_styles"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cells": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "properties": {
+                "section": {
+                  "type": "string",
+                  "enum": [
+                    "Header",
+                    "Body",
+                    "Summary",
+                    "Footer"
+                  ]
+                },
+                "row": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "column": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "section",
+                "row",
+                "column"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "action",
+          "scheduleId",
+          "cells"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "presentation"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "action",
+          "scheduleId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detail"
+            ]
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "includeFields": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "includeSchedulableFields": {
+            "type": "boolean"
+          },
+          "schedulableFieldOffset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxSchedulableFields": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "includeData": {
+            "type": "boolean"
+          },
+          "rowOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "columnOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "maxRows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "maxColumns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "includeDefinitionSnapshot": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "requireUniqueQuery": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "scheduleId",
+          "includeDefinitionSnapshot"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/project-parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "detail",
+          "create",
+          "validate_required"
+        ]
+      },
+      "query": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "max": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5000
+      },
+      "parameterId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "name": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "categoryNames": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      },
+      "instanceBinding": {
+        "type": "boolean"
+      },
+      "visible": {
+        "type": "boolean"
+      },
+      "userModifiable": {
+        "type": "boolean"
+      },
+      "rebindIfExists": {
+        "type": "boolean",
+        "enum": [
+          false
+        ]
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "dataType": {
+        "type": "string",
+        "enum": [
+          "text",
+          "url",
+          "multiline_text",
+          "multiline",
+          "multilinetext",
+          "yesno",
+          "yes_no",
+          "yes/no",
+          "integer",
+          "number"
+        ]
+      },
+      "parameterGroup": {
+        "type": "string",
+        "enum": [
+          "identity_data",
+          "identity",
+          "data",
+          "text",
+          "constraints",
+          "geometry",
+          "materials",
+          "graphics",
+          "phasing"
+        ]
+      },
+      "requiredParameters": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      },
+      "requiredParameterNames": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        }
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detail"
+            ]
+          },
+          "parameterId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "action",
+          "parameterId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "categoryNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "instanceBinding": {
+            "type": "boolean"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "userModifiable": {
+            "type": "boolean"
+          },
+          "rebindIfExists": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "dataType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "url",
+              "multiline_text",
+              "multiline",
+              "multilinetext",
+              "yesno",
+              "yes_no",
+              "yes/no",
+              "integer",
+              "number"
+            ]
+          },
+          "parameterGroup": {
+            "type": "string",
+            "enum": [
+              "identity_data",
+              "identity",
+              "data",
+              "text",
+              "constraints",
+              "geometry",
+              "materials",
+              "graphics",
+              "phasing"
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "name",
+          "categoryNames"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "validate_required"
+            ]
+          },
+          "categoryNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "requiredParameters": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          },
+          "requiredParameterNames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/inspect-drawing-spec": {
+    "type": "object",
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520
+      },
+      "manifestElementId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "pageOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "expectedSnapshotSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "inspect",
+          "list"
+        ]
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSnapshotSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "action": {
+            "enum": [
+              "inspect"
+            ]
+          }
+        },
+        "required": [
+          "sourcePath",
+          "manifestElementId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "list"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/import-drawing-spec": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "import",
+          "update"
+        ]
+      },
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520
+      },
+      "manifestElementId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "expectedSourceSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "expectedNativeSnapshotSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "viewId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "viewName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "textTypeName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "columns": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 24
+      },
+      "columnWidthInches": {
+        "type": "number"
+      },
+      "columnHeightInches": {
+        "type": "number"
+      },
+      "gutterInches": {
+        "type": "number"
+      },
+      "marginInches": {
+        "type": "number"
+      },
+      "startXInches": {
+        "type": "number"
+      },
+      "startYInches": {
+        "type": "number"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "sourcePath"
+    ],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "import"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "viewId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          },
+          "columnWidthInches": {
+            "type": "number"
+          },
+          "columnHeightInches": {
+            "type": "number"
+          },
+          "gutterInches": {
+            "type": "number"
+          },
+          "marginInches": {
+            "type": "number"
+          },
+          "startXInches": {
+            "type": "number"
+          },
+          "startYInches": {
+            "type": "number"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "update"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "expectedNativeSnapshotSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          },
+          "columnWidthInches": {
+            "type": "number"
+          },
+          "columnHeightInches": {
+            "type": "number"
+          },
+          "gutterInches": {
+            "type": "number"
+          },
+          "marginInches": {
+            "type": "number"
+          },
+          "startXInches": {
+            "type": "number"
+          },
+          "startYInches": {
+            "type": "number"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "manifestElementId",
+          "expectedSourceSha256",
+          "expectedNativeSnapshotSha256"
+        ]
+      }
+    ]
+  },
+  "/revit/inspect-excel-source": {
+    "type": "object",
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520,
+        "pattern": "\\S"
+      },
+      "sheetName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "\\S"
+      },
+      "section": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "worksheets",
+          "cells",
+          "rows",
+          "columns",
+          "merges",
+          "issues",
+          "formatting",
+          "printContext"
+        ]
+      },
+      "pageOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "expectedSourceSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "sourcePath"
+    ],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "pageOffset",
+          "expectedSourceSha256"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets",
+              "cells",
+              "rows",
+              "columns",
+              "merges",
+              "issues",
+              "formatting",
+              "printContext"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets",
+              "cells",
+              "rows",
+              "columns",
+              "merges",
+              "issues",
+              "formatting",
+              "printContext"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName",
+          "pageOffset",
+          "expectedSourceSha256"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/import-excel-output": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 110
+          },
+          "partIndex": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "layout": {
+            "type": "object",
+            "properties": {
+              "range": {
+                "type": "object",
+                "properties": {
+                  "firstRow": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  },
+                  "lastRow": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  },
+                  "firstColumn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  },
+                  "lastColumn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  }
+                },
+                "required": [
+                  "firstRow",
+                  "lastRow",
+                  "firstColumn",
+                  "lastColumn"
+                ],
+                "additionalProperties": false
+              },
+              "pageWidthInches": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 96
+              },
+              "pageHeightInches": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 96
+              },
+              "paddingPoints": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 36
+              },
+              "minimumTextPoints": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 72
+              },
+              "repeatHeaderRows": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "wrapOverflow": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "borderWeights": {
+            "type": "object",
+            "properties": {
+              "hair": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "thin": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "medium": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "thick": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName",
+          "expectedSourceSha256",
+          "viewName"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 110
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 499
+          },
+          "layout": {
+            "type": "object",
+            "properties": {
+              "range": {
+                "type": "object",
+                "properties": {
+                  "firstRow": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  },
+                  "lastRow": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  },
+                  "firstColumn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  },
+                  "lastColumn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  }
+                },
+                "required": [
+                  "firstRow",
+                  "lastRow",
+                  "firstColumn",
+                  "lastColumn"
+                ],
+                "additionalProperties": false
+              },
+              "pageWidthInches": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 96
+              },
+              "pageHeightInches": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 96
+              },
+              "paddingPoints": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 36
+              },
+              "minimumTextPoints": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 72
+              },
+              "repeatHeaderRows": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "wrapOverflow": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "borderWeights": {
+            "type": "object",
+            "properties": {
+              "hair": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "thin": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "medium": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "thick": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedImportSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName",
+          "expectedSourceSha256",
+          "viewName",
+          "manifestElementId",
+          "expectedImportSnapshotSha256"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/inspect-excel-import": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedInspectionSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "sourcePath",
+          "manifestElementId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "notes",
+              "cells",
+              "borders",
+              "issues"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedInspectionSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 499
+          }
+        },
+        "required": [
+          "sourcePath",
+          "manifestElementId",
+          "partIndex"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "notes",
+              "cells",
+              "borders",
+              "issues"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedInspectionSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 499
+          }
+        },
+        "required": [
+          "sourcePath",
+          "manifestElementId",
+          "partIndex",
+          "pageOffset",
+          "expectedInspectionSnapshotSha256"
+        ],
+        "additionalProperties": false
+      }
+    ]
   }
 }

@@ -54,10 +54,46 @@ function categorySelector(value: unknown): string | null {
   return label ? `label:${JSON.stringify(label)}` : null;
 }
 
+export function isVisibilityPhasingEditV2(value: unknown): boolean {
+  const r=record(value),b=record(r.body??r.arguments??value);
+  return ['set_phase','set_phase_filter'].includes(String(b.action??'').trim().toLowerCase());
+}
+
+function phaseRequest(value: unknown): readonly string[] {
+  const r=record(value),b=record(r.body??r.arguments??value),id=viewId(b.viewId);
+  const action=String(b.action??'').trim().toLowerCase();
+  const field=action==='set_phase'?'phase':action==='set_phase_filter'?'phaseFilter':null;
+  if(!id||!field||b.dryRun===true||r.path!==undefined&&r.path!=='/revit/visibility'
+    ||Object.keys(b).some(k=>!['viewId','action','dryRun',field+'Id',field+'Name'].includes(k)))return [];
+  const out:string[]=[];
+  if(Object.hasOwn(b,field+'Id')){
+    const selected=b[field+'Id'];if(typeof selected!=='number'||!viewId(selected))return [];
+    out.push(`native_view_phasing:${id}:${field}:id:${selected}`);
+  }
+  if(Object.hasOwn(b,field+'Name')){
+    const selected=categoryLabel(b[field+'Name']);if(!selected)return [];
+    out.push(`native_view_phasing:${id}:${field}:name:${JSON.stringify(selected)}`);
+  }
+  return out;
+}
+
+/** Assignment identity only. Filter status rules and complete schedule member
+ * scope are separate predicates; neither follows from a phase-filter ID. */
+export function visibilityPhasingReadbackMatchesV2(input: unknown,payload: unknown,read?: unknown): boolean {
+  const expected=phaseRequest(input);if(!expected.length)return false;
+  if(read!==undefined){
+    const r=record(read),b=record(r.body??r.arguments??read),a=record(input),wanted=record(a.body??a.arguments??input);
+    if(r.path!=='/revit/visibility'||r.method!=='POST'||b.action!=='get'||viewId(b.viewId)!==viewId(wanted.viewId))return false;
+  }
+  const observed=new Set(visibilityObservedValuesV2(payload));
+  return expected.every(token=>observed.has(token));
+}
+
 export function visibilityExpectedValuesV2(value: unknown): readonly string[] {
   const root = record(value);
   const body = record(root.body ?? root.arguments ?? value);
   const id = viewId(body.viewId);
+  if(isVisibilityPhasingEditV2(value))return phaseRequest(value);
   if (body.action === "set_category_override") {
     // Both selectors accepted by the native handler must be checkable. A
     // display label is matched to native returned identity, never translated
@@ -101,6 +137,13 @@ export function visibilityObservedValuesV2(value: unknown): readonly string[] {
     const token = propertyToken(id, field, view[field]);
     return token ? [token] : [];
   });
+  for(const field of ['phase','phaseFilter']){
+    const native=record(view[field]),nativeId=viewId(native.id),name=categoryLabel(native.name);
+    if(typeof native.id==='number'&&nativeId&&name){
+      values.push(`native_view_phasing:${id}:${field}:id:${nativeId}`);
+      values.push(`native_view_phasing:${id}:${field}:name:${JSON.stringify(name)}`);
+    }
+  }
   const category = record(view.categoryOverride);
   if (/^OST_[A-Za-z0-9_]+$/.test(String(category.builtInCategory ?? ""))
     && Number.isSafeInteger(category.categoryId) && Number(category.categoryId) < 0) {

@@ -2779,8 +2779,7 @@ test("schedule rows do not masquerade as filter configuration and an exact filte
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Filter schedule OPERATOR SMOKE ME EQUIPMENT where Mark begins with OPERATOR-SMOKE."));
   const body = {
-    query: "OPERATOR SMOKE ME EQUIPMENT",
-    exact: true,
+    scheduleId: 1543072,
     filters: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
     replaceFilters: true,
     dryRun: true
@@ -2819,18 +2818,27 @@ test("schedule rows do not masquerade as filter configuration and an exact filte
     assert.equal(rowsOnly?.verified, false);
     assert.equal(rowsOnly?.stage, "verify");
 
+    const nativeDetail = {
+      status: "Ok", action: "detail",
+      schedule: { id:1543072,name:"OPERATOR SMOKE ME EQUIPMENT",fieldCount:3 },
+      fields: [{fieldId:0,name:"Mark"},{fieldId:1,name:"Family and Type"},{fieldId:2,name:"Level"}],
+      filterDefinitions: [{index:0,fieldId:0,field:"Mark",op:"begins_with",value:"OPERATOR-SMOKE",readable:true}],
+      filterDefinitionsComplete: true
+    };
+    const wrongSelector = guardTeammateMcpCall(owner, {
+      tool: "revit_list_schedules", arguments: {action:"detail",scheduleId:99,includeFields:true}
+    });
+    assert.equal(wrongSelector.allowed,true);
+    recordTeammateMcpResult(owner,wrongSelector,{content:[{type:"text",text:JSON.stringify(nativeDetail)}]});
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified,false,"a matching payload cannot override the wrong native read selector");
+
     const filterReadback = guardTeammateMcpCall(owner, {
       tool: "revit_list_schedules",
       arguments: { action: "detail", scheduleId: 1543072, includeFields: true }
     });
     assert.equal(filterReadback.allowed, true);
     recordTeammateMcpResult(owner, filterReadback, {
-      content: [{ type: "text", text: JSON.stringify({
-        status: "Ok",
-        schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
-        filterDefinitions: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
-        filterDefinitionsComplete: true
-      }) }]
+      content: [{ type: "text", text: JSON.stringify(nativeDetail) }]
     });
 
     const receipt = teammateLoopReceiptForOwner(owner);
@@ -2974,3 +2982,16 @@ test("state questions inspect Revit while explicit combined edits keep their mut
   for (const prompt of ["Is Revit connected? Then delete the selected duct.", "Are these ducts connected? If not, connect them.", "12x10 SUPPLY DUCT at the marked branch"])
     assert.equal(classifyAgentTurn(prompt), "mutation", prompt);
 });
+
+for(const body of [{action:'list',scheduleId:1542917},{action:'detail',scheduleId:1542917,includeFields:false}])
+ test('schedule readback admission retains the actual action and field selector '+JSON.stringify(body),()=>{
+  __testOnlyResetTeammateLoopState();const owner={};
+  const lease=beginTeammateLoopOwner(owner,request('Create schedule TEST MECHANICAL EQUIPMENT.'));
+  try{
+   const apply=guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:{method:'POST',path:'/revit/create-schedule',body:{name:'TEST MECHANICAL EQUIPMENT',dryRun:false}}});
+   assert(apply.allowed);recordTeammateMcpResult(owner,apply,{content:[{type:'text',text:JSON.stringify({status:'Success',schedule:{id:1542917,name:'TEST MECHANICAL EQUIPMENT'}})}]});
+   const read=guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:{method:'POST',path:'/revit/schedules',body}});
+   assert(read.allowed);recordTeammateMcpResult(owner,read,{content:[{type:'text',text:JSON.stringify({status:'Ok',schedule:{id:1542917,name:'TEST MECHANICAL EQUIPMENT',fieldCount:4}})}]});
+   assert.equal(teammateLoopReceiptForOwner(owner)?.verified,false);
+  }finally{endTeammateLoopOwner(lease);}
+ });

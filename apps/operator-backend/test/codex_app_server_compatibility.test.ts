@@ -3,6 +3,17 @@ import { EventEmitter } from "node:events";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { attachDynamicObservationContext } from "../src/brains/codex_dynamic_result_adapter.js";
+
+test('retained evidence reaches the actual Codex adapter as one image, never base64 prose',async()=>{
+ const {retainedImageDelivery}=await import(pathToFileURL(path.resolve('../mcp-server/dist/lib/retainedImageDelivery.js')).href);
+ const bytes=Buffer.from('retained pixel bytes'),hash='sha256:'+createHash('sha256').update(bytes).digest('hex');
+ const ref={evidence_id:'ev1_'+'a'.repeat(32),session_id:'image-session',assignment_id:null,media_type:'image/png',byte_count:bytes.length,content_hash:hash,trust_level:'untrusted_caller'};
+ const result=retainedImageDelivery({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection:{media_type:'image/png',data_base64:bytes.toString('base64')},complete:true}},
+  {evidenceId:ref.evidence_id,sessionId:ref.session_id});
+ const delivered=adaptMcpToolCallResultToDynamicResponse(result,{tool:'operator_retrieve_evidence',projections:[{evidence_id:ref.evidence_id} as any],omitted:0});
+ assert.equal(delivered.success,true);assert.deepEqual(delivered.contentItems.filter(c=>c.type==='inputImage'),[{type:'inputImage',imageUrl:'data:image/png;base64,'+bytes.toString('base64')}]);
+ const text=delivered.contentItems.filter(c=>c.type==='inputText').map(c=>(c as any).text).join('\n');assert(!text.includes(bytes.toString('base64')));assert(text.includes(ref.content_hash));assert(text.includes('untrusted_caller'));
+});
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
 
 test("one-shot capture pixels pass from the actual MCP presenter to Codex in the same result",async()=>{
@@ -100,6 +111,76 @@ test("code-mode evidence selections remain one JSON value with separate host obs
   attachDynamicObservationContext(image, "operator_retrieve_evidence", JSON.stringify(index));
   assert.deepEqual(image.contentItems[0], { type: "inputImage", imageUrl: "data:image/png;base64,AA==" });
   }
+});
+
+test("nested dynamic responses deliver each byte-identical observation context once", () => {
+  for (const success of [true, false]) {
+    const response = adaptMcpToolCallResultToDynamicResponse({ isError: !success, content: [
+      { type: "text", text: success ? '{"ok":true,"result":"saved"}' : '{"ok":false,"error":"unknown effect; do not retry"}' },
+      { type: "image", mimeType: "image/png", data: "AA==" }
+    ] });
+    const index = JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
+      host_budget: { state: "checkpoint" }, pending_verification: [{ operation_id: "save", check_state: "unconfirmed" }],
+      observations: [{ evidence_id: "retained-native" }], omitted: 0 });
+    attachDynamicObservationContext(response, "revit_call_tool", index);
+    const once = structuredClone(response);
+    attachDynamicObservationContext(response, "revit_call_tool", index);
+    assert.deepEqual(response, once, "outer response assembly must not repeat the child's identical index");
+    assert.equal(response.success, success);
+    assert.equal(response.contentItems.filter(item => item.type === "inputImage").length, 1);
+  }
+});
+
+test("observation deduplication retains fresh control changes and exact source text", () => {
+  const initial = JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
+    host_budget: { state: "available" }, pending_verification: [], observations: [] });
+  const response = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: `Source quote: ${initial}` }] });
+  attachDynamicObservationContext(response, "revit_call_tool", initial);
+  const newer = JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
+    host_budget: { state: "hold" }, pending_verification: [{ operation_id: "changed", check_state: "previous_check_stale" }],
+    observations: [], execution_control: { state: "paused" } });
+  attachDynamicObservationContext(response, "revit_call_tool", newer);
+  assert.deepEqual(response.contentItems, [
+    { type: "inputText", text: `Source quote: ${initial}` },
+    { type: "inputText", text: initial }, { type: "inputText", text: newer }
+  ]);
+});
+
+test("retrieved evidence stays one JSON value through repeated observation attachment", () => {
+  const payload = { ok: true, result: { schema: "revit-operator.evidence-retrieval.v1",
+    selection: { sheet: "M001", view_id: 123, text: "Complete source text" }, complete: false,
+    pagination: { next_start: 5 } } };
+  const response = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: JSON.stringify(payload) }] });
+  const index = JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1", observations: [], omitted: 3 });
+  attachDynamicObservationContext(response, "operator_retrieve_evidence", index);
+  attachDynamicObservationContext(response, "operator_retrieve_evidence", index);
+  assert.equal(response.contentItems.length, 1);
+  const item = response.contentItems[0]!;
+  assert.equal(item.type, "inputText");
+  if (item.type !== "inputText") throw Error("Expected retrieval JSON");
+  assert.deepEqual(JSON.parse(item.text).result, payload.result);
+});
+
+test("nested readback and edit share host metadata while retaining both observation identities", () => {
+  const metadata = { schema: "revit-operator.advisory-observation-index/v1", host_budget: { remaining: 20 },
+    pending_verification: [{ operation_id: "edit", check_state: "unconfirmed" }], omitted: 0, usage: "Not whole-task proof" };
+  const read = { observation_id: "observed-read", operation_id: "read", evidence_id: "native-read" };
+  const edit = { observation_id: "observed-edit", operation_id: "edit", evidence_id: "native-edit" };
+  const source = JSON.stringify({ ...metadata, observations: [{ observation_id: "untrusted-source" }] });
+  const child = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: source }] });
+  attachDynamicObservationContext(child, "revit_call_tool", JSON.stringify({ ...metadata, observations: [read] }));
+  const parent = adaptMcpToolCallResultToDynamicResponse({ content: [{ type: "text", text: "Committed edit receipt" }] });
+  parent.contentItems.push(...child.contentItems);
+  attachDynamicObservationContext(parent, "revit_call_tool", JSON.stringify({ ...metadata, observations: [edit, read] }));
+  assert.equal(parent.contentItems.length, 3);
+  assert.deepEqual(parent.contentItems[1], { type: "inputText", text: source }, "schema-like source text is untouched");
+  const merged = parent.contentItems[2]!;
+  assert.equal(merged.type, "inputText");
+  if (merged.type !== "inputText") throw Error("Expected host index");
+  assert.deepEqual(JSON.parse(merged.text), { ...metadata, observations: [read, edit] });
+  const changed = JSON.stringify({ ...metadata, omitted: 1, observations: [edit] });
+  attachDynamicObservationContext(parent, "revit_call_tool", changed);
+  assert.deepEqual(parent.contentItems[3], { type: "inputText", text: changed }, "coverage differences cannot be hidden by union");
 });
 
 test("observation normalization preserves errors, images, multiple blocks and unrecognized schemas", () => {

@@ -1,3 +1,10 @@
+import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
+import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
+import {committedDeletedElementsReadbackPlansV2}from '../verification/deleted_elements_postcondition_v2.js';
+import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
+import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
+import { committedRegularSchedulePresentationReadbackPlanV2 } from "../verification/regular_schedule_presentation_v2.js";
+import { committedProjectParameterBindingReadbackPlanV2 } from "../verification/project_parameter_binding_v2.js";
 import type { CodexServerRequest } from "../codex/app_server.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
@@ -8,6 +15,8 @@ import {
   recordTeammateMcpResult,
   reconcileTeammateCanonicalSettlementV2,
   teammateLoopIsConversationForOwner,
+  teammateDesktopHelperScopeForOwner,
+  teammateDesktopHelperCallLeaseForOwner,
   teammateLoopSessionIdForOwner
 } from "../teammate_loop_runtime.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
@@ -49,8 +58,8 @@ import {
   advanceAssignmentKernelProgressV2,
   recordAssignmentProgressEpochV2
 } from "../assignments/assignment_kernel_v2_progress.js";
-import { assignmentWorkBudgetStatusV2 } from "../assignments/assignment_work_allowance_v2.js";
-import { deriveProgressGapsV2 } from "../domain/assignment-kernel/index.js";
+import { assignmentWorkBudgetStatusV2,defaultAssignmentWorkBudgetV2 } from "../assignments/assignment_work_allowance_v2.js";
+import { deriveProgressGapsV2,decideAssignmentProgressV2,assignmentNativeReadbackResourceBlockerV2 } from "../domain/assignment-kernel/index.js";
 import { reconcileCanonicalToolVerification } from "../teammate_verification_state.js";
 import { expandExactRegisteredStageToolArguments } from "../existing_conditions/registered_stage_handoff_http.js";
 import { committedTagReadbackPlanV2 } from "../verification/committed_tag_readback_plan_v2.js";
@@ -61,13 +70,25 @@ import { committedElementTypeReadbackPlanV2 } from "../verification/element_type
 import { committedDuplicatedTypeReadbackPlanV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_postcondition_v2.js";
 import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { committedNativeAnnotationReadbackPlanV2 } from "../verification/native_annotation_postcondition_v2.js";
 import { committedModelPointMoveReadbackPlanV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { committedScheduleReadbackPlanV2 } from "../verification/committed_schedule_readback_plan_v2.js";
+import { committedCreatedScheduleReadbackPlanV2 } from "../verification/created_schedule_postcondition_v2.js";
+import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
+import { committedNativeSchedulePresentationReadbackPlanV2, committedNativeSchedulePresentationReadbackPlansV2 } from "../verification/native_schedule_presentation_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
+import { committedReadRetryDecisionV2 } from '../verification/safe_committed_read_retry_v2.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
+import {DESKTOP_HELPER_RETURN_REASON,peekDesktopHelperReturnV1,retainDesktopHelperReturnV1,desktopHelperReturnMessageV1,isDesktopHelperReturnRequestV1} from './desktop_helper_return.js';
+import {desktopHelperLeaseDecisionV1,desktopHelperBudgetReportV1} from './desktop_helper_budget.js';
+import {reserveCommittedReadbacksV2,consumeCommittedReadbackV2,retireCommittedReadbacksV2,isCommittedReadbackReservationV2} from './committed_readback_reservations_v2.js';
+import {evaluatePendingAssignmentCriteriaV2} from '../assignments/assignment_kernel_v2_progress.js';
 
 const parallelGuard = new RevitToolParallelGuard();
+// Only in-process deterministic checking receives this token. Request IDs,
+// JSON fields and model prose cannot bypass the local helper allowance.
+const HOST_READBACK=Symbol('host-readback');
 
 function attachCurrentAssignmentContext(response: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>,
   tool: unknown, assignmentId: string, operationId?: string): void {
@@ -83,9 +104,10 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
   before: NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;
   after: NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;
   operation_id: string;
+  progress_already_recorded?:boolean;
 }>): void {
   const gapIds = deriveProgressGapsV2(input.before).map(gap => gap.gap_id);
-  const epoch = recordAssignmentProgressEpochV2({
+  const epoch = input.progress_already_recorded?input.after:recordAssignmentProgressEpochV2({
     before: input.before,
     after: input.after,
     stated_gap_ids: gapIds,
@@ -106,7 +128,7 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
   }
 }
 
-export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
+export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest,hostBoundary?:unknown): Promise<unknown> {
   const params = request.params ?? {};
   if ((params.namespace === "revit_operator" || params.namespace === "mcp__revit_operator") && ["operator_read_attachment", "operator_read_output_pdf"].includes(params.tool)) {
     try {
@@ -214,6 +236,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       success: false
     };
   }
+  if(peekDesktopHelperReturnV1(runtime,params.turnId)){
+    runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+    return {contentItems:[{type:'inputText',text:'Scoped helper return is retained; no further helper tool was dispatched. The desktop owner must consume the report after provider drain.'}],success:false};
+  }
   const boundArguments = bindCanonicalAssignmentToolArguments(params.tool, params.arguments ?? {}, {
     session_id: sessionId,
     assignment_id: v2Binding?.assignment_id ?? journalContext!.assignmentId,
@@ -235,6 +261,22 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   }
   const boundParams = { ...params, arguments: boundArguments.arguments };
   const boundRequest = { ...request, params: boundParams };
+  if(v2Snapshot&&v2Binding&&hostBoundary!==HOST_READBACK&&!isCommittedReadbackReservationV2(hostBoundary)&&!isDesktopHelperReturnRequestV1(String(params.tool),boundArguments.arguments)){
+    const marker=teammateDesktopHelperScopeForOwner(runtime,params.turnId),lease=teammateDesktopHelperCallLeaseForOwner(runtime,params.turnId);
+    const decision=desktopHelperLeaseDecisionV1(lease,v2Snapshot,marker);
+    if(decision?.decision==='warn'&&lease){
+      lease.warning_issued=true;lease.warned_grant=decision.granted_calls;
+      return {success:false,contentItems:[{type:'inputText',text:'The scoped helper is near its share of the existing task call allowance. This tool was not dispatched. Return a bounded subtask report now using propose_completion: actual findings and evidence references, remaining work and uncertainties. Keep subtask findings distinct from the parent checklist; this report cannot complete the parent task. The desktop owner needs the remaining allowance for inspection, correction, saving and final delivery; no extra allowance or write authority was granted.'}]};
+    }
+    if(decision?.decision==='yield'&&lease){
+      const returned=retainDesktopHelperReturnV1({owner:runtime,turn_id:params.turnId,binding:v2Snapshot.current_binding,
+        marker,tool:'host_desktop_helper_call_yield',arguments:{report:desktopHelperBudgetReportV1(v2Snapshot,lease)}});
+      if(returned){runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+        const response={success:true,contentItems:[{type:'inputText' as const,text:desktopHelperReturnMessageV1(returned)}]};
+        attachCurrentAssignmentContext(response,params.tool,v2Binding.assignment_id);return response;}
+      return {success:false,contentItems:[{type:'inputText',text:'Scoped helper handback could not be retained under current parent controls. No tool was dispatched. Re-establish current task state; do not repeat any uncertain edit.'}]};
+    }
+  }
   // The connected runtime's advertised schema is checked before the mutation
   // guard and durable admission. Invalid input has no possible native effect;
   // errors received after dispatch still require authoritative reconciliation.
@@ -256,6 +298,20 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (v2Snapshot && v2Binding) {
     if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
       try {
+        // The helper's local instruction is not the entire authenticated user
+        // request. Do not let its inspection handoff place the desktop owner
+        // behind a whole-task review fence. No existing fence is cleared.
+        const helperReturn=retainDesktopHelperReturnV1({owner:runtime,turn_id:params.turnId,binding:v2Snapshot.current_binding,
+          marker:teammateDesktopHelperScopeForOwner(runtime,params.turnId),tool:String(params.tool),arguments:boundArguments.arguments});
+        if(helperReturn){
+          const text=desktopHelperReturnMessageV1(helperReturn);
+          recordTeammateMcpResult(runtime,teammateGate,{content:[{type:'text',text}]});
+          // Existing post-tool flush delivers the response before interrupting
+          // this helper provider. Nothing changes the parent lifecycle state.
+          runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+          const response={contentItems:[{type:'inputText' as const,text}],success:true};
+          attachCurrentAssignmentContext(response,params.tool,v2Binding.assignment_id);return response;
+        }
         let result = await runtime.callTool(params.tool, boundArguments.arguments, {
           turnId: params.turnId,
           sessionId,
@@ -270,7 +326,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           parallel.release();
           try {
             const host=await codexRequestedScopeReadbackV1({runtime,request:boundRequest,binding:v2Binding,
-              session_id:sessionId,arguments:boundArguments.arguments,dispatch:r=>handleCodexDynamicToolCall(runtime,r)});
+              session_id:sessionId,arguments:boundArguments.arguments,dispatch:r=>handleCodexDynamicToolCall(runtime,r,HOST_READBACK)});
             if(host){result=host.result;hostScopeNotice=host.notice;}
           }catch(error){hostScopeNotice='Host native scope readback remains unavailable: '+String(error).slice(0,800);}
         }
@@ -296,7 +352,12 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     }
     let lease: ReturnType<typeof openAssignmentKernelOperationV2>;
     try {
-      lease = openAssignmentKernelOperationV2({
+      if(hostBoundary===HOST_READBACK){
+        const fresh=getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
+        const exhausted=fresh?assignmentNativeReadbackResourceBlockerV2(fresh,defaultAssignmentWorkBudgetV2(fresh,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),new Date().toISOString(),1):'assignment_missing';
+        if(exhausted)throw Error(exhausted);
+      }
+      lease = consumeCommittedReadbackV2(hostBoundary,runtime,boundRequest,boundArguments.arguments)??openAssignmentKernelOperationV2({
         snapshot: v2Snapshot,
         controller_request_id: request.id,
         provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
@@ -341,13 +402,14 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         reconcileCanonicalToolVerification(teammateGate.state, settled.snapshot, lease.operation_id);
         reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
       }
-      checkpointAssignmentKernelProgressV2({
-        runtime,
-        turn_id: params.turnId,
-        before: v2Snapshot,
-        after: settled.snapshot,
-        operation_id: lease.operation_id
+      const epoch=recordAssignmentProgressEpochV2({
+        before:v2Snapshot,after:settled.snapshot,stated_gap_ids:deriveProgressGapsV2(v2Snapshot).map(g=>g.gap_id),admitted_operation_ids:[lease.operation_id]
       });
+      // Evaluate authoritative evidence at its causal settlement boundary.
+      // Reserve finite real native checks before the general budget checkpoint;
+      // their in-flight operations keep the task open without another paid call.
+      if(decideAssignmentProgressV2({snapshot:epoch,budget:defaultAssignmentWorkBudgetV2(epoch,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),now:new Date().toISOString()}).decision==='evaluate_criteria')
+        evaluatePendingAssignmentCriteriaV2({binding:epoch.current_binding});
       // The user need not prescribe a verification recipe. After a reviewed
       // existing-tag commit, perform one bounded separate read through this
       // same handler's schema, owner, pause, admission and MCP settlement gates.
@@ -359,37 +421,95 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       const readPlan = typedRead?.plan ?? (current?.operations[lease.operation_id]
         ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedRegularSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedDrawingSpecImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedExcelTableImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedProjectParameterBindingReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedCreatedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedNativeAnnotationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedModelPointMoveReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCircuitReadbackPlanV2(current, current.operations[lease.operation_id]!) : null);
       let hostReadResponse: ReturnType<typeof adaptMcpToolCallResultToDynamicResponse> | null = null;
       const readPlans=readPlan?[readPlan]:(current?.operations[lease.operation_id]
-        ? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
-      if (readPlans.length) {
+        ? committedDeletedElementsReadbackPlansV2(current,current.operations[lease.operation_id]!)
+          ?? committedNativeSchedulePresentationReadbackPlansV2(current,current.operations[lease.operation_id]!)
+          ?? committedSheetMoveReadbackPlansV2(current,current.operations[lease.operation_id]!)??[]:[]);
+      const batch=current&&readPlans.length?await reserveCommittedReadbacksV2({runtime,parent:boundRequest,snapshot:current,subjectId:typedRead?.operation_id??lease.operation_id,plans:readPlans}):{entries:[]};
+      checkpointAssignmentKernelProgressV2({runtime,turn_id:params.turnId,before:v2Snapshot,after:epoch,operation_id:lease.operation_id,progress_already_recorded:true});
+      if(readPlans.length&&!batch.entries.length)hostReadResponse={success:false,contentItems:[{type:'inputText',text:`Automatic readback remains unverified (${batch.reason??'not admitted'}). Retain the committed change; do not repeat it.`}]};
+      if (batch.entries.length) {
         // Native dispatch has returned and canonical settlement is retained.
         // Release only this completed route's lease before the separate read
         // reacquires the ordinary guard. Otherwise same-route reads (visibility
         // and schedule settings) are mistaken for concurrent duplicate calls.
         // The new call still validates ownership, pause, admission and freshness.
         parallel.release();
-        for(const [index,plan] of readPlans.entries())try {
-          const response = await handleCodexDynamicToolCall(runtime, {
-            id: `host-committed-readback:${typedRead?.operation_id ?? lease.operation_id}:${index}`, method: "item/tool/call",
-            params: { namespace: "revit_operator", tool: "revit_call_tool",
-              turnId: params.turnId, threadId: params.threadId, arguments: plan }
-          }) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+        try{for(const [index,entry] of batch.entries.entries())try {
+          const plan=readPlans[index]!;
+          const applyOperationId=typedRead?.operation_id ?? lease.operation_id;
+          const beforeRead=getAssignmentKernelSnapshotV2(lease.assignment_id);
+          let response = await handleCodexDynamicToolCall(runtime,entry.request,entry.token) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
           if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
+          const retryDecision=committedReadRetryDecisionV2({planning:current,beforeRead,afterRead:getAssignmentKernelSnapshotV2(lease.assignment_id),
+            applyOperationId,plan,response,retryAttempt:0,reservedReadOperationId:entry.operation_id});
+          if(!response.success&&!retryDecision.retry)hostReadResponse.contentItems.push({type:'inputText',text:`Automatic readback remains unverified (${retryDecision.reason}). Obtain fresh authorized evidence; do not repeat the committed change.`});
+          if(retryDecision.retry){
+            const retrySnapshot=getAssignmentKernelSnapshotV2(lease.assignment_id);
+            const exhausted=retrySnapshot?assignmentNativeReadbackResourceBlockerV2(retrySnapshot,defaultAssignmentWorkBudgetV2(retrySnapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),new Date().toISOString(),1):'assignment_missing';
+            if(exhausted){hostReadResponse.contentItems.push({type:'inputText',text:`The separate read retry was not admitted (${exhausted}); the committed change remains retained and unverified.`});break;}
+            await new Promise(resolve=>setTimeout(resolve,200));
+            response=await handleCodexDynamicToolCall(runtime,{
+              id:`host-committed-readback:${applyOperationId}:${index}:retry:1`,method:'item/tool/call',
+              params:{namespace:'revit_operator',tool:'revit_call_tool',turnId:params.turnId,threadId:params.threadId,arguments:plan}
+            },HOST_READBACK) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+            hostReadResponse.contentItems.push({type:'inputText',text:'Host attempted one separate read after a confirmed pre-dispatch authorization-service availability failure. The original failed read remains retained; the new read must independently establish its postcondition.'},...response.contentItems);
+          }
           if(!response.success)break;
         } catch (error) {
           const failure = { success:false, contentItems:[{type:"inputText" as const,text:
             `Host readback remains unverified: ${String(error).slice(0,1000)}`}] };
           if(hostReadResponse)hostReadResponse.contentItems.push(...failure.contentItems);else hostReadResponse=failure;
           break;
+        }
+        }finally{retireCommittedReadbacksV2(batch.entries);
+          const afterReads=getAssignmentKernelSnapshotV2(lease.assignment_id);
+          if(afterReads&&!afterReads.terminal)checkpointAssignmentKernelProgressV2({runtime,turn_id:params.turnId,before:v2Snapshot,after:afterReads,operation_id:lease.operation_id,progress_already_recorded:true});
+        }
+      }
+      // A later edit can invalidate earlier checks. Refresh only previously
+      // successful recognized checks, with real reads through ordinary gates.
+      // Bound fan-out and stop at the first refusal/mismatch. Never replay an
+      // apply, reinterpret a failed check, or manufacture a final proof fact.
+      if(current?.operations[lease.operation_id]?.requested_effect==='apply') {
+        parallel.release();
+        for(let n=0;n<16;n++) {
+          const before=getAssignmentKernelSnapshotV2(lease.assignment_id);if(!before)break;
+          const candidate=Object.values(before.operations)
+            .filter(op=>committedCheckNeedsRefreshV2(before,op))
+            .sort((a,b)=>`${b.settled_at??b.opened_at}:${b.operation_id}`.localeCompare(`${a.settled_at??a.opened_at}:${a.operation_id}`))
+            .map(op=>({op,plan:committedRegularSchedulePresentationReadbackPlanV2(before,op)
+              ??committedVisibilityReadbackPlanV2(before,op)})).find(v=>v.plan);
+          if(!candidate)break;
+          try {
+            const response=await handleCodexDynamicToolCall(runtime,{
+              id:`host-final-committed-readback:${lease.operation_id}:${candidate.op.operation_id}:${n}`,method:'item/tool/call',
+              params:{namespace:'revit_operator',tool:'revit_call_tool',turnId:params.turnId,threadId:params.threadId,arguments:candidate.plan}
+            },HOST_READBACK) as ReturnType<typeof adaptMcpToolCallResultToDynamicResponse>;
+            if(hostReadResponse)hostReadResponse.contentItems.push(...response.contentItems);else hostReadResponse=response;
+            const after=getAssignmentKernelSnapshotV2(lease.assignment_id);
+            if(!response.success||!after||!checkedEditIsCurrentV2(after,candidate.op.operation_id))break;
+          }catch(error){
+            const item={type:'inputText' as const,text:`Final native recheck remains open: ${String(error).slice(0,500)}. Do not replay committed changes.`};
+            if(hostReadResponse)hostReadResponse.contentItems.push(item);else hostReadResponse={success:false,contentItems:[item]};break;
+          }
         }
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);

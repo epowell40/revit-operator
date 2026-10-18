@@ -286,7 +286,10 @@ namespace RevitBridge
         private static void OnDocumentClosed(object sender, DocumentClosedEventArgs args)
             => RevitUiContextSnapshot.Invalidate("document_closed");
         private static void OnDocumentChanged(object sender, DocumentChangedEventArgs args)
-            => RevitUiContextSnapshot.RefreshFromUiEvent();
+        {
+            RevitDocumentChangeObservations.Capture(args);
+            RevitUiContextSnapshot.RefreshFromUiEvent();
+        }
         private static void OnDocumentSaved(object sender, DocumentSavedEventArgs args)
             => RevitUiContextSnapshot.RefreshFromUiEvent();
         private static void OnDocumentSavedAs(object sender, DocumentSavedAsEventArgs args)

@@ -2,6 +2,8 @@ export const EVIDENCE_REF_SCHEMA = "revit-operator.evidence-ref.v1" as const;
 export const EVIDENCE_PROJECTION_SCHEMA = "revit-operator.evidence-projection.v1" as const;
 export const EVIDENCE_RETRIEVAL_SCHEMA = "revit-operator.evidence-retrieval.v1" as const;
 export const EVIDENCE_TELEMETRY_SCHEMA = "revit-operator.evidence-telemetry.v1" as const;
+// Same decoded-image bound as native MCP captures; text selections stay at1MiB.
+export const MAX_RETAINED_IMAGE_BYTES_V1 = 5 * 1024 * 1024;
 
 export type EvidenceTrustLevel =
   | "untrusted_caller"
@@ -72,6 +74,21 @@ export type EvidenceProjectionV1 = {
   tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
   /** Observed native topology presentation; raw evidence remains authoritative. */
   connector_graph?: import("./connector_graph_projection.js").ConnectorGraphProjection;
+  /** Screened, scoped helper claims for iteration; never native or completion proof. */
+  helper_findings?: import("./scoped_helper_projection.js").ScopedHelperFindings;
+  /** Host-attached, model-only supporting review feedback. Never native proof.
+   * Full raw review and images remain in their scoped evidence artifacts. */
+  visual_work_review?: {
+    schema: "operator.visual_work_review_feedback.v1";
+    source_evidence_id: string;
+    authority: "supporting_visual_assessment";
+    native_postcondition_verified: false;
+    whole_task_verified: false;
+    state: string;
+    checks: Array<{ id: string; expected: string; status: string; observed: string; correction: string }>;
+    coverage: { total: number; returned: number; complete: boolean; next_start: number | null };
+    retrieval: { evidence_id: string; checks_path: string; reason_path: string; full_context_path: string };
+  };
   before_hash: string | null;
   after_hash: string | null;
   diagnostics: string[];
@@ -125,6 +142,8 @@ export type EvidenceRetrievalResult = {
   selection: unknown;
   returned_bytes: number;
   complete: boolean;
+  image_byte_count?: number;
+  image_byte_limit?: number;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
     has_more: boolean; next_start: number | null; byte_limited: boolean; requested_rows_complete: boolean;
     source_rows_exhausted: boolean; fields?: string[]; row_projection?: "selected_fields" };

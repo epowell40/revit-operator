@@ -1,4 +1,5 @@
 import { nativeArtifactReceiptEffectV1 } from "./native-artifact.js";
+import { MAX_NATIVE_AFFECTED_TARGETS_V2 } from "./native-affected-targets.js";
 
 const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const hash = value => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
@@ -44,7 +45,7 @@ export function nativeCompletionReconciliationEffectV1(value, operation) {
     || settlement.requested_effect !== operation.requested_effect || settlement.method !== n.method || settlement.path !== n.path
     || settlement.request_dispatched !== true || !["none", "applied"].includes(settlement.effect_state)) return null;
   const affected = settlement.affected_target_identities;
-  if (!Array.isArray(affected) || affected.length > 256 || affected.some(id => !text(id)) || new Set(affected).size !== affected.length) return null;
+  if (!Array.isArray(affected) || affected.length > MAX_NATIVE_AFFECTED_TARGETS_V2 || affected.some(id => !text(id)) || new Set(affected).size !== affected.length) return null;
   if (proof.artifact_receipt !== undefined) {
     if (operation.requested_effect !== "apply") return null;
     const effect = nativeArtifactReceiptEffectV1(proof.artifact_receipt, n.method, n.path, "apply");

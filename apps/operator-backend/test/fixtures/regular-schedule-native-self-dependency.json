@@ -1,0 +1,170 @@
+{
+  "description": "Actual117 read-only Revit2024 schedule scope. No transaction or actor outcome is claimed. No bindings or filesystem paths.",
+  "native_read": {
+    "status": "Ok",
+    "action": "presentation",
+    "read_only": true,
+    "schedule": {
+      "id": 1542917,
+      "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b05",
+      "kind": "schedule"
+    },
+    "presentation": {
+      "schema": "operator.regular_schedule_presentation.v1",
+      "complete": true,
+      "showTitle": true,
+      "showHeaders": true,
+      "fieldOrder": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "title": {
+        "id": 737462,
+        "uniqueId": "247470a6-3d69-4a8f-bb7a-7474b867003d-000b40b6",
+        "name": "Schedule Default",
+        "font": "Arial",
+        "sizeFeet": 0.010416666666666666,
+        "bold": false,
+        "italic": false
+      },
+      "header": {
+        "id": 737462,
+        "uniqueId": "247470a6-3d69-4a8f-bb7a-7474b867003d-000b40b6",
+        "name": "Schedule Default",
+        "font": "Arial",
+        "sizeFeet": 0.010416666666666666,
+        "bold": false,
+        "italic": false
+      },
+      "body": {
+        "id": 737462,
+        "uniqueId": "247470a6-3d69-4a8f-bb7a-7474b867003d-000b40b6",
+        "name": "Schedule Default",
+        "font": "Arial",
+        "sizeFeet": 0.010416666666666666,
+        "bold": false,
+        "italic": false
+      },
+      "note": "Native default text styles only. Field/cell overrides and rendered legibility require separate inspection."
+    },
+    "scope": {
+      "schema": "operator.regular_schedule_presentation_scope.v1",
+      "complete": true,
+      "coverage": "configuration_cell_text_style_geometry_v1",
+      "targetId": 1542917,
+      "targetUniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b05",
+      "unrequestedSchedules": [
+        {
+          "scheduleId": 1420970,
+          "uniqueId": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015aeaa",
+          "semanticHash": "a7c6eccc3dbc0c452237d96455cdda66146ae7409ab5fb09c0ee93b139a8bab9"
+        },
+        {
+          "scheduleId": 1420997,
+          "uniqueId": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015aec5",
+          "semanticHash": "93719c17b2cfbea03a1f38e74ac0de3216529539e1ee2ed27ad62e3ed0be8dc1"
+        },
+        {
+          "scheduleId": 1422218,
+          "uniqueId": "d6197270-0ef4-4e34-8760-c60ef0c99ec8-0015b38a",
+          "semanticHash": "dc82da205e9d3986dd4b26421bcd5a1b12da5a3e7319cd15472715109ad40b7f"
+        },
+        {
+          "scheduleId": 1488968,
+          "uniqueId": "6e7c3fc3-4f12-40cc-bc89-7c636a4b76fa-0016b848",
+          "semanticHash": "230b1243372ce989b11d7a7aab4c938a6de96955ccf9cdb78c17396ef0c17bee"
+        },
+        {
+          "scheduleId": 1521719,
+          "uniqueId": "e7aba700-9e09-4b70-b1a8-4ca024b8ae0a-00173837",
+          "semanticHash": "6b901d6eecd47e3a2c4fd4b5c90ebf383ca85c75be677466d6004e930faa8559"
+        },
+        {
+          "scheduleId": 1521731,
+          "uniqueId": "e7aba700-9e09-4b70-b1a8-4ca024b8ae0a-00173843",
+          "semanticHash": "8be3bd6767c61fd59dc03368c253061325ebe56b10acb70349f0dce1d5a95b25"
+        }
+      ],
+      "dependencies": [
+        {
+          "id": 1542917,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b05",
+          "className": "Autodesk.Revit.DB.ViewSchedule",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542918,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b06",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542919,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b07",
+          "className": "Autodesk.Revit.DB.Viewport",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542920,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b08",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542921,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b09",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542922,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b0a",
+          "className": "Autodesk.Revit.DB.Element",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542923,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b0b",
+          "className": "Autodesk.Revit.DB.GraphicsStyle",
+          "ownerViewId": -1
+        },
+        {
+          "id": 1542924,
+          "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b0c",
+          "className": "Autodesk.Revit.DB.ScheduleSheetInstance",
+          "ownerViewId": 1488975
+        }
+      ],
+      "totalUnrequestedCells": 1014,
+      "note": "Native logical dependencies and sampled complete regular-schedule configuration/cell appearance; not engineering or rendered visual approval."
+    },
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": "d8587f2c7ca7816c5ff4f123d2d87873",
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/schedules",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-16T12:05:42.1711782+00:00"
+    }
+  }
+}

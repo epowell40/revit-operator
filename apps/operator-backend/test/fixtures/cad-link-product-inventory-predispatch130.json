@@ -1,0 +1,11 @@
+{
+  "source": "Actual candidate130 tool-doc request before any CAD mutation",
+  "request": {"method": "POST", "path": "/revit/link-cad"},
+  "first_response": {
+    "ok": false,
+    "error": "This tool is outside the supported product inventory: POST /revit/link-cad",
+    "code": "PRODUCT_TOOL_NOT_SUPPORTED",
+    "request_dispatched": false,
+    "outcome_unknown": false
+  }
+}

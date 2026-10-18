@@ -1,0 +1,9 @@
+{
+  "source": "Retained candidate167 ordinary Sidecar review request and native export dimensions",
+  "request": {"view_id":1488975,"capture_mode":"target_view","image_size":6000,"checks":[{"id":"no-spacer","expected":"AIR DEVICE SCHEDULE has no extra empty row between the column headings and first data row."}]},
+  "native_dimensions": {"widthPx":6000,"heightPx":4285},
+  "native_image_sha256": "5e29ab757731e86d385541b33ee03a4c7d24b651571921cf957e80e614f59ebc",
+  "original_reason": "visual_review_target_capture_invalid",
+  "next_request": {"view_id":1488975,"capture_mode":"visible_work","image_size":4000,"checks":[{"id":"no-spacer","expected":"AIR DEVICE SCHEDULE has no empty spacer row immediately below column headings."}]},
+  "next_original_error": "visual_review_capture_mode_invalid"
+}

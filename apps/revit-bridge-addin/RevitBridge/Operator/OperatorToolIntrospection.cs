@@ -293,6 +293,10 @@ namespace RevitBridge.Operator
                 { "/revit/place-pdf-underlay", typeof(RevitBridge.Handlers.PlacePdfUnderlayHandler.Params) },
                 { "/revit/import-zippybim-geometry", typeof(RevitBridge.Handlers.ImportZippyBimGeometryHandler.Params) },
                 { "/revit/import-drawing-spec", typeof(RevitBridge.Handlers.ImportDrawingSpecHandler.Params) },
+                { "/revit/inspect-drawing-spec", typeof(RevitBridge.Common.DrawingSpecInspectionRequest) },
+                { "/revit/inspect-excel-source", typeof(RevitBridge.Common.XlsxSourceInspectionRequest) },
+                { "/revit/import-excel-output", typeof(RevitBridge.Common.XlsxTableImportRequest) },
+                { "/revit/inspect-excel-import", typeof(RevitBridge.Common.XlsxTableInspectionRequest) },
                 { "/revit/import-excel-table", typeof(RevitBridge.Handlers.ImportExcelTableHandler.Params) },
                 { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
                 { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },
@@ -445,6 +449,13 @@ namespace RevitBridge.Operator
 
                 if (OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema))
                     return conditionalSchema;
+
+                if (p == "/revit/configure-schedule")
+                {
+                    var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    OperatorConditionalRequestContracts.ApplyScheduleCombinedFragment(schema);
+                    return schema;
+                }
 
                 if (p == "/revit/create-duct" || p == "/revit/create-pipe" || p == "/revit/repair-mep-connectors")
                 {
@@ -882,31 +893,7 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
-                // Schedule reads have two conditional shapes. Listing needs no
-                // selector; detail requires either scheduleId or query. Do not use
-                // reflection here because nullable-reference metadata is not
-                // available in the net48 build and would make action/query appear
-                // universally required.
-                if (string.Equals(p, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
-                {
-                    return Obj(
-                        props: new Dictionary<string, object>
-                        {
-                            { "action", Str(new[] { "list", "detail" }) },
-                            { "scheduleId", Int(1) },
-                            { "query", Str() },
-                            { "exact", Bool() },
-                            { "max", Int(1, 2000) },
-                            { "includeFields", Bool() },
-                            { "includeData", Bool() },
-                            { "rowOffset", Int(0, 1000000) },
-                            { "columnOffset", Int(0, 1000000) },
-                            { "maxRows", Int(1, 500) },
-                            { "maxColumns", Int(1, 100) }
-                        },
-                        required: Array.Empty<string>(),
-                        additionalProps: false);
-                }
+                // Schedule read modes use the embedded conditional contract above.
 
                 // Schedule-backed writes are intentionally fail-closed and have
                 // conditional selectors. Reflection cannot recover nullable
@@ -1530,7 +1517,11 @@ namespace RevitBridge.Operator
                 if (p == "/revit/link-cad")
                 {
                     enumMap["placement"] = new[] { "origin", "center" };
+                    enumMap["colorMode"] = new[] { "preserve", "black_and_white", "invert" };
                     notes.Add("sourcePath can be Workspace-relative OR an external path under OPERATOR_ALLOWED_EXTERNAL_ROOTS.");
+                    notes.Add("Colors default to preserve. link defaults true and never silently falls back to an embedded import; link:false explicitly requests import.");
+                    notes.Add("Use a drafting view at viewScale:1 for paper-size CAD details. importUnit controls source geometry units. customScale overrides importUnit; customScale:1 alone is not proof of one-to-one printed size. Verify actual native transform and sheet output.");
+                    notes.Add("cadCategories returns native imported layer identities for scoped view graphics overrides. A whole-link lineweight override is not a substitute for changing only the requested new-work layers.");
                 }
 
                 if (p == "/revit/link-revit")
@@ -1752,42 +1743,9 @@ namespace RevitBridge.Operator
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
 
-                    // If schema is oneOf(null, object) pick the object branch for field summaries.
-                    if (root.ValueKind == JsonValueKind.Object && !root.TryGetProperty("properties", out _)
-                        && root.TryGetProperty("oneOf", out var oneOf) && oneOf.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var branch in oneOf.EnumerateArray())
-                        {
-                            if (branch.ValueKind == JsonValueKind.Object &&
-                                branch.TryGetProperty("type", out var t) &&
-                                t.ValueKind == JsonValueKind.String &&
-                                string.Equals(t.GetString(), "object", StringComparison.OrdinalIgnoreCase))
-                            {
-                                root = branch;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object)
-                    {
-                        var all = props.EnumerateObject().Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                        var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        if (root.TryGetProperty("required", out var reqEl) && reqEl.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var r in reqEl.EnumerateArray())
-                            {
-                                if (r.ValueKind == JsonValueKind.String) required.Add(r.GetString() ?? "");
-                            }
-                        }
-
-                        foreach (var r in required.Where(x => !string.IsNullOrWhiteSpace(x))) req.Add(r);
-                        foreach (var f in all)
-                        {
-                            if (string.IsNullOrWhiteSpace(f)) continue;
-                            if (!required.Contains(f)) opt.Add(f);
-                        }
-                    }
+                    var fields = OperatorRequestSchemaSummary.Summarize(root);
+                    req.AddRange(fields.RequiredFields);
+                    opt.AddRange(fields.OptionalFields);
                 }
                 catch
                 {

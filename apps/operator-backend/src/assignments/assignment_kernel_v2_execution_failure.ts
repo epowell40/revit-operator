@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { CodexWorkTimeExpiredError } from '../codex/turn_completions.js';
 import {
   ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA,
   canonicalJsonV2,
@@ -56,6 +57,7 @@ export function classifyAssignmentKernelExecutionFailureV2(
 ): ExecutionFailureClassV2 {
   if (options.canceled) return "canceled";
   if (options.runtime) return "runtime";
+  if (error instanceof CodexWorkTimeExpiredError) return 'resource_exhausted';
   const message = error instanceof Error ? error.message : String(error);
   if (/\b(?:429|quota|rate[ -]?limit|resource exhausted|insufficient capacity)\b/i.test(message)) {
     return "resource_exhausted";

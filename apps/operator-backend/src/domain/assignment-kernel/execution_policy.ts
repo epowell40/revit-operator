@@ -1,5 +1,6 @@
 import type { AssignmentSpecV2 } from "./assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import {utf8TextSha256V2} from './canonical.js';
 
 export type PdfWorkAllowanceV1 = {
   mode: "marked_pdf_sheets_v1";
@@ -18,13 +19,24 @@ export interface LocalAdvisoryExecutionPolicyV1 {
   max_operations: number;
   max_total_tokens: number;
   max_wall_clock_ms: number;
+  /** New-task opt-in; ready checklist work is not a final handoff checkpoint. */
+  ready_work_handoff?: 'continue_ready_work_v1';
   source_work_allowance?: PdfWorkAllowanceV1;
+  /** New-task opt-in: bounded planning from an authoritative native source census. */
+  native_scope_planning?: {
+    mode:'native_inventory_planning_v1';scope_kind:'schedules';source_request_sha256:string;
+    items_per_unit:5;max_units:4;
+  };
   /** Frozen at creation; credit never changes write authority or completion truth. */
   progress_allowance?: {
     mode: "verified_native_changes_v1";
     max_provider_calls: number;
     max_operations: number;
     max_total_tokens: number;
+    /** Optional creation-time ceiling; absent in historical fixed-clock policies. */
+    max_wall_clock_ms?: number;
+    /** Absent means historical operation-batch credits. Frozen for new tasks only. */
+    credit_unit?: 'distinct_verified_targets_v1';
   };
 }
 
@@ -56,6 +68,9 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
     && policy.session_id === spec.binding.session_id && Boolean(policy.document_fingerprint)
     && policy.document_fingerprint === spec.binding.document_fingerprint
     && sourceValid && bounded(policy.max_turns, 16) && bounded(policy.max_provider_calls, callCeiling)
+    && (policy.ready_work_handoff === undefined
+      || policy.ready_work_handoff === 'continue_ready_work_v1' && spec.requested_effect === 'apply')
+    && (policy.native_scope_planning===undefined||validNativeScopePlanningPolicyV1(spec))
     && bounded(policy.max_operations, operationCeiling) && bounded(policy.max_total_tokens, tokenCeiling)
     && bounded(policy.max_wall_clock_ms, 120 * 60_000)
     && (!policy.progress_allowance || (policy.progress_allowance.mode === "verified_native_changes_v1"
@@ -65,7 +80,21 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
       && bounded(policy.progress_allowance.max_operations, operationCeiling)
       && policy.progress_allowance.max_operations >= policy.max_operations
       && bounded(policy.progress_allowance.max_total_tokens, tokenCeiling)
-      && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens));
+      && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens
+      && (policy.progress_allowance.credit_unit === undefined
+        || policy.progress_allowance.credit_unit === 'distinct_verified_targets_v1')
+      && (policy.progress_allowance.max_wall_clock_ms === undefined
+        || (bounded(policy.progress_allowance.max_wall_clock_ms,120*60_000)
+          && policy.progress_allowance.max_wall_clock_ms >= policy.max_wall_clock_ms))));
+}
+
+export function validNativeScopePlanningPolicyV1(spec:AssignmentSpecV2):boolean {
+ const p=spec.execution_policy,n=p?.native_scope_planning;
+ return !!n&&p?.mode==='local_advisory_v1'&&p.selected_by==='trusted_local_host'&&spec.requested_effect==='apply'
+   &&p.progress_allowance?.mode==='verified_native_changes_v1'&&!p.source_work_allowance
+   &&n.mode==='native_inventory_planning_v1'&&n.scope_kind==='schedules'&&n.items_per_unit===5&&n.max_units===4
+   &&typeof spec.source_user_request==='string'&&!!spec.source_user_request.trim()
+   &&n.source_request_sha256===utf8TextSha256V2(spec.source_user_request);
 }
 
 export function validAdvisoryProposalV1(proposal: AdvisoryCompletionProposalV1): boolean {

@@ -2031,6 +2031,7 @@ namespace RevitBridge.Operator
 
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
+                ".dwg",
                 ".pdf",
                 ".docx",
                 ".xlsx",
@@ -2124,6 +2125,7 @@ namespace RevitBridge.Operator
         private static string? GuessMimeFromExtension(string ext)
         {
             var e = (ext ?? "").Trim().ToLowerInvariant();
+            if (e == ".dwg") return "application/acad";
             if (e == ".pdf") return "application/pdf";
             if (e == ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             if (e == ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -3669,14 +3671,16 @@ namespace RevitBridge.Operator
             if (string.IsNullOrWhiteSpace(claimToken))
                 throw new InvalidOperationException("Batch claim_token is required before item execution.");
 
-            object result;
+            OperatorRevitBatchTerminalOutcome outcome;
+            var delegationStarted = false;
             try
             {
                 await EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken).ConfigureAwait(false);
                 var jobType = GetJsonString(job, "job_type", 64);
                 if (string.Equals(jobType, "delegated_revit_task_batch", StringComparison.OrdinalIgnoreCase))
                 {
-                    result = await ExecuteDelegatedRevitBatchItemAsync(job, item, cancellationToken).ConfigureAwait(false);
+                    delegationStarted = true;
+                    outcome = await ExecuteDelegatedRevitBatchItemAsync(job, item, binding, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -3691,10 +3695,30 @@ namespace RevitBridge.Operator
                     binding,
                     claimToken,
                     FormatException(ex),
-                    new { error = FormatException(ex) },
+                    OperatorRevitBatchTerminalOutcome.Failed(
+                        FormatException(ex),
+                        "execution_error",
+                        delegationStarted ? "unknown" : "none",
+                        "",
+                        Array.Empty<object>()).WireResult,
                     cancellationToken).ConfigureAwait(false);
                 return;
             }
+
+            if (!outcome.Ok)
+            {
+                await _backendClient.FailRevitBatchItemJsonAsync(
+                    jobId,
+                    itemId,
+                    binding,
+                    claimToken,
+                    outcome.Error,
+                    outcome.WireResult,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var result = outcome.WireResult;
 
             var outboxKey = BuildRevitBatchCompletionOutboxKey(jobId, itemId);
             try
@@ -3907,7 +3931,11 @@ namespace RevitBridge.Operator
                 GetJsonString(envelope, "document_path", 2048));
         }
 
-        private async Task<object> ExecuteDelegatedRevitBatchItemAsync(JsonObject job, JsonObject item, CancellationToken cancellationToken)
+        private async Task<OperatorRevitBatchTerminalOutcome> ExecuteDelegatedRevitBatchItemAsync(
+            JsonObject job,
+            JsonObject item,
+            OperatorRevitBatchBinding binding,
+            CancellationToken cancellationToken)
         {
             var taskPrompt = GetJsonString(item, "task_prompt", 4000);
             if (string.IsNullOrWhiteSpace(taskPrompt))
@@ -3942,11 +3970,39 @@ namespace RevitBridge.Operator
             var lastPlanSignature = "";
             var repeatedPlanCount = 0;
             var rounds = new System.Collections.Generic.List<object>();
+            var executedToolResults = new System.Collections.Generic.List<OperatorToolResult>();
 
             for (int round = 0; round < perItemMaxRounds; round++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    return OperatorRevitBatchTerminalOutcome.Failed(
+                        FormatException(ex),
+                        "delegate_round_error",
+                        SummarizeDelegatedBatchEffectState(executedToolResults),
+                        lastAssistantMessage,
+                        rounds);
+                }
+                try
+                {
+                    // A delegated turn can span several user-visible document changes. Re-fence every round,
+                    // not just once when the backend item is claimed.
+                    await EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    return OperatorRevitBatchTerminalOutcome.Failed(
+                        FormatException(ex),
+                        "batch_binding_changed",
+                        SummarizeDelegatedBatchEffectState(executedToolResults),
+                        lastAssistantMessage,
+                        rounds);
+                }
 
                 OperatorChatResponse response;
                 try
@@ -3962,15 +4018,36 @@ namespace RevitBridge.Operator
                 }
                 catch (Exception ex) when (IsBackendConnectionFailure(ex))
                 {
-                    await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
-                    response = await _backendClient.ChatAsync(
-                        batchSessionId,
-                        $"{jobId}:batch:{itemId}:{round + 1}",
-                        userText,
-                        context,
-                        toolResults.Count == 0 ? null : toolResults,
-                        userAttachments: null,
-                        cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
+                        response = await _backendClient.ChatAsync(
+                            batchSessionId,
+                            $"{jobId}:batch:{itemId}:{round + 1}",
+                            userText,
+                            context,
+                            toolResults.Count == 0 ? null : toolResults,
+                            userAttachments: null,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception retryEx)
+                    {
+                        return OperatorRevitBatchTerminalOutcome.Failed(
+                            FormatException(retryEx),
+                            "delegate_round_error",
+                            SummarizeDelegatedBatchEffectState(executedToolResults),
+                            lastAssistantMessage,
+                            rounds);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return OperatorRevitBatchTerminalOutcome.Failed(
+                        FormatException(ex),
+                        "delegate_round_error",
+                        SummarizeDelegatedBatchEffectState(executedToolResults),
+                        lastAssistantMessage,
+                        rounds);
                 }
 
                 var actions = response.Actions ?? new System.Collections.Generic.List<OperatorActionCall>();
@@ -3985,12 +4062,20 @@ namespace RevitBridge.Operator
 
                 if (actions.Count == 0)
                 {
-                    return new
+                    if (toolResults.Any(result => string.Equals((result?.Status ?? "").Trim(), "failed", StringComparison.OrdinalIgnoreCase)))
                     {
-                        ok = true,
-                        assistant_message = lastAssistantMessage,
-                        rounds
-                    };
+                        return OperatorRevitBatchTerminalOutcome.Failed(
+                            "The delegate returned no actions while the prior tool result was still failed.",
+                            "unresolved_prior_tool_failure",
+                            SummarizeDelegatedBatchEffectState(executedToolResults),
+                            lastAssistantMessage,
+                            rounds);
+                    }
+
+                    return OperatorRevitBatchTerminalOutcome.Succeeded(
+                        lastAssistantMessage,
+                        rounds,
+                        SummarizeDelegatedBatchEffectState(executedToolResults));
                 }
 
                 var actionPlanSignature = BuildActionPlanSignature(actions);
@@ -4007,15 +4092,14 @@ namespace RevitBridge.Operator
                     if (repeatedPlanCount >= 3 &&
                         (ToolResultsAllFailed(toolResults) || ToolResultsAllSucceeded(toolResults)))
                     {
-                        return new
-                        {
-                            ok = false,
-                            error = ToolResultsAllFailed(toolResults)
+                        return OperatorRevitBatchTerminalOutcome.Failed(
+                            ToolResultsAllFailed(toolResults)
                                 ? "Stopped repeated failing batch action loop."
                                 : "Stopped repeated successful batch action loop without advancing.",
-                            assistant_message = lastAssistantMessage,
-                            rounds
-                        };
+                            "repeated_action_loop",
+                            SummarizeDelegatedBatchEffectState(executedToolResults),
+                            lastAssistantMessage,
+                            rounds);
                     }
                 }
                 else
@@ -4027,15 +4111,47 @@ namespace RevitBridge.Operator
                 var nextToolResults = new System.Collections.Generic.List<OperatorToolResult>();
                 foreach (var plannedAction in actions)
                 {
+                    // OperatorActionRunner checks these inside the same ExternalEvent callback that invokes
+                    // the handler, closing the gap between this asynchronous preflight and execution.
+                    plannedAction.ExpectedDocumentTitle = binding.DocumentTitle;
+                    plannedAction.ExpectedDocumentPath = binding.DocumentPath;
+                    try
+                    {
+                        // The active document can change after planning or between two actions in one round.
+                        // Fence immediately before every effect-capable dispatch.
+                        await EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        return OperatorRevitBatchTerminalOutcome.Failed(
+                            FormatException(ex),
+                            "batch_binding_changed",
+                            SummarizeDelegatedBatchEffectState(executedToolResults),
+                            lastAssistantMessage,
+                            rounds);
+                    }
+
                     var startedAt = DateTime.UtcNow;
                     try
                     {
                         var result = await ExecuteActionAsync(plannedAction, cancellationToken).ConfigureAwait(false);
-                        nextToolResults.Add(await BuildToolResultAsync(plannedAction, startedAt, result, null).ConfigureAwait(false));
+                        var toolResult = await BuildToolResultAsync(plannedAction, startedAt, result, null).ConfigureAwait(false);
+                        if (OperatorRevitBatchTerminalOutcome.TryGetTopLevelHandlerFailure(result, out var handlerError))
+                        {
+                            toolResult.Status = "failed";
+                            toolResult.Error = handlerError;
+                            toolResult.FailureKind = "handler_envelope";
+                            toolResult.FailureCode = "handler_returned_ok_false";
+                            toolResult.ResultJson = result;
+                        }
+                        nextToolResults.Add(toolResult);
+                        executedToolResults.Add(toolResult);
                     }
                     catch (Exception ex)
                     {
-                        nextToolResults.Add(await BuildToolResultAsync(plannedAction, startedAt, null, ex).ConfigureAwait(false));
+                        var toolResult = await BuildToolResultAsync(plannedAction, startedAt, null, ex).ConfigureAwait(false);
+                        nextToolResults.Add(toolResult);
+                        executedToolResults.Add(toolResult);
                     }
                 }
 
@@ -4043,13 +4159,24 @@ namespace RevitBridge.Operator
                 userText = "";
             }
 
-            return new
-            {
-                ok = false,
-                error = $"Stopped after max batch rounds ({perItemMaxRounds}).",
-                assistant_message = lastAssistantMessage,
-                rounds
-            };
+            return OperatorRevitBatchTerminalOutcome.Failed(
+                $"Stopped after max batch rounds ({perItemMaxRounds}).",
+                "max_rounds_exhausted",
+                SummarizeDelegatedBatchEffectState(executedToolResults),
+                lastAssistantMessage,
+                rounds);
+        }
+
+        private static string SummarizeDelegatedBatchEffectState(System.Collections.Generic.IEnumerable<OperatorToolResult>? toolResults)
+        {
+            if (toolResults == null) return "none";
+            var applyResults = toolResults
+                .Where(result => result != null && string.Equals((result.RequestEffect ?? "").Trim(), "apply", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (applyResults.Count == 0) return "none";
+            return applyResults.Any(result => !string.Equals((result.Status ?? "").Trim(), "done", StringComparison.OrdinalIgnoreCase))
+                ? "unknown"
+                : "applied";
         }
 
         private static JsonObject ParseJsonObjectBestEffort(string? json)

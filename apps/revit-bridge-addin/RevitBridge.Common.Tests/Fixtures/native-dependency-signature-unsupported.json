@@ -1,0 +1,39 @@
+{
+  "source": "Actual Revit2024 catalog on installed124, retained diagnostic125. API metadata only; no model content.",
+  "item": {
+    "member_id": "method:Autodesk.Revit.DB.Element.GetDependentElements(Autodesk.Revit.DB.ElementFilter)",
+    "namespace": "Autodesk.Revit.DB",
+    "type": "Autodesk.Revit.DB.Element",
+    "name": "GetDependentElements",
+    "kind": "method",
+    "signature": "IList<ElementId> Element.GetDependentElements(ElementFilter filter)",
+    "return_type": "IList<ElementId>",
+    "is_static": false,
+    "parameter_count": 1,
+    "parameter_types": [
+      "ElementFilter"
+    ],
+    "risk": "low",
+    "mutating_hint": false,
+    "freeze_risk_hint": false,
+    "priority": 60,
+    "signature_supported": false,
+    "graph_signature_supported": false,
+    "graph_allowed": false,
+    "graph_blocked_reason": "Unsupported parameter types for this gateway.",
+    "detached_geometry_factory": false,
+    "target_reachable": false,
+    "target_reachability": "unsupported_signature",
+    "chainable": false,
+    "terminally_useful": null,
+    "terminal_usefulness_evidence": "unverified",
+    "callable": false,
+    "callable_deprecated": true,
+    "unsupported_parameter_types": [
+      "Autodesk.Revit.DB.ElementFilter"
+    ],
+    "allowed": false,
+    "blocked_reason": "Unsupported parameter types for this gateway.",
+    "docs_search_url": "https://www.revitapidocs.com/search/?query=Autodesk.Revit.DB.Element.GetDependentElements"
+  }
+}

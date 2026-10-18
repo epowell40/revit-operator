@@ -59,7 +59,7 @@ test(`ordinary category graphics ${variant}: committed edit retained and one sep
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(response.success,true);assert.equal(apply.result?.persistent_effect,'applied');
    assert.equal(calls.filter(c=>c.body.action==='set_category_override').length,1,JSON.stringify({input:apply.input,result:apply.result,calls}));
-   assert.equal(validations.filter(c=>c.body.action==='get').length,pauses?0:1,JSON.stringify({input:apply.input,result:apply.result,calls}));
+   assert.equal(validations.filter(c=>c.body.action==='get').length,pauses?0:variant==='schema_rejected'?1:2,JSON.stringify({input:apply.input,result:apply.result,calls}));
    assert.equal(calls.filter(c=>c.body.action==='get').length,variant==='schema_rejected'||pauses?0:1,JSON.stringify(response));
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
    assert.equal(verified,passing);

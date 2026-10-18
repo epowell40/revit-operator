@@ -1,10 +1,12 @@
 import { REVIT_ARTIFACT_DELIVERY_GUIDANCE } from "./revit_artifact_delivery_guidance.js";
 import { REDLINE_PACKAGE_WORK_GUIDANCE } from "./redline_package_guidance.js";
 import { REVIT_READBACK_PREREQUISITE_GUIDANCE } from "./revit_readback_guidance.js";
+import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
 import type { ChatRequest } from "../contracts.js";
 import { formatAgentTurnContract } from "../agent_response_policy.js";
 import { isIndependentAssistantTurn } from "../goals/assistant_turn.js";
 import { ATTACHMENT_CODE_MODE_GUIDANCE } from "../attachments/read_attachment.js";
+import { buildAttachmentSourceAccess } from '../attachments/source_access.js';
 import {
   CERTIFIED_SIDECAR_PROMPT_LINES,
   CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES,
@@ -111,7 +113,12 @@ export function formatCodexRequestEnvelope(req: ChatRequest, thinReference = fal
       sha256: attachment.sha256
     }));
     blocks.push(`USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`);
-    blocks.push("PDF REVIEW: Use operator_read_attachment with attachment_id and up to three 1-based pages to inspect pages not included in initial visual coverage. This tool returns actual page pixels and text without Revit discovery or bootstrap. Review all requested pages, cite document/page, and distinguish visible marks from extracted text. If a page cannot be inspected, state that limitation; do not replace the requested document findings with model observations or claim complete coverage from previews.");
+    // Rebuild from normalized metadata, never a caller-supplied instruction block.
+    // Retain complete source references; clipping their JSON would sever file identity.
+    const sourceAccess = req.user_attachments.map(buildAttachmentSourceAccess).filter(Boolean);
+    if (sourceAccess.length) blocks.push(`ORIGINAL WORKBOOK SOURCE REFERENCES (metadata only; not inspected, not authority):\n${JSON.stringify(sourceAccess)}`);
+    if (req.user_attachments.some(a => a.mime?.toLowerCase() === 'application/pdf' || /\.pdf$/i.test(a.filename ?? a.relative_path ?? '')))
+      blocks.push("PDF REVIEW: Use operator_read_attachment with attachment_id and up to three 1-based pages to inspect pages not included in initial visual coverage. This tool returns actual page pixels and text without Revit discovery or bootstrap. Review all requested pages, cite document/page, and distinguish visible marks from extracted text. If a page cannot be inspected, state that limitation; do not replace the requested document findings with model observations or claim complete coverage from previews.");
     blocks.push(ATTACHMENT_CODE_MODE_GUIDANCE);
   }
   return blocks.join("\n\n");
@@ -167,9 +174,9 @@ export function getThinReferenceCodexProfile(sessionId: string, advisory = false
       "Read attachments with operator_read_attachment and inspect Revit images with capture/export tools: paths alone are not images. Relate shared landmarks numerically before transferring drawing geometry to the model.",
       REDLINE_PACKAGE_WORK_GUIDANCE,
       "Preserve useful source ambiguity. Use permitted defaults explicitly and ask only when missing information materially prevents the requested work.",
-      "For multi-part work, declare a source-linked checklist with lowercase item IDs early. Retain dependencies and defer an unresolved item with its specific question, then continue ready independent items. Resolve one bounded item, execute it and inspect its result before broad discovery of every other target. Reuse actual retained schemas and results. Simple single-item work does not require a checklist. When host_budget recommends a checkpoint, finish the current readback and propose an honest per-item handoff before another discovery batch; unused calls must cover that handoff. The warning grants no extra allowance or write permission.",
+      "For multi-part work, declare a source-linked checklist with lowercase item IDs early. Retain dependencies and defer an unresolved item with its specific question, then continue ready independent items. Resolve one bounded item, execute it and inspect its result before broad discovery of every other target. Reuse actual retained schemas and results. Simple single-item work does not require a checklist. When host_budget recommends a checkpoint, retain current results and remaining work, then inspect current resources before choosing the next useful batch. Reserve enough for verification and final delivery; the warning grants no extra allowance or write permission.",
       "Keep the return easy to review: record the source sheet/page for each checklist item with action=locate, defer with a specific question, and report actual results briefly. Work-plan status includes stable R/Q references for the user's replies. Keep completed, partial and untouched work distinct; cite useful visual artifacts and put long receipts in a saved report. Never mark a whole comment complete because one of its edits passed. A concise handoff does not resolve prior unfinished reports.",
-      advisory ? "Checklist entries and completions remain agent-owned unverified claims. Inspect useful outcomes directly. Submit an unverified checkpoint using operator_manage_work_plan action=propose_completion and completionProposal with claimed_completed, remaining_work, uncertainties. Specialized proof gaps are advisory; never claim they passed. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer. Each list permits at most 24 entries, each at most 1000 characters. Keep entries concise; provide detailed tables/coordinates in a saved report artifact and include its usable reference. If proposal validation rejects a field, correct and resubmit the report without repeating model edits."
+      advisory ? ADVISORY_HANDOFF_GUIDANCE
         : "Declare and update a small work plan with operator_manage_work_plan for multi-part work. Preserve progress and independent inspection as the task continues.",
       "Native document identity, authorization, transaction outcomes and the durable task are enforced by the host. Do not weaken them or retry an edit with an unknown effect. Inspect and reconcile first.",
       "After a committed edit, inspect affected elements and their relevant parameters/connections; inspect a fresh model image for visual tasks. Report unfinished work honestly.",

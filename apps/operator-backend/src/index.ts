@@ -1,3 +1,4 @@
+import {stopBackgroundWorker} from "./background_worker_lifecycle.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from "./desktop_response_store.js";
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
@@ -11,7 +12,9 @@ import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
-import { conversationDisplay, recordUiContextConversation } from "./conversation_history.js";
+import { recordUiContextConversation } from "./conversation_history.js";
+import {requestConversationPersistenceV1,retainDesktopInitialConversationV1} from './assignments/desktop_conversation.js';
+import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import { getConversationHistory } from "./memory/sqlite_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
 import { appendAuditLine } from "./audit_log.js";
@@ -1264,6 +1267,10 @@ const server = http.createServer(async (req, res) => {
               actor: trimText((body as any)?.assignment_run_actor, 160) || "external_assignment_controller"
             })
           : null;
+        if(assignmentRun?.kernelVersion===2){
+          const snapshot=getAssignmentKernelSnapshotV2(goal.id);
+          if(snapshot)retainDesktopInitialConversationV1(snapshot.current_binding);
+        }
         appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
         return writeJson(res, 200, {
           ok: true,
@@ -2283,9 +2290,9 @@ const server = http.createServer(async (req, res) => {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_stream_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, requestConversationPersistenceV1(parsed, userText, userAttachments));
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, requestConversationPersistenceV1(parsed, macroResp.assistant_message));
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2360,7 +2367,7 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, requestConversationPersistenceV1(parsed, userText, userAttachments));
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2420,7 +2427,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const text = (decision.assistant_message || doneText || streamed || "").toString();
-        appendMessage(parsed.session_id, { role: "assistant", text }, { display: conversationDisplay(parsed.message_id, text) });
+        appendMessage(parsed.session_id, { role: "assistant", text }, requestConversationPersistenceV1(parsed, text));
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {
@@ -2640,9 +2647,9 @@ const server = http.createServer(async (req, res) => {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_chat_macro");
         ensureSession(parsed.session_id);
-        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
+        if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, requestConversationPersistenceV1(parsed, userText, userAttachments));
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
-        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, { display: conversationDisplay(parsed.message_id, macroResp.assistant_message) });
+        appendMessage(parsed.session_id, { role: "assistant", text: macroResp.assistant_message }, requestConversationPersistenceV1(parsed, macroResp.assistant_message));
 
         // Phase 1 journaling: tool outputs and assistant.
         try {
@@ -2711,7 +2718,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, { display: conversationDisplay(parsed.message_id, userText, userAttachments) });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments }, requestConversationPersistenceV1(parsed, userText, userAttachments));
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -2744,7 +2751,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const decision = await decide(boundBrainRequest);
         if (assignmentBinding?.kernelVersion !== 2) journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
-        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message }, { display: conversationDisplay(parsed.message_id, decision.assistant_message) });
+        appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message }, requestConversationPersistenceV1(parsed, decision.assistant_message));
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
         } catch {
@@ -4097,22 +4104,12 @@ function persistServerPlannedStep(sessionId: string, messageId: string, userText
 let uploadQueueWorker: { stop: () => void } | null = null;
 let improvementJobWorker: { stop: () => void } | null = null;
 function refreshImprovementJobWorker(): void {
-  try {
-    improvementJobWorker?.stop();
-  } catch {
-    // ignore
-  }
-  improvementJobWorker = null;
+  improvementJobWorker = stopBackgroundWorker(improvementJobWorker);
   improvementJobWorker = startImprovementJobWorker();
 }
 
 function refreshUploadQueueWorker(): void {
-  try {
-    uploadQueueWorker?.stop();
-  } catch {
-    // ignore
-  }
-  uploadQueueWorker = null;
+  uploadQueueWorker = stopBackgroundWorker(uploadQueueWorker);
   uploadQueueWorker = startUploadQueueWorker();
 }
 

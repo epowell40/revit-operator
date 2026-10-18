@@ -1,4 +1,4 @@
-import { operationInputSchemaGapErrorV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { operationInputSchemaGapErrorV2, isCanonicalNativeAffectedTargetSetV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import {
   OBSERVATION_V2_SCHEMA,
@@ -74,13 +74,7 @@ function validateOperationResultShape(value: unknown): asserts value is Operatio
   adapterAssert(["none", "unknown", "applied"].includes(String(value.persistent_effect)), "operation_result_effect_invalid", "Operation result effect is invalid.");
   adapterAssert(["not_applicable", "not_started", "committed", "rolled_back", "unknown"].includes(String(value.native_transaction_state)), "operation_result_transaction_invalid", "Operation result transaction state is invalid.");
   if (value.affected_target_identities !== undefined) {
-    adapterAssert(Array.isArray(value.affected_target_identities)
-      && value.affected_target_identities.length <= 256
-      && value.affected_target_identities.every(identity => typeof identity === "string"
-        && identity === identity.trim() && identity.length > 0 && identity.length <= 500
-        && !/[\u0000-\u001f\u007f]/.test(identity))
-      && new Set(value.affected_target_identities).size === value.affected_target_identities.length
-      && value.affected_target_identities.every((identity, index, identities) => index === 0 || identities[index - 1]! < identity),
+    adapterAssert(isCanonicalNativeAffectedTargetSetV2(value.affected_target_identities),
     "operation_result_affected_targets_invalid", "Operation result affected targets must be a bounded unique ordinal identity set.");
   }
   if (value.observation_required) adapterAssert(typeof value.raw_payload_hash === "string" && value.raw_payload_hash.length > 0, "operation_result_payload_hash_missing", "Observation-bearing result requires a raw payload hash.");

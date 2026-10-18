@@ -22,9 +22,12 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bound-desktop-relay-"));
   let goalId = "";
   let requests = 0;
+  let upstreamRequest: any;
   const server = http.createServer((request, response) => {
-    request.resume();
+    const chunks: Buffer[] = [];
+    request.on('data',chunk=>chunks.push(Buffer.from(chunk)));
     request.on("end", () => {
+      upstreamRequest=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       requests++;
       const snapshot = getAssignmentKernelSnapshotV2(goalId)!;
       assert.equal(snapshot.in_flight_provider_call_ids.length, 1);
@@ -47,7 +50,10 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a" },
       { ...binding, kernelVersion: 2 });
     assert.equal(requests, 1);
+    assert.match(JSON.stringify(upstreamRequest.input), /operator.desktop-assignment-feedback.v1/);
+    assert.match(JSON.stringify(upstreamRequest.input), /Inspect PDF/);
     assert.equal(result.model_call_receipt.call_id, "bound-upstream");
+    assert.equal(result.status, "completed");
     assert.deepEqual(result.provider_response_usage, {
       schema: "revit-operator.provider-response-usage/v1", session_id: binding.session_id,
       message_id: "direct-request-a", disposition: "completed", raw_response_ids: ["bound-upstream"]
@@ -71,6 +77,25 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     await new Promise<void>(resolve => server.close(() => resolve()));
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("desktop relay preserves incomplete provider status even when its text looks like a valid review", {concurrency:false}, async () => {
+  const previous={key:process.env.OPERATOR_OPENAI_API_KEY,base:process.env.OPERATOR_OPENAI_BASE_URL};
+  let submitted:any;
+  const server=http.createServer((request,response)=>{
+    const chunks:Buffer[]=[];request.on('data',chunk=>chunks.push(Buffer.from(chunk)));request.on('end',()=>{
+      submitted=JSON.parse(Buffer.concat(chunks).toString('utf8'));response.writeHead(200,{'content-type':'application/json'});
+      response.end(JSON.stringify({id:'resp_incomplete_review',status:'incomplete',model:'gpt-6.1-sol',
+        output:[{type:'message',content:[{type:'output_text',text:'{"checks":[{"id":"gap","status":"matched"}]}'}]}],
+        usage:{input_tokens:10,output_tokens:5,total_tokens:15}}));
+    });
+  });
+  try{
+    process.env.OPERATOR_OPENAI_API_KEY='test-key';process.env.OPERATOR_OPENAI_BASE_URL=`http://127.0.0.1:${await listen(server)}`;
+    const r=await relayDesktopComputerResponse({model:'gpt-6.1-sol',reasoning_effort:'medium',instructions:'Independent visual review.',tools:[],input:[{role:'user',content:[{type:'input_text',text:'Inspect the current sheet.'},{type:'input_image',image_url:'data:image/png;base64,aW1hZ2U=',detail:'original'}]}]});
+    assert.equal(r.status,'incomplete');assert.match(r.output_text,/matched/);assert.equal(r.model_call_receipt.tokens.total_tokens,15);
+    assert.deepEqual(submitted.tools,[]);assert.equal(submitted.previous_response_id,undefined);assert.equal(submitted.input[0].content[1].type,'input_image');
+  }finally{if(previous.key===undefined)delete process.env.OPERATOR_OPENAI_API_KEY;else process.env.OPERATOR_OPENAI_API_KEY=previous.key;if(previous.base===undefined)delete process.env.OPERATOR_OPENAI_BASE_URL;else process.env.OPERATOR_OPENAI_BASE_URL=previous.base;await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
 
 async function listen(server: http.Server): Promise<number> {

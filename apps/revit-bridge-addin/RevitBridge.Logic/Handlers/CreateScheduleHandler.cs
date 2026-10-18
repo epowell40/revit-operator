@@ -148,6 +148,10 @@ namespace RevitBridge.Logic.Handlers
             }
 
             long scheduleId = 0;
+            var sourceDefinitionBefore = source == null || kind != ScheduleKind.Clone ? null : ScheduleDefinitionIdentitySnapshot.CaptureDefinition(source);
+            string? resolvedCategoryError = null;
+            var resolvedRequestedCategory = kind == ScheduleKind.Clone ? null
+                : TryResolveCategoryId(doc, ResolveCategoryToken(p, kind), kind, out resolvedCategoryError);
             var failureGuard = new OperatorNativeFailureGuard();
             var response = NativeSingleTransaction.Execute(app, doc, "Create and Place Schedule", createdIds =>
             {
@@ -182,6 +186,13 @@ namespace RevitBridge.Logic.Handlers
                 };
             }, configureTransaction: transaction => NativeNonInteractiveFailureHandling.Configure(transaction, failureGuard));
             response["capturedFailures"] = failureGuard.Failures;
+            response["sourceDefinitionBefore"] = sourceDefinitionBefore;
+            response["categoryResolution"] = new
+            {
+                requested = ResolveCategoryToken(p, kind),
+                categoryId = resolvedRequestedCategory == null ? (long?)null : ElementIdCompat.GetValue(resolvedRequestedCategory),
+                error = resolvedCategoryError
+            };
             OperatorNativeTransactionExecution.ReadCommitted(response, () =>
             {
                 var schedule = doc.GetElement(ElementIdCompat.Create(scheduleId)) as ViewSchedule;
@@ -189,7 +200,8 @@ namespace RevitBridge.Logic.Handlers
                     throw new InvalidOperationException("Created schedule unavailable after commit.");
                 return new Dictionary<string, object?>
                 {
-                    ["schedule"] = new { id = scheduleId, name = schedule.Name, kind = kind.ToString(), fieldCount = SafeGetFieldCount(schedule.Definition) }
+                    ["schedule"] = new { id = scheduleId, name = schedule.Name, kind = kind.ToString(), fieldCount = SafeGetFieldCount(schedule.Definition) },
+                    ["definitionIdentity"] = ScheduleDefinitionIdentitySnapshot.Read(schedule)
                 };
             });
             response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Success");

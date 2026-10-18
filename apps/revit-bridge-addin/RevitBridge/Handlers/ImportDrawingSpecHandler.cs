@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -11,6 +10,8 @@ using System.Xml.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Logic;
+using RevitBridge.Logic.Handlers;
 
 namespace RevitBridge.Handlers
 {
@@ -18,11 +19,14 @@ namespace RevitBridge.Handlers
     {
         public sealed class Params
         {
+            public string? action { get; set; }
             public string? sourcePath { get; set; }
+            public long? manifestElementId { get; set; }
+            public string? expectedSourceSha256 { get; set; }
+            public string? expectedNativeSnapshotSha256 { get; set; }
             public long? viewId { get; set; }
             public string? viewName { get; set; }
             public string? textTypeName { get; set; }
-
             public int? columns { get; set; }
             public double? columnWidthInches { get; set; }
             public double? columnHeightInches { get; set; }
@@ -30,424 +34,167 @@ namespace RevitBridge.Handlers
             public double? marginInches { get; set; }
             public double? startXInches { get; set; }
             public double? startYInches { get; set; }
-
             public bool? dryRun { get; set; }
         }
 
-        public Task<object> Handle(UIApplication app, string jsonData)
+        public Task<object> Handle(UIApplication app, string jsonData) => Task.FromResult(
+            NativeMutationPreflightBoundary.Execute(enterNativeScope => Execute(app, jsonData, enterNativeScope)));
+
+        private static object Execute(UIApplication app, string jsonData, Action enterNativeScope)
         {
-            var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            var doc = app.ActiveUIDocument.Document;
-
-            var src = (p.sourcePath ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(src)) throw new InvalidOperationException("import-drawing-spec.sourcePath is required (path under Workspace).");
-
-            var dryRun = p.dryRun ?? false;
-
-            var full = WorkspacePaths.ResolveExistingFileUnderWorkspace(src);
-            var ext = (Path.GetExtension(full) ?? "").Trim().ToLowerInvariant();
-            var rawText = ReadSourceText(full, ext);
-
-            // Safety cap: avoid creating gigantic TextNotes that can hang UI.
-            if (rawText.Length > 300_000) rawText = rawText.Substring(0, 300_000);
-
-            var columns = ClampInt(p.columns ?? 4, 1, 24);
-            var colWIn = ClampDouble(p.columnWidthInches ?? 8.5, 1.0, 48.0);
-            var colHIn = ClampDouble(p.columnHeightInches ?? 11.0, 1.0, 96.0);
-            var gutterIn = ClampDouble(p.gutterInches ?? 0.25, 0.0, 12.0);
-            var marginIn = ClampDouble(p.marginInches ?? 0.25, 0.0, 12.0);
-            var startXIn = p.startXInches ?? 0.0;
-            var startYIn = p.startYInches ?? 0.0;
-
-            var plan = new
+            var p = JsonSerializer.Deserialize<Params>(jsonData) ?? throw new ArgumentException("Import body is required.");
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            bool updating = p.action == "update";
+            if (p.action != null && p.action != "import" && !updating) throw new ArgumentException("action must be import or update.");
+            if (updating && (!p.manifestElementId.HasValue || p.manifestElementId.Value <= 0 || p.viewId.HasValue || p.viewName != null))
+                throw new ArgumentException("Update the exact manifestElementId; its existing view identities cannot be redirected or renamed.");
+            if (!updating && (p.manifestElementId.HasValue || p.expectedSourceSha256 != null || p.expectedNativeSnapshotSha256 != null))
+                throw new ArgumentException("Managed revision fields require action=update.");
+            var prior = updating ? DrawingSpecNativeImportState.ReadById(document, p.manifestElementId!.Value) : null;
+            if (prior != null)
             {
-                sourcePath = src,
-                sourceFullPath = full,
-                columns,
-                columnWidthInches = colWIn,
-                columnHeightInches = colHIn,
-                gutterInches = gutterIn,
-                marginInches = marginIn,
-                startXInches = startXIn,
-                startYInches = startYIn,
-                textTypeName = string.IsNullOrWhiteSpace(p.textTypeName) ? null : p.textTypeName.Trim()
-            };
-
-            if (dryRun)
-            {
-                return Task.FromResult<object>(new { status = "Dry Run", dryRun = true, plan });
+                DrawingSpecNativeUpdate.RequireCurrent(document, prior, p.expectedSourceSha256, p.expectedNativeSnapshotSha256);
+                if (prior.FlowGeometry == null) throw new InvalidOperationException("Legacy import has no retained column geometry; reconcile its layout explicitly first.");
             }
-
-            using (var t = new Transaction(doc, "Import Drawing Spec"))
+            var path = WorkspacePaths.ResolveExistingFileUnderWorkspace((p.sourcePath ?? "").Trim());
+            if (new FileInfo(path).Length > 64 * 1024 * 1024) throw new InvalidOperationException("Specification source exceeds64MiB; no text was truncated.");
+            var source = ReadSource(path);
+            if (!source.BodyTextComplete || source.Blocks.Any(b => b.Kind != "paragraph" && b.Kind != "section_properties"))
+                throw new InvalidOperationException("Source contains unresolved content or table layout. No partial body import was dispatched.");
+            if (source.Warnings.Any(w => w.Code == "notes_require_placement_policy") || source.Parts.Any(part =>
+                (part.Path.StartsWith("word/header", StringComparison.Ordinal) || part.Path.StartsWith("word/footer", StringComparison.Ordinal)) &&
+                part.Xml != null && XDocument.Parse(part.Xml).Descendants(XName.Get("t", "http://schemas.openxmlformats.org/wordprocessingml/2006/main")).Any(t => t.Value.Length > 0)))
+                throw new InvalidOperationException("Running matter or footnotes need explicit placement support; no content was silently omitted.");
+            var baseType = ResolveType(document, p.textTypeName);
+            var baseFont = DrawingSpecNativeFontProfile.Capture(baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString());
+            string fallbackFont = p.textTypeName == null ? prior?.SourceFallbackFont ?? baseFont.FontFamily : baseFont.FontFamily;
+            double fallbackPoints = p.textTypeName == null && prior?.SourceFallbackPoints != null ? prior.SourceFallbackPoints.Value
+                : baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble());
+            var paragraphs = source.Blocks.Where(b => b.Kind == "paragraph").Select(b => DrawingSpecRichParagraph.Build(b,
+                fallbackFont, fallbackPoints)).ToArray();
+            if (!paragraphs.Any(item => !string.IsNullOrWhiteSpace(item.SourceText))) throw new InvalidOperationException("Specification has no body content.");
+            var fonts = DrawingSpecNativeFontProfile.CaptureAll(paragraphs);
+            if (paragraphs.Any(item => item.NativeText.Length > 1000000)) throw new InvalidOperationException("An individual source paragraph exceeds the bounded native layout limit; split it explicitly before import. No content was truncated.");
+            var blockById = source.Blocks.ToDictionary(b => b.SourcePath);
+            var sourceBlockManifest = JsonSerializer.Serialize(paragraphs.Select(item => new
             {
-                t.Start();
-
-                var view = ResolveOrCreateTargetView(doc, p.viewId, (p.viewName ?? "").Trim());
-                var typeId = ResolveTextTypeId(doc, (p.textTypeName ?? "").Trim());
-
-                var created = CreateSpecColumns(doc, view, typeId, rawText, columns, colWIn, colHIn, gutterIn, marginIn, startXIn, startYIn);
-
-                t.Commit();
-
-                return Task.FromResult<object>(new
-                {
-                    status = "Success",
-                    dryRun = false,
-                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                    viewName = view.Name,
-                    createdTextNoteIds = created.CreatedIds.Select(id => RevitBridge.Common.ElementIdCompat.GetValue(id)).ToArray(),
-                    columnsUsed = created.ColumnsUsed,
-                    remainingLineCount = created.RemainingLineCount,
-                    sourcePath = src
-                });
-            }
-        }
-
-        private sealed class CreateColumnsResult
-        {
-            public List<ElementId> CreatedIds { get; } = new List<ElementId>();
-            public int ColumnsUsed { get; set; }
-            public int RemainingLineCount { get; set; }
-        }
-
-        private static CreateColumnsResult CreateSpecColumns(
-            Document doc,
-            View view,
-            ElementId textTypeId,
-            string rawText,
-            int columns,
-            double columnWidthInches,
-            double columnHeightInches,
-            double gutterInches,
-            double marginInches,
-            double startXInches,
-            double startYInches)
-        {
-            var lines = NormalizeLines(rawText);
-            var result = new CreateColumnsResult();
-            if (lines.Count == 0) return result;
-
-            var colWidthFt = columnWidthInches / 12.0;
-            var colHeightFt = columnHeightInches / 12.0;
-            var gutterFt = gutterInches / 12.0;
-            var marginFt = marginInches / 12.0;
-
-            var textWidthFt = Math.Max(0.05, colWidthFt - (2 * marginFt));
-            var maxHeightFt = Math.Max(0.05, colHeightFt - (2 * marginFt));
-
-            // Desired top-left of the first column (text area, after margins).
-            var startXFt = startXInches / 12.0 + marginFt;
-            var startYFt = startYInches / 12.0 - marginFt;
-
-            var cursor = 0;
-            for (var col = 0; col < columns && cursor < lines.Count; col++)
+                sourceId = item.SourceId, blockById[item.SourceId].ContentSha256,
+                nativeTextSha256 = DrawingSpecNativeImportState.Hash(item.NativeText), characters = item.NativeText.Length,
+                sourceFormattingSha256 = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(item))
+            }));
+            double margin = p.marginInches ?? (updating ? 0 : .25);
+            var geometry = new DrawingSpecFlowGeometry { Columns = p.columns ?? prior?.FlowGeometry?.Columns ?? 4,
+                ColumnWidthInches = p.columnWidthInches.HasValue ? p.columnWidthInches.Value - margin * 2 : prior?.FlowGeometry?.ColumnWidthInches ?? 8.5 - margin * 2,
+                ColumnHeightInches = p.columnHeightInches.HasValue ? p.columnHeightInches.Value - margin * 2 : prior?.FlowGeometry?.ColumnHeightInches ?? 27 - margin * 2,
+                GutterInches = p.gutterInches.HasValue ? p.gutterInches.Value + margin * 2 : prior?.FlowGeometry?.GutterInches ?? .25 + margin * 2 };
+            DrawingSpecColumnFlow.Plan(Array.Empty<DrawingSpecFlowItem>(), geometry, (_, __, ___, ____) => throw new InvalidOperationException("Validation must not measure text."));
+            double x = p.startXInches.HasValue ? p.startXInches.Value + margin : prior?.StartXInches ?? margin;
+            double y = p.startYInches.HasValue ? p.startYInches.Value - margin : prior?.StartYInches ?? -margin;
+            if (double.IsNaN(margin) || double.IsInfinity(margin) || margin < 0 || margin > 12 || !Finite(x) || !Finite(y)) throw new ArgumentException("Invalid printed margins/origin.");
+            var target = updating ? document.GetElement(ElementIdCompat.Create(prior!.ViewIds[0])) as View
+                : p.viewId.HasValue ? document.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View : null;
+            if (p.viewId.HasValue && (target == null || target.IsTemplate || target.ViewType != ViewType.DraftingView)) throw new ArgumentException("viewId must identify a non-template drafting view.");
+            string name = !string.IsNullOrWhiteSpace(p.viewName) ? p.viewName!.Trim() : target?.Name ?? "Drawing Spec " + Path.GetFileNameWithoutExtension(path);
+            if (name.Length > 110) throw new ArgumentException("Specification view name exceeds110characters; no name was silently truncated.");
+            string importKey = prior?.ImportKey ?? JsonSerializer.Serialize(new { filename = Path.GetFileName(path), viewId = p.viewId, name });
+            string inputHash = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(new { source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, fonts = fonts.Values.Select(f => f.Signature).ToArray(), geometry, x, y, p.textTypeName }));
+            if (!updating) prior = DrawingSpecNativeImportState.Find(document, importKey);
+            if (!updating && prior != null && (prior.InputSha256 != inputHash || prior.SourceSha256 != source.SourceSha256))
+                throw new InvalidOperationException("Imported source/settings changed. Retain the prior result for managed-update reconciliation; do not duplicate or overwrite it.");
+            if (prior != null && DrawingSpecNativeImportState.CurrentSnapshotHash(document, prior) != prior.NativeStateSha256)
+                throw new InvalidOperationException("Imported native content changed since its saved manifest. Reconcile those edits before repeating the import.");
+            bool unchanged = prior != null && prior.InputSha256 == inputHash && prior.SourceSha256 == source.SourceSha256;
+            var plan = new { action = updating ? "update" : "import", sourcePath = p.sourcePath, sourceSha256 = source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, paragraphs = paragraphs.Length,
+                geometry, fontProfiles = fonts.Values.ToArray(), startXInches = x, startYInches = y, viewName = name,
+                replacedTextNoteCount = updating ? prior!.Notes.Count : 0,
+                sourceWarnings = source.Warnings, sheetsPlaced = false, independentVerificationComplete = false };
+            if (p.dryRun == true || unchanged)
+                return new { status = p.dryRun == true ? "Dry Run" : "Success", dryRun = p.dryRun == true,
+                    previewExecuted = false, applied = false, alreadyImported = prior != null && !updating, alreadyUpdated = unchanged && updating,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(), plan,
+                    viewIds = prior?.ViewIds.ToArray() ?? Array.Empty<long>(), manifestElementId = prior?.StorageId };
+            var family = new FilteredElementCollector(document).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().FirstOrDefault(t => t.ViewFamily == ViewFamily.Drafting)
+                ?? throw new InvalidOperationException("No drafting view family type.");
+            if (target == null && ViewNameExists(document, name)) throw new InvalidOperationException("Target view name already exists without this import's ownership record. Select its viewId or use a new name.");
+            DrawingSpecStoredImport? stored = null;
+            enterNativeScope();
+            var result = NativeSingleTransaction.Execute(app, document, updating ? "Update owned drawing specification" : "Import complete drawing specification", created =>
             {
-                var colLeftFt = startXFt + (col * (colWidthFt + gutterFt));
-                var topLeft = new XYZ(colLeftFt, startYFt, 0);
-
-                var take = FindMaxLinesThatFit(doc, view, textTypeId, topLeft, textWidthFt, maxHeightFt, lines, cursor);
-                if (take <= 0)
+                DrawingSpecUpdateRevision? revision = null;
+                if (updating)
                 {
-                    throw new InvalidOperationException("Drawing spec does not fit even a single line in the configured column height; reduce text size or increase columnHeightInches.");
+                    DrawingSpecNativeUpdate.RequireCurrent(document, prior!, p.expectedSourceSha256, p.expectedNativeSnapshotSha256);
+                    revision = DrawingSpecNativeUpdate.ReplaceOwnedNotes(document, prior!);
                 }
-
-                var text = string.Join("\n", lines.Skip(cursor).Take(take));
-                var note = CreateTextNote(doc, view, topLeft, textWidthFt, text, textTypeId);
-                AlignTextNoteTopLeft(doc, view, note, topLeft);
-
-                result.CreatedIds.Add(note.Id);
-                cursor += take;
-                result.ColumnsUsed = col + 1;
-            }
-
-            result.RemainingLineCount = Math.Max(0, lines.Count - cursor);
+                View Page(int page)
+                {
+                    if (updating && page < prior!.ViewIds.Count) return (View)document.GetElement(ElementIdCompat.Create(prior.ViewIds[page]));
+                    if (page == 0 && target != null) return target;
+                    string pageName = page == 0 ? name : name + " - " + (page + 1).ToString("D2");
+                    if (ViewNameExists(document, pageName)) throw new InvalidOperationException("Continuation view name collides with unrelated work: " + pageName);
+                    var view = ViewDrafting.Create(document, family.Id); view.Name = pageName; view.Scale = 1;
+                    created.Add(ElementIdCompat.GetValue(view.Id)); return view;
+                }
+                var layout = DrawingSpecNativeLayout.Render(document, paragraphs, geometry, baseType, Page, created, x, y, fonts);
+                stored = new DrawingSpecStoredImport { ImportKey = importKey, SourceSha256 = source.SourceSha256, InputSha256 = inputHash,
+                    SourceFallbackFont = fallbackFont, SourceFallbackPoints = fallbackPoints,
+                    FlowGeometry = geometry, StartXInches = x, StartYInches = y,
+                    ViewIds = updating ? prior!.ViewIds.Concat(layout.ViewIds).Distinct().ToList() : layout.ViewIds,
+                    Notes = layout.Notes, LayoutSpansJson = JsonSerializer.Serialize(layout.LayoutSpans),
+                    StorageId = updating ? prior!.StorageId : 0, LastUpdate = revision,
+                    SourceBlocksJson = sourceBlockManifest, SourceWarnings = source.Warnings.Select(w => w.Code + ":" + w.SourcePath).ToList() };
+                stored.NativeStateSha256 = DrawingSpecNativeImportState.CurrentSnapshotHash(document, stored);
+                if (updating) DrawingSpecNativeImportState.Replace(document, prior!, stored);
+                else DrawingSpecNativeImportState.Store(document, stored, created);
+                DrawingSpecManagedUpdateGuard.RequireBoundedInventory(created.Concat(stored.ViewIds).Append(stored.StorageId)
+                    .Concat(revision?.ReplacedTextNoteIds ?? new List<long>()));
+                return new Dictionary<string, object?> { ["viewId"] = layout.ViewIds[0], ["viewIds"] = stored.ViewIds,
+                    ["activeViewIds"] = layout.ViewIds, ["unusedContinuationViewIds"] = stored.ViewIds.Except(layout.ViewIds).ToArray(),
+                    ["updated"] = updating, ["managedUpdate"] = DrawingSpecNativeUpdate.InspectRevision(document, stored),
+                    ["createdTextNoteIds"] = layout.Notes.Select(n => n.Id).ToArray(), ["sourceSha256"] = source.SourceSha256,
+                    ["manifestElementId"] = stored.StorageId, ["paragraphCount"] = paragraphs.Length, ["remainingParagraphCount"] = 0,
+                    ["nativeMetricProbes"] = layout.NativeProbes, ["metricCacheEntries"] = layout.MetricCacheEntries,
+                    ["sourceWarnings"] = source.Warnings, ["sheetsPlaced"] = false,
+                    ["remainingWork"] = new[] { "Place continuation drafting views on appropriate sheets and review source/layout visually.", "Independent integral verification is still required." } };
+            });
+            OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                if (stored == null || DrawingSpecNativeImportState.CurrentSnapshotHash(document, stored) != stored.NativeStateSha256)
+                    throw new InvalidOperationException("Committed imported text differs from its retained native snapshot.");
+                return new Dictionary<string, object?> { ["nativeSnapshotSha256"] = stored.NativeStateSha256,
+                    ["nativeSnapshotScope"] = "imported_text_parameters_and_character_status_not_visual_or_whole_task" };
+            });
+            result.Remove("verified"); result.Remove("ok");
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
             return result;
         }
 
-        private static int FindMaxLinesThatFit(
-            Document doc,
-            View view,
-            ElementId textTypeId,
-            XYZ desiredTopLeft,
-            double widthFt,
-            double maxHeightFt,
-            List<string> lines,
-            int startIndex)
+        private static TextNoteType ResolveType(Document document, string? name)
         {
-            var remaining = lines.Count - startIndex;
-            if (remaining <= 0) return 0;
-
-            int lo = 1;
-            int hi = remaining;
-            int best = 0;
-
-            while (lo <= hi)
-            {
-                var mid = lo + (hi - lo) / 2;
-                var candidate = string.Join("\n", lines.Skip(startIndex).Take(mid));
-                var tmp = CreateTextNote(doc, view, desiredTopLeft, widthFt, candidate, textTypeId);
-                try
-                {
-                    AlignTextNoteTopLeft(doc, view, tmp, desiredTopLeft);
-                    var bb = tmp.get_BoundingBox(view);
-                    if (bb == null) throw new InvalidOperationException("Unable to measure TextNote bounds.");
-                    var height = bb.Max.Y - bb.Min.Y;
-                    if (height <= maxHeightFt)
-                    {
-                        best = mid;
-                        lo = mid + 1;
-                    }
-                    else
-                    {
-                        hi = mid - 1;
-                    }
-                }
-                finally
-                {
-                    try { doc.Delete(tmp.Id); } catch { }
-                }
-            }
-
-            return best;
+            var types = new FilteredElementCollector(document).OfClass(typeof(TextNoteType)).Cast<TextNoteType>().ToArray();
+            if (!string.IsNullOrWhiteSpace(name)) return types.SingleOrDefault(t => string.Equals(t.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("Requested base text type was not found.");
+            return document.GetElement(document.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType)) as TextNoteType ?? types.FirstOrDefault()
+                ?? throw new InvalidOperationException("No base text type.");
         }
-
-        private static void AlignTextNoteTopLeft(Document doc, View view, TextNote note, XYZ desiredTopLeft)
+        private static bool ViewNameExists(Document document, string name) => new FilteredElementCollector(document).OfClass(typeof(View)).Cast<View>().Any(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase));
+        private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+        internal static DrawingSpecSourceManifest ReadSource(string path)
         {
-            var bb = note.get_BoundingBox(view);
-            if (bb == null) return;
-            var dx = desiredTopLeft.X - bb.Min.X;
-            var dy = desiredTopLeft.Y - bb.Max.Y;
-            if (Math.Abs(dx) < 1e-8 && Math.Abs(dy) < 1e-8) return;
-            ElementTransformUtils.MoveElement(doc, note.Id, new XYZ(dx, dy, 0));
-        }
-
-        private static TextNote CreateTextNote(Document doc, View view, XYZ origin, double widthFt, string text, ElementId textTypeId)
-        {
-            var opts = new TextNoteOptions(textTypeId)
-            {
-                HorizontalAlignment = HorizontalTextAlignment.Left
-            };
-
-            var methods = typeof(TextNote).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .Where(m => string.Equals(m.Name, "Create", StringComparison.Ordinal))
-                .ToList();
-
-            // Prefer overload: (Document, ElementId, XYZ, double, string, TextNoteOptions)
-            foreach (var m in methods)
-            {
-                var ps = m.GetParameters();
-                if (ps.Length != 6) continue;
-                if (ps[0].ParameterType != typeof(Document)) continue;
-                if (ps[1].ParameterType != typeof(ElementId)) continue;
-                if (ps[2].ParameterType != typeof(XYZ)) continue;
-                if (ps[3].ParameterType != typeof(double)) continue;
-                if (ps[4].ParameterType != typeof(string)) continue;
-                if (ps[5].ParameterType != typeof(TextNoteOptions)) continue;
-
-                return (TextNote)m.Invoke(null, new object[] { doc, view.Id, origin, widthFt, text, opts });
-            }
-
-            // Fallback: (Document, ElementId, XYZ, string, ElementId)
-            foreach (var m in methods)
-            {
-                var ps = m.GetParameters();
-                if (ps.Length != 5) continue;
-                if (ps[0].ParameterType != typeof(Document)) continue;
-                if (ps[1].ParameterType != typeof(ElementId)) continue;
-                if (ps[2].ParameterType != typeof(XYZ)) continue;
-                if (ps[3].ParameterType != typeof(string)) continue;
-                if (ps[4].ParameterType != typeof(ElementId)) continue;
-
-                var tn = (TextNote)m.Invoke(null, new object[] { doc, view.Id, origin, text, textTypeId });
-                TrySetTextNoteWidth(tn, widthFt);
-                return tn;
-            }
-
-            throw new InvalidOperationException("No supported TextNote.Create overload found in this Revit version.");
-        }
-
-        private static void TrySetTextNoteWidth(TextNote tn, double widthFt)
-        {
-            try
-            {
-                var prop = tn.GetType().GetProperty("Width", BindingFlags.Public | BindingFlags.Instance);
-                if (prop == null || !prop.CanWrite) return;
-                if (prop.PropertyType != typeof(double)) return;
-                prop.SetValue(tn, widthFt);
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        private static View ResolveOrCreateTargetView(Document doc, long? viewId, string desiredName)
-        {
-            if (viewId.HasValue && viewId.Value > 0)
-            {
-                var v = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(viewId.Value)) as View;
-                if (v == null) throw new InvalidOperationException($"View {viewId.Value} not found.");
-                return v;
-            }
-
-            var name = string.IsNullOrWhiteSpace(desiredName) ? $"Drawing Spec_{DateTime.Now:yyyyMMdd_HHmmss}" : desiredName;
-            name = name.Trim();
-            if (name.Length > 120) name = name.Substring(0, 120).Trim();
-            name = EnsureUniqueViewName(doc, name);
-
-            var vft = new FilteredElementCollector(doc)
-                .OfClass(typeof(ViewFamilyType))
-                .Cast<ViewFamilyType>()
-                .FirstOrDefault(x => x.ViewFamily == ViewFamily.Drafting);
-            if (vft == null) throw new InvalidOperationException("No ViewFamilyType for Drafting views found.");
-
-            var dv = ViewDrafting.Create(doc, vft.Id);
-            dv.Name = name;
-            return dv;
-        }
-
-        private static string EnsureUniqueViewName(Document doc, string name)
-        {
-            var existing = new FilteredElementCollector(doc)
-                .OfClass(typeof(View))
-                .Cast<View>()
-                .Where(v => v != null && !v.IsTemplate)
-                .Select(v => v.Name ?? "")
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (!existing.Contains(name)) return name;
-            for (int i = 2; i <= 50; i++)
-            {
-                var cand = $"{name} ({i})";
-                if (!existing.Contains(cand)) return cand;
-            }
-            return $"{name} ({Guid.NewGuid().ToString("N").Substring(0, 6)})";
-        }
-
-        private static ElementId ResolveTextTypeId(Document doc, string typeName)
-        {
-            if (!string.IsNullOrWhiteSpace(typeName))
-            {
-                var match = new FilteredElementCollector(doc)
-                    .OfClass(typeof(TextNoteType))
-                    .Cast<TextNoteType>()
-                    .FirstOrDefault(t => string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match.Id;
-            }
-
-            try
-            {
-                var def = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
-                if (def != null && def != ElementId.InvalidElementId) return def;
-            }
-            catch { }
-
-            return new FilteredElementCollector(doc).OfClass(typeof(TextNoteType)).FirstElementId();
-        }
-
-        private static string ReadSourceText(string fullPath, string extLower)
-        {
-            if (string.Equals(extLower, ".txt", StringComparison.OrdinalIgnoreCase))
-            {
-                return File.ReadAllText(fullPath, Encoding.UTF8);
-            }
-
-            if (string.Equals(extLower, ".docx", StringComparison.OrdinalIgnoreCase))
-            {
-                return ExtractTextFromDocx(fullPath);
-            }
-
-            if (string.Equals(extLower, ".doc", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Legacy .doc is not supported. Please Save As .docx (or export as .txt) and try again.");
-            }
-
-            throw new InvalidOperationException($"Unsupported spec file type: {extLower}. Supported: .docx, .txt");
-        }
-
-        private static string ExtractTextFromDocx(string filePath)
-        {
-            using (var archive = ZipFile.OpenRead(filePath))
-            {
-                var entry = archive.GetEntry("word/document.xml");
-                if (entry == null) throw new InvalidOperationException("Invalid .docx: missing word/document.xml");
-                using (var s = entry.Open())
-                using (var reader = new StreamReader(s, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-                {
-                    var xml = reader.ReadToEnd();
-                    return ExtractTextFromWordprocessingXml(xml);
-                }
-            }
-        }
-
-        private static string ExtractTextFromWordprocessingXml(string xml)
-        {
-            var w = XNamespace.Get("http://schemas.openxmlformats.org/wordprocessingml/2006/main");
-            XDocument doc;
-            try
-            {
-                doc = XDocument.Parse(xml, LoadOptions.None);
-            }
-            catch
-            {
-                return "";
-            }
-
-            var sb = new StringBuilder();
-            var body = doc.Root?.Element(w + "body");
-            if (body == null) return "";
-
-            foreach (var p in body.Elements(w + "p"))
-            {
-                var para = new StringBuilder();
-                foreach (var node in p.Descendants())
-                {
-                    if (node.Name == w + "t")
-                    {
-                        para.Append(node.Value);
-                    }
-                    else if (node.Name == w + "tab")
-                    {
-                        para.Append('\t');
-                    }
-                    else if (node.Name == w + "br" || node.Name == w + "cr")
-                    {
-                        para.Append('\n');
-                    }
-                }
-
-                var text = para.ToString().TrimEnd('\r', '\n');
-                sb.Append(text);
-                sb.Append("\n\n");
-            }
-
-            return sb.ToString().Trim();
-        }
-
-        private static List<string> NormalizeLines(string raw)
-        {
-            var s = (raw ?? "").Replace("\r\n", "\n").Replace("\r", "\n");
-            s = s.Trim();
-            if (s.Length == 0) return new List<string>();
-
-            var parts = s.Split('\n');
-            // Preserve blank lines.
-            return parts.Select(x => x ?? "").ToList();
-        }
-
-        private static int ClampInt(int v, int min, int max)
-        {
-            if (v < min) return min;
-            if (v > max) return max;
-            return v;
-        }
-
-        private static double ClampDouble(double v, double min, double max)
-        {
-            if (double.IsNaN(v) || double.IsInfinity(v)) return min;
-            if (v < min) return min;
-            if (v > max) return max;
-            return v;
+            var extension = Path.GetExtension(path);
+            if (!string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase) && !string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Supported specification sources are .docx and .txt; legacy .doc must be converted explicitly.");
+            var bytes = File.ReadAllBytes(path);
+            if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase)) return DocxDrawingSpecSourceReader.Read(bytes);
+            string digest;
+            using (var hash = SHA256.Create()) digest = BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+            var manifest = new DrawingSpecSourceManifest { SourceSha256 = digest };
+            var text = new UTF8Encoding(false, true).GetString(bytes).Replace("\r\n", "\n").Replace('\r', '\n');
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var block = new DrawingSpecBlock { SourcePath = "text/0", Kind = "paragraph", Text = text,
+                PropertiesXml = new XElement(w + "pPr").ToString(), ContentSha256 = digest };
+            block.Runs.Add(new DrawingSpecRun { Text = text, PropertiesXml = new XElement(w + "rPr").ToString() });
+            manifest.Blocks.Add(block); return manifest;
         }
     }
 }
-

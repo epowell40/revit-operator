@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="Fixtures\native-dependency-signature-unsupported.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\native-table-style-passive-getter-rejected.json" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
@@ -23,6 +25,8 @@
     <None Include="Fixtures\view-range-preview-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\visibility-plan-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\rename-view-plan-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\cad-capability-probe-unsettled131.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\cad-named-owner-before-sheet132.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\c109-registered-stage-blocked-rollback.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\c114-registered-stage-preflight-not-started.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\c138-registered-branch-blocked-rollback.json" CopyToOutputDirectory="PreserveNewest" />

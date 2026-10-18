@@ -153,7 +153,9 @@ function criteria(snapshot: AssignmentSnapshotV2): VerifiedWorkAcceptanceCriteri
   });
 }
 
-function status(snapshot: AssignmentSnapshotV2): VerifiedWorkPacketStatus {
+function status(snapshot: AssignmentSnapshotV2, overallTrust: VerifiedWorkTrust): VerifiedWorkPacketStatus {
+  if (["complete", "verified_noop"].includes(snapshot.outcome)
+    && overallTrust !== "independently_verified") return "complete_with_issues";
   if (snapshot.outcome === "complete") return "verified_complete";
   if (snapshot.outcome === "complete_with_issues") return "complete_with_issues";
   if (snapshot.outcome === "verified_noop") return "verified_no_op";
@@ -237,6 +239,7 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
   assertProviderLedgerCoherent(snapshot);
   const actionRows = actions(snapshot);
   const criterionRows = criteria(snapshot);
+  const overallTrust = packetOverallTrustV2(snapshot);
   const providerUsage = {
     input_tokens: sumProviderUsage(snapshot, "input_tokens"), output_tokens: sumProviderUsage(snapshot, "output_tokens"),
     total_tokens: sumProviderUsage(snapshot, "total_tokens"), estimated_cost_usd: sumProviderUsage(snapshot, "estimated_cost_usd")
@@ -264,8 +267,10 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
       exclusions: [...goal.non_goals], constraints: [],
       authorization_envelope: { policy_id: snapshot.spec.authorization_policy_id, deviation_policy_id: snapshot.spec.deviation_policy_id ?? null }
     },
-    status: status(snapshot),
-    status_reason: snapshot.terminal_reason ?? `assignment_kernel_v2_${snapshot.outcome}`,
+    status: status(snapshot, overallTrust),
+    status_reason: ["complete", "verified_noop"].includes(snapshot.outcome) && overallTrust !== "independently_verified"
+      ? `Historical outcome ${snapshot.outcome} is retained; current verification is incomplete.`
+      : snapshot.terminal_reason ?? `assignment_kernel_v2_${snapshot.outcome}`,
     grounded_targets: [...new Set(actionRows.flatMap(action => action.target_identities))].map(identity => ({
       identity, element_id: /^id:\d+$/.test(identity) ? identity.slice(3) : /^\d+$/.test(identity) ? identity : null, view_id: null, sheet_id: null,
       family_id: null, type_id: null, system_id: null, room_id: null, space_id: null,
@@ -294,10 +299,10 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
       telemetry_complete: Object.values(providerUsage).every(value => value !== null), human_intervention: null
     },
     trust_presentation: {
-      overall: packetOverallTrustV2(snapshot),
+      overall: overallTrust,
       agent_reported: "Reported by an agent; never authoritative execution truth.",
       native_execution_evidence: "Bound to one OperationV2 and an authoritative retained ObservationV2.",
-      independently_verified: "Accepted by the criterion model using exact Operation and Observation fact identities.",
+      independently_verified: "Accepted criteria and current native readback using exact Operation and Observation fact identities.",
       uncertain_or_missing: "Required authority, criterion support, or reconciliation is absent."
     }
   };

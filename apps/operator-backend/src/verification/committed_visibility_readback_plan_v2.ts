@@ -2,6 +2,7 @@ import type { AssignmentSnapshotV2, OperationV2 } from '../domain/assignment-ker
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
 import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
 import { visibilityExpectedValuesV2 } from './visibility_view_contract_v2.js';
+import { visibilityCheckNeedsRefreshV2 } from './regular_schedule_recheck_v2.js';
 
 /** One independent native read of an explicit committed view setting.
  * Direct category overrides prove stored properties, not effective linked
@@ -22,8 +23,9 @@ export function committedVisibilityReadbackPlanV2(snapshot: AssignmentSnapshotV2
     || !sameAssignmentBindingV2(r.binding, operation.binding)
     || !operation.request_identity.request_signature || r.request_identity?.request_signature !== operation.request_identity.request_signature
     || !Number.isFinite(Date.parse(r.completed_at)) || !r.affected_target_identities?.includes('element_id:' + body.viewId)
-    || operation.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)) return null;
-  if (Object.values(snapshot.operations).some(other => other.operation_id !== operation.operation_id
+    || ((operation.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))
+      && !visibilityCheckNeedsRefreshV2(snapshot,operation))) return null;
+  if (!visibilityCheckNeedsRefreshV2(snapshot,operation) && Object.values(snapshot.operations).some(other => other.operation_id !== operation.operation_id
     && other.requested_effect === 'apply' && other.persistent_effect !== 'none' && other.opened_at >= operation.opened_at
     && ((other.input.body as any)?.viewId === body.viewId
       || other.result?.affected_target_identities?.includes('element_id:' + body.viewId)))) return null;

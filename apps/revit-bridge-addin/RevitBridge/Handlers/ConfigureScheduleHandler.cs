@@ -72,7 +72,7 @@ namespace RevitBridge.Handlers
             public int[]? backgroundColorRgb { get; set; } // [r,g,b]
         }
 
-        public sealed class AppearanceSpec
+        public sealed class AppearanceSpec : RevitBridge.Common.ScheduleTextStyles
         {
             public bool? showTitle { get; set; }
             public bool? showHeaders { get; set; }
@@ -87,6 +87,8 @@ namespace RevitBridge.Handlers
             public bool? exact { get; set; }
 
             public List<string>? addFields { get; set; }
+            public List<int>? fieldOrder { get; set; }
+            public RevitBridge.Common.ScheduleCombinedFieldSpec? combinedField { get; set; }
             public List<FilterSpec>? filters { get; set; }
             public bool? replaceFilters { get; set; }
 
@@ -104,6 +106,7 @@ namespace RevitBridge.Handlers
             public bool? filterBySheet { get; set; }
 
             public bool? dryRun { get; set; }
+            public List<RevitBridge.Common.ScheduleCellBackgroundChange>? cellStyles { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -115,11 +118,35 @@ namespace RevitBridge.Handlers
             var doc = app.ActiveUIDocument?.Document;
             if (doc == null) throw new InvalidOperationException("No active Revit document.");
 
+            if (p.cellStyles != null)
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCellAppearanceContract.Validate(body.RootElement, true, out var error))
+                        throw new ArgumentException(error);
+                return Task.FromResult<object>(ScheduleCellAppearanceOperations.Edit(app, doc, p.scheduleId!.Value, p.cellStyles, p.dryRun ?? false));
+            }
+
+            if (p.combinedField != null)
+            {
+                using (var body = JsonDocument.Parse(jsonData))
+                    if (!RevitBridge.Common.ScheduleCombinedFieldContract.ValidateEdit(body.RootElement, out var error)) throw new ArgumentException(error);
+                return Task.FromResult<object>(ScheduleCombinedFieldOperations.Edit(app, doc, p.scheduleId!.Value, p.combinedField, p.dryRun ?? false));
+            }
+
             var exact = p.exact ?? false;
             var schedule = ScheduleSelectionHelper.ResolveSchedule(doc, p.scheduleId, p.query, exact);
             if (schedule == null)
             {
-                throw new InvalidOperationException("Schedule not found. Provide scheduleId or query.");
+                // Resolution happens before BuildPlan/ApplyOperations and before any transaction.
+                // A panel schedule is a TableView, not a ViewSchedule. Return authoritative
+                // no-effect truth so a valid alternate tool can be used without replaying a write.
+                return Task.FromResult<object>(new
+                {
+                    status = "Failed",
+                    errorCode = "regular_schedule_required",
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
+                    message = "No regular ViewSchedule matched. Advanced configuration (including rowHeights) requires a regular schedule. For a PanelScheduleView, use the supported native API operations to read and set TableSectionData row heights or text; cellStyles is a separate supported panel-schedule operation. Resolve the current schedule before continuing."
+                });
             }
 
             var hasAddFields = p.addFields != null && p.addFields.Any(x => !string.IsNullOrWhiteSpace(x));
@@ -133,12 +160,35 @@ namespace RevitBridge.Handlers
             var hasAppearance = p.appearance != null;
             var hasFilterBySheet = p.filterBySheet.HasValue;
 
-            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
+            if (p.fieldOrder == null && !hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !p.isItemized.HasValue)
             {
                 throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet, isItemized).");
             }
 
             var dryRun = p.dryRun ?? false;
+            using (var body = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData))
+                if (!RevitBridge.Common.SchedulePresentationContract.Validate(body.RootElement, out var error))
+                    return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = error,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            try {
+                RegularSchedulePresentation.Preflight(doc, schedule, p.fieldOrder, p.appearance);
+                if (hasColumnWidths && !hasAddFields && !hasCalculatedFields)
+                    foreach (var width in p.columnWidths!) ResolveUniqueWidthField(doc, schedule, width.field!);
+                using (var formatBody = JsonDocument.Parse(jsonData))
+                {
+                    if (RevitBridge.Common.ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow(formatBody.RootElement))
+                        return Task.FromResult<object>(new { status = "Failed", errorCode = "standard_schedule_body_row_height_unsupported",
+                            message = "Revit does not permit per-row resizing in a standard schedule body. For all body rows, omit rowNumber and use the host-supported schedule-wide override; the header/data spacer requires the Appearance UI. No mutation was started.",
+                            transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+                    if (RevitBridge.Common.ScheduleFieldFormatContract.IsBoundedEdit(formatBody.RootElement))
+                        foreach (var format in p.fieldFormats!) ResolveUniqueWidthField(doc, schedule, format.field!);
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                return Task.FromResult<object>(new { status = "Failed", errorCode = "invalid_schedule_presentation", message = ex.Message,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            }
             var plan = BuildPlan(doc, schedule, p);
             if (dryRun)
             {
@@ -156,7 +206,25 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            var result = ApplyOperations(app, doc, schedule, p);
+            bool scopedPresentation, scopedRowHeights;
+            using (var body = JsonDocument.Parse(jsonData)) {
+                scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
+                scopedRowHeights = RevitBridge.Common.ScheduleRowHeightPolicy.IsBoundedEdit(body.RootElement);
+            }
+            var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
+            var rowHeightsBefore = scopedRowHeights ? RegularScheduleRowHeights.Read(schedule) : null;
+            var presentationBefore = scopedRowHeights ? RegularSchedulePresentation.Read(doc, schedule) : null;
+            if (scopedRowHeights && !JsonSerializer.SerializeToElement(rowHeightsBefore).GetProperty("complete").GetBoolean())
+                return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_row_height_preservation", rowHeightsBefore,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            object? definitionBefore = scopedPresentation && (hasColumnWidths || hasFieldFormats || scopedRowHeights) ? ScheduleCombinedFieldOperations.Read(doc, schedule) : null;
+            if (definitionBefore != null && !JsonSerializer.SerializeToElement(definitionBefore).GetProperty("complete").GetBoolean())
+                return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_width_preservation", definitionBefore,
+                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            var result = ApplyOperations(app, doc, schedule, p, scopedPresentation && hasFieldFormats);
+            if (definitionBefore != null) result["definitionBefore"] = definitionBefore;
+            if (scopedRowHeights) { result["rowHeightsBefore"] = rowHeightsBefore; result["presentationBefore"] = presentationBefore; }
+            if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
             result["status"] = RevitBridge.Common.OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
             result["dryRun"] = false;
             result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name };
@@ -165,6 +233,10 @@ namespace RevitBridge.Handlers
             {
                 try
                 {
+                    if (scopedPresentation) result["presentationScopeAfter"] = RegularSchedulePresentationScope.Capture(doc, schedule);
+                    result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
+                    if (scopedRowHeights) result["rowHeightsAfter"] = RegularScheduleRowHeights.Read(schedule);
+                    if (definitionBefore != null) result["definitionAfter"] = ScheduleCombinedFieldOperations.Read(doc, schedule);
                     result["filterReadback"] = schedule.Definition.GetFilters().Select(filter => new
                     {
                         fieldId = filter.FieldId.IntegerValue,
@@ -175,7 +247,7 @@ namespace RevitBridge.Handlers
                             : filter.IsIntegerValue ? (object)filter.GetIntegerValue() : filter.IsDoubleValue ? (object)filter.GetDoubleValue()
                             : filter.IsStringValue ? (object)filter.GetStringValue() : null
                     }).ToArray();
-                    result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), name = schedule.Name,
+                    result["schedule"] = new { id = RevitBridge.Common.ElementIdCompat.GetValue(schedule.Id), uniqueId = schedule.UniqueId, name = schedule.Name,
                         fieldCount = schedule.Definition.GetFieldCount(), isItemized = schedule.Definition.IsItemized };
                 }
                 catch (Exception ex)
@@ -328,17 +400,21 @@ namespace RevitBridge.Handlers
                 },
                 appearance = new
                 {
+                    titleTextTypeId = p.appearance?.titleTextTypeId,
+                    headerTextTypeId = p.appearance?.headerTextTypeId,
+                    bodyTextTypeId = p.appearance?.bodyTextTypeId,
                     showTitle = p.appearance?.showTitle,
                     showHeaders = p.appearance?.showHeaders,
                     stripedRows = p.appearance?.stripedRows,
                     freezeHeaders = p.appearance?.freezeHeaders
                 },
+                fieldOrder = p.fieldOrder,
                 isItemized = new { before = definition.IsItemized, requested = p.isItemized },
                 filterBySheet = p.filterBySheet
             };
         }
 
-        private static Dictionary<string, object?> ApplyOperations(UIApplication app, Document doc, ViewSchedule schedule, Params p)
+        private static Dictionary<string, object?> ApplyOperations(UIApplication app, Document doc, ViewSchedule schedule, Params p, bool boundedFieldFormats)
         {
             var addResults = new List<object>();
             var filterResults = new List<object>();
@@ -351,7 +427,7 @@ namespace RevitBridge.Handlers
             var appearanceResults = new List<object>();
             var filterBySheetResults = new List<object>();
 
-            return RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Configure Schedule", created =>
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Configure Schedule", created =>
             {
                 if (p.isItemized.HasValue)
                     schedule.Definition.IsItemized = p.isItemized.Value;
@@ -379,6 +455,7 @@ namespace RevitBridge.Handlers
                 if (p.rowHeights != null)
                 {
                     ApplyRowHeights(schedule, p.rowHeights, rowHeightResults);
+                    if (p.rowHeights.Count > 0) RevitBridge.Common.ScheduleRowHeightPolicy.RequireAppliedRows(JsonSerializer.SerializeToElement(rowHeightResults));
                 }
 
                 if (p.calculatedFields != null)
@@ -388,13 +465,15 @@ namespace RevitBridge.Handlers
 
                 if (p.fieldFormats != null)
                 {
-                    ApplyFieldFormats(doc, schedule, p.fieldFormats, fieldFormatResults);
+                    ApplyFieldFormats(doc, schedule, p.fieldFormats, fieldFormatResults, boundedFieldFormats);
                 }
 
                 if (p.conditionalFormats != null)
                 {
                     ApplyConditionalFormats(doc, schedule, p.conditionalFormats, conditionalResults);
                 }
+
+                RegularSchedulePresentation.Apply(schedule, p.fieldOrder, p.appearance, appearanceResults);
 
                 if (p.appearance != null)
                 {
@@ -420,6 +499,8 @@ namespace RevitBridge.Handlers
                 filterBySheet = filterBySheetResults
             } };
             });
+            if (rowHeightResults.Count > 0 && (!result.TryGetValue("success", out var success) || !Equals(success, true))) result["rowHeightAttemptReadback"] = rowHeightResults;
+            return result;
         }
 
         private static void ApplyAddFields(Document doc, ViewSchedule schedule, List<string> addFields, List<object> addResults)
@@ -568,41 +649,25 @@ namespace RevitBridge.Handlers
             }
         }
 
+        private static ScheduleField ResolveUniqueWidthField(Document doc, ViewSchedule schedule, string name)
+        {
+            var matches = schedule.Definition.GetFieldOrder().Select(id => schedule.Definition.GetField(id))
+                .Where(f => string.Equals(ScheduleSelectionHelper.ReadFieldName(f, doc)?.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1) throw new ArgumentException("Column width requires one unambiguous existing field named " + name + "; found " + matches.Length + ". Resolve duplicate field names before changing widths.");
+            return matches[0];
+        }
+
         private static void ApplyColumnWidths(Document doc, ViewSchedule schedule, List<ColumnWidthSpec> columnWidths, List<object> widthResults)
         {
             foreach (var item in columnWidths)
             {
-                var fieldName = (item.field ?? "").Trim();
-                if (fieldName.Length == 0)
-                {
-                    widthResults.Add(new { field = fieldName, status = "Skipped", reason = "field is required" });
-                    continue;
-                }
-
-                if (!item.widthFeet.HasValue || item.widthFeet.Value <= 0 || item.widthFeet.Value > 100)
-                {
-                    widthResults.Add(new { field = fieldName, status = "Skipped", reason = "widthFeet must be > 0 and <= 100" });
-                    continue;
-                }
-
-                var field = ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
-                if (field == null)
-                {
-                    widthResults.Add(new { field = fieldName, status = "NotFound" });
-                    continue;
-                }
-
-                var width = item.widthFeet.Value;
-                var setGrid = TrySetDoubleProperty(field, "GridColumnWidth", width);
-                var setSheet = TrySetDoubleProperty(field, "SheetColumnWidth", width);
-
-                widthResults.Add(new
-                {
-                    field = fieldName,
-                    status = (setGrid || setSheet) ? "Applied" : "Skipped",
-                    widthFeet = width,
-                    appliedTo = new { grid = setGrid, sheet = setSheet }
-                });
+                var field = ResolveUniqueWidthField(doc, schedule, item.field!);
+                var width = item.widthFeet!.Value;
+                field.GridColumnWidth = width; field.SheetColumnWidth = width;
+                if (Math.Abs(field.GridColumnWidth - width) > 1e-8 || Math.Abs(field.SheetColumnWidth - width) > 1e-8)
+                    throw new InvalidOperationException("Requested grid and sheet column widths did not read back; roll back.");
+                widthResults.Add(new { field = item.field!.Trim(), fieldId = field.FieldId.IntegerValue, status = "Applied", widthFeet = width,
+                    appliedTo = new { grid = true, sheet = true } });
             }
         }
 
@@ -791,7 +856,7 @@ namespace RevitBridge.Handlers
             }
         }
 
-        private static void ApplyFieldFormats(Document doc, ViewSchedule schedule, List<FieldFormatSpec> fieldFormats, List<object> results)
+        private static void ApplyFieldFormats(Document doc, ViewSchedule schedule, List<FieldFormatSpec> fieldFormats, List<object> results, bool exactNames)
         {
             foreach (var item in fieldFormats)
             {
@@ -802,7 +867,7 @@ namespace RevitBridge.Handlers
                     continue;
                 }
 
-                var field = ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
+                var field = exactNames ? ResolveUniqueWidthField(doc, schedule, fieldName) : ScheduleSelectionHelper.FindFieldByName(schedule, doc, fieldName);
                 if (field == null)
                 {
                     results.Add(new { field = fieldName, status = "NotFound" });

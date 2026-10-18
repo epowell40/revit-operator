@@ -12,6 +12,22 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorAttemptSettlementTests
     {
         [Fact]
+        public void CadCapabilityProbeNeedsAnAuthoritativeNotStartedReceipt()
+        {
+            var raw = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "cad-capability-probe-unsettled131.json"));
+            var original = OperatorAttemptSuccessfulSettlement.Classify(JsonNode.Parse(raw)!, "preview", "POST", "/revit/link-cad");
+            Assert.Equal("unknown", original.EffectState);
+            var repaired = CadLinkPreflightCapability.CreateResponse();
+            var known = OperatorAttemptSuccessfulSettlement.Classify(repaired, "preview", "POST", "/revit/link-cad");
+            Assert.Equal("none", known.EffectState);
+            Assert.Equal("native_transaction_not_started", known.EffectReason);
+            Assert.False(repaired.previewExecuted);
+            var corrupted = JsonNode.Parse(JsonSerializer.Serialize(repaired))!;
+            corrupted["transaction"]!["status"] = "pending";
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(corrupted, "preview", "POST", "/revit/link-cad").EffectState);
+        }
+
+        [Fact]
         public void C138BlockedInteriorTeeWithOuterAndChildRollbackIsKnownNoEffect()
         {
             const string path = "/revit/existing-conditions-mep-draft-workflow";

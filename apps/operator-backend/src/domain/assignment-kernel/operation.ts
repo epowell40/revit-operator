@@ -69,13 +69,15 @@ export interface OperationV2 {
   native_completion_reconciliation?: import("@revitoperator/assignment-kernel-v2-contracts").NativeCompletionReconciliationV1;
   /** Derived only from retained native diagnostics; never accepted at admission. */
   native_failure_context?: import("./native_failure_context.js").NativeFailureContextV1;
+  /** Reducer-derived complete native source census; not verified model work. */
+  native_inventory_workload?: import('./native_inventory_workload.js').NativeInventoryWorkloadV1;
   observation_commit?: ObservationCommitInputV2;
   observation_commit_attempts?: number;
   observation_ids: readonly ObservationIdV2[];
   verification_operation_ids: readonly OperationIdV2[];
   verification_of_operation_id?: OperationIdV2;
   retry_of_operation_id?: OperationIdV2;
-  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered" | "committed_target_change" | "family_session_capacity_released";
+  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered" | "committed_target_change" | "family_session_capacity_released" | "native_pre_dispatch_read";
   retry_after_operation_id?: OperationIdV2;
   /** A new same-document save after a later committed edit; not a write retry. */
   checkpoint_of_operation_id?: OperationIdV2;
@@ -84,6 +86,10 @@ export interface OperationV2 {
   native_template_state?: import("./template_reassignment.js").NativeTemplateStateV1;
   reassignment_of_operation_id?: OperationIdV2;
   reassignment_after_operation_id?: OperationIdV2;
+  /** Native filter-only counter-state; intentional restoration is single-use. */
+  native_schedule_filter_state?: import('./schedule_filter_restoration.js').NativeScheduleFilterStateV1;
+  filter_restoration_of_operation_id?: OperationIdV2;
+  filter_restoration_after_operation_id?: OperationIdV2;
   /** Reducer-derived ordering; never accepted from an admission proposal. */
   admitted_assignment_version?: number;
   settled_assignment_version?: number;

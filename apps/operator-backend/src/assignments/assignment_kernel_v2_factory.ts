@@ -200,7 +200,6 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     principal_id: principalId,
     ...(documentFingerprint ? { document_fingerprint: documentFingerprint } : {})
   };
-  const executionPolicy = selectLocalAdvisoryPolicy(binding, process.env, undefined, requestedEffect(input.goal),input.source_work_allowance);
   const effect = requestedEffect(input.goal);
   // Re-fetch the exact authenticated intake receipt. Work-budget/client hints
   // cannot smuggle interpreted authority into a newly created Assignment.
@@ -211,6 +210,8 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     source_message_id:messageId,source_request_sha256:operationScopeRequestHash(exactSource),scope:structuredClone(intake.operation_scope)
   }:undefined;
   if(interpretedScope&&interpretedScope.scope.requested_effect!==effect)throw Error("assignment_kernel_v2_interpreted_effect_mismatch");
+  const executionPolicy=selectLocalAdvisoryPolicy(binding,process.env,undefined,effect,input.source_work_allowance,
+    interpretedScope?exactSource:input.goal.objective);
   const inputVariables = inputs(input.goal,interpretedScope);
   const criterionSpecs = criteria(input.goal);
   return {

@@ -1,12 +1,19 @@
+import {mergeEvaluation,projectWorkUnitCriteria} from './criterion_projection.js';
+import { isCanonicalNativeAffectedTargetSetV2 } from '@revitoperator/assignment-kernel-v2-contracts';
+import { defaultAssignmentWorkBudgetV2, allocateAuthenticatedFollowupV1 } from "./effective_work_budget.js";
+import { USER_FOLLOWUP_ALLOCATION_V1 } from './user_followup_allocation.js';
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
+import { preDispatchReadRetryV2 } from './pre_dispatch_read_retry.js';
 import { recordWorkPlanLocationV2 } from './work_plan_location.js';
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
 import { validLocalAdvisoryPolicyV1, validAdvisoryProposalV1 } from "./execution_policy.js";
 import { deriveNativeFailureContextV1 } from "./native_failure_context.js";
+import {deriveNativeInventoryWorkloadV1} from './native_inventory_workload.js';
 import { committedTargetChangeRetryV2 } from "./committed_target_retry.js";
 import { documentCheckpointContinuationV2 } from "./document_checkpoint.js";
 import { deriveNativeTemplateStateV1, templateReassignmentV1 } from "./template_reassignment.js";
+import { deriveNativeScheduleFilterStateV1, scheduleFilterRestorationV1 } from './schedule_filter_restoration.js';
 import { validBoundOperationScope, prerequisiteValueSatisfied } from "./operation_scope.js";
 import { advisoryVerificationV2 } from "./execution_policy.js";
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
@@ -15,14 +22,13 @@ import { canonicalJsonV2 } from "./canonical.js";
 import { nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { declareWorkPlanV2, completeWorkPlanItemV2, workPlanPendingV2, deferWorkPlanItemV2, workPlanItemDeferredV2 } from "./work_plan.js";
-import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2, AdvisoryCheckpointContinuationV1 } from "./events.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./progress/execution_time.js";
 import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import { validWorkPlanScopeV1 } from './work_plan_scope.js';
 import type { CriterionEvaluationV2 } from "./criteria.js";
-import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
+import { deriveAssignmentOutcomeV2 } from "./outcome.js";
 import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
 import { operationMatchesTargetIdentityV2 } from "./operation_target_identity.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
@@ -43,7 +49,7 @@ const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
 /** Rechecked under the journal lock. Saving a direction may precede resolution;
  * only that command's own pending input may survive a crash-prefix preflight. */
 export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnapshotV2, reviewId: string,
-  continuation: AdvisoryCheckpointContinuationV1, now: string, preparingDirection = false): void {
+  continuation: AdvisoryCheckpointContinuationV1, now: string, preparingDirection = false, allocateNewWork = false): void {
   kernelAssertV2(advisoryVerificationV2(snapshot) && !snapshot.terminal, "advisory_continuation_not_enabled", "An open advisory task is required.");
   kernelAssertV2(Boolean(continuation) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(continuation.command_id)
     && typeof continuation.direction_text === "string" && continuation.direction_text.trim().length > 0 && continuation.direction_text.length <= 8000
@@ -60,22 +66,31 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
   kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0, "advisory_continuation_reconciliation_required", "Unknown effects cannot be released by a follow-up.");
   kernelAssertV2(snapshot.pending_input_variable_ids.every(id => preparingDirection && id === continuation.direction_variable_id),
     "advisory_continuation_input_pending", "Other execution-critical answers are still required.");
-  kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && snapshot.execution_failure_ids.length === 0,
+  kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && !snapshot.provider_usage_hold && snapshot.execution_failure_ids.length === 0,
     "advisory_continuation_execution_blocked", "A checkpoint cannot clear execution failure or budget stops.");
-  const policy = snapshot.spec.execution_policy!;
-  kernelAssertV2(Object.keys(snapshot.provider_calls).length < policy.max_provider_calls
-    && Object.keys(snapshot.operations).length < policy.max_operations
-    && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < policy.max_total_tokens
-    && assignmentActiveExecutionTimeMsV2(snapshot, now) < policy.max_wall_clock_ms,
+  const candidate = allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,continuation.command_id,now) : snapshot;
+  const budget = advisoryWorkBudget(candidate);
+  kernelAssertV2(Object.keys(snapshot.provider_calls).length < budget.max_provider_calls
+    && Object.keys(snapshot.operations).length < budget.max_operations
+    && Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0) < budget.max_total_tokens
+    && assignmentActiveExecutionTimeMsV2(snapshot, now) < budget.max_wall_clock_ms,
     "advisory_continuation_budget_exhausted", "Continuation retains the original usage limits.");
   if (!preparingDirection) {
     const input = snapshot.clarifications[continuation.command_id];
     kernelAssertV2(input?.variable_id === continuation.direction_variable_id && Boolean(input.resolved_at)
       && snapshot.input_values[continuation.direction_variable_id] === continuation.direction_text,
       "advisory_continuation_direction_not_saved", "The authenticated follow-up must be saved before releasing its checkpoint.");
-    kernelAssertV2(deriveAssignmentOutcomeV2({ ...snapshot, completion_proposal: undefined, pending_review_ids: [] }) === "active",
+    kernelAssertV2(deriveAssignmentOutcomeV2({ ...candidate, completion_proposal: undefined, pending_review_ids: [] }) === "active",
       "advisory_continuation_execution_blocked", "The task still has unresolved execution prerequisites.");
   }
+}
+
+function advisoryWorkBudget(snapshot: AssignmentSnapshotV2) {
+  const policy = snapshot.spec.execution_policy!;
+  return defaultAssignmentWorkBudgetV2(snapshot, {
+    ...policy, max_reasoning_turns: policy.max_provider_calls, max_equivalent_operations: 0,
+    max_no_progress_epochs: 0, max_reconciliation_attempts: 0
+  });
 }
 const PROVIDER_STATE_RANK: Readonly<Record<ProviderCallStateV2, number>> = {
   admitted: 0,
@@ -227,9 +242,12 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
   assertProviderUsageOperationAdmissionV1(snapshot, operation);
   kernelAssertV2(operation.native_failure_context === undefined, "operation_native_failure_context_forbidden", "Failure context is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_inventory_workload === undefined,'operation_native_inventory_workload_forbidden','Source workload is derived only from retained native evidence.');
   kernelAssertV2(operation.native_template_state === undefined, "operation_native_template_state_forbidden", "Template state is derived only from retained native evidence.");
+  kernelAssertV2(operation.native_schedule_filter_state === undefined, 'operation_native_filter_state_forbidden', 'Filter state is derived only from retained native evidence.');
   const advisory = advisoryVerificationV2(snapshot);
-  kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < snapshot.spec.execution_policy!.max_operations, "operation_budget_exhausted", "The immutable local operation budget is exhausted.");
+  kernelAssertV2(!advisory || Object.keys(snapshot.operations).length < advisoryWorkBudget(snapshot).max_operations,
+    "operation_budget_exhausted", "The retained local operation allowance is exhausted.");
   kernelAssertV2(!snapshot.completion_proposal || Boolean(operation.parent_operation_id), "assignment_completion_proposal_pending", "A proposed checkpoint admits no new root work.");
   kernelAssertV2(advisory || operation.requested_effect !== "apply" || !snapshot.spec.work_plan_required || Boolean(snapshot.work_plan),
     "assignment_kernel_v2_declare_work_plan_before_apply", "Multi-part editing requires a declared scope before native admission.");
@@ -308,8 +326,15 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && reassignment.reassignment_after_operation_id === operation.reassignment_after_operation_id,
     "operation_template_reassignment_invalid", "Reassignment requires an unused native committed counter-state on the exact view.");
   }
+  const restoration = operation.filter_restoration_of_operation_id || operation.filter_restoration_after_operation_id
+    ? scheduleFilterRestorationV1(snapshot, operation) : null;
+  if (operation.filter_restoration_of_operation_id !== undefined || operation.filter_restoration_after_operation_id !== undefined) {
+    kernelAssertV2(!!restoration && restoration.filter_restoration_of_operation_id === operation.filter_restoration_of_operation_id
+      && restoration.filter_restoration_after_operation_id === operation.filter_restoration_after_operation_id,
+    'operation_filter_restoration_invalid', 'Restoration requires an unused native committed counter-state on the exact schedule.');
+  }
   const equivalent = Object.values(snapshot.operations).find((candidate) => operationProgressIdentityV2(candidate) === operationProgressIdentityV2(operation));
-  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || operation.purpose === "reconciliation",
+  kernelAssertV2((advisory && operation.requested_effect === "read") || !equivalent || Boolean(operation.retry_of_operation_id) || Boolean(checkpoint) || Boolean(reassignment) || Boolean(restoration) || operation.purpose === "reconciliation",
     "operation_progress_equivalent_repeat", "Equivalent operation requires a typed retry or reconciliation basis.");
   if (advisory && operation.requested_effect === "apply" && operation.request_identity) {
     const duplicateWrite = Object.values(snapshot.operations).some(prior => prior.requested_effect === "apply"
@@ -318,7 +343,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && prior.request_identity?.path === operation.request_identity!.path
       && prior.request_identity?.request_signature === operation.request_identity!.request_signature
       && (prior.persistent_effect !== "none" || prior.settlement_state !== "settled"));
-    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
+    kernelAssertV2(!duplicateWrite || Boolean(checkpoint) || Boolean(reassignment) || Boolean(restoration), "operation_native_write_repeat_unsafe", "Applied or unsettled native requests cannot be replayed by changing semantic metadata.");
   }
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
@@ -369,6 +394,11 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
     kernelAssertV2(Boolean(operation.retry_basis), "operation_retry_basis_missing", "A retry must state the material correction that permits it.");
+    if(operation.retry_basis==='native_pre_dispatch_read'){
+      const correction=preDispatchReadRetryV2(snapshot,operation);
+      kernelAssertV2(correction?.retry_of_operation_id===operation.retry_of_operation_id,
+        'operation_pre_dispatch_read_retry_invalid','Retry requires an unused, settled native non-dispatch of the same verification read and unchanged committed subject.');
+    }
     if (operation.retry_basis === "family_session_capacity_released") {
       const correction = familyCapacityRetryV2(snapshot, operation);
       kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
@@ -469,13 +499,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
     if (error) kernelAssertV2(false, error.code, error.message);
   }
   if (result.affected_target_identities !== undefined) {
-    kernelAssertV2(Array.isArray(result.affected_target_identities)
-      && result.affected_target_identities.length <= 256
-      && result.affected_target_identities.every(identity => typeof identity === "string"
-        && identity === identity.trim() && identity.length > 0 && identity.length <= 500
-        && !/[\u0000-\u001f\u007f]/.test(identity))
-      && new Set(result.affected_target_identities).size === result.affected_target_identities.length
-      && result.affected_target_identities.every((identity, index, identities) => index === 0 || identities[index - 1]! < identity)
+    kernelAssertV2(isCanonicalNativeAffectedTargetSetV2(result.affected_target_identities)
       && (result.affected_target_identities.length === 0
         || (result.dispatch_state === "dispatched" && ["native-host", "dynamic-runtime"].includes(result.authority))),
     "operation_result_affected_targets_invalid", "Affected targets require a bounded, unique, ordinal native settlement identity set.");
@@ -502,50 +526,6 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
       && gap.native_replay_allowed === false,
     "operation_result_semantic_gap_invalid", "A result-semantic gap must bind the exact operation/result contract and prohibit provider correction or native replay.");
   }
-}
-
-function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: CriterionEvaluationV2): CriterionEvaluationV2 {
-  if (!previous || previous.status === next.status || ["needs_input", "needs_review", "partial", "uncertain"].includes(previous.status)) return next;
-  if (previous.status === "pass" && next.status === "pass") return next;
-  return {
-    ...next,
-    status: "uncertain",
-    basis: "policy",
-    supporting_operation_ids: [...new Set([...previous.supporting_operation_ids, ...next.supporting_operation_ids])].sort(),
-    supporting_facts: [...previous.supporting_facts, ...next.supporting_facts],
-    reason: `Conflicting authoritative criterion evaluations: ${previous.status} versus ${next.status}.`
-  };
-}
-
-function projectWorkUnitCriteria(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 {
-  const states = { ...snapshot.work_unit_states };
-  const appliedOperations = Object.values(snapshot.operations)
-    .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");
-  const verificationUnitIds = new Set([
-    ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
-    ...Object.values(snapshot.operations)
-      .filter((operation) => operation.purpose === "verification")
-      .map((operation) => operation.work_unit_id)
-  ]);
-  for (const unit of snapshot.spec.work_units) {
-    if (unit.criterion_ids.length === 0) continue;
-    const evaluations = unit.criterion_ids.map(id => snapshot.criteria[id]).filter(Boolean);
-    if (evaluations.length !== unit.criterion_ids.length) continue;
-    if (evaluations.every(row => row!.status === "pass" || row!.status === "not_applicable")) {
-      if (snapshot.spec.requested_effect === "apply" && verificationUnitIds.has(unit.work_unit_id)) {
-        const verifiedNoop = appliedOperations.length === 0
-          && evaluations.some((evaluation) => evaluation!.basis === "desired_state_equivalence");
-        const everyApplyVerified = appliedOperations.length > 0
-          && appliedOperations.every((operation) =>
-            appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id));
-        if (!verifiedNoop && !everyApplyVerified) continue;
-      }
-      states[unit.work_unit_id] = "complete";
-    } else if (unit.safe_to_retain && evaluations.some(row => row!.status === "pass" || row!.status === "partial")) {
-      states[unit.work_unit_id] = "retained";
-    }
-  }
-  return { ...snapshot, work_unit_states: states };
 }
 
 function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation: CriterionEvaluationV2): void {
@@ -914,6 +894,8 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const nativeFailureContext = deriveNativeFailureContextV1(operation, nativeFailureDependencyLinksV1(
           operation.observation_commit?.raw_payload, [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]));
         const nativeTemplateState = deriveNativeTemplateStateV1(operation);
+        const nativeFilterState = deriveNativeScheduleFilterStateV1(operation);
+        const nativeInventoryWorkload=deriveNativeInventoryWorkloadV1(operation);
         const settledOperation = {
           ...operation,
           settlement_state: "settled" as const,
@@ -922,6 +904,8 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           observation_retention_error: undefined,
           ...(nativeFailureContext ? { native_failure_context: nativeFailureContext } : {}),
           ...(nativeTemplateState ? { native_template_state: nativeTemplateState } : {}),
+          ...(nativeFilterState ? { native_schedule_filter_state: nativeFilterState } : {}),
+          ...(nativeInventoryWorkload?{native_inventory_workload:nativeInventoryWorkload}:{}),
           // The exact payload remains in the immutable result event and the
           // authoritative evidence store. Only pending retention needs another
           // in-memory copy; settled duplicate delivery rehydrates the evidence.
@@ -1072,12 +1056,13 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         break;
       case "review_resolved":
         kernelAssertV2(snapshot.pending_review_ids.includes(event.review_id), "review_resolution_unknown", "Review resolution does not match a pending review.");
-        if (event.decision === "continue_advisory_checkpoint_v1") {
+        if (event.decision === "continue_advisory_checkpoint_v1" || event.decision === USER_FOLLOWUP_ALLOCATION_V1) {
           kernelAssertV2(event.actor === "authenticated-user", "advisory_continuation_authority_invalid", "Only an authenticated user can continue a checkpoint.");
-          assertAdvisoryCheckpointContinuationV1(snapshot, event.review_id, event.continuation!, event.occurred_at);
+          const allocateNewWork = event.decision === USER_FOLLOWUP_ALLOCATION_V1;
+          assertAdvisoryCheckpointContinuationV1(snapshot, event.review_id, event.continuation!, event.occurred_at, false, allocateNewWork);
           // The immutable proposal remains in its original review_requested event.
           // Only the pending projection changes; identity, controls and usage do not.
-          snapshot = { ...snapshot, completion_proposal: undefined };
+          snapshot = { ...(allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,event.continuation!.command_id,event.occurred_at) : snapshot), completion_proposal: undefined };
         } else kernelAssertV2(event.continuation === undefined, "advisory_continuation_decision_invalid", "Continuation requires its versioned decision.");
         snapshot = { ...snapshot, pending_review_ids: snapshot.pending_review_ids.filter((id) => id !== event.review_id) };
         break;

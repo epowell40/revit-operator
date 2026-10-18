@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {createContentVerifiedJournalV2} from '../src/assignments/content_verified_journal_v2.js';
 import { normalizeAssignmentInputsV2 } from "../src/assignments/assignment_kernel_v2_input_adapter.js";
+import {defaultAssignmentWorkBudgetV2} from '../src/domain/assignment-kernel/effective_work_budget.js';
+import {utf8TextSha256V2} from '../src/domain/assignment-kernel/canonical.js';
+import {DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 as inventoryOrdinaryBudget} from '../src/assignments/assignment_kernel_v2_progress.js';
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   ASSIGNMENT_SPEC_V2_SCHEMA,
@@ -105,6 +108,33 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
   journal.append(event(journal, { event_type: "assignment_created", spec: assignmentSpec }));
   return journal;
 }
+
+test('native source planning derives at retention, cold replays identically and cannot be supplied at admission',()=>{
+ const a=spec('apply');a.source_user_request='Review all panel schedules throughout this project.';
+ a.work_units=[...a.work_units,{...a.work_units[0]!,work_unit_id:'census-unit',requested_effect:'read',rollback_scope:'none'}];
+ a.execution_policy={mode:'local_advisory_v1',selected_by:'trusted_local_host',session_id:binding.session_id,document_fingerprint:binding.document_fingerprint!,max_turns:8,max_provider_calls:64,max_operations:256,max_total_tokens:8_000_000,max_wall_clock_ms:20*60_000,
+  native_scope_planning:{mode:'native_inventory_planning_v1',scope_kind:'schedules',source_request_sha256:utf8TextSha256V2(a.source_user_request),items_per_unit:5,max_units:4},
+  progress_allowance:{mode:'verified_native_changes_v1',credit_unit:'distinct_verified_targets_v1',max_provider_calls:256,max_operations:1024,max_total_tokens:32_000_000,max_wall_clock_ms:120*60_000}};
+ const journal=createJournal(a),q={capability_id:'inventory.read',method:'POST' as const,path:'/revit/schedules',request_signature:'native-census'};
+ const op={...operation('read','evidence_read'),work_unit_id:'census-unit',request_identity:q,input:{method:'POST',path:q.path,body:{action:'list',kind:'panel',max:100}}};
+ const before=journal.snapshot();assert.throws(()=>journal.append(event(journal,{event_type:'operation_admitted',operation:{...op,native_inventory_workload:{} as any}})),(e:any)=>e.code==='operation_native_inventory_workload_forbidden');assert.deepEqual(journal.snapshot(),before);
+ journal.append(event(journal,{event_type:'operation_admitted',operation:op}));
+ journal.append(event(journal,{event_type:'native_dispatch_recorded',operation_id:op.operation_id,native_correlation_id:'native-1'}));
+ const uid=(id:number)=>'00000000-0000-0000-0000-000000000000-'+id.toString(16).padStart(8,'0');
+ const raw={schema:'operator.schedule_inventory.v1',status:'Ok',action:'list',kind:'panel',offset:0,max:100,query:null,matched:21,returned:21,complete:true,hasMore:false,nextOffset:null,
+  items:Array.from({length:21},(_,i)=>({id:i+1,uniqueId:uid(i+1),kind:'panel_schedule',isTemplate:false,panelElementId:i+101,panelUniqueId:uid(i+101)}))};
+ const r={...result(raw),result_schema_id:'operator-native/POST:/revit/schedules/v2',request_identity:q};
+ journal.append(event(journal,{event_type:'operation_result_recorded',result:r,observation_commit:{schema:'revit-operator.observation-commit-input/v2',result_id:r.result_id,raw_payload:raw,semantic_facts:[]}}));
+ assert.equal(defaultAssignmentWorkBudgetV2(journal.snapshot(),inventoryOrdinaryBudget).max_provider_calls,64,'Pending retention earns nothing');
+ const decoder=new ObservationDecoderRegistryV2();decoder.register(r.result_schema_id,()=>[]);
+ const observation=observationFor(journal,r,'observed-inventory','evidence:retained-inventory',raw,decoder);
+ const settled=journal.append(event(journal,{event_type:'observation_retained',observation}));
+ assert.equal(settled.operations[op.operation_id]!.observation_commit,undefined);
+ assert.equal(settled.operations[op.operation_id]!.native_inventory_workload?.item_count,21);
+ assert.equal(defaultAssignmentWorkBudgetV2(settled,inventoryOrdinaryBudget).max_provider_calls,256);
+ assert.deepEqual(settled.criteria,before.criteria,'Source discovery did not certify the requested work');
+ assert.deepEqual(reduceAssignmentEventsV2(journal.events()),settled);assert.deepEqual(settled.spec.execution_policy,a.execution_policy);
+});
 
 test('saved scope selectors replay without certifying checklist claims or criterion truth',()=>{
   const assignment=spec('apply');assignment.work_units=[...assignment.work_units,{...assignment.work_units[0]!,work_unit_id:'work-2',requested_effect:'read',rollback_scope:'none'}];
@@ -291,6 +321,40 @@ function result(rawPayload: unknown, effect: "read" | "preview" | "apply" = "rea
     completed_at: "2026-08-26T12:00:04.000Z"
   };
 }
+
+test("large native affected sets survive transport, durable kernel replay and still require verification", () => {
+  for (const count of [257, 400, 4096]) {
+    const identities = Array.from({ length: count }, (_, i) => `element_id:${1000000 + i}`).sort();
+    const nativeResult = { ...result({}, "apply"), affected_target_identities: identities };
+    const decoded = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: nativeResult } });
+    const journal = createJournal(spec("apply"));
+    journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+    journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+    const saved = journal.append(event(journal, { event_type: "operation_result_recorded", result: decoded }));
+    assert.deepEqual(saved.operations["operation-1"]!.result!.affected_target_identities, identities);
+    assert.deepEqual(reduceAssignmentEventsV2(JSON.parse(JSON.stringify(journal.events()))), saved);
+    assert.notEqual(saved.outcome, "complete");
+    assert.equal(saved.operations["operation-1"]!.verification_operation_ids.length, 0);
+  }
+});
+
+test("large-set admission retains malformed, duplicate, unsorted and non-native authority guards", () => {
+  const ids = Array.from({ length: 400 }, (_, i) => `element_id:${1000000 + i}`).sort();
+  for (const identities of [[...ids, ids[0]!], [...ids].reverse(), [...ids, " bad"], [...ids, "bad\u0000id"],
+    Array.from({ length: 4097 }, (_, i) => `element_id:${1000000 + i}`).sort()]) {
+    const nativeResult = { ...result({}, "apply"), affected_target_identities: identities };
+    assert.throws(() => unwrapOperationResultV2({ transport: "direct_native", operation_result_v2: nativeResult }), /affected targets/);
+    const direct = createJournal(spec("apply"));
+    direct.append(event(direct, { event_type: "operation_admitted", operation: operation("apply") }));
+    direct.append(event(direct, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+    assert.throws(() => direct.append(event(direct, { event_type: "operation_result_recorded", result: nativeResult })), /Affected targets/);
+  }
+  const journal = createJournal(spec("apply"));
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+  assert.throws(() => journal.append(event(journal, { event_type: "operation_result_recorded",
+    result: { ...result({}, "apply"), authority: "model" as any, affected_target_identities: ids } })));
+});
 
 function registry(): ObservationDecoderRegistryV2 {
   const output = new ObservationDecoderRegistryV2();

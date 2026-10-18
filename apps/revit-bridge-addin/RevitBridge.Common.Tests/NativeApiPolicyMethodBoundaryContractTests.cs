@@ -9,6 +9,24 @@ namespace RevitBridge.Common.Tests
     public sealed class NativeApiPolicyMethodBoundaryContractTests
     {
         [Fact]
+        public void DependencyReadExceptionIsSdkBoundGraphOnlyAndRejectsNonNullBeforeInvocation()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway, "private static NativeApiMemberDescriptor? BuildDescriptor(",
+                "dependencyRead.DeclaringType == typeof(Element)",
+                "dependencyRead.DeclaringType.Assembly == typeof(Element).Assembly",
+                "OperatorNativeDependencyReadPolicy.IsUnfilteredRead(",
+                "!unfilteredDependencyRead && !IsGraphSupportedType(p.ParameterType)",
+                "Callable = unsupported.Count == 0", "UnfilteredDependencyRead = unfilteredDependencyRead");
+            AssertOrdered(gateway, "var provided = descriptor == null ? new List<JsonElement>() : ReadArgs(operation.args);",
+                "OperatorNativeDependencyReadPolicy.RequireNullFilter(provided)",
+                "var args = new object?[ps.Length];", "args[i] = null;",
+                "raw = propertyInfo != null ? propertyInfo.GetValue(targetObject, null) : InvokeReflectedMember(descriptor!, targetObject, args);");
+            Assert.Contains("BoundedNativeSequence.Project(seq, item => ReturnShape(item, depth + 1))", gateway);
+            Assert.Contains("native-api-ops v2 is read-only; member is not low-risk", gateway);
+        }
+
+        [Fact]
         public void SingleCallGatewayRejectsMutationAndFreezeRiskBeforeReflection()
         {
             var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
@@ -17,6 +35,42 @@ namespace RevitBridge.Common.Tests
                 "public static object Invoke(UIApplication app, string memberId, string? target, JsonElement? args, bool dryRun)",
                 "if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)",
                 "raw = InvokeReflectedMember(descriptor, invokeTarget, values);");
+        }
+
+        [Fact]
+        public void PassivePropertyExceptionBindsSdkMetadataAndKeepsFreezeGuard()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway,
+                "private static PropertyInfo ResolveReadableProperty(",
+                "var matches = target.GetType()",
+                "var property = matches[0];",
+                "property.DeclaringType?.Assembly == typeof(Element).Assembly",
+                "OperatorNativePresentationPropertyReadPolicy.IsPassiveRead(",
+                "property.DeclaringType?.FullName, property.Name, property.PropertyType.FullName",
+                "IsFreezeRiskHint(propertyName, target.GetType()) && !passivePresentationRead",
+                "is blocked by the freeze-risk policy",
+                "return property;");
+            // The exception belongs only to a public-property read. Single-call
+            // and mutation-graph method risk fences still classify executable calls.
+            Assert.Contains("if (descriptor.MutatingHint || descriptor.FreezeRiskHint || descriptor.RiskLevel != OperatorActionRisk.Low)", gateway);
+            Assert.Contains("native-api-mutation-ops blocks freeze-risk members:", gateway);
+        }
+
+        [Fact]
+        public void GraphReceiptsCaptureActualElementReceiverBeforeInvocation()
+        {
+            var gateway = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorNativeApiGateway.cs");
+            AssertOrdered(gateway,
+                "targetObject = ResolveOperationTarget(operation.target, descriptor.DeclaringType, app, values, id);",
+                "var targetIdentity = CaptureElementReceiverIdentity(targetObject, app.ActiveUIDocument?.Document);",
+                "raw = propertyInfo != null ? propertyInfo.GetValue(targetObject, null) : InvokeReflectedMember(descriptor!, targetObject, args);",
+                "target_identity = targetIdentity");
+            Assert.Contains("schema = \"operator.native_element_receiver.v1\"", gateway);
+            Assert.Contains("element_id = ElementIdCompat.GetValue(element.Id)", gateway);
+            Assert.Contains("unique_id = element.UniqueId", gateway);
+            Assert.Contains("type_name = element.GetType().FullName", gateway);
+            Assert.Contains("active_document = activeDocument != null && element.Document.Equals(activeDocument)", gateway);
         }
 
         [Fact]
@@ -71,6 +125,11 @@ namespace RevitBridge.Common.Tests
             {
                 var candidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments).ToArray());
                 if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                if (relativeSegments.Length > 1 && relativeSegments[0] == "apps")
+                {
+                    var integrationCandidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments.Skip(1)).ToArray());
+                    if (File.Exists(integrationCandidate)) return File.ReadAllText(integrationCandidate);
+                }
                 cursor = cursor.Parent;
             }
 

@@ -19,6 +19,9 @@ import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../assignments/assignment
 import { projectWorkPlan } from '../assignments/work_plan_projection.js';
 import { assignmentBudgetForPrompt } from './assignment_budget_prompt.js';
 import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js';
+import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
+import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
+import {createDesktopHelperCallLeaseV1} from './desktop_helper_budget.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -94,19 +97,20 @@ function executionControlContext(snapshot: AssignmentSnapshotV2): string {
   ].join("\n");
 }
 
-export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, concise = false): Readonly<{
+export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, concise = false, desktopHelperScope?:unknown): Readonly<{
   snapshot: AssignmentSnapshotV2;
   prompt: string;
   message: string;
 }> {
   const progression = advanceAssignmentKernelProgressV2({ binding });
+  const helperLease=createDesktopHelperCallLeaseV1(progression.snapshot,desktopHelperScope);
   const prompt = advisoryVerificationV2(progression.snapshot) && progression.decision.decision === "admit_reasoning_turn"
       ? ["CURRENT TASK:", progression.snapshot.spec.source_user_request,
         `Requested effect: ${progression.snapshot.spec.requested_effect}`,
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        "When done or returning a best effort, call operator_manage_work_plan action=propose_completion with completionProposal={claimed_completed: [...], remaining_work: [...], uncertainties: [...]}. This stops for independent review, not verified completion. The completion proposal is the final user-visible answer: the host stops the turn when it is submitted. Put the requested results themselves in claimed_completed (actual counts and each requested group, values, conclusions, or usable artifact references), not just statements that you inspected or prepared them. A result that you have not delivered belongs in remaining_work. Keep scope limitations in uncertainties. Do not expect a later assistant message to supply the answer. Each list permits at most 24 entries, each at most 1000 characters. Keep entries concise; provide detailed tables/coordinates in a saved report artifact and include its usable reference. If proposal validation rejects a field, correct and resubmit the report without repeating model edits.",
+        desktopHelperScopeForSnapshotV1(progression.snapshot,desktopHelperScope)?DESKTOP_SCOPED_HELPER_GUIDANCE:ADVISORY_HANDOFF_GUIDANCE,
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"
@@ -121,7 +125,8 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
     snapshot: progression.snapshot,
     prompt: prompt ? [prompt,
       `Host budget status: ${JSON.stringify(assignmentBudgetForPrompt(assignmentWorkBudgetStatusV2(progression.snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString())))}`,
-      "For multi-part work, retain a source-linked checklist, group related marks, and check operator_manage_work_plan status after each useful batch. Record completed operations and unresolved questions promptly. A near-limit warning means finish the current verification and save an honest checkpoint; do not spend the remaining allowance rediscovering completed work. Task counts and assistant claims do not authorize extra budget or prove completion.",
+      ...(helperLease?[`Scoped helper share: ${helperLease.granted_calls} provider calls from the current parent allowance, including your report. Return useful findings and references promptly so the desktop owner can inspect, correct, save and deliver. This is not an additional allowance. A helper-only tool limitation is a handback to that owner, not a reason to exhaust the task or ask the human to operate its tools.`]:[]),
+      "For multi-part work, retain a source-linked checklist, group related marks, and check operator_manage_work_plan status after each useful batch. Record completed operations and unresolved questions promptly. A near-limit warning means retain an honest checkpoint, not automatically propose completion. Continue ready independent work when the current remaining budget can cover the next useful batch, verification and final save/handoff; recheck host status after the batch. Stop for a user pause, an actual blocking condition or insufficient remaining resources, not merely because one example or panel succeeded. Do not spend allowance rediscovering completed work. Task counts and assistant claims do not authorize extra budget or prove completion.",
       executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
@@ -188,7 +193,7 @@ function advisoryHandoffMessage(proposal: NonNullable<AssignmentSnapshotV2["comp
   ].join("\n\n");
 }
 
-export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string, desktopHelperScope?:unknown): string {
   if (snapshot?.unresolved_unknown_operation_ids.length) {
     return "I could not confirm whether the requested change completed. The task and remaining checks are saved; I need to verify the result before retrying.";
   }
@@ -223,6 +228,13 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
       .filter(question => !question.resolved_at)
       .map(question => question.question.trim()).filter(Boolean);
     if (questions.length) return [...new Set(questions)].join("\n\n");
+  }
+  if(snapshot?.outcome==='active'&&snapshot.quiescent&&!snapshot.provider_budget_exhausted
+    &&!snapshot.progress_blocker&&!snapshot.execution_failure_ids.length
+    &&!snapshot.pending_input_variable_ids.length&&!snapshot.pending_review_ids.length
+    &&!snapshot.in_flight_operation_ids.length&&!snapshot.in_flight_provider_call_ids.length
+    &&desktopHelperScopeForSnapshotV1(snapshot,desktopHelperScope)){
+    return 'Subtask report (unverified; not completion of the assignment).\n\n'+fallback;
   }
   if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
       && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {

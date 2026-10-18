@@ -1,0 +1,148 @@
+{
+  "at": "2026-10-14T19:28:12.770Z",
+  "purpose": "Independent root read, not actor integral verification",
+  "route": "/revit/native-api-ops",
+  "body": {
+    "operations": [
+      {
+        "target": "doc",
+        "args": [
+          1442183
+        ],
+        "id": "panel",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)"
+      },
+      {
+        "target": "$panel",
+        "args": [
+          "Body"
+        ],
+        "id": "body",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.Electrical.PanelScheduleView.GetSectionData(Autodesk.Revit.DB.SectionType)"
+      },
+      {
+        "target": "$body",
+        "args": [
+          2,
+          5
+        ],
+        "id": "style",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.TableSectionData.GetTableCellStyle(System.Int32,System.Int32)"
+      },
+      {
+        "target": "$body",
+        "args": [
+          2,
+          5
+        ],
+        "id": "allowed",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.TableSectionData.AllowOverrideCellStyle(System.Int32,System.Int32)"
+      },
+      {
+        "target": "$panel",
+        "args": [
+          "Body",
+          2,
+          5
+        ],
+        "id": "text",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)"
+      },
+      {
+        "target": "$style",
+        "id": "IsInactivePhaseload",
+        "op": "get_property",
+        "property": "IsInactivePhaseload"
+      },
+      {
+        "target": "$style",
+        "id": "IsOverridden",
+        "op": "get_property",
+        "property": "IsOverridden"
+      },
+      {
+        "target": "$style",
+        "id": "IsReadOnly",
+        "op": "get_property",
+        "property": "IsReadOnly"
+      },
+      {
+        "target": "$style",
+        "id": "IsEnabled",
+        "op": "get_property",
+        "property": "IsEnabled"
+      },
+      {
+        "target": "$style",
+        "id": "sheetcolor",
+        "op": "get_property",
+        "property": "SheetBackgroundColor"
+      },
+      {
+        "target": "$sheetcolor",
+        "id": "Red",
+        "op": "get_property",
+        "property": "Red"
+      },
+      {
+        "target": "$sheetcolor",
+        "id": "Green",
+        "op": "get_property",
+        "property": "Green"
+      },
+      {
+        "target": "$sheetcolor",
+        "id": "Blue",
+        "op": "get_property",
+        "property": "Blue"
+      }
+    ],
+    "returns": [
+      "text",
+      "allowed",
+      "IsInactivePhaseload",
+      "IsOverridden",
+      "IsReadOnly",
+      "IsEnabled",
+      "Red",
+      "Green",
+      "Blue"
+    ]
+  },
+  "status": 400,
+  "payload": {
+    "ok": false,
+    "error": "get_property operation 'IsInactivePhaseload' is blocked by the freeze-risk policy: IsInactivePhaseload",
+    "code": "invalid_revit_tool_request",
+    "retryable": false,
+    "phase": "request_validation",
+    "request_dispatched": false,
+    "outcome_unknown": false,
+    "correlation_id": "bc6300d3fc7a48712ca137555150db0e",
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": null,
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "POST",
+      "path": "/revit/native-api-ops",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": false,
+      "effect_state": "none",
+      "effect_reason": "invalid_revit_tool_request",
+      "effect_authority": "schema_validator",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-14T19:28:12.7662843+00:00"
+    }
+  }
+}

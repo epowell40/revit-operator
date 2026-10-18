@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -33,6 +34,7 @@ namespace RevitBridge.Handlers
             public double? xInches { get; set; } // sheet inches for viewport placement
             public double? yInches { get; set; }
             public string? importUnit { get; set; } // Default|Foot|Inch|Meter|...
+            public string? colorMode { get; set; } // preserve (default)|black_and_white|invert
             public double? customScale { get; set; } // 1.0 = one-to-one when supported by Revit API
             public bool? link { get; set; } // default true (link if API supports)
             public bool? preflightOnly { get; set; }
@@ -45,6 +47,7 @@ namespace RevitBridge.Handlers
 
             var dryRun = p.dryRun ?? false;
             var wantLink = p.link ?? true;
+            var colorMode = CadLinkOptionPolicy.ResolveColorMode(p.colorMode);
 
             if (dryRun && (p.preflightOnly ?? false))
             {
@@ -61,7 +64,8 @@ namespace RevitBridge.Handlers
             var targetView = directSheetImport
                 ? (sheet as View)
                 : ResolveExistingTargetView(doc, p);
-            var plannedDraftingViewName = targetView == null && !directSheetImport && sheet != null && (p.createDraftingView ?? true)
+            var plannedDraftingViewName = CadLinkOptionPolicy.ShouldCreateDraftingView(targetView != null,
+                directSheetImport, sheet != null, p.viewName, p.createDraftingView)
                 ? ResolvePlannedDraftingViewName(p, src, sheet)
                 : null;
             if (targetView == null && string.IsNullOrWhiteSpace(plannedDraftingViewName))
@@ -72,6 +76,7 @@ namespace RevitBridge.Handlers
             var full = ResolveSourcePath(src);
             var ext = (Path.GetExtension(full) ?? "").Trim().ToLowerInvariant();
             if (ext != ".dwg") throw new InvalidOperationException("link-cad only supports .dwg files.");
+            var sourceSha256 = FileSha256(full);
 
             var shouldPlaceOnSheet = sheet != null && (targetView == null || !(targetView is ViewSheet)) && (p.placeOnSheet ?? true);
             var viewportPoint = sheet == null ? XYZ.Zero : ResolveViewportPoint(sheet, p);
@@ -85,6 +90,7 @@ namespace RevitBridge.Handlers
             {
                 sourcePath = src,
                 sourceFullPath = full,
+                sourceSha256,
                 targetMode = directSheetImport ? "direct_sheet_import" : "view_then_sheet",
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(targetView?.Id),
                 viewName = targetView?.Name ?? plannedDraftingViewName,
@@ -102,52 +108,51 @@ namespace RevitBridge.Handlers
                 directSheetImport,
                 importUnit = string.IsNullOrWhiteSpace(p.importUnit) ? null : p.importUnit.Trim(),
                 customScale = p.customScale,
+                colorMode,
                 link = wantLink,
                 dryRun
             };
 
             if (dryRun)
             {
-                return Task.FromResult<object>(new { status = "Dry Run", dryRun = true, plan });
+                return Task.FromResult<object>(new { status = "Dry Run", dryRun = true, previewExecuted = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(), plan });
             }
 
-            using (var t = new Transaction(doc, wantLink ? "Link CAD (DWG)" : "Import CAD (DWG)"))
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, wantLink ? "Link CAD (DWG)" : "Import CAD (DWG)", created =>
             {
-                t.Start();
-
                 var targetViewCreatedInTransaction = false;
                 if (!directSheetImport)
                     targetView = ResolveTargetView(doc, p, src, sheet, out targetViewCreatedInTransaction);
                 var targetViewCreated = !directSheetImport && targetViewCreatedInTransaction;
                 if (targetView == null)
                     throw new InvalidOperationException("link-cad could not resolve or create a target view.");
+                if (targetViewCreated) created.Add(ElementIdCompat.GetValue(targetView.Id));
 
                 TrySetScale(targetView, p.viewScale);
+                if (p.viewScale.HasValue && SafeViewScale(targetView) != p.viewScale.Value)
+                    throw new InvalidOperationException("Requested CAD owner-view scale could not be applied.");
 
                 var options = new DWGImportOptions();
-                try { options.ThisViewOnly = true; } catch { }
-                try { options.Placement = ImportPlacement.Origin; } catch { }
+                options.ColorMode = (ImportColorMode)Enum.Parse(typeof(ImportColorMode), colorMode);
+                options.ThisViewOnly = true;
+                options.Placement = ImportPlacement.Origin;
                 ApplyImportUnit(options, p.importUnit);
                 ApplyCustomScale(options, p.customScale);
 
-                var ok = false;
-                ElementId importedId = ElementId.InvalidElementId;
-                var mode = "import";
-
-                if (wantLink)
+                ElementId RunRequested(string method)
                 {
-                    ok = TryLinkOrImport(doc, "Link", full, options, targetView, out importedId);
-                    if (ok) mode = "link";
+                    if (!TryLinkOrImport(doc, method, full, options, targetView, out var id) || id == null || id == ElementId.InvalidElementId)
+                        throw new InvalidOperationException("Requested CAD " + method + " failed; no alternate import/link was attempted.");
+                    return id;
                 }
-
-                if (!ok)
-                {
-                    ok = TryLinkOrImport(doc, "Import", full, options, targetView, out importedId);
-                    mode = "import";
-                }
-
-                if (!ok || importedId == null || importedId == ElementId.InvalidElementId)
-                    throw new InvalidOperationException("CAD link/import failed (no element id returned).");
+                var importedId = CadLinkOptionPolicy.ExecuteRequestedMode(wantLink,
+                    () => RunRequested("Link"), () => RunRequested("Import"),
+                    id => (doc.GetElement(id) as ImportInstance)?.IsLinked
+                        ?? throw new InvalidOperationException("Native CAD instance identity could not be read."));
+                var imported = (ImportInstance)doc.GetElement(importedId);
+                created.Add(ElementIdCompat.GetValue(importedId));
+                var mode = wantLink ? "link" : "import";
 
                 var placement = (p.placement ?? "origin").Trim().ToLowerInvariant();
                 if (placement == "center")
@@ -171,39 +176,37 @@ namespace RevitBridge.Handlers
                         if (!Viewport.CanAddViewToSheet(doc, sheet!.Id, targetView.Id))
                             throw new InvalidOperationException("CAD target view cannot be placed on the requested sheet.");
                         viewport = Viewport.Create(doc, sheet!.Id, targetView.Id, viewportPoint);
+                        created.Add(ElementIdCompat.GetValue(viewport.Id));
                     }
                     viewportId = RevitBridge.Common.ElementIdCompat.GetValue(viewport.Id);
                     viewportBox = TryGetViewportBox(viewport);
                 }
 
-                t.Commit();
-
+                doc.Regenerate();
+                if (!string.Equals(FileSha256(full), sourceSha256, StringComparison.Ordinal))
+                    throw new InvalidOperationException("CAD source bytes changed during placement; refusing to commit a different reference.");
                 var cadCategories = BuildCadCategoryState(doc, importedId);
                 var elementBoxInOwnerView = TryGetBoundingBox(doc.GetElement(importedId), targetView);
                 var elementBoxOnSheet = sheet == null ? null : TryGetBoundingBox(doc.GetElement(importedId), sheet);
 
-                return Task.FromResult<object>(new
+                return new Dictionary<string, object?>
                 {
-                    status = "Success",
-                    mode,
-                    targetMode = directSheetImport ? "direct_sheet_import" : "view_then_sheet",
-                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id),
-                    viewName = targetView.Name,
-                    viewType = targetView.ViewType.ToString(),
-                    viewCreated = targetViewCreated,
-                    viewScale = SafeViewScale(targetView),
-                    sheetViewId = RevitBridge.Common.ElementIdCompat.GetValue(sheet?.Id),
-                    sheetNumber = sheet?.SheetNumber,
-                    viewportId,
-                    viewportBox,
-                    elementId = RevitBridge.Common.ElementIdCompat.GetValue(importedId),
-                    ownerViewId = RevitBridge.Common.ElementIdCompat.GetValue(targetView.Id),
-                    elementBoundingBoxInOwnerView = elementBoxInOwnerView,
-                    elementBoundingBoxOnSheet = elementBoxOnSheet,
-                    sourcePath = src,
-                    cadCategories
-                });
-            }
+                    ["mode"] = mode, ["isLinked"] = imported.IsLinked,
+                    ["colorMode"] = options.ColorMode.ToString(), ["importUnit"] = options.Unit.ToString(),
+                    ["customScale"] = options.CustomScale, ["totalTransformScale"] = imported.GetTotalTransform().Scale,
+                    ["targetMode"] = directSheetImport ? "direct_sheet_import" : "view_then_sheet",
+                    ["viewId"] = ElementIdCompat.GetValue(targetView.Id), ["viewName"] = targetView.Name,
+                    ["viewType"] = targetView.ViewType.ToString(), ["viewCreated"] = targetViewCreated,
+                    ["viewScale"] = SafeViewScale(targetView), ["sheetViewId"] = ElementIdCompat.GetValue(sheet?.Id),
+                    ["sheetNumber"] = sheet?.SheetNumber, ["viewportId"] = viewportId, ["viewportBox"] = viewportBox,
+                    ["elementId"] = ElementIdCompat.GetValue(importedId), ["elementUniqueId"] = imported.UniqueId,
+                    ["ownerViewId"] = ElementIdCompat.GetValue(targetView.Id),
+                    ["elementBoundingBoxInOwnerView"] = elementBoxInOwnerView, ["elementBoundingBoxOnSheet"] = elementBoxOnSheet,
+                    ["sourcePath"] = src, ["sourceSha256"] = sourceSha256, ["cadCategories"] = cadCategories
+                };
+            });
+            result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
+            return Task.FromResult<object>(result);
         }
 
         private static ViewSheet? ResolveSheet(Document doc, long? sheetViewId, string sheetNumber)
@@ -374,6 +377,13 @@ namespace RevitBridge.Handlers
             }
         }
 
+        private static string FileSha256(string fullPath)
+        {
+            using (var stream = File.OpenRead(fullPath))
+            using (var hash = SHA256.Create())
+                return BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+        }
+
         private static string ResolveSourcePath(string userProvided)
         {
             // Workspace relative path preferred for safety.
@@ -392,36 +402,12 @@ namespace RevitBridge.Handlers
         {
             elementId = ElementId.InvalidElementId;
 
-            // Reflection keeps us resilient across API versions (some expose Document.Link for CAD).
-            var flags = BindingFlags.Instance | BindingFlags.Public;
-            var candidates = typeof(Document)
-                .GetMethods(flags)
-                .Where(m => string.Equals(m.Name, methodName, StringComparison.Ordinal) && m.GetParameters().Length == 4)
-                .ToList();
-
-            foreach (var m in candidates)
-            {
-                try
-                {
-                    var ps = m.GetParameters();
-                    if (ps[0].ParameterType != typeof(string)) continue;
-                    if (!ps[1].ParameterType.IsAssignableFrom(typeof(DWGImportOptions))) continue;
-                    if (!typeof(View).IsAssignableFrom(ps[2].ParameterType)) continue;
-                    if (!ps[3].IsOut) continue;
-
-                    object?[] args = new object?[] { filePath, options, view, ElementId.InvalidElementId };
-                    var ret = m.Invoke(doc, args);
-                    var ok = ret is bool b ? b : true;
-                    if (args[3] is ElementId id) elementId = id;
-                    return ok;
-                }
-                catch
-                {
-                    continue;
-                }
-            }
-
-            return false;
+            // All supported Revit targets expose these signatures. Propagate the
+            // actual native failure through the owning transaction; do not retry
+            // another overload or substitute an import after a failed link.
+            if (methodName == "Link") return doc.Link(filePath, options, view, out elementId);
+            if (methodName == "Import") return doc.Import(filePath, options, view, out elementId);
+            throw new ArgumentException("Unsupported CAD operation.", nameof(methodName));
         }
 
         private static void ApplyImportUnit(DWGImportOptions options, string? rawUnit)
@@ -430,21 +416,13 @@ namespace RevitBridge.Handlers
             if (unit.Length == 0) return;
 
             var unitProp = typeof(DWGImportOptions).GetProperty("Unit", BindingFlags.Instance | BindingFlags.Public);
-            if (unitProp == null || !unitProp.CanWrite) return;
+            if (unitProp == null || !unitProp.CanWrite) throw new NotSupportedException("Requested CAD import units are unavailable in this Revit version.");
 
             var propType = unitProp.PropertyType;
-            try
-            {
-                if (propType.IsEnum)
-                {
-                    var parsed = Enum.Parse(propType, unit, ignoreCase: true);
-                    unitProp.SetValue(options, parsed, null);
-                }
-            }
-            catch
-            {
-                // Older Revit API versions vary here; leave default units when unsupported.
-            }
+            if (!propType.IsEnum) throw new NotSupportedException("CAD import unit property is not an enum.");
+            var parsed = Enum.Parse(propType, unit, ignoreCase: true);
+            if (!Enum.IsDefined(propType, parsed)) throw new ArgumentException("Unknown CAD import unit.");
+            unitProp.SetValue(options, parsed, null);
         }
 
         private static void ApplyCustomScale(DWGImportOptions options, double? customScale)
@@ -454,13 +432,8 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException("link-cad.customScale must be a positive number.");
 
             var scaleProp = typeof(DWGImportOptions).GetProperty("CustomScale", BindingFlags.Instance | BindingFlags.Public);
-            if (scaleProp == null || !scaleProp.CanWrite) return;
-
-            try { scaleProp.SetValue(options, customScale.Value, null); }
-            catch
-            {
-                // Leave default scale when this Revit API surface does not support CustomScale.
-            }
+            if (scaleProp == null || !scaleProp.CanWrite) throw new NotSupportedException("Requested CAD custom scale is unavailable in this Revit version.");
+            scaleProp.SetValue(options, customScale.Value, null);
         }
 
         private static object[] BuildCadCategoryState(Document doc, ElementId importId)

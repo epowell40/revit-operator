@@ -2,7 +2,7 @@ const record = value => value && typeof value === "object" && !Array.isArray(val
 const text = (value, max = Infinity) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
 const invalid = (code, message) => ({ code, message });
 const constraintKinds = new Set(["required", "json_type", "enum", "numeric_range", "string_length", "array_length",
-  "property_set", "schema_depth", "schema_bounds", "schema_alternative"]);
+  "property_set", "schema_depth", "schema_bounds", "schema_alternative", "unique_items"]);
 const constraintKeys = new Set(["kind", "type", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"]);
 
 /** Optional correction diagnostics. This validates no dispatch/effect authority; callers must validate the independent result core. */

@@ -539,5 +539,69 @@
         "additionalProperties": true
       }
     ]
+  },
+  "schedule_combined_field": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "scheduleId",
+      "combinedField"
+    ],
+    "properties": {
+      "scheduleId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "combinedField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "sourceFieldIds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Name and heading of one new combined parameter field. Existing name collision refuses; inspect before adding."
+          },
+          "sourceFieldIds": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Ordered existing native ScheduleFieldIds from this regular schedule, including hidden fields. These are NOT model ElementIds. Each source must bind a distinct actual parameter, not count, calculated or combined fields."
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200,
+            "description": "Index in complete field order including hidden fields. Default is first source position."
+          },
+          "separator": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "Between parameter values; defaults to space slash space. Last part has no trailing separator."
+          },
+          "hideSourceFields": {
+            "type": "boolean",
+            "description": "Defaults true. Preserves original fields and native parameter data; hides source columns instead of deleting them."
+          },
+          "widthFeet": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 5
+          }
+        }
+      }
+    }
   }
 }

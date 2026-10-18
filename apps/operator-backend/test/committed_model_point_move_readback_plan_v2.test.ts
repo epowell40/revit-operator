@@ -52,7 +52,7 @@ test(`ordinary dynamic model-point move ${variant} triggers one separate guarded
    if(variant==='unsettled'){assert.equal(apply.persistent_effect,'unknown');assert.equal(calls.length,1);return;}
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/move-elements').length,1);
    assert.equal(response.success,true,'failed read must not relabel committed edit as failure');
-   assert.equal(validations.filter(a=>a.path==='/revit/get-element-summary').length,['paused_after_commit','missing_point','unsettled','unknown_after_commit','later_write'].includes(variant)?0:1);
+   assert.equal(validations.filter(a=>a.path==='/revit/get-element-summary').length,['paused_after_commit','missing_point','unsettled','unknown_after_commit','later_write'].includes(variant)?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/get-element-summary').length,['read_schema_rejected','paused_after_commit','missing_point','unsettled','unknown_after_commit','later_write'].includes(variant)?0:1);
    if(variant==='exact'){
     assert.deepEqual(calls[1].body.elementIds,f.apply_input.body.ids);

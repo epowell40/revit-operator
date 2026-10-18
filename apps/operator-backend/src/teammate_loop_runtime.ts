@@ -1,4 +1,8 @@
+import {checkedTeammateVerificationAssertionV2,type TeammateVerificationAssertionV2} from "./teammate_verification_assertion.js";
 import { resultSucceeded, mcpResultSucceeded } from "./teammate_result_status.js";
+import {createDesktopHelperCallLeaseV1,type DesktopHelperCallLeaseV1} from './brains/desktop_helper_budget.js';
+import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
+import { reviewedTeammateNativeAliasRoute } from './teammate_native_aliases.js';
 import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
 import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, reconcileCanonicalOutstandingVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
@@ -69,6 +73,8 @@ type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
 export type TeammateLoopState = {
+  desktop_helper_scope?:unknown;
+  desktop_helper_call_lease?:DesktopHelperCallLeaseV1|null;
   canonical_supervision_only?: boolean;
   key: string;
   contract: TeammateTurnContract;
@@ -113,12 +119,7 @@ export type TeammateLoopState = {
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
 export type TeammateMcpGate = { allowed: boolean; message?: string; call?: PendingCall; state?: TeammateLoopState };
-export type TeammateVerificationAssertionV2 = Readonly<{
-  schema: "revit-operator.teammate-verification-assertion/v2";
-  action_id: string;
-  mode: "target_bound_readback";
-  evidence_sha256: string;
-}>;
+export type {TeammateVerificationAssertionV2} from "./teammate_verification_assertion.js";
 
 const statesByTurn = new Map<string, TeammateLoopState>();
 const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>; by_turn: Map<string, TeammateLoopOwnerLease> }>();
@@ -498,11 +499,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const tool = `${toolValue || ""}`.trim();
   const args = objectValue(structuredActionBody(argsValue));
   if (tool === "revit_call_tool") return classifyPathCall(args.method, args.path, args.body);
-  // The typed PDF alias exposes the same handler and dry-run semantics as the
-  // generic route. Classify it before the broad export_* observation family;
-  // a real PDF export creates a durable file while dryRun=true is executable
-  // preflight evidence.
-  if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
+  const nativeRoute = reviewedTeammateNativeAliasRoute(tool);
+  if (nativeRoute) return classifyPathCall("POST", nativeRoute, args);
   const target_tokens = targetTokens(args);
   const principal_target_tokens = [...operationTargetSelectorV2({
     operation: { capability_id: tool, tool },
@@ -904,7 +902,8 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     }
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
-  const verificationAdmission = verificationCapabilityAdmissionForPathsV2(state.apply_call?.path ?? "", pending.path);
+  const verificationAdmission = verificationCapabilityAdmissionForPathsV2(
+    state.apply_call?.path ?? "", pending.path, state.apply_call?.raw_body, pending.raw_body);
   if (state.apply_succeeded && succeeded && pending.effect === "read"
       && verificationAdmission.admissible && state.apply_artifact_receipt
       && nativeArtifactPostconditionV2(state.apply_artifact_receipt, verificationPayload)) {
@@ -1093,6 +1092,11 @@ export function beginTeammateLoopOwner(owner: object, req: ChatRequest, options?
     throw new Error("Canonical-only supervision requires a bound V2 assignment.");
   }
   state.canonical_supervision_only = options?.canonicalSupervisionOnly === true;
+  state.desktop_helper_scope=objectValue(req.context).desktop_helper_scope_v1;
+  const helperSnapshot=req.assignment_id?getAssignmentKernelSnapshotV2(req.assignment_id):null;
+  if(helperSnapshot&&helperSnapshot.current_binding.session_id===req.session_id
+    &&helperSnapshot.current_binding.run_id===req.assignment_run_id&&helperSnapshot.current_binding.generation===req.assignment_generation)
+    state.desktop_helper_call_lease=createDesktopHelperCallLeaseV1(helperSnapshot,state.desktop_helper_scope);
   ingestToolResults(state, req.tool_results);
   const lease = { owner, state, turn_id: null };
   const registry = statesByOwner.get(owner) ?? { unbound: new Set<TeammateLoopOwnerLease>(), by_turn: new Map<string, TeammateLoopOwnerLease>() };
@@ -1144,6 +1148,8 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
 }
 
 export function teammateLoopIsConversationForOwner(owner: object, turnId: unknown): boolean { return ownerState(owner, turnId)?.contract.turn_kind === "conversation"; }
+export function teammateDesktopHelperScopeForOwner(owner:object,turnId:unknown):unknown {return ownerState(owner,turnId)?.desktop_helper_scope;}
+export function teammateDesktopHelperCallLeaseForOwner(owner:object,turnId:unknown):DesktopHelperCallLeaseV1|null {return ownerState(owner,turnId)?.desktop_helper_call_lease??null;}
 
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown },
   canonicalSnapshot?: AssignmentSnapshotV2 | null): TeammateMcpGate {
@@ -1235,17 +1241,7 @@ export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, re
     }
   }
   recordResult(state, actionId, succeeded, result);
-  return state.verified
-      && state.verification_mode === "target_bound_readback"
-      && state.verification_action_id === actionId
-      && state.verification_evidence_sha256
-    ? {
-        schema: "revit-operator.teammate-verification-assertion/v2",
-        action_id: actionId,
-        mode: "target_bound_readback",
-        evidence_sha256: state.verification_evidence_sha256
-      }
-    : null;
+  return checkedTeammateVerificationAssertionV2(state,actionId);
 }
 
 export function teammateLoopReceiptForOwner(owner: object): NonNullable<ChatResponse["teammate_loop_receipt"]> | undefined {

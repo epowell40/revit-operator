@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { operationMatchesTargetIdentityV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
@@ -9,6 +10,18 @@ import {
   verificationCapabilityAdmissionV2,
   verificationCapabilityGuidanceV2
 } from "../src/verification/verification_capability_admission_v2.js";
+
+test('SDK schedule getter target binding survives the path-call classifier boundary without argument duplication',()=>{
+ const lookup={id:'schedule',op:'call',target:'doc',memberId:'method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)',args:[41]};
+ const read={operations:[lookup,{id:'read0',op:'call',target:'$schedule',memberId:'method:Autodesk.Revit.DB.TableView.GetCellText(Autodesk.Revit.DB.SectionType,System.Int32,System.Int32)',args:['Footer',2,1]}],returns:['$read0']};
+ const operation={capability_id:'revit_call_tool',method:'POST',path:'/revit/native-api-ops'};
+ assert.deepEqual(operationTargetSelectorV2({operation,value:read,fallback_target_tokens:['id:2','id:1']}).principal_target_tokens,['id:41']);
+ const payload={version:'operator.native_api_ops.v2',ok:true,read_only:true,operation_count:2,operations:[{id:'schedule',op:'call',member_id:lookup.memberId,target_type:'Autodesk.Revit.DB.Document',result_preview:{id:41,unique_id:'native41'}},{}]};
+ assert.deepEqual(operationTargetSelectorV2({operation:{...operation,arguments:{body:read}},value:payload}).principal_target_tokens,['id:41']);
+ assert.deepEqual(operationTargetSelectorV2({operation:{...operation,arguments:{body:read}},value:{report:{id:41}}}).principal_target_tokens,[]);
+ const broken=structuredClone(read);broken.operations[1]!.target='$unknown';
+ assert.notDeepEqual(operationTargetSelectorV2({operation,value:broken}).principal_target_tokens,['id:41']);
+});
 
 test("whole-area HRU replay binds summary ids alias to committed native identities without binding view scope", () => {
   const committed = { target: {}, result: { affected_target_identities: ["element_id:1542933"] } } as any;
@@ -46,6 +59,29 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   });
   assert.equal(capable.admissible, true);
   assert.deepEqual(capable.provided_semantic_outputs, ["text_note.value"]);
+});
+
+test('annotation postconditions require capable exact reads and keep owning sheet/view contextual',()=>{
+  const create={capability_id:'revit_call_tool',path:'/revit/create-text'};
+  const placement={capability_id:'revit_call_tool',path:'/revit/place-view'};
+  for(const verification of [
+    {capability_id:'revit_call_tool',path:'/revit/get-element-summary'},
+    {capability_id:'revit_call_tool',path:'/revit/create-text'},
+    {capability_id:'revit_call_tool',path:'/revit/find-text-notes'},
+    {capability_id:'revit_call_tool',path:'/revit/find-text-notes',arguments:{body:{elementIds:[800],familyDocumentId:'other-family'}}},
+  ])assert.equal(verificationCapabilityAdmissionV2({apply:create,verification}).admissible,false);
+  assert.equal(verificationCapabilityAdmissionV2({apply:create,verification:{capability_id:'revit_call_tool',path:'/revit/find-text-notes',arguments:{body:{elementIds:[800]}}}}).admissible,true);
+  assert.equal(verificationCapabilityAdmissionV2({apply:placement,verification:{capability_id:'revit_call_tool',path:'/revit/get-element-summary'}}).admissible,false);
+  assert.equal(verificationCapabilityAdmissionV2({apply:placement,verification:{capability_id:'revit_call_tool',path:'/revit/sheets'}}).admissible,true);
+  for(const [path,value] of [
+    ['/revit/create-text',{textNoteId:800,viewId:100}],
+    ['/revit/place-view',{id:800,sheetId:100,viewId:200}],
+  ] as const){
+    const selector=operationTargetSelectorV2({operation:{path},value});
+    assert(selector.principal_target_tokens.includes('id:800'));
+    assert(!selector.principal_target_tokens.includes('id:100'));
+    assert(!selector.principal_target_tokens.includes('id:200'));
+  }
 });
 
 test("duplicate-view keeps the source contextual and verifies only the new view identity", () => {
@@ -225,4 +261,40 @@ test("visibility verification uses its native view contract and excludes nested 
   const guidance = verificationCapabilityGuidanceV2({ ...operation, target_id: "id:42" })!;
   assert.match(guidance, /viewId=42.*action=get.*view.id/);
   assert.doesNotMatch(guidance, /viewId do not establish/);
+});
+
+// Exact retained native request graphs: the subject lookup is needed to prove
+// association, but only the created tag is the postcondition target.
+for (const fixture of ['created-tag-readback-43.json','created-space-tag-readback-49.json'])
+test(`created-tag graph target excludes contextual subject: ${fixture}`, () => {
+ const f=JSON.parse(readFileSync(`test/fixtures/${fixture}`,'utf8').replace(/^\uFEFF/,''));
+ const expected=f.applied.tagIds.map((id:number)=>'id:'+id).sort();
+ // The retained IndependentTag read contains extra TagText/head fields and is
+ // intentionally not a creation-proof graph. Reproduce the dispatcher's
+ // bounded association graph here; its generated result is tested separately
+ // through ordinary created_tag_postcondition dispatch, not claimed live.
+ if(fixture==='created-tag-readback-43.json'){
+  f.read_input.body.operations=f.read_input.body.operations.filter((op:any)=>!['TagText','TagHeadPosition'].includes(op.property));
+  f.read_input.body.operations.push({id:'orientation',op:'get_property',target:'$tag',property:'TagOrientation'},
+   {id:'subject',op:'call',target:'doc',memberId:'method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)',args:[f.input.body.elementIds[0]]});
+  f.read_input.body.returns=f.read_input.body.operations.map((op:any)=>'$'+op.id);
+ }
+ const operation={capability_id:'revit_call_tool',method:'POST',path:'/revit/native-api-ops'};
+ for(const input of [
+  {operation,value:f.read_input.body},
+  {operation:{...operation,arguments:f.read_input},value:f.read_input.body},
+  ...(fixture==='created-space-tag-readback-49.json'?[{operation:{...operation,arguments:f.read_input},value:f.native_read}]:[]),
+ ]) assert.deepEqual(operationTargetSelectorV2(input).principal_target_tokens,expected);
+ const broken=structuredClone(f.native_read);broken.operation_count++;
+ assert.deepEqual(operationTargetSelectorV2({operation:{...operation,arguments:f.read_input},value:broken}).principal_target_tokens,[]);
+});
+
+test('plain element absence probes retain their own exact targets',()=>{
+ const body={operations:[{id:'absent',op:'call',target:'doc',memberId:'method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)',args:[79]}],returns:['$absent']};
+ const operation={method:'POST',path:'/revit/native-api-ops',arguments:{method:'POST',path:'/revit/native-api-ops',body}};
+ assert.deepEqual(operationTargetSelectorV2({operation,value:body}).principal_target_tokens,['id:79']);
+ const payload={version:'operator.native_api_ops.v2',ok:true,read_only:true,operation_count:1,operations:[{id:'absent',op:'call',member_id:body.operations[0].memberId,target_type:'Autodesk.Revit.DB.Document',result_preview:null}],results:{absent:null}};
+ assert.deepEqual(operationTargetSelectorV2({operation,value:payload}).principal_target_tokens,['id:79']);
+ payload.operations[0].result_preview={id:79} as any;
+ assert.deepEqual(operationTargetSelectorV2({operation,value:payload}).principal_target_tokens,[]);
 });

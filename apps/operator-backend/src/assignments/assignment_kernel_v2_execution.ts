@@ -1,9 +1,19 @@
-import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,validateFacts,evidenceInput} from './native_observation_inputs_v2.js';
+import {verifiedDeliverableTargetGroupsV2} from "../verification/verified_deliverable_targets_v2.js";
+import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
+import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
+import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
+import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
+import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
+import { isRegularSchedulePresentationEditV2, regularSchedulePresentationPostconditionSatisfiedV2 } from "../verification/regular_schedule_presentation_v2.js";
+import { projectParameterBindingPostconditionSatisfiedV2 } from "../verification/project_parameter_binding_v2.js";
+import {operationEffect,operationPurpose,admittedWorkUnit} from './assignment_operation_purpose.js';
+import {scheduleCellReadIsFreshNativeV2,parameterReadIsFreshNativeV2,nativePropertyReadIsFreshNativeV2,circuitReadIsFreshNativeV2,scheduleFilterReadIsFreshNativeV2,validateFacts,evidenceInput,explicitMcpEnvelope,observationCommitLimit,nativePropertyComparisonControlFactV2,type AssignmentKernelMcpResultV2} from './native_observation_inputs_v2.js';
 import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capacity_retry.js";
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
 import { committedTargetChangeRetryV2 } from "../domain/assignment-kernel/committed_target_retry.js";
 import { templateReassignmentV1 } from "../domain/assignment-kernel/template_reassignment.js";
+import { scheduleFilterRestorationV1 } from '../domain/assignment-kernel/schedule_filter_restoration.js';
 import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
 import { nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { trustedLocalExperimentHost } from "./local_advisory_policy.js";
@@ -12,6 +22,13 @@ import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_post
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
+import { nativeAnnotationPostconditionSatisfiedV2 } from "../verification/native_annotation_postcondition_v2.js";
+import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
+import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
+import {isNativePhaseFilterEditV2,nativePhaseFilterPostconditionSatisfiedV2}from '../verification/native_phase_filter_v2.js';
+import {deletionRequestV2}from '../verification/deletion_contract_v2.js';
+import {deletedElementsPostconditionSatisfiedV2}from '../verification/deleted_elements_postcondition_v2.js';
+import {isVisibilityPhasingEditV2}from '../verification/visibility_view_contract_v2.js';
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
@@ -74,24 +91,15 @@ import {
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 import { existingTagRepairRequestV2 } from "../verification/tag_property_readback_v2.js";
+import { preDispatchReadRetryV2 } from '../domain/assignment-kernel/pre_dispatch_read_retry.js';
 
 import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
 import { duplicatedTypePostconditionSatisfiedV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { createdTagPostconditionSatisfiedV2 } from "../verification/created_tag_postcondition_v2.js";
 
-export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
-
-export type AssignmentKernelMcpResultV2 = Readonly<{
-  schema: typeof ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA;
-  operation_result_v2: OperationResultV2;
-  observation?: Readonly<{
-    raw_payload: unknown;
-    semantic_facts: readonly SemanticFactV2[];
-    target_scope?: Readonly<Record<string, string | number | boolean | null>>;
-    verification_relevance?: readonly string[];
-  }>;
-}>;
+export { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "./native_observation_inputs_v2.js";
+export type { AssignmentKernelMcpResultV2 } from "./native_observation_inputs_v2.js";
 
 export type AssignmentKernelTrustedVerificationV2 = Readonly<{
   schema: "revit-operator.teammate-verification-assertion/v2";
@@ -155,39 +163,6 @@ function boundedDeadline(openedAt: string): string {
   const parsed = Number.parseInt(process.env.OPERATOR_MCP_TOOL_TIMEOUT_MS ?? "", 10);
   const timeout = Number.isFinite(parsed) ? Math.max(1_000, Math.min(30 * 60_000, parsed)) : 240_000;
   return new Date(Date.parse(openedAt) + timeout).toISOString();
-}
-
-function operationEffect(effect: string): RequestedEffectV2 {
-  if (effect === "preview" || effect === "apply") return effect;
-  return "read";
-}
-
-function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): OperationPurposeV2 {
-  if (snapshot.unresolved_unknown_operation_ids.length > 0 && effect === "read") {
-    return "reconciliation";
-  }
-  if (effect === "evidence_read") return "evidence_read";
-  if (effect === "discovery" || effect === "navigation") return "discovery";
-  if (effect === "read" && snapshot.spec.requested_effect === "apply"
-      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply"
-        && operation.persistent_effect === "applied"
-        && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
-    return "verification";
-  }
-  if (effect === "read" && snapshot.spec.requested_effect !== "read") return "discovery";
-  return "work";
-}
-
-function admittedWorkUnit(snapshot: AssignmentSnapshotV2, suggestedEffect: RequestedEffectV2, purpose: OperationPurposeV2): AssignmentSnapshotV2["spec"]["work_units"][number] {
-  const preferred = purpose === "evidence_read" ? "work-evidence"
-    : purpose === "verification" ? "work-verification"
-      : purpose === "discovery" && snapshot.spec.requested_effect !== "read" ? "work-discovery"
-        : suggestedEffect === "preview" && snapshot.spec.requested_effect === "apply" ? "work-preview"
-          : "work-primary";
-  const unit = snapshot.spec.work_units.find(candidate => candidate.work_unit_id === preferred && candidate.requested_effect === suggestedEffect)
-    ?? snapshot.spec.work_units.find(candidate => candidate.requested_effect === suggestedEffect);
-  if (!unit) throw new Error("assignment_kernel_v2_work_unit_not_admitted");
-  return unit;
 }
 
 function canonicalInput(value: unknown): Record<string, unknown> {
@@ -283,7 +258,7 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
       && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
-      && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
+      && operationNeedsReadbackV2(snapshot,operation)
       && verificationReadTargetsCovered(operation, targetTokens, identity)
       && verificationCapabilityAdmissionV2({
         apply: { capability_id: operation.capability_id, method: operation.request_identity?.method,
@@ -523,12 +498,14 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   };
   assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
   if (!operation.retry_of_operation_id) {
-    const correction = familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
+    const correction = preDispatchReadRetryV2(snapshot, operation) ?? familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
     if (correction) Object.assign(operation, correction);
     const checkpoint = documentCheckpointContinuationV2(snapshot, operation, nativeDocumentCheckpointResultV2);
     if (checkpoint) Object.assign(operation, checkpoint);
     const reassignment = templateReassignmentV1(snapshot, operation);
     if (reassignment) Object.assign(operation, reassignment);
+    const restoration = scheduleFilterRestorationV1(snapshot, operation);
+    if (restoration) Object.assign(operation, restoration);
   }
   appendCurrentAssignmentKernelEventV2({
     goal_id: snapshot.spec.binding.assignment_id,
@@ -704,19 +681,6 @@ export function markAssignmentKernelOperationDispatchStartedV2(lease: Assignment
   });
 }
 
-function explicitMcpEnvelope(rawResult: unknown): AssignmentKernelMcpResultV2 {
-  const root = object(rawResult);
-  const structured = object(root.structuredContent ?? root.structured_content);
-  if (structured.schema !== ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA) throw new Error("assignment_kernel_v2_operation_result_missing");
-  if (!structured.operation_result_v2 || typeof structured.operation_result_v2 !== "object") throw new Error("assignment_kernel_v2_operation_result_missing");
-  return structured as unknown as AssignmentKernelMcpResultV2;
-}
-
-function observationCommitLimit(): number {
-  const parsed = Number.parseInt(process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS ?? "", 10);
-  return Number.isSafeInteger(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
-}
-
 function commitInput(
   envelope: AssignmentKernelMcpResultV2,
   result: OperationResultV2,
@@ -733,9 +697,10 @@ function commitInput(
       throw new Error("assignment_kernel_v2_artifact_receipt_payload_mismatch");
     }
   }
-  // Inventory completeness is host-derived, never a provider/producer assertion.
+  // Proof and inventory completeness are host-derived, never producer claims.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
-    .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2);
+    .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied');
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
   if (nativeChangeInventoryCompleteV2(operation, result, envelope.observation.raw_payload)) {
@@ -775,10 +740,17 @@ function commitInput(
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
       && deterministicallyTargetBound
+      && (verificationSubject.request_identity?.path!=='/revit/visibility'||!isVisibilityPhasingEditV2(verificationSubject.input)
+        || (nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility')
+          && result.native_transaction_state==='not_applicable'&&Boolean(result.receipt_id&&result.native_correlation_id)
+          && !snapshot?.unresolved_unknown_operation_ids.length
+          && !snapshot?.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation?.operation_id)))
       && (verificationSubject.request_identity?.path !== "/revit/update-schedule-cell" || scheduleCellReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/set-parameter" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/change-element-type" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/assign-electrical-circuit" || circuitReadIsFreshNativeV2(verificationSubject, operation, result))
+      && (verificationSubject.request_identity?.path !== '/revit/configure-schedule' || !Object.hasOwn(object(verificationSubject.input.body),'filters')
+        || scheduleFilterReadIsFreshNativeV2(verificationSubject,operation,result))
       && (verificationSubject.request_identity?.path !== "/revit/configure-schedule" || result.request_identity?.path !== "/revit/native-api-ops"
         || nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/tag-elements" || !existingTagRepairRequestV2(verificationSubject.input)
@@ -791,8 +763,28 @@ function commitInput(
           ? createdTagPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/create-family-instance"
           ? familyPlacementPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isScheduleCellBackgroundEditV2(verificationSubject.input)
+          ? scheduleCellBackgroundPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isRegularSchedulePresentationEditV2(verificationSubject.input)
+          ? regularSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/import-drawing-spec'
+          ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/import-excel-output'
+          ? excelTableImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : deletionRequestV2(verificationSubject.input)
+          ? deletedElementsPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/project-parameters"
+          ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
+          ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/create-schedule' || isNativeScheduleDuplicateV2(snapshot!,verificationSubject)
+          ? createdSchedulePostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(verificationSubject.input)
+          ? nativePhaseFilterPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements" && result.request_identity?.path === "/revit/sheets"
           ? sheetMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")
+          ? nativeAnnotationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements"
           ? modelPointMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/connect-existing-mep-branch"
@@ -809,6 +801,9 @@ function commitInput(
           affected_target_identities: verificationSubject.result?.affected_target_identities }
       ))
   );
+  const comparisonFact = nativePropertyComparisonControlFactV2(snapshot, operation, verificationSubject, result,
+    lease, envelope.observation.raw_payload, deterministicallyTargetBound, deterministicallySatisfied);
+  if (comparisonFact) semanticFacts.push(comparisonFact);
   if (trustedVerification) {
     if (lease.purpose !== "verification"
         || lease.fulfillment_role !== "verification"
@@ -831,18 +826,8 @@ function commitInput(
       fact_class: "verification",
       value: true
     });
-    // The native sheet comparator checked every requested placement. The
-    // read's containing sheet is not itself the edited deliverable. Keep
-    // this platform mapping here; the generic domain consumes only the fact.
-    if (verificationSubject?.request_identity?.path === "/revit/move-elements"
-        && result.request_identity?.path === "/revit/sheets") {
-      const body = verificationSubject.input?.body as Record<string, unknown> | undefined;
-      const ids = body?.ids;
-      if (!Array.isArray(ids) || !ids.length || ids.length > 256
-          || ids.some(id => !Number.isSafeInteger(id) || Number(id) <= 0)
-          || new Set(ids).size !== ids.length) throw new Error("verified_deliverable_targets_invalid");
-      semanticFacts.push({fact_id: VERIFIED_DELIVERABLE_TARGETS_FACT_V2, fact_class: "verification",
-        value: ids.map(id => `element_id:${id}`), cardinality: "many"});
+    for(const targets of verifiedDeliverableTargetGroupsV2(snapshot!,verificationSubject,result)){
+      semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',value:targets,cardinality:'many'});
     }
   }
   return {

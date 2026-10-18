@@ -1,5 +1,8 @@
 const READ_ONLY_PATHS = new Set([
   "/revit/inspect-exported-files",
+  "/revit/inspect-drawing-spec",
+  "/revit/inspect-excel-source",
+  "/revit/inspect-excel-import",
   "/revit/ping",
   "/revit/context",
   "/revit/activate-view",
@@ -147,6 +150,16 @@ function genericConditionalIntentEffect(row) {
 }
 
 function explicitConditionalActionPathEffect(normalized, row) {
+  if (normalized === "/revit/project-parameters") {
+    const action = row.action === undefined ? "list" : row.action;
+    const keys = Object.keys(row);
+    if (action === "detail" && keys.every(k => ["action", "parameterId"].includes(k))
+        && Number.isSafeInteger(row.parameterId) && row.parameterId > 0) return "read";
+    if (action === "list" && keys.every(k => ["action", "query", "max"].includes(k))
+        && (row.query === undefined || typeof row.query === "string" && row.query.length <= 120)
+        && (row.max === undefined || Number.isInteger(row.max) && row.max >= 1 && row.max <= 5000)) return "read";
+    return genericConditionalIntentEffect(row) ?? "apply";
+  }
   if (normalized === "/revit/assign-electrical-circuit") return row.dryRun === false ? "apply" : "preview";
   if (normalized === "/revit/existing-conditions-mep-draft-workflow") {
     // This native wrapper rolls back only when dryRun is explicitly true.
@@ -205,6 +218,12 @@ function explicitConditionalActionPathEffect(normalized, row) {
 
 export function conditionalActionPathEffect(pathname, body) {
   const normalized = canonicalRevitActionPath(pathname);
+  // Malformed input must not become an empty, read-only parameter-list request.
+  if (normalized === "/revit/project-parameters") {
+    let parsed = body;
+    if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch { return "apply"; } }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "apply";
+  }
   const row = bodyRecord(body);
   const explicit = explicitConditionalActionPathEffect(normalized, row);
   if (explicit !== undefined) return explicit;

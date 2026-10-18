@@ -171,7 +171,15 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === 'schedule_filter_restoration.ts') {
+        assert.match(source, /import \{ nativeScheduleFilterRequestV1, nativeScheduleFilterResultStateV1 \} from '@revitoperator\/assignment-kernel-v2-contracts'/);
+        assert.doesNotMatch(source, /\/revit\//i, 'Filter wire parsing belongs in the shared pure decoder');
+      }
+      if (path.basename(file) === "native_inventory_workload.ts") {
+        assert.match(source, /import\s*\{\s*nativeSourceInventoryRequestV1\s*,\s*nativeSourceInventoryWorkloadV1\s*\}\s*from ['"]@revitoperator\/assignment-kernel-v2-contracts['"]/);
+        assert.doesNotMatch(source, /\/revit\//i, "native inventory wire interpretation belongs in the shared pure decoder");
+      }
       if (path.basename(file) === "family_capacity_retry.ts") {
         assert.match(source, /import \{ nativeFamilySessionRequestV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
         assert.doesNotMatch(source, /\/revit\//i);
@@ -275,7 +283,11 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
   }
   assert.doesNotMatch(brain, /(?:activeClient|c)\.startTurn\(/, "neither provider start may bypass instruction binding");
   const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
-  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
+  // The ordinary exit also owns an earned-work deadline: expiry must interrupt
+  // and drain the started turn, while receipts still reconcile before release.
+  assert.match(brain, /let workTimeExpired\s*=\s*false/);
+  assert.match(brain, /workTimeExpired\s*=\s*error instanceof CodexWorkTimeExpiredError/);
+  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(workTimeExpired)", reconcileAt);
   assert.ok(reconcileAt >= 0 && normalReleaseAt > reconcileAt,
     "completed provider receipts must reconcile before the immutable terminal barrier is released");
   const setupBindAt = brain.indexOf("bindBackendAuthLeaseTurn(backendAuthLease, turnId)", providerStartAt);
@@ -314,13 +326,16 @@ test("every V2 provider exit records canonical failure or returns already-earned
     "an already-complete Assignment must return its terminal result instead of an infrastructure error");
   assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
     "a normally returned interrupted Codex turn must not bypass V2 settlement");
-  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference)");
+  const progressDecisionAt = brain.indexOf("const progression = prepareCodexAssignmentProgressV2(");
   const progressStopAt = brain.indexOf("if (!progression.prompt) {", progressDecisionAt);
   const progressReturnAt = brain.indexOf("return {", progressStopAt);
   const providerBootstrapAt = brain.indexOf("c = await getClient(workspaceRoot, threadProfile)");
   assert.ok(progressDecisionAt >= 0 && progressStopAt > progressDecisionAt && progressReturnAt > progressStopAt
     && providerBootstrapAt > progressReturnAt,
     "both default and thin turns must admit canonical progress, returning denied work before provider connection or thread bootstrap");
+  assert.match(brain.slice(progressDecisionAt, progressStopAt),
+    /prepareCodexAssignmentProgressV2\(assignmentKernelV2\.binding, thinReference,\s*desktopHelperScopeFromContextV1\(req\.context\)\)/,
+    "progress admission retains the current binding and authenticated helper context");
   assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
     "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
   const startDiagnosticAt = brain.indexOf('recordProviderStartFailureDiagnostic({');

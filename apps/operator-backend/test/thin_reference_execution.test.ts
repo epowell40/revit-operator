@@ -406,3 +406,37 @@ test("configured turn cap retains precedence over the fourth empty completion", 
   const result = await runThinReferenceTurns({ ...f, limits: { ...f.limits, max_turns: 4 }, invoke: async (request, turn) => receiptOnlyTurn(f, request, turn) });
   assert.equal(result.turns, 4); assert.equal(result.stop_reason, "experiment_turn_limit");
 }, true));
+
+test('outer runner continues past base wall time only when the shared earned deadline remains positive', () => fixture(async f => {
+  let clock=0,calls=0;
+  const result=await runThinReferenceTurns({...f,limits:{max_turns:2,max_wall_ms:1000},now:()=>clock,
+    remainingWallMs:()=>Math.max(0,4000-clock),
+    invoke:async(request:ChatRequest,turn:number)=>{calls++;clock=turn*1500;return completed(request,turn);}
+  });
+  assert.equal(calls,2,'A checked-work extension must survive the outer runner, not only the provider waiter');
+  assert.equal(result.stop_reason,'experiment_turn_limit','The separate provider-turn cap still applies');
+  assert.equal(result.turns,2);
+}));
+
+test('outer runner without an earned projection keeps its historical fixed wall cap', () => fixture(async f => {
+  let clock=0,calls=0;
+  const result=await runThinReferenceTurns({...f,limits:{max_turns:3,max_wall_ms:1000},now:()=>clock,
+    invoke:async(request,turn)=>{calls++;clock=1500;return completed(request,turn);}});
+  assert.equal(calls,1);assert.equal(result.stop_reason,'experiment_wall_limit');assert.equal(result.provider_turns.length,1);
+}));
+
+test('expired shared deadline never invokes a provider or loses explicit zero-call usage', () => fixture(async f => {
+  const result=await runThinReferenceTurns({...f,remainingWallMs:()=>0,
+    invoke:async()=>{throw Error('must not invoke');}});
+  assert.equal(result.turns,0);assert.equal(result.stop_reason,'experiment_wall_limit');
+  assert.equal(result.response.provider_turn_usage?.disposition,'not_started');assert.deepEqual(result.response.provider_turn_usage?.raw_response_ids,[]);
+}));
+
+for(const gate of ['pause','cancel','native-in-flight']as const)test(`positive earned time cannot bypass ${gate} at the outer runner`,()=>fixture(async f=>{
+  const abort=new AbortController();let calls=0;
+  const result=await runThinReferenceTurns({...f,signal:abort.signal,remainingWallMs:()=>60_000,
+    invoke:async(request,turn)=>{calls++;if(gate==='pause')controlAssignmentExecutionV2({binding:f.binding,action:'pause',command_id:'outer-pause',expected_command_id:null});
+      else if(gate==='cancel')abort.abort('user_cancel');else nativeUnknown(f);return completed(request,turn);}});
+  assert.equal(calls,1);assert.notEqual(result.stop_reason,'experiment_wall_limit');assert.notEqual(result.stop_reason,'experiment_turn_limit');
+  if(gate==='cancel')assert.equal(result.stop_reason,'request_interrupted');
+}));

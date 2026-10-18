@@ -9,6 +9,15 @@ export type DocumentCheckpointContinuationV2 = Readonly<{
 }>;
 const normalizedPath = (value: string) => value.replace(/\\/g, "/").toLowerCase();
 
+/** MCP's boolean registry-discovery hint does not change a native save request.
+ * Preserve the literal input in history, and compare every other field exactly.
+ * Malformed hint values are not eligible for this equivalence. */
+const checkpointInputIdentity = (input: OperationV2["input"]): string | null => {
+  const { requireKnownPath, ...nativeInput } = input;
+  return requireKnownPath === undefined || typeof requireKnownPath === "boolean"
+    ? canonicalJsonV2(nativeInput) : null;
+};
+
 /** A new save of changed document contents, never a retry of an applied edit.
  * Only retained native receipts and reducer-stamped journal order are proof.
  * The reducer repeats this derivation under its journal lock. */
@@ -63,11 +72,12 @@ export function documentCheckpointContinuationV2(snapshot: AssignmentSnapshotV2,
   const repeats = operations.filter(candidate => candidate.requested_effect === "apply"
     && candidate.request_identity?.method === request.method && candidate.request_identity?.path === request.path
     && candidate.request_identity?.request_signature === request.request_signature);
-  if (repeats.length === 0 || repeats.some(candidate => !isCheckpoint(candidate)
+  const inputIdentity = checkpointInputIdentity(operation.input);
+  if (inputIdentity === null || repeats.length === 0 || repeats.some(candidate => !isCheckpoint(candidate)
       || candidate.capability_id !== operation.capability_id
       || canonicalJsonV2(candidate.request_identity) !== canonicalJsonV2(request)
       || canonicalJsonV2(candidate.target) !== canonicalJsonV2(operation.target)
-      || canonicalJsonV2(candidate.input) !== canonicalJsonV2(operation.input))) return null;
+      || checkpointInputIdentity(candidate.input) !== inputIdentity)) return null;
   const prior = repeats.sort((a, b) => b.admitted_assignment_version! - a.admitted_assignment_version!)[0]!;
   if (operations.some(candidate => candidate.checkpoint_of_operation_id === prior.operation_id)) return null;
   // A different successful Save As also consumes earlier document changes.

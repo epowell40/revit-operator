@@ -9,6 +9,18 @@ const fixture = () => JSON.parse(fs.readFileSync('test/fixtures/work-review-nati
 const counterId = 'opv2_e8f6cb909ad4ca30087cfeaef8ac4aa7aac7ab7d769fb0ab151752eb0f5de28d';
 const typeId = 'opv2_ae19b52577af2c43b3ed23be92fae4584a3c8bd18d495a32889dcb4c71f72449';
 
+test('large change inventories remain exact and do not turn a commit into postcondition proof',()=>{
+  const f=fixture(),op=f.snapshot.operations[counterId],p=f.native_applies[counterId];
+  const ids=Array.from({length:400},(_,i)=>1000000+i);
+  p.transaction={status:'committed',committed:true,added_element_ids:ids,modified_element_ids:[],deleted_element_ids:[],affected_element_ids:ids};
+  op.result.affected_target_identities=ids.map(id=>'element_id:'+id).sort();
+  op.result.raw_payload_hash=createHash('sha256').update(canonicalJsonV2(p)).digest('hex');
+  assert.equal(nativeChangeInventoryCompleteV2(op,op.result,p),true);
+  p.transaction.affected_element_ids=p.transaction.affected_element_ids.slice(0,-1);
+  op.result.raw_payload_hash=createHash('sha256').update(canonicalJsonV2(p)).digest('hex');
+  assert.equal(nativeChangeInventoryCompleteV2(op,op.result,p),false,'no truncation or partial union is exhaustive');
+});
+
 function reproject(f: ReturnType<typeof fixture>) {
   // Replay the new host derivation on retained native bytes, not a rewrite of
   // the historical publication or an assertion of a new live qualification.

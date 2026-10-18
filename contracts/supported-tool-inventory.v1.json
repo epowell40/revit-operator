@@ -4,6 +4,22 @@
   "native_routes": [
     {
       "method": "POST",
+      "path": "/revit/inspect-excel-import"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-excel-output"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-source"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-drawing-spec"
+    },
+    {
+      "method": "POST",
       "path": "/revit/locate-elements"
     },
     {
@@ -236,6 +252,10 @@
     },
     {
       "method": "POST",
+      "path": "/revit/link-cad"
+    },
+    {
+      "method": "POST",
       "path": "/revit/linked-room-boundaries"
     },
     {
@@ -317,6 +337,10 @@
     {
       "method": "POST",
       "path": "/revit/print-sets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/project-parameters"
     },
     {
       "method": "POST",
@@ -437,6 +461,10 @@
     {
       "method": "POST",
       "path": "/revit/visibility"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec"
     }
   ],
   "mcp_aliases": [

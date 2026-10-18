@@ -3,6 +3,7 @@ import { appendEvent, latestCommandEvent, recentCommandEvents, getConversationTu
 import { getGoal } from "../goals/service.js";
 import { appendCurrentAssignmentKernelEventV2, normalizeAssignmentKernelJournalV2 } from "./assignment_kernel_v2_store.js";
 import { assertAdvisoryCheckpointContinuationV1 } from "../domain/assignment-kernel/reducer.js";
+import { USER_FOLLOWUP_ALLOCATION_V1 } from '../domain/assignment-kernel/user_followup_allocation.js';
 import { canonicalJsonV2 } from "../domain/assignment-kernel/canonical.js";
 import { activeProviderTurnForBinding } from "../codex/active_turns.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
@@ -96,12 +97,13 @@ function continueAdvisoryCheckpoint(input: {
     || canonicalJsonV2(previous.checkpoint ?? null) !== canonicalJsonV2(checkpoint)))
     throw new Error("This direction identity was already used for different content or a different checkpoint.");
   const variableId = "user_direction_" + createHash("sha256").update(input.command_id).digest("hex").slice(0,32);
-  const body = { event_type: "review_resolved" as const, review_id: checkpoint.review_id, decision: "continue_advisory_checkpoint_v1",
+  const body = { event_type: "review_resolved" as const, review_id: checkpoint.review_id, decision: USER_FOLLOWUP_ALLOCATION_V1,
     continuation: { command_id: input.command_id, expected_control_command_id: checkpoint.expected_control_command_id,
       document_fingerprint: checkpoint.document_fingerprint, direction_variable_id: variableId, direction_text: input.text } };
   const eventId = `checkpoint-continued:${input.command_id}`;
   const priorResolution = normalizeAssignmentKernelJournalV2(getGoal(input.binding.assignment_id)?.assignment_kernel_v2).events.find(event => event.event_id === eventId);
   if (priorResolution) {
+    if (priorResolution.event_type === 'review_resolved') body.decision = priorResolution.decision;
     // Revalidate the event body through the existing exact-event idempotency path.
     // An old retry returns its receipt even if a newer checkpoint now exists.
     appendCurrentAssignmentKernelEventV2({ goal_id: input.binding.assignment_id, binding: resolved.binding,
@@ -110,7 +112,7 @@ function continueAdvisoryCheckpoint(input: {
     return previous;
   }
   if (activeProviderTurnForBinding(input.binding)) throw new Error("Wait for the active provider turn to settle before continuing its checkpoint.");
-  assertAdvisoryCheckpointContinuationV1(resolved.snapshot, checkpoint.review_id, body.continuation, new Date().toISOString(), true);
+  assertAdvisoryCheckpointContinuationV1(resolved.snapshot, checkpoint.review_id, body.continuation, new Date().toISOString(), true, true);
   const receipt = previous ?? save({command_id:input.command_id,binding:{...input.binding},text:input.text,
     thread_id:null,turn_id:null,state:"saved",updated_at:new Date().toISOString(),checkpoint:{...checkpoint}});
   requestAssignmentInputV2({binding:input.binding,clarification_id:input.command_id,variable_ids:[variableId],new_variable_ids:[variableId],question:"Additional direction from the user"});

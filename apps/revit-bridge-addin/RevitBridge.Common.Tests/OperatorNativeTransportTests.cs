@@ -769,9 +769,18 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("status = \"Dry Run\",\n                    dryRun = true,\n                    transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()", handler, StringComparison.Ordinal);
             Assert.Contains("NativeSingleTransaction.Execute(app, doc, \"Configure Schedule\"", handler, StringComparison.Ordinal);
             Assert.Contains("OperatorNativeTransactionExecution.OutcomeStatus(result, \"Success\")", handler, StringComparison.Ordinal);
+            Assert.Contains("ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow(formatBody.RootElement)", handler, StringComparison.Ordinal);
+            Assert.True(handler.IndexOf("ScheduleRowHeightPolicy.HasUnsupportedExplicitBodyRow", StringComparison.Ordinal) < handler.IndexOf("var plan = BuildPlan", StringComparison.Ordinal));
+            Assert.Contains("ScheduleRowHeightPolicy.RequireAppliedRows(JsonSerializer.SerializeToElement(rowHeightResults))", handler, StringComparison.Ordinal);
+            Assert.Contains("result[\"rowHeightAttemptReadback\"] = rowHeightResults", handler, StringComparison.Ordinal);
             Assert.DoesNotContain("OperatorNativeTransactionReceipt.Committed(", handler, StringComparison.Ordinal);
             Assert.DoesNotContain("TryClearFilters(", handler, StringComparison.Ordinal);
             Assert.Contains("definition.SetFilters(combined);", handler, StringComparison.Ordinal);
+            var missingTarget = handler.Substring(handler.IndexOf("if (schedule == null)", StringComparison.Ordinal));
+            missingTarget = missingTarget.Substring(0, missingTarget.IndexOf("var hasAddFields", StringComparison.Ordinal));
+            Assert.Contains("regular_schedule_required", missingTarget, StringComparison.Ordinal);
+            Assert.Contains("OperatorNativeTransactionReceipt.NotStarted()", missingTarget, StringComparison.Ordinal);
+            Assert.DoesNotContain("throw new", missingTarget, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -850,9 +859,20 @@ namespace RevitBridge.Common.Tests
         private static string ReadSharedSource(params string[] segments)
         {
             var root = FindRepositoryRoot();
-            var publicServerSource = Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            var publicRoot = Path.Combine(root, "apps", "revit-bridge-addin");
+            var addinRoot = File.Exists(Path.Combine(publicRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))
+                ? publicRoot
+                : Path.Combine(root, "revit-bridge-addin");
+            var serverSource = Path.Combine(addinRoot, "RevitBridge", "Server", "RevitHttpServer.cs");
+            if (segments.Length > 0 && string.Equals(segments[0], "revit-bridge-addin", StringComparison.Ordinal))
+            {
+                var addinCandidate = Path.Combine(new[] { addinRoot }.Concat(segments.Skip(1)).ToArray());
+                if (File.Exists(serverSource) && File.Exists(addinCandidate)) return File.ReadAllText(addinCandidate);
+            }
+
             var publicCandidate = Path.Combine(new[] { root, "apps" }.Concat(segments).ToArray());
-            if (File.Exists(publicServerSource) && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
+            if (File.Exists(Path.Combine(publicRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))
+                && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
 
             var privateCandidate = Path.Combine(new[] { root }.Concat(segments).ToArray());
             return File.ReadAllText(privateCandidate);

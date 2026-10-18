@@ -6,6 +6,7 @@ import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { categoryVisibilityScopeSchemaV1 } from './lib/category_visibility_scope_schema.js';
 import { familyStaticTextScopeSchemaV1 } from './lib/family_static_text_scope_schema.js';
 import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import {retainedImageDelivery,MAX_RETAINED_IMAGE_BYTES} from './lib/retainedImageDelivery.js';
 import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
 import * as path from "path";
@@ -1001,8 +1002,8 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256), fields: z.array(z.string()).min(1).max(64).optional() }).describe("One bounded array page. Optional fields selects columns relative to each row and returns row_index, values keyed by the exact path, and missing_fields; projected pages are always partial. Mutually exclusive with every other selector.").optional(),
     textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
-    image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),
-    maxBytes: z.number().int().min(64).max(1_048_576).optional()
+    image: z.literal(true).describe("Return one exact retained image as pixels with its original scope/hash, not base64 text or current-state proof. Mutually exclusive with every other selector.").optional(),
+    maxBytes: z.number().int().min(64).max(MAX_RETAINED_IMAGE_BYTES).describe("Image: decoded file bytes, default/max5MiB. Text/JSON: existing default16KiB/max1MiB. Explicit smaller image budgets are respected.").optional()
   },
   async (args) => {
     try {
@@ -1028,6 +1029,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
         ...selectorRequest,
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
+      if(args.image===true)return retainedImageDelivery(result,args);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
@@ -1107,7 +1109,7 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_manage_work_plan", "Manage the saved task checklist and checkpoint. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; each list has at most 24 entries and each entry at most 1000 characters. Put lengthy tables in a saved report artifact and reference it. Correct rejected report arguments without redoing model edits; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Use dependsOn for ordered edits (delete a sheet before reusing its number). Cycles are rejected. Use defer with itemId/reason for an unresolved question; continue ready independent items and consolidate questions. resume_item with itemId/reason revisits a deferred item without marking it done. Status shows ready_items, waiting_on and deferrals; these are planning advice, not execution authority. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
+server.tool("operator_manage_work_plan", "Manage the saved task checklist. Retain intermediate progress with checklist updates; propose_completion is a final user handoff that stops for review, not a context checkpoint. Continue ready independent work within current host limits; defer actual blockers with specific reasons. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; each list has at most 24 entries and each entry at most 1000 characters. Put lengthy tables in a saved report artifact and reference it. Correct rejected report arguments without redoing model edits; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Use dependsOn for ordered edits (delete a sheet before reusing its number). Cycles are rejected. Use defer with itemId/reason for an unresolved question; continue ready independent items and consolidate questions. resume_item with itemId/reason revisits a deferred item without marking it done. Status shows ready_items, waiting_on and deferrals; these are planning advice, not execution authority. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
   {
     action: z.enum(["declare", "complete", "status", "propose_completion", "update_followup", "defer", "resume_item", "locate", "check_scope"]),
     scopeCheck: z.union([z.object({category:z.string().regex(/^OST_[A-Za-z0-9]+Tags$/),view_ids:z.array(z.number().int().positive()).min(1).max(128),
@@ -1648,14 +1650,17 @@ registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the
   }
 });
 
-server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells. For eligible columns not yet added, request detail with includeSchedulableFields; follow nextOffset until hasMore=false before claiming a field is absent. Names are exact native names, not aliases.",
+server.tool("revit_list_schedules", "List schedules with kind=regular (default), panel, or all; list pages return native IDs/UIDs, matched/returned/complete/hasMore/nextOffset. For whole-project panel work start with kind=panel; panel templates are excluded. For compact electrical discovery use action=circuits, max=1..500 (default200), offset and optional native panel scheduleId. Without scheduleId it enumerates all project power circuits, including explicit Spare/Space types, and returns both Load Name and Schedule Circuit Notes, native rating/voltage/VA/phase currents, conductor counts, member IDs and model wire profiles. Follow nextOffset for pages; completeness is enumeration, not suitability or verified work. Load classifications do not establish continuous duty; inspect equipment/use and applicable rules. Read panel detail separately for actual visible cell bindings. Only an unfiltered complete inventory establishes whole-project enumeration; the last page alone does not. Read one regular/panel schedule by native scheduleId. Panel detail with includeData=true returns bounded Header/Body/Summary/Footer text, actual cell parameter bindings, circuit identities and both Load Name and Schedule Circuit Notes: compact wiring can be stored in either, so description-only counts are incomplete. Follow section row/column continuation. Panel detail pages allow 1..200 rows, 1..40 columns, at most2000 cells per section. Rendered legibility and electrical sizing are separate checks. For regular columns not yet added, request includeSchedulableFields and follow nextOffset until hasMore=false. Names are exact native names, not aliases.",
   {
-    action: z.enum(["list", "detail"]).optional().default("list"),
-    scheduleId: z.number().int().optional(),
+    action: z.enum(["list", "detail", "circuits"]).optional().default("list"),
+    kind: z.enum(["regular", "panel", "all"]).optional().describe("List selector. Resolve panel detail by a scheduleId from its inventory."),
+    offset: z.number().int().min(0).max(100000).optional(),
+    scheduleId: z.number().int().positive().optional(),
     query: z.string().optional(),
     exact: z.boolean().optional().default(false),
     max: z.number().int().min(1).max(500).optional(),
     includeFields: z.boolean().optional(),
+    includeDefinitionSnapshot: z.boolean().optional().describe("Opt-in bounded flat ViewSchedule definition, cell styles and table snapshot for an independent clone check; requires exact scheduleId detail, fields enabled, no query. Not panel schedules."),
     includeSchedulableFields: z.boolean().optional(),
     schedulableFieldOffset: z.number().int().min(0).optional(),
     maxSchedulableFields: z.number().int().min(1).max(200).optional(),
@@ -1670,6 +1675,7 @@ server.tool("revit_list_schedules", "List schedules or read one schedule's bound
       if (args.action === "detail" && args.scheduleId === undefined && !String(args.query ?? "").trim()) {
         throw new Error("revit_list_schedules detail requires scheduleId or query.");
       }
+      if(args.action==='circuits'&&(args.kind!==undefined||args.query?.trim()))throw Error('Circuit inventory uses optional scheduleId, not query/kind.');
       const data = await callRevit("/revit/schedules", "POST", args, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });

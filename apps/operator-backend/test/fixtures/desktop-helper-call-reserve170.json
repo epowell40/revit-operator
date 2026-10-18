@@ -1,0 +1,14 @@
+{
+  "schema": "operator.desktop-helper-call-reserve-failure.v1",
+  "source": "Actual disposable Snowdon candidate170 task; no office reference content.",
+  "global_provider_call_limit": 64,
+  "desktop_calls": 18,
+  "backend_helper_calls": [
+    38,
+    6,
+    2
+  ],
+  "result": "Correction and same-check historical visual recheck passed, SaveAs committed, then global call cap stopped final verification.",
+  "parent_plan_pollution": "Helper inspection item was still presented as whole-task unfinished work. Separate ownership repair remains required.",
+  "limits": "Retained observation, not a benchmark pass or authorization for extra global budget."
+}

@@ -9,6 +9,7 @@ import type { AssignmentProgressBudgetV2 } from "./progress/contracts.js";
 import type { AssignmentEventV2 } from "./events.js";
 import type { OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { defaultAssignmentWorkBudgetV2 } from './effective_work_budget.js';
 
 export const PROVIDER_USAGE_HOLD_V1_SCHEMA = "revit-operator.provider-usage-hold/v1" as const;
 
@@ -95,7 +96,11 @@ export function assertProviderUsageResumeV1(snapshot: AssignmentSnapshotV2,
     kernelAssertV2(validLocalAdvisoryPolicyV1(snapshot.spec), "provider_usage_resume_policy_invalid", "Resume requires the unchanged creation-time policy.");
     const original = { ...hold.resume_budget, max_provider_calls: policy.max_provider_calls, max_reasoning_turns: policy.max_provider_calls,
       max_operations: policy.max_operations, max_total_tokens: policy.max_total_tokens, max_wall_clock_ms: policy.max_wall_clock_ms };
-    kernelAssertV2(!assignmentProgressBudgetBlockerV2(snapshot, original, event.occurred_at),
+    // New explicitly time-extended policies retain their earned allowance, not
+    // a fresh ledger. The captured hold budget above remains a second hard cap.
+    // Historical policies preserve the original Resume fence exactly.
+    const frozen=policy.progress_allowance?.max_wall_clock_ms===undefined?original:defaultAssignmentWorkBudgetV2(snapshot,original);
+    kernelAssertV2(!assignmentProgressBudgetBlockerV2(snapshot, frozen, event.occurred_at),
       "provider_usage_resume_budget_exhausted", "Resume cannot exceed the original advisory policy.");
   }
 }

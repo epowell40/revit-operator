@@ -45,8 +45,8 @@ export function isStandaloneAssistantRequest(text: string): boolean {
     .replace(/\b(?:make|perform|apply|commit)\s+no\s+(?:(?:revit|model|project|document)\s+)?(?:changes?|edits?|modifications?)\b/gi, " ")
     .replace(/\b(?:leave|keep)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\s+unchanged\b/gi, " ");
   if (isRetainedResultDiscussion(request)) return true;
-  const documentReview = /\b(?:read|review|summarize|explain|extract|compare|outline|analy[sz]e)\b[^.!?;\n]{0,100}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|redlines?|drawings?)\b/i.test(request)
-    || /\bwhat\b[^.!?;\n]{0,60}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?)\b[^.!?;\n]{0,60}\b(?:say|mean|require|call for)\b/i.test(request);
+  const documentReview = /\b(?:read|review|inspect|summarize|explain|extract|compare|outline|analy[sz]e)\b[^.!?;\n]{0,100}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|redlines?|drawings?|tables?|json|csv|text|notes?)\b/i.test(request)
+    || /\bwhat\b[^.!?;\n]{0,60}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|tables?|json|csv|text|notes?)\b[^.!?;\n]{0,60}\b(?:say|mean|require|call for)\b/i.test(request);
   const researchOrCalculation = /\b(?:look up|research|search (?:the )?(?:internet|web)|manufacturer|published|calculate|calculation|convert|formula|explain|engineering)\b/i.test(request);
   const answerDraft = isAnswerDraftRequest(request);
   if (!researchOrCalculation && !documentReview && !answerDraft) return false;
@@ -60,7 +60,7 @@ export function isStandaloneAssistantRequest(text: string): boolean {
     if (/\b(?:revit|model|selected|selection|parameter|element)\b|\b(?:current|active|open|this|our)\s+(?:project|sheet|view|schedule)\b/i.test(scopeRequest)) return false;
   } else if (/\b(?:revit|model|project|selected|selection|sheet|view|redline|markup|parameter|element|schedule)\b/i.test(request)) return false;
   if (/\b(?:this|that|these|those|current|active)\s+(?:duct|pipe|fan|device|equipment|system|branch)\b/i.test(request)) return false;
-  if (/\b(?:add|adjust|change|correct|fix|create|place|move|delete|remove|rename|resize|replace|set|route|connect|disconnect|update|modify|edit|apply|commit|export|print)\b/i.test(request)) return false;
+  if (/\b(?:add|adjust|change|correct|fix|create|place|move|delete|remove|rename|resize|replace|set|route|connect|disconnect|update|modify|edit|apply|commit|export|print|fill(?:\s+(?:out|in))?|populate)\b/i.test(request)) return false;
   // A drafting request does not absorb a second instruction to execute or
   // communicate the plan. Keep that mixed request with the durable owner.
   if (answerDraft && /\b(?:execute|implement|perform|carry out|go ahead|do (?:it|that|the work|the tasks)|send|email|contact|publish|submit|resume|continue|run)\b/i.test(request)) return false;

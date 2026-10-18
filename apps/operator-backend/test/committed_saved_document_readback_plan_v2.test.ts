@@ -1,3 +1,5 @@
+import {savedCopyHandoffV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -11,6 +13,8 @@ import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
+import {recordCompletedAssignmentProviderReceiptV2,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from '../src/assignments/assignment_kernel_v2_progress.js';
+import {defaultAssignmentWorkBudgetV2} from '../src/assignments/assignment_work_allowance_v2.js';
 
 function fixture(){
  const output='C:/fixture/result.rvt',identity={session_id:'native-document-1',project_fingerprint:'a'.repeat(64),path:output};
@@ -24,10 +28,13 @@ function fixture(){
     saved_document:{...identity,is_modified:false,is_modifiable:false,is_family_document:false}}};
 }
 
-for(const variant of ['exact','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save'] as const)
+for(const variant of ['exact','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save','last_provider_call','last_provider_call_advisory','last_provider_call_schema_rejected','last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'] as const)
 test(`ordinary native save ${variant} receives one guarded fresh file/document read without another save`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-save-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
+ const fixtureEnv:Record<string,string>={REVIT_OPERATOR_MODE:'development',OPERATOR_HOSTED_ENABLED:'0',OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS:'save-host-session',OPERATOR_ADVISORY_MAX_PROVIDER_CALLS:'64'};
+ const oldEnv=Object.fromEntries(Object.keys(fixtureEnv).map(k=>[k,process.env[k]]));
+ if(variant==='last_provider_call_advisory')Object.assign(process.env,fixtureEnv);
  try { await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const f=fixture();
   if(variant==='native_session_transition'){
@@ -38,13 +45,28 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
   const goal=createGoal({title:'Save the updated model',objective:'Save the updated model as a new result.',acceptance_criteria:['The requested output is saved.'],status:'active',
    related_session_id:'save-host-session',created_by:'save-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'a'.repeat(64)}});
   createAssignmentKernelForGoalV2({goal,run_id:'save-host-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
+  const initial=getAssignmentKernelSnapshotV2(goal.id)!,limit=defaultAssignmentWorkBudgetV2(initial,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls;
+  function fixtureProviderReceipt(index:number){const s=getAssignmentKernelSnapshotV2(goal.id)!;
+   recordCompletedAssignmentProviderReceiptV2({binding,call_id:'last-call-fixture:'+index,controller_turn_id:'save-turn',provider:'test-only-fixture',model:'test-only-no-provider',reasoning_effort:'medium',
+    gap_ids:deriveProgressGapsV2(s).map(g=>g.gap_id),criterion_ids:s.spec.criteria.map(c=>c.criterion_id),expected_information:['Inspect the saved result'],
+    admitted_at:s.spec.created_at,completed_at:new Date().toISOString(),provider_duration_ms:0,usage:{input_tokens:1,output_tokens:0,reasoning_tokens:0,total_tokens:1,estimated_cost_usd:null},success:true});}
+  const lastCall=variant.startsWith('last_provider_call');
+  const schemaRejected=variant==='read_schema_rejected'||variant==='last_provider_call_schema_rejected';
+  const noDispatch=['last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'].includes(variant);
+  if(variant==='last_provider_call_advisory'){assert.equal(initial.spec.execution_policy?.mode,'local_advisory_v1');assert.equal(limit,64);}
+  if(lastCall)for(let i=0;i<limit-1;i++)fixtureProviderReceipt(i);
   const calls:any[]=[],validations:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
    async validateToolArguments(_tool:string,args:any){validations.push(args);if(args.path==='/revit/inspect-exported-files'){
-    assert.deepEqual(args.body,{paths:[f.output]});if(variant==='read_schema_rejected')throw Error('read_schema_rejected');
+    assert.deepEqual(args.body,{paths:[f.output]});if(schemaRejected)throw Error('read_schema_rejected');
+    if(validations.filter(c=>c.path==='/revit/inspect-exported-files').length===2){
+     if(variant==='last_provider_call_schema_changed')throw Error('current_schema_changed');
+     if(variant==='last_provider_call_pause_at_dispatch')controlAssignmentExecutionV2({binding,command_id:'pause-during-admission',expected_command_id:null,action:'pause'});
+    }
    }},async callTool(_tool:string,args:any,context:any){
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();
     const read=args.path==='/revit/inspect-exported-files';if(read&&variant==='read_failure')throw Error('native_read_failed');
+    if(!read&&lastCall)fixtureProviderReceipt(limit-1);
     const payload:any=read?structuredClone(f.read):{status:'Success',ok:true,artifact_receipt:f.receipt};
     if(read){if(variant==='dirty_document')payload.saved_document.is_modified=true;if(variant==='wrong_hash')payload.files[0].sha256='c'.repeat(64);
      if(variant==='wrong_native_session')payload.saved_document.session_id='different';}
@@ -65,11 +87,35 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
    const response:any=await handleCodexDynamicToolCall(runtime,{id:'user-save',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'save-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/save-as').length,1);assert.equal(response.success,true);
-   assert.equal(validations.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'?0:1);
-   assert.equal(calls.filter(c=>c.path==='/revit/inspect-exported-files').length,['paused_after_save','read_schema_rejected'].includes(variant)?0:1);
+   assert.equal(validations.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'?0:schemaRejected?1:2);
+   assert.equal(calls.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'||schemaRejected||noDispatch?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   const expectedVerified=['exact','native_session_transition'].includes(variant);
+   const expectedVerified=['exact','native_session_transition'].includes(variant)||lastCall&&!schemaRejected&&!noDispatch;
    assert.equal(verified,expectedVerified);assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!expectedVerified);
+   assert.deepEqual(s.in_flight_operation_ids,[]);assert.deepEqual(s.unresolved_unknown_operation_ids,[]);
+   if(lastCall){assert.equal(Object.keys(s.provider_calls).length,limit);assert.equal(defaultAssignmentWorkBudgetV2(s,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,limit);}
+   if(schemaRejected){
+    const before=structuredClone(s),stopped=structuredClone(s);Object.assign(stopped,{terminal:true,outcome:'blocked',terminal_reason:'provider_call_budget_exhausted'});
+    const handoff=deriveTerminalResultV2(stopped);
+    assert.match(handoff.result_summary,/Saved copy: result\.rvt/,'A native save receipt must survive a later verification/budget stop');
+    assert.match(handoff.result_summary,/content verification.*pending/i);assert.equal(handoff.outcome,'blocked');assert(handoff.evidence_refs.includes(s.observations[apply.observation_ids[0]!]!.raw_payload_ref));
+    assert.deepEqual(s,before,'Rendering a partial saved result must not certify it or change lifecycle state');
+    assert(savedCopyHandoffV2(stopped));
+    for(const mutate of [(v:any)=>v.unresolved_unknown_operation_ids=['old-unknown'],(v:any)=>v.in_flight_operation_ids=['pending-native'],
+     (v:any)=>v.current_binding={...v.current_binding,run_id:'foreign'},(v:any)=>v.input_invalidated_operation_ids=[apply.operation_id],
+     (v:any)=>v.operations[apply.operation_id].result.authority='model',(v:any)=>v.operations[apply.operation_id].result.persistent_effect='unknown',
+     (v:any)=>v.operations[apply.operation_id].input.body.filePath='C:/foreign/other.rvt',
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.save_document.native_save_returned=false,
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.outputs[0].stable_read=false,
+     (v:any)=>v.operations[apply.operation_id].result.native_artifact_receipt.outputs[0].sha256='c'.repeat(64),
+     (v:any)=>v.operations[apply.operation_id].observation_ids=[],
+     (v:any)=>v.observations[apply.observation_ids[0]!].raw_payload_hash='d'.repeat(64),
+     (v:any)=>v.observations[apply.observation_ids[0]!].authority='model',
+     (v:any)=>v.operations['later-edit']={...v.operations[apply.operation_id],operation_id:'later-edit',result:{...v.operations[apply.operation_id].result,completed_at:'2099-01-01T00:00:00Z'}}]){
+      const altered=structuredClone(stopped);mutate(altered);assert.equal(savedCopyHandoffV2(altered),null,'Stale, foreign, invented or unbacked saved-file claims cannot become a partial deliverable');
+    }
+
+   }
    if(expectedVerified){
     assert.equal(committedSavedDocumentReadbackPlanV2(s,apply),null,'Never repeat completed automatic read');
     const plain:any=structuredClone(s);plain.operations[apply.operation_id].verification_operation_ids=[];plain.observations={};plain.operations[apply.operation_id].observation_ids=[];
@@ -82,5 +128,5 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
     }
    }
   }finally{endTeammateLoopOwner(owner);}
- });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
+ });}finally{for(const [k,v]of Object.entries(oldEnv)){if(v===undefined)delete process.env[k];else process.env[k]=v;}__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });

@@ -78,6 +78,16 @@ namespace RevitBridge.Handlers
             var changedElementIds = new HashSet<long>();
             var titleblockHits = new Dictionary<long, HashSet<string>>();
             var appliedTargets = new List<AppliedTarget>();
+            var circuitWiringBefore = new Dictionary<long, RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Snapshot>();
+            var circuitWiringPreview = new Dictionary<long, RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Snapshot>();
+            foreach (var entry in effectiveChanges)
+            {
+                var circuit = doc.GetElement(ElementIdCompat.Create(entry.elementId)) as Autodesk.Revit.DB.Electrical.ElectricalSystem;
+                var parameter = circuit?.LookupParameter(entry.parameterName);
+                if (parameter != null && RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.IsSizingParameter(parameter)
+                    && !circuitWiringBefore.ContainsKey(entry.elementId))
+                    circuitWiringBefore.Add(entry.elementId, RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Read(doc, entry.elementId));
+            }
             var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted(targetElementIds);
             var failureGuard = new OperatorNativeFailureGuard();
             var changeInventory = new OperatorNativeChangeInventory(doc);
@@ -245,6 +255,9 @@ namespace RevitBridge.Handlers
                         }
                     }
 
+                    foreach (var id in circuitWiringBefore.Keys)
+                        circuitWiringPreview[id] = RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Read(doc, id);
+
                     if (apply && changedCount > 0)
                     {
                         var commitStatus = trans.Commit();
@@ -404,7 +417,9 @@ namespace RevitBridge.Handlers
                 failureRollbackRequested = failureGuard.RollbackRequested,
                 requiredConfirm,
                 confirmReceived,
-                titleblockImpacts
+                titleblockImpacts,
+                dependentCircuitWiring = RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Describe(
+                    doc, circuitWiringBefore, circuitWiringPreview, transactionReceipt.Status)
             });
         }
     }

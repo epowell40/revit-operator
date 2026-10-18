@@ -3,6 +3,42 @@ const sameBinding = (a, b) => bindingKeys.every(key => a?.[key] === b?.[key]);
 const canonical = view => view?._sourceKind === 'assignment_kernel_v2'
   && Number.isSafeInteger(view._assignmentVersion) && view._assignmentVersion > 0;
 
+/** Navigation only: open this exact saved task, then load its authoritative
+ * publication and use ordinary controls. Selecting history never resumes it. */
+export function savedAssignmentNavigationTargetV2(view, currentSessionId) {
+  const binding = view?._bindingV2;
+  if (!canonical(view) || !binding || !currentSessionId || binding.session_id !== currentSessionId
+      || !bindingKeys.slice(0, 3).every(key => typeof binding[key] === 'string' && binding[key].length > 0 && binding[key].length <= 240)
+      || !Number.isSafeInteger(binding.generation) || binding.generation < 0
+      || view._sourceRecordId !== binding.assignment_id || view.id !== `goal:${binding.assignment_id}`) return null;
+  return { session_id: binding.session_id, assignment_id: binding.assignment_id };
+}
+
+/** Keep the opened task addressable even beyond the history page, without
+ * hiding other saved tasks in its conversation. All views come from the
+ * host's owner-checked canonical publication endpoints; this never executes. */
+export async function readSavedAssignmentHistoryV2(readJson, sessionId, assignmentId) {
+  if (![sessionId, assignmentId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 240))
+    throw new Error('A saved task and conversation are required.');
+  const session = encodeURIComponent(sessionId);
+  const [exact, history] = await Promise.all([
+    readJson(`/api/assignment-workspace/v2/task?session_id=${session}&assignment_id=${encodeURIComponent(assignmentId)}`),
+    readJson(`/api/assignment-workspace/v2?session_id=${session}&limit=30`)
+  ]);
+  const target = exact?.assignment;
+  if (savedAssignmentNavigationTargetV2(target, sessionId)?.assignment_id !== assignmentId
+      || history?.session_id !== sessionId || !Array.isArray(history.assignments) || history.assignments.length > 30)
+    throw new Error('The saved task history does not match this conversation.');
+  const views = new Map([[target.id, target]]);
+  for (const view of history.assignments) {
+    if (!savedAssignmentNavigationTargetV2(view, sessionId)) throw new Error('Invalid saved task history.');
+    const prior = views.get(view.id);
+    if (prior && !sameBinding(prior._bindingV2, view._bindingV2)) throw new Error('Saved task generation changed.');
+    if (!prior || view._assignmentVersion > prior._assignmentVersion) views.set(view.id, view);
+  }
+  return { assignments: [...views.values()] };
+}
+
 /** A save's exact acknowledgment owns continuation. Background polling does not. */
 export async function acknowledgeAssignmentMutationV2(readJson, projectPublication, backendPath, body) {
   const result = await readJson(backendPath, {
@@ -24,6 +60,18 @@ export async function acknowledgeAssignmentMutationV2(readJson, projectPublicati
     return { ok: true, idempotent: result.idempotent === true,
       refresh_error: 'Saved, but the current task could not be refreshed. Reconnect before continuing.' };
   }
+}
+
+/** Keep the control's original authoritative fences and attach an exact refreshed
+ * view. A cancelled/superseded background poll cannot own Resume continuation. */
+export async function acknowledgeAssignmentControlV2(readJson, projectPublication, backendPath, body) {
+  let acknowledged;
+  const refreshed = await acknowledgeAssignmentMutationV2(async (path, options) => {
+    const response = await readJson(path, options);
+    if (options.method === 'POST') acknowledged = response;
+    return response;
+  }, projectPublication, backendPath, body);
+  return { ...acknowledged, ...refreshed };
 }
 
 /** Preserve a newer verified display version when a status response arrives late. */

@@ -355,6 +355,24 @@ export async function getAttachmentExcerptsForPrompt(attachments: UserAttachment
     }
 
     const ext = extLower(full);
+    if (ext === ".dwg") {
+      const sha = await sha256HexFile(full);
+      if (a.sha256 && a.sha256.toLowerCase() !== sha) {
+        out.push({ id, label, relative_path: rp, mime: "application/acad", sha256: sha, excerpts: [], warning: "CAD attachment bytes changed since upload; do not use the retained identity as a link source." });
+        continue;
+      }
+      const header = Buffer.alloc(6), fd = fs.openSync(full, "r");
+      let count: number;
+      try { count = fs.readSync(fd, header, 0, header.length, 0); } finally { fs.closeSync(fd); }
+      const signature = count === 6 ? header.toString("ascii") : "";
+      const recognized = /^AC10[0-9]{2}$/.test(signature);
+      out.push({ id, label, relative_path: rp, mime: "application/acad", sha256: sha,
+        excerpts: recognized ? [{ anchor: "CAD binary reference", text: JSON.stringify({ format: "DWG", signature, source_path: rp,
+          geometry_extracted: false, units_known: false, text_height_known: false,
+          note: "Use the registered source path for native CAD linking when requested. Native units, layers, scale and printed appearance need separate inspection; binary content has not been interpreted." }) }] : [],
+        warning: recognized ? undefined : "Unrecognized DWG header; native CAD compatibility has not been established." });
+      continue;
+    }
     if (ext !== ".pdf" && ext !== ".docx" && ext !== ".xlsx" && ext !== ".xls" && ext !== ".png" && ext !== ".jpg" && ext !== ".jpeg" && ext !== ".json") {
       out.push({ id, label, relative_path: rp, external_path: extPath || undefined, mime: a.mime, sha256: a.sha256, excerpts: [], warning: "No auto-extraction for this file type (supported: .pdf, .docx, .xlsx/.xls, .png/.jpg, .json)." });
       continue;

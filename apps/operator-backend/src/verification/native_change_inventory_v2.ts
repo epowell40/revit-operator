@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_NATIVE_AFFECTED_TARGETS_V2 } from '@revitoperator/assignment-kernel-v2-contracts';
 import { canonicalJsonV2 } from '../domain/assignment-kernel/canonical.js';
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
 import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.js';
@@ -29,7 +30,7 @@ export function nativeChangeInventoryCompleteV2(operation: OperationV2 | undefin
     || tracking.captureFailureCount !== 0 || !positiveId(tracking.matchingEventCount)
     || !positiveId(tracking.eventCount) || tracking.matchingEventCount > tracking.eventCount) return false;
   const sets = ['added_element_ids', 'modified_element_ids', 'deleted_element_ids', 'affected_element_ids'].map(key => tx[key]);
-  if (!sets.every((ids): ids is number[] => Array.isArray(ids) && ids.length <= 256
+  if (!sets.every((ids): ids is number[] => Array.isArray(ids) && ids.length <= MAX_NATIVE_AFFECTED_TARGETS_V2
     && ids.every(positiveId) && new Set(ids).size === ids.length)) return false;
   const union = [...new Set(sets.slice(0,3).flat())].sort((a,b) => a-b);
   const affected = [...sets[3]!].sort((a,b) => a-b);

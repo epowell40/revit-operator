@@ -1,0 +1,127 @@
+{
+  "provenance": "Exact disposable Snowdon116 presentation request and native payload. Private session/transport wrapper excluded. No scope-before proof existed, so this historical write remains unverified.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/configure-schedule",
+    "body": {
+      "scheduleId": 1542917,
+      "fieldOrder": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        19,
+        18,
+        20
+      ],
+      "appearance": {
+        "showTitle": true,
+        "showHeaders": true,
+        "titleTextTypeId": 1542930
+      },
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1542917
+      ],
+      "affected_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1542917,
+        1542935
+      ],
+      "added_element_ids": [
+        1542935
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "status": "Success",
+    "dryRun": false,
+    "schedule": {
+      "id": 1542917,
+      "uniqueId": "ac8026be-c58b-4ac1-af39-686831e89569-00178b05",
+      "name": "AIR DEVICE SCHEDULE",
+      "fieldCount": 10,
+      "isItemized": false
+    },
+    "presentationReadback": {
+      "schema": "operator.regular_schedule_presentation.v1",
+      "complete": true,
+      "showTitle": true,
+      "showHeaders": true,
+      "fieldOrder": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        19,
+        18,
+        20
+      ],
+      "title": {
+        "id": 1542930,
+        "uniqueId": "cc225205-64ac-45fe-b9fb-883fca8676b4-00178b12",
+        "name": "Air Device Schedule Title - Arial Bold 3-16",
+        "font": "Arial",
+        "sizeFeet": 0.015625,
+        "bold": true,
+        "italic": false
+      },
+      "header": {
+        "id": 737462,
+        "uniqueId": "247470a6-3d69-4a8f-bb7a-7474b867003d-000b40b6",
+        "name": "Schedule Default",
+        "font": "Arial",
+        "sizeFeet": 0.010416666666666666,
+        "bold": false,
+        "italic": false
+      },
+      "body": {
+        "id": 737462,
+        "uniqueId": "247470a6-3d69-4a8f-bb7a-7474b867003d-000b40b6",
+        "name": "Schedule Default",
+        "font": "Arial",
+        "sizeFeet": 0.010416666666666666,
+        "bold": false,
+        "italic": false
+      },
+      "note": "Native default text styles only. Field/cell overrides and rendered legibility require separate inspection."
+    },
+    "filterReadback": [
+      {
+        "fieldId": 20,
+        "op": "NotContains",
+        "valueType": "string",
+        "value": "Cap"
+      }
+    ]
+  }
+}

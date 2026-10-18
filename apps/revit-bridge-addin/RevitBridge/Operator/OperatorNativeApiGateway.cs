@@ -76,6 +76,7 @@ namespace RevitBridge.Operator
         public string[] ParameterTypes { get; set; } = Array.Empty<string>();
         public bool Callable { get; set; }
         public bool GraphCallable { get; set; }
+        public bool UnfilteredDependencyRead { get; set; }
         public bool DetachedGeometryFactory { get; set; }
         public string[] UnsupportedParameterTypes { get; set; } = Array.Empty<string>();
         public string DocsSearchUrl { get; set; } = "";
@@ -785,6 +786,8 @@ namespace RevitBridge.Operator
 
                 var ps = descriptor?.Method?.GetParameters() ?? Array.Empty<ParameterInfo>();
                 var provided = descriptor == null ? new List<JsonElement>() : ReadArgs(operation.args);
+                if (descriptor?.UnfilteredDependencyRead == true)
+                    RevitBridge.Common.OperatorNativeDependencyReadPolicy.RequireNullFilter(provided);
                 if (provided.Count > ps.Length)
                     throw new InvalidOperationException($"Native API operation '{id}' supplied {provided.Count} arguments for a member that accepts {ps.Length}.");
                 var args = new object?[ps.Length];
@@ -795,6 +798,13 @@ namespace RevitBridge.Operator
                     if (parameter.IsOut || parameter.ParameterType.IsByRef) throw new InvalidOperationException($"Unsupported by-ref parameter: {parameter.Name}");
                     if (i < provided.Count)
                     {
+                        if (descriptor?.UnfilteredDependencyRead == true)
+                        {
+                            // Only this exact SDK read accepts a literal null for
+                            // ElementFilter. Never deserialize an arbitrary filter.
+                            args[i] = null;
+                            continue;
+                        }
                         var resolved = ConvertOperationArgument(provided[i], parameter.ParameterType, values, valueOwners, argumentResolver, id);
                         args[i] = resolved.Value;
                         argumentOwners.AddRange(resolved.Owners);
@@ -808,6 +818,9 @@ namespace RevitBridge.Operator
                 if (mutationEnvelopeRequired && descriptor?.MutatingHint == true && !descriptor.DetachedGeometryFactory)
                     ValidateMutationOwnership(descriptor, operationOwners, transactionDocument!, id);
 
+                // Capture the actual receiver before invocation; allowed IDs
+                // and the caller's current-view claim cannot establish identity.
+                var targetIdentity = CaptureElementReceiverIdentity(targetObject, app.ActiveUIDocument?.Document);
                 var step = Stopwatch.StartNew();
                 object? raw;
                 try
@@ -841,6 +854,7 @@ namespace RevitBridge.Operator
                     property = propertyInfo?.Name,
                     signature = descriptor?.Signature ?? PropertySignature(propertyInfo!),
                     target_type = targetObject?.GetType().FullName,
+                    target_identity = targetIdentity,
                     duration_ms = step.ElapsedMilliseconds,
                     result_preview = OperationPreview(raw)
                 });
@@ -1138,9 +1152,6 @@ namespace RevitBridge.Operator
             var propertyName = (rawProperty ?? "").Trim();
             if (string.IsNullOrWhiteSpace(propertyName) || propertyName.Length > 128 || !(char.IsLetter(propertyName[0]) || propertyName[0] == '_') || propertyName.Any(ch => !(char.IsLetterOrDigit(ch) || ch == '_')))
                 throw new InvalidOperationException($"get_property operation '{operationId}' requires a simple public property name (max 128 characters).");
-            if (IsFreezeRiskHint(propertyName, target.GetType()))
-                throw new InvalidOperationException($"get_property operation '{operationId}' is blocked by the freeze-risk policy: {propertyName}");
-
             var matches = target.GetType()
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => string.Equals(p.Name, propertyName, StringComparison.OrdinalIgnoreCase) && p.CanRead && p.GetIndexParameters().Length == 0 && p.GetMethod != null && p.GetMethod.IsPublic && !p.GetMethod.IsStatic)
@@ -1148,7 +1159,16 @@ namespace RevitBridge.Operator
                 .ThenByDescending(p => p.DeclaringType == target.GetType())
                 .ToList();
             if (matches.Count == 0) throw new InvalidOperationException($"Readable public property '{propertyName}' was not found on {target.GetType().FullName}.");
-            return matches[0];
+            var property = matches[0];
+            // Resolve metadata before classifying the name; never invoke a getter
+            // merely to discover whether it is safe. Bind the exception to the
+            // actual Revit SDK declaration, not a caller-supplied type/name.
+            var passivePresentationRead = property.DeclaringType?.Assembly == typeof(Element).Assembly
+                && RevitBridge.Common.OperatorNativePresentationPropertyReadPolicy.IsPassiveRead(
+                    property.DeclaringType?.FullName, property.Name, property.PropertyType.FullName);
+            if (IsFreezeRiskHint(propertyName, target.GetType()) && !passivePresentationRead)
+                throw new InvalidOperationException($"get_property operation '{operationId}' is blocked by the freeze-risk policy: {propertyName}");
+            return property;
         }
 
         private static NativeGraphArgument ConvertOperationArgument(JsonElement value, Type targetType,
@@ -1170,6 +1190,19 @@ namespace RevitBridge.Operator
         }
 
         private static string PropertySignature(PropertyInfo property) => $"{FriendlyType(property.PropertyType)} {property.DeclaringType?.Name}.{property.Name} {{ get; }}";
+
+        private static object? CaptureElementReceiverIdentity(object? target, Document? activeDocument)
+        {
+            if (!(target is Element element) || !element.IsValidObject) return null;
+            return new
+            {
+                schema = "operator.native_element_receiver.v1",
+                element_id = ElementIdCompat.GetValue(element.Id),
+                unique_id = element.UniqueId,
+                type_name = element.GetType().FullName,
+                active_document = activeDocument != null && element.Document.Equals(activeDocument)
+            };
+        }
 
         private static object? OperationPreview(object? value)
         {
@@ -1220,6 +1253,7 @@ namespace RevitBridge.Operator
                 priority = d.Priority,
                 signature_supported = signatureSupported,
                 graph_signature_supported = d.GraphCallable,
+                unfiltered_dependency_read = d.UnfilteredDependencyRead,
                 graph_allowed = graphAllowed,
                 graph_blocked_reason = graphAllowed ? null : graphReason,
                 detached_geometry_factory = d.DetachedGeometryFactory,
@@ -1294,6 +1328,12 @@ namespace RevitBridge.Operator
         private static NativeApiMemberDescriptor? BuildDescriptor(Type t, MethodBase m, string kind)
         {
             var ps = m.GetParameters();
+            var unfilteredDependencyRead = m is MethodInfo dependencyRead
+                && dependencyRead.DeclaringType == typeof(Element)
+                && dependencyRead.DeclaringType.Assembly == typeof(Element).Assembly
+                && RevitBridge.Common.OperatorNativeDependencyReadPolicy.IsUnfilteredRead(
+                    dependencyRead.DeclaringType.FullName, dependencyRead.Name, dependencyRead.IsStatic,
+                    NativeParameterShape(dependencyRead.ReturnType), ps.Select(p => NativeParameterShape(p.ParameterType)).ToArray());
             var paramTypes = ps.Select(x => FriendlyType(x.ParameterType)).ToArray();
             var unsupported = new List<string>();
             var graphUnsupported = new List<string>();
@@ -1301,7 +1341,7 @@ namespace RevitBridge.Operator
             {
                 if (p.IsOut || p.ParameterType.IsByRef) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
                 else if (!IsSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)) unsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
-                if (p.IsOut || p.ParameterType.IsByRef || (!IsGraphSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)))
+                if (p.IsOut || p.ParameterType.IsByRef || (!unfilteredDependencyRead && !IsGraphSupportedType(p.ParameterType) && !p.HasDefaultValue && !CanResolveContextParameter(p.ParameterType)))
                     graphUnsupported.Add(p.ParameterType.FullName ?? p.ParameterType.Name);
             }
 
@@ -1330,6 +1370,7 @@ namespace RevitBridge.Operator
                 ParameterTypes = paramTypes,
                 Callable = unsupported.Count == 0,
                 GraphCallable = graphUnsupported.Count == 0,
+                UnfilteredDependencyRead = unfilteredDependencyRead,
                 DetachedGeometryFactory = m is MethodInfo factory && OperatorNativeGeometryGraphPolicy.IsDetachedFactory(
                     factory.DeclaringType?.FullName ?? "", factory.Name, factory.IsStatic, factory.ReturnType.FullName ?? "",
                     ps.Select(parameter => NativeParameterShape(parameter.ParameterType)).ToArray()),
@@ -1501,15 +1542,7 @@ namespace RevitBridge.Operator
 
         private static int Score(NativeApiMemberDescriptor m, string q)
         {
-            var s = 0;
-            var tokens = q.Split(new[] { ' ', '\t', '\r', '\n', '/', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
-            if (m.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 80;
-            if (m.TypeName.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 60;
-            if (m.Signature.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) s += 50;
-            foreach (var t in tokens) { if (m.SearchText.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0) s += 8; }
-            s += m.Priority / 3;
-            if (m.Callable) s += 4;
-            return s;
+            return NativeApiSearchScore.Compute(q, m.Name, m.TypeName, m.Signature, m.SearchText, m.Priority, m.Callable);
         }
 
         private static bool IsMutatingHint(string name)

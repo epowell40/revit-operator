@@ -1,0 +1,53 @@
+{
+  "schema": "operator.visual-review-missing-baseline-fixture.v1",
+  "source": "Retained disposable Snowdon candidate168 embedded review; no reference image or user office data.",
+  "before_request": {
+    "view_id": 1542917,
+    "capture_mode": "visible_work",
+    "image_size": 4000,
+    "reference_filename": null,
+    "checks": [
+      {
+        "id": "blank-row",
+        "expected": "There is no extra blank row immediately below AIR DEVICE SCHEDULE column headings and before the first Return Air row."
+      },
+      {
+        "id": "baseline",
+        "expected": "Seven populated data rows and the current grid/column layout are visible as the pre-correction baseline."
+      }
+    ]
+  },
+  "after_request": {
+    "view_id": 1542917,
+    "capture_mode": "visible_work",
+    "image_size": 4000,
+    "reference_filename": null,
+    "checks": [
+      {
+        "id": "blank-row",
+        "expected": "No extra blank row remains between the column headings and the first Return Air data row."
+      },
+      {
+        "id": "data-layout",
+        "expected": "All seven populated rows remain in the same order (two Return Air and five Supply Air), with existing column grid layout."
+      }
+    ]
+  },
+  "retained_after_state": "uncertain",
+  "retained_after_checks": [
+    {
+      "id": "blank-row",
+      "expected": "No extra blank row remains between the column headings and the first Return Air data row.",
+      "status": "matched",
+      "observed": "The first Return Air row directly follows the column headings, with no intervening blank row visible.",
+      "correction": ""
+    },
+    {
+      "id": "data-layout",
+      "expected": "All seven populated rows remain in the same order (two Return Air and five Supply Air), with existing column grid layout.",
+      "status": "uncertain",
+      "observed": "Seven populated rows are visible: two Return Air rows followed by five Supply Air rows, within a column grid. No baseline image is supplied to establish that their detailed order, data, and existing grid layout are unchanged.",
+      "correction": "Compare against the pre-correction schedule image to verify preservation of row order, data, and borders."
+    }
+  ]
+}

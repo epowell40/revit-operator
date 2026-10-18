@@ -10,13 +10,80 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void GuardedExcelOutputImportAndIndependentPartReadAreExposedWithoutLegacyMutation()
+        {
+            foreach (var path in new[] { "/revit/import-excel-output", "/revit/inspect-excel-import" })
+            {
+                Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+                Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path);
+                Assert.True(OperatorConditionalRequestContracts.TryGet(path, out _));
+                Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", path + "-other"));
+            }
+            Assert.Equal(OperatorActionRisk.Low, Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/inspect-excel-import").RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/import-excel-table"));
+        }
+        [Fact]
+        public void ExcelSourceInspectionIsDiscoverableWithoutEnablingLegacyMutation()
+        {
+            const string path = "/revit/inspect-excel-source";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            Assert.Equal(OperatorActionRisk.Low, Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path).RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/import-excel-table"));
+            Assert.True(OperatorConditionalRequestContracts.TryGet(path, out var schema));
+            Assert.Equal(4, schema.GetProperty("oneOf").GetArrayLength());
+        }
+        [Fact]
+        public void SourceBoundWordInspectionIsExposedAsReadWithoutAdjacentMutationRoutes()
+        {
+            const string path = "/revit/inspect-drawing-spec";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path);
+            Assert.Equal(OperatorActionRisk.Low, tool.RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", path + "-apply"));
+        }
+        [Fact]
+        public void WordSpecificationImportIsDiscoverableThroughExistingMutationAdmission()
+        {
+            const string path = "/revit/import-drawing-spec";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            var tool = Assert.Single(OperatorToolManifest.Tools.Where(t => t.Method == "POST" && t.Path == path));
+            Assert.Contains(".docx", tool.Description);
+            Assert.Equal(OperatorActionRisk.Medium, tool.RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/import-excel-table"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", path + "-unreviewed"));
+        }
+        [Fact]
+        public void CadLinkIsDiscoverableAndAdmittedWithoutOpeningAdjacentRoutes()
+        {
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/link-cad"));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", "/revit/link-cad"));
+            Assert.Single(OperatorToolManifest.Tools.Where(t => t.Method == "POST" && t.Path == "/revit/link-cad"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/link-cad"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/link-cad-unreviewed"));
+        }
+        [Fact]
+        public void SharedInstanceParameterCreationAndInspectionAreDiscoverableWithoutWideningOtherRoutes()
+        {
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/project-parameters"));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", "/revit/project-parameters"));
+            Assert.Single(OperatorToolManifest.Tools.Where(t => t.Method == "POST" && t.Path == "/revit/project-parameters"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/project-parameters"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/project-parameters-unreviewed"));
+        }
+        [Fact]
         public void EveryImplementedRouteIsConstrainedAtNativeAdmissionAndDiscovery()
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
-            Assert.Equal(217, implemented.Count);
-            Assert.Equal(109, OperatorToolManifest.Tools.Count);
-            Assert.Equal(109, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(221, implemented.Count);
+            Assert.Equal(116, OperatorToolManifest.Tools.Count);
+            Assert.Equal(116, OperatorActionAllowlist.EnumerateAllowed().Count());
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));

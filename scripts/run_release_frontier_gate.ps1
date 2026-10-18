@@ -90,18 +90,34 @@ function Invoke-Composition([string]$Root, [string]$Label) {
   $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
   Assert-ManifestCoverage $manifest
 
+  $backendRoot = Resolve-AppRoot $Root "operator-backend"
+  $mcpRoot = Resolve-AppRoot $Root "mcp-server"
+  $desktopRoot = Resolve-AppRoot $Root "operator-desktop"
+  $dotnetRoot = Resolve-AppRoot $Root "revit-bridge-addin"
+  if (-not $backendRoot -or -not $mcpRoot) { throw "$Label backend or MCP source root is missing." }
+
+  # Fail missing executable inputs before running an expensive test stage.
+  foreach ($testFile in @($manifest.backend_tests)) {
+    $source = Join-Path $backendRoot "test/$testFile"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label backend frontier test is missing: $testFile" }
+  }
+  foreach ($testFile in @($manifest.mcp_tests)) {
+    $source = Join-Path $mcpRoot "src/$testFile"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label MCP frontier test is missing: $testFile" }
+  }
+  if ($desktopRoot) {
+    foreach ($testFile in @($manifest.desktop_tests)) {
+      $source = Join-Path $desktopRoot ([string]$testFile)
+      if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label Desktop frontier test is missing: $testFile" }
+    }
+  }
+
   Invoke-External "$Label architecture authorities" {
     & (Join-Path $Root "scripts/check_assignment_kernel_boundary.ps1") -RepoRoot $Root
   }
   Invoke-External "$Label benchmark/runtime separation" {
     & (Join-Path $Root "scripts/check_benchmark_runtime_boundary.ps1") -RepoRoot $Root
   }
-
-  $backendRoot = Resolve-AppRoot $Root "operator-backend"
-  $mcpRoot = Resolve-AppRoot $Root "mcp-server"
-  $desktopRoot = Resolve-AppRoot $Root "operator-desktop"
-  $dotnetRoot = Resolve-AppRoot $Root "revit-bridge-addin"
-  if (-not $backendRoot -or -not $mcpRoot) { throw "$Label backend or MCP source root is missing." }
 
   $javascriptTests = @(Get-JavaScriptTests $manifest | ForEach-Object { Resolve-JavaScriptTest $Root ([string]$_) })
   if ($javascriptTests.Count -gt 0) {
@@ -111,10 +127,6 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     }
   }
 
-  foreach ($testFile in @($manifest.backend_tests)) {
-    $source = Join-Path $backendRoot "test/$testFile"
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label backend frontier test is missing: $testFile" }
-  }
   Invoke-External "$Label backend frontier" {
     Push-Location $backendRoot
     try {
@@ -124,10 +136,6 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     } finally { Pop-Location }
   }
 
-  foreach ($testFile in @($manifest.mcp_tests)) {
-    $source = Join-Path $mcpRoot "src/$testFile"
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label MCP frontier test is missing: $testFile" }
-  }
   Invoke-External "$Label MCP frontier" {
     Push-Location $mcpRoot
     try {
@@ -139,10 +147,6 @@ function Invoke-Composition([string]$Root, [string]$Label) {
   }
 
   if ($desktopRoot) {
-    foreach ($testFile in @($manifest.desktop_tests)) {
-      $source = Join-Path $desktopRoot ([string]$testFile)
-      if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$Label Desktop frontier test is missing: $testFile" }
-    }
     Invoke-External "$Label Desktop/Sidecar frontier" {
       Push-Location $desktopRoot
       try {

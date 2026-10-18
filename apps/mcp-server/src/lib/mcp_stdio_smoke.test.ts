@@ -1,14 +1,14 @@
+import {protectedSmokeResponse,writeNativeReceipt} from './nativeTransport.testSupport.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
-  NATIVE_TRANSPORT_ALGORITHM,
   NATIVE_TRANSPORT_CONTENT_TYPE,
   NATIVE_TRANSPORT_PATH,
   NATIVE_TRANSPORT_VERSION
@@ -66,68 +66,6 @@ function smokeCanonical(value: unknown): unknown {
 
 function smokeDigest(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(smokeCanonical(value)), "utf8").digest("hex")}`;
-}
-
-function nativeKeys(token: string, epoch: string, direction: "request" | "response") {
-  const epochBytes = Buffer.from(epoch, "base64url");
-  const prk = createHmac("sha512", epochBytes).update(token, "utf8").digest();
-  const info = Buffer.from(`${NATIVE_TRANSPORT_VERSION}\0${direction}\0${NATIVE_TRANSPORT_ALGORITHM}`, "utf8");
-  const okm = createHmac("sha512", prk).update(Buffer.concat([info, Buffer.from([1])])).digest();
-  return { mac: okm.subarray(0, 32), enc: okm.subarray(32, 64) };
-}
-
-function nativeTag(key: Buffer, epoch: string, direction: "request" | "response", iv: Buffer, ciphertext: Buffer): Buffer {
-  const aad = Buffer.from(`${NATIVE_TRANSPORT_VERSION}\n${NATIVE_TRANSPORT_ALGORITHM}\n${epoch}\n${direction}\nPOST\n${NATIVE_TRANSPORT_PATH}`, "utf8");
-  const bits = Buffer.alloc(8);
-  bits.writeBigUInt64BE(BigInt(aad.length) * 8n);
-  return createHmac("sha512", key).update(Buffer.concat([aad, iv, ciphertext, bits])).digest().subarray(0, 32);
-}
-
-function protectedSmokeResponse(requestEnvelopeJson: string, token: string, statusCode: number, bodyJson: string): string {
-  const envelope = JSON.parse(requestEnvelopeJson);
-  assert.equal(envelope.v, NATIVE_TRANSPORT_VERSION);
-  assert.equal(envelope.alg, NATIVE_TRANSPORT_ALGORITHM);
-  assert.equal(envelope.dir, "request");
-  const requestIv = Buffer.from(envelope.iv, "base64url");
-  const requestCiphertext = Buffer.from(envelope.ciphertext, "base64url");
-  const requestKeys = nativeKeys(token, envelope.epoch, "request");
-  const requestTag = Buffer.from(envelope.tag, "base64url");
-  assert.equal(timingSafeEqual(requestTag, nativeTag(requestKeys.mac, envelope.epoch, "request", requestIv, requestCiphertext)), true);
-  const decipher = createDecipheriv("aes-256-cbc", requestKeys.enc, requestIv);
-  const request = JSON.parse(Buffer.concat([decipher.update(requestCiphertext), decipher.final()]).toString("utf8"));
-
-  const responseInner = Buffer.from(JSON.stringify({
-    request_id: request.request_id,
-    request_nonce: request.request_nonce,
-    issued_at_unix_ms: Date.now(),
-    status_code: statusCode,
-    body_json: bodyJson
-  }), "utf8");
-  const responseIv = randomBytes(16);
-  const responseKeys = nativeKeys(token, envelope.epoch, "response");
-  const cipher = createCipheriv("aes-256-cbc", responseKeys.enc, responseIv);
-  const responseCiphertext = Buffer.concat([cipher.update(responseInner), cipher.final()]);
-  return JSON.stringify({
-    v: NATIVE_TRANSPORT_VERSION,
-    alg: NATIVE_TRANSPORT_ALGORITHM,
-    epoch: envelope.epoch,
-    dir: "response",
-    iv: responseIv.toString("base64url"),
-    ciphertext: responseCiphertext.toString("base64url"),
-    tag: nativeTag(responseKeys.mac, envelope.epoch, "response", responseIv, responseCiphertext).toString("base64url")
-  });
-}
-
-function writeNativeReceipt(localAppData: string, url: string, epoch: string): void {
-  const directory = path.join(localAppData, "RevitOperator");
-  fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, "bridge_transport.v1.json"), JSON.stringify({
-    version: NATIVE_TRANSPORT_VERSION,
-    algorithm: NATIVE_TRANSPORT_ALGORITHM,
-    transport_path: NATIVE_TRANSPORT_PATH,
-    url,
-    server_epoch: epoch
-  }), "utf8");
 }
 
 function writeSmokePolicyVariant(mutate: (policy: any) => void): { policyPath: string; policyHash: string; root: string } {
@@ -271,6 +209,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const connectorInspectionBodies: any[] = [];
   const sheetBodies: any[] = [];
   const scheduleBodies: any[] = [];
+  const circuitInventoryBodies:any[]=[];
   const scheduleCellBodies: any[] = [];
   const scheduleReplacementBodies: any[] = [];
   const setParameterBodies: any[] = [];
@@ -351,6 +290,21 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/schedules") {
       scheduleBodies.push(JSON.parse(requestBody || "{}"));
+      if(scheduleBodies.at(-1)?.action==='circuits'){
+        circuitInventoryBodies.push(scheduleBodies.at(-1));
+        res.end(JSON.stringify({schema:'operator.electrical_circuit_inventory.v1',status:'Ok',read_only:true,
+          items:[{id:101,loadName:'OFFICE REC. (3/4"C W/2#12+1#12GRD)',scheduleCircuitNotes:''},
+            {id:102,loadName:'OFFICE REC.',scheduleCircuitNotes:'3/4"C W/2#12+1#12GRD'}]}));return;
+      }
+      if(scheduleBodies.at(-1)?.scheduleId === 9007) {
+        res.end(JSON.stringify({schema:"operator.panel_schedule_detail.v1",status:"Ok",action:"detail",read_only:true,
+          schedule:{id:9007,kind:"panel_schedule",panelElementId:8003},
+          table:{sections:[{section:"Body",rowOffset:12,columnOffset:4,returnedRows:1,returnedColumns:2,
+            hasMoreRows:true,nextRowOffset:13,hasMoreColumns:false,nextColumnOffset:null,
+            rows:[{rowIndex:12,cells:[{column:4,text:"OFFICE REC.",parameterId:-1,circuitElementId:8009},
+              {column:5,text:'3/4"C W/2#12+1#12GRD',parameterId:7002,circuitElementId:8009}]}]}]},
+          circuits:[{elementId:8009,circuitNumber:"3",wireSize:{isReadOnly:true}}]}));return;
+      }
       res.end(JSON.stringify({ items: [{ id: 4101, name: "Mechanical Equipment Schedule" }] }));
       return;
     }
@@ -667,6 +621,40 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   }), "listing schedules over stdio");
   assert.match((schedules as any).content[0].text, /Mechanical Equipment Schedule/);
   assert.deepEqual(scheduleBodies[0], { action: "list", exact: false, max: 10 });
+
+  const panelDetail = await withTimeout(client.callTool({name:"revit_list_schedules",
+    arguments:{action:"detail",scheduleId:9007,includeData:true,rowOffset:12,columnOffset:4,maxRows:1,maxColumns:2}}),"reading panel cells over stdio");
+  assert.equal(panelDetail.isError,undefined);
+  const panelRead=JSON.parse((panelDetail as any).content[0].text);
+  assert.equal(panelRead.schema,"operator.panel_schedule_detail.v1");
+  assert.equal(panelRead.table.sections[0].rows[0].cells[1].circuitElementId,8009);
+  assert.equal(panelRead.table.sections[0].nextRowOffset,13);
+  assert.equal(panelRead.circuits[0].wireSize.isReadOnly,true);
+  assert.deepEqual(scheduleBodies[1],{action:"detail",scheduleId:9007,exact:false,includeData:true,rowOffset:12,columnOffset:4,maxRows:1,maxColumns:2});
+
+  // Panel inventory is a different native class from ordinary ViewSchedule.
+  // Do not silently strip its selector and return an unrelated regular list.
+  const panelInventory=await withTimeout(client.callTool({name:"revit_list_schedules",
+    arguments:{action:"list",kind:"panel",offset:0,max:100}}),"listing native panel schedules over stdio");
+  assert.equal(panelInventory.isError,undefined);
+  assert.deepEqual(scheduleBodies[2],{action:"list",kind:"panel",offset:0,exact:false,max:100});
+  for(const invalid of [{kind:"panels"},{kind:"panel",offset:-1},{kind:"panel",offset:100001}]){
+    const denied=await client.callTool({name:"revit_list_schedules",arguments:{action:"list",...invalid}});
+    assert.equal(denied.isError,true);
+    assert.match(JSON.stringify(denied.content),/Input validation error/);
+  }
+  assert.equal(scheduleBodies.length,3,"Invalid inventory scope must not dispatch a native read");
+  const circuitInventory=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits',max:500,offset:0}});
+  assert.equal(circuitInventory.isError,undefined,JSON.stringify(circuitInventory.content));
+  const circuitRows=JSON.parse((circuitInventory.content as any)[0].text).items;
+  assert.match(circuitRows[0].loadName,/W\//);assert.match(circuitRows[1].scheduleCircuitNotes,/W\//);
+  assert.deepEqual(circuitInventoryBodies[0],{action:'circuits',exact:false,offset:0,max:500});
+  const defaultCircuitInventory=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits'}});
+  assert.equal(defaultCircuitInventory.isError,undefined);assert.deepEqual(circuitInventoryBodies[1],{action:'circuits',exact:false});
+  for(const invalid of [{kind:'panel'}, {max:501}, {query:'P1'}, {scheduleId:-1}, {offset:-1}]){
+    const denied=await client.callTool({name:'revit_list_schedules',arguments:{action:'circuits',...invalid}});assert.equal(denied.isError,true);
+  }
+  assert.equal(circuitInventoryBodies.length,2,'Invalid inventory/evaluator combinations do not reach native host');
 
   const scheduleCell = await withTimeout(client.callTool({
     name: "revit_update_schedule_cell",

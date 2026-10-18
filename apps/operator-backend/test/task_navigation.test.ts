@@ -5,8 +5,10 @@ import path from "node:path";
 import http from "node:http";
 import test from "node:test";
 import { listTaskNavigation, listTaskNavigationAsync } from "../src/assignments/task_navigation.js";
+import { readNavigationProjectionAsync } from "../src/assignments/task_navigation_reader.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
-import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { __testOnlyResetGoalListCache, getGoalStoragePath } from "../src/goals/service.js";
@@ -42,6 +44,73 @@ function task(session: string) {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "test-model" } } } } })!;
   return prepared.bindingV2!;
 }
+
+test("canonical review is distinct from a required answer in synchronous and asynchronous task discovery", () => workspace(async () => {
+  conversation("review-status", "Inspect the completed schedule"); const review = task("review-status");
+  appendCurrentAssignmentKernelEventV2({ goal_id: review.assignment_id, binding: getAssignmentKernelSnapshotV2(review.assignment_id)!.current_binding,
+    event_id: "review-status-request", actor: "test", body: { event_type: "review_requested", review_id: "review-status", work_unit_ids: [], reason: "Review the retained work." } });
+  assert.equal(getAssignmentKernelSnapshotV2(review.assignment_id)!.outcome, "awaiting_user_review");
+  conversation("answer-status", "Set the schedule scope"); const answer = task("answer-status");
+  requestAssignmentInputV2({ binding: answer, clarification_id: "scope-question", variable_ids: ["scope_choice"],
+    new_variable_ids: ["scope_choice"], question: "Which equipment should the schedule include?" });
+  assert.equal(getAssignmentKernelSnapshotV2(answer.assignment_id)!.outcome, "awaiting_user_input");
+  const before = [review, answer].map(binding => getAssignmentKernelSnapshotV2(binding.assignment_id));
+  for (const page of [listTaskNavigation(), await listTaskNavigationAsync()]) {
+    assert.equal(page.tasks.find(row => row.session_id === review.session_id)!.state, "needs_review");
+    assert.match(page.tasks.find(row => row.session_id === review.session_id)!.summary, /ready for review/i);
+    assert.equal(page.tasks.find(row => row.session_id === answer.session_id)!.state, "needs_input");
+    assert.match(page.tasks.find(row => row.session_id === answer.session_id)!.summary, /answer is needed/i);
+  }
+  assert.deepEqual([review, answer].map(binding => getAssignmentKernelSnapshotV2(binding.assignment_id)), before, "Discovery never resumes or rewrites the tasks.");
+  controlAssignmentExecutionV2({ binding: review, action: "pause", command_id: "pause-review", expected_command_id: null });
+  assert.equal(listTaskNavigation().tasks.find(row => row.session_id === review.session_id)!.state, "paused");
+  assert.equal((await listTaskNavigationAsync()).tasks.find(row => row.session_id === review.session_id)!.state, "paused");
+}));
+
+test("async history reader preserves canonical byte validation across concurrent reads and same-stat rewrites", () => workspace(async () => {
+  conversation("worker-byte-check", "Review the circuit"); const binding=task("worker-byte-check"), file=getGoalStoragePath(binding.assignment_id)!;
+  const original=fs.readFileSync(file,"utf8"), stat=fs.statSync(file);
+  const first=readNavigationProjectionAsync(file), concurrent=readNavigationProjectionAsync(file);
+  assert.equal(first,concurrent,"Concurrent navigation observers share a read, not duplicate journal replay.");
+  const before=await first;assert(before&&!before.invalid);assert.deepEqual(before.binding,getAssignmentKernelSnapshotV2(binding.assignment_id)!.current_binding);
+  const record=JSON.parse(original),request=record.assignment_kernel_v2.events[0].spec.source_user_request;
+  assert.equal(typeof request,"string");const replacement="B".repeat(request.length);
+  const rewritten=original.replaceAll(JSON.stringify(request),JSON.stringify(replacement));
+  assert.notEqual(rewritten,original);assert.equal(Buffer.byteLength(rewritten),Buffer.byteLength(original));
+  fs.writeFileSync(file,rewritten);fs.utimesSync(file,stat.atime,stat.mtime);
+  const changed=await readNavigationProjectionAsync(file);assert(changed&&!changed.invalid);
+  assert.equal(changed.title,replacement.slice(0,180));
+  const invalid=JSON.parse(rewritten);invalid.assignment_kernel_v2.events[0].binding.generation=0;
+  fs.writeFileSync(file,JSON.stringify(invalid));assert.deepEqual(await readNavigationProjectionAsync(file),{invalid:true});
+  fs.writeFileSync(file,original);assert.deepEqual(await readNavigationProjectionAsync(file),before);
+  assert.equal(fs.readFileSync(file,"utf8"),original,"Projection reads never rewrite canonical records.");
+}));
+
+test("async navigation keeps live execution ownership outside its cached journal projection", () => workspace(async () => {
+  conversation("async-lost-worker", "Inspect and correct the ductwork");const binding=task("async-lost-worker");
+  const lease=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(binding.assignment_id)!,controller_request_id:"read",provider_turn_id:"old-provider",capability_id:"inventory.read",classified_effect:"read",arguments:{id:1}});
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const before=getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const state=async()=>(await listTaskNavigationAsync()).tasks.find(row=>row.session_id===binding.session_id)!.state;
+  assert.equal(await state(),"unknown");
+  const owner=beginAssignmentKernelTerminalBarrierV2({binding,barrier_id:"async-real-owner"});
+  try{assert.equal(await state(),"working");}finally{endAssignmentKernelTerminalBarrierV2(owner);}
+  assert.equal(await state(),"unknown");assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id),before);
+}));
+
+test("async worker projections remain scoped to the requesting principal", () => workspace(async () => {
+  const own:RequestPrincipal={sub:"owner-a",user_id:"owner-a",tenant_id:"team",license_id:"team",roles:[],tier:null,claims:{}};
+  const foreign:RequestPrincipal={...own,sub:"owner-b",user_id:"owner-b"};
+  for(const principal of [own,foreign])runWithRequestContext({principal},()=>{
+    const session=createPrincipalBoundSessionId(principal);conversation(session,principal.user_id===own.user_id?"Owned work":"PRIVATE FOREIGN WORK");
+    const binding=task(session);controlAssignmentExecutionV2({binding,action:"pause",command_id:"pause",expected_command_id:null});
+  });
+  await runWithRequestContext({principal:own},async()=>{
+    const page=await listTaskNavigationAsync(100);
+    assert.equal(page.tasks.length,1);assert.equal(page.tasks[0]!.title,"Owned work");assert.equal(page.tasks[0]!.state,"paused");
+    assert(!JSON.stringify(page).includes("PRIVATE FOREIGN WORK"));
+  });
+}));
 
 test("C51 orphaned native operations are unknown; live ownership changes cached navigation without changing evidence", () => workspace(() => {
   conversation("lost-worker", "Run the read-only diagnostic program"); const binding = task("lost-worker");

@@ -68,9 +68,12 @@ namespace RevitBridge.Common.Tests
                 "ProcessClaimedRevitBatchItemAsync(job, item, claimToken");
             AssertOrdered(
                 pane,
-                "object result;",
-                "result = await ExecuteDelegatedRevitBatchItemAsync(job, item, cancellationToken)",
+                "OperatorRevitBatchTerminalOutcome outcome;",
+                "outcome = await ExecuteDelegatedRevitBatchItemAsync(job, item, binding, cancellationToken)",
                 "FailRevitBatchItemJsonAsync(",
+                "return;",
+                "if (!outcome.Ok)",
+                "outcome.WireResult",
                 "return;",
                 "_revitBatchCompletionOutbox.Save(",
                 "PostAndValidateRevitBatchCompletionAsync(");
@@ -111,7 +114,7 @@ namespace RevitBridge.Common.Tests
                 "AssertClaimedJobBinding(job, binding);",
                 "ProcessClaimedRevitBatchItemAsync(job, item, claimToken, binding",
                 "EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken)",
-                "ExecuteDelegatedRevitBatchItemAsync(job, item, cancellationToken)");
+                "ExecuteDelegatedRevitBatchItemAsync(job, item, binding, cancellationToken)");
             Assert.Contains("session_id = binding.SessionId", pane);
             Assert.Contains("project_fingerprint = binding.ProjectFingerprint", pane);
             Assert.Contains("BindingFromCompletionEnvelope(envelope)", pane);

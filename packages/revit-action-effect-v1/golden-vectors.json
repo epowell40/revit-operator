@@ -1,6 +1,146 @@
 {
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
+    {"id":"xlsx_original_source_read","method":"POST","path":"/revit/inspect-excel-source","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"read"},
+    {"id":"xlsx_original_source_serialized_read","method":"POST","path":"/revit/inspect-excel-source","body":"{\"sourcePath\":\"artifacts/uploads/ventilation.xlsx\",\"section\":\"worksheets\",\"expectedSourceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}","expected_effect":"read"},
+    {"id":"xlsx_source_lookalike_stays_apply","method":"POST","path":"/revit/inspect-excel-source-apply","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"apply"},
+    {"id":"xlsx_legacy_import_stays_apply","method":"POST","path":"/revit/import-excel-table","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","sheetName":"Ventilation Schedule","range":"A1:Y434"},"expected_effect":"apply"},
+    {
+      "id": "drawing_spec_inspection_read",
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec",
+      "body": {
+        "sourcePath": "spec.docx",
+        "manifestElementId": 1
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "drawing_spec_inspection_neighbor_stays_apply",
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec-apply",
+      "body": {
+        "sourcePath": "spec.docx",
+        "manifestElementId": 1
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_list",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {},
+      "expected_effect": "read"
+    },
+    {
+      "id": "c121_parameter_detail",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 42
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "c121_parameter_detail_string_id",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": "42"
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_detail_zero_id",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 0
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_detail_mixed",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "detail",
+        "parameterId": 42,
+        "instanceBinding": true
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_list_mixed",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "list",
+        "name": "Note"
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_list_null_action",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": null
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_invalid_body",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": null,
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_instance",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "instanceBinding": true
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_type",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "instanceBinding": false
+      },
+      "expected_effect": "apply"
+    },
+    {
+      "id": "c121_parameter_create_plan",
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "body": {
+        "action": "create",
+        "name": "Office Note",
+        "categoryNames": [
+          "Air Terminals"
+        ],
+        "dryRun": true
+      },
+      "expected_effect": "preview"
+    },
     {
       "id": "c103_registered_stage_explicit_rollback",
       "method": "POST",
@@ -248,6 +388,30 @@
       "id": "unknown_post_fails_closed",
       "method": "POST",
       "path": "/revit/unclassified-future-command",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "excel_import_inspection_read",
+      "method": "POST",
+      "path": "/revit/inspect-excel-import",
+      "body": {
+        "manifestElementId": 123,
+        "partIndex": 0
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "excel_import_inspection_lookalike_apply",
+      "method": "POST",
+      "path": "/revit/inspect-excel-import-other",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "excel_output_import_apply",
+      "method": "POST",
+      "path": "/revit/import-excel-output",
       "body": {},
       "expected_effect": "apply"
     }

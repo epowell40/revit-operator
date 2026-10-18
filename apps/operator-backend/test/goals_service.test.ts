@@ -20,6 +20,7 @@ import {
   getGoal,
   getCurrentGoalForSession,
   listGoals,
+  listGoalCandidatesForSessions,
   markAgentGoalBlocked,
   markAgentGoalComplete,
   requestGoalCompletionAudit,
@@ -106,7 +107,7 @@ test("goal creation persists typed core fields", () => {
   });
 });
 
-test("repeated goal listings reuse durable records and observe in-process creates and updates", () => {
+test("repeated discovery reuses compact metadata while selected full records remain fresh", () => {
   withWorkspace(() => {
     __testOnlyResetGoalListCache();
     for (let index = 0; index < 200; index += 1) {
@@ -114,6 +115,7 @@ test("repeated goal listings reuse durable records and observe in-process create
         title: `Cached goal ${index}`,
         objective: "Exercise durable goal listing.",
         acceptance_criteria: ["The record remains visible."],
+        related_session_id: `cached-session-${index}`,
         status: "active"
       });
     }
@@ -125,22 +127,25 @@ test("repeated goal listings reuse durable records and observe in-process create
           && `${args[0]}`.endsWith(`${path.sep}goal.json`)) goalReads += 1;
         return originalReadFileSync(...args as [fs.PathOrFileDescriptor, BufferEncoding]);
       }) as typeof fs.readFileSync;
-      assert.equal(listGoals(200).length, 200);
+      assert.equal(listGoalCandidatesForSessions(() => true).length, 200);
       assert.ok(goalReads >= 200);
       goalReads = 0;
-      for (let index = 0; index < 20; index += 1) assert.equal(listGoals(200).length, 200);
+      for (let index = 0; index < 20; index += 1) assert.equal(listGoalCandidatesForSessions(() => true).length, 200);
       assert.equal(goalReads, 0);
 
       const created = createGoal({
         title: "New cached goal",
         objective: "Appear without a historical rescan.",
         acceptance_criteria: ["The new goal is listed."],
+        related_session_id: "new-cached-session",
         status: "active"
       });
       const updated = updateGoal(created.id, { progress_summary: "Observed update." });
       goalReads = 0;
-      assert.equal(listGoals(200).find(goal => goal.id === created.id)?.revision, updated.revision);
+      assert.equal(listGoalCandidatesForSessions(id => id === "new-cached-session")[0]?.id, created.id);
       assert.equal(goalReads, 0);
+      assert.equal(listGoals(1)[0]?.revision, updated.revision);
+      assert.equal(goalReads, 1, "A full selected record is read from persisted bytes, never from the discovery cache.");
     } finally {
       fs.readFileSync = originalReadFileSync;
       __testOnlyResetGoalListCache();

@@ -39,6 +39,25 @@ test("legacy view and one-shot screen captures deliver existing pixels without a
   }
 });
 
+test("inactive target-view exports retain sheet identity and deliver only native hash-bound pixels",()=>{
+  const route="/revit/export-image" as const;
+  const native={viewId:42,activeViewId:7,viewName:"Notes, Symbols & Schedules",viewUniqueId:"target-view-unique-id",viewType:"DrawingSheet",sheetNumber:"M002",
+    exportMode:"full_view",path:"artifacts/captures/Revit_42_unique - Sheet - M002.jpg",timestamp:"2026-10-17T15:00:00Z",widthPx:4000,heightPx:3000,
+    bytes:6,sha256:createHash("sha256").update("pixels").digest("hex"),
+    canonical_attempt_settlement:{effect_state:"none",requested_effect:"read",method:"POST",path:route}};
+  for(const deliver of [captureImageContent,(value:any,path:any,reader:any)=>nativeViewImageContent("POST",path,value,reader)!]) {
+    const read=(file:string)=>{assert.equal(file,native.path);return {ok:true as const,data:Buffer.from("pixels").toString("base64"),mimeType:"image/jpeg" as const};};
+    const result=deliver(native,route,read),metadata=JSON.parse((result.content[0] as {text:string}).text);
+    assert.equal(result.content.length,2);assert.equal(metadata.viewId,42);assert.equal(metadata.activeViewId,7);assert.equal(metadata.sheetNumber,"M002");
+    assert.equal(metadata.viewUniqueId,native.viewUniqueId);assert.equal(metadata.image_delivery.available,true);assert.equal(metadata.viewport,undefined);
+    for(const bad of [{...native,sha256:"a".repeat(64)},{...native,bytes:7},{...native,sha256:undefined},{...native,bytes:undefined},{...native,sha256:42}]) {
+      const denied=deliver(bad,route,read);assert.equal(denied.content.length,1);assert.equal(JSON.parse((denied.content[0] as {text:string}).text).image_delivery.available,false);
+    }
+    const changed=deliver(native,route,()=>({ok:true as const,data:Buffer.from("other!").toString("base64"),mimeType:"image/jpeg" as const}));
+    assert.equal(changed.content.length,1);assert.match((changed.content[0] as {text:string}).text,/no longer match/);
+  }
+});
+
 test("identical exported pixels retain the same displayed-outline coordinates through frame and inventory consumers",()=>{
   const mapping={mode:"2d_affine",modelFrameSource:"view_outline",frameBasis:"exported_raster",
     topLeftXyz:[-123.31686468322523,71.48585540021631,32.16666666666667],

@@ -1,6 +1,15 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "attachment_upload_store.test.ts",
+    "attachments_extract.test.ts",
+    "native_inventory_work_budget_v2.test.ts",
+    "progress_outer_deadline_v2.test.ts",
+    "verified_target_work_credit_v2.test.ts",
+    "progress_execution_time_v2.test.ts",
+    "native_annotation_postcondition_v2.test.ts",
+    "read_text_attachment.test.ts",
+    "schedule_cell_appearance_v2.test.ts",
     "viewport_projection_pose_v2.test.ts",
     "multi_sheet_move_verification_v2.test.ts",
     "created_tag_postcondition_v2.test.ts",
@@ -97,6 +106,7 @@
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
     "teammate_mutation_intent_binding.test.ts",
+    "opaque_text_input_scope.test.ts",
     "teammate_loop_runtime.test.ts",
     "c111_registered_stage_compat_verification.test.ts",
     "teammate_verification_evidence.test.ts",
@@ -161,6 +171,7 @@
     "read_attachment_redline.test.ts",
     "pdf_source_annotations.test.ts",
     "goals_service.test.ts",
+    "goal_listing_resources.test.ts",
     "pdf_source_landmarks.test.ts",
     "pdf_source_landmarks_pdfjs.test.ts",
     "assignment_mutation_acknowledgment.test.ts",
@@ -272,10 +283,42 @@
     "openai_brain_redline_targeting.test.ts",
     "saved_document_postcondition_v2.test.ts",
     "committed_saved_document_readback_plan_v2.test.ts",
+    "committed_readback_reservations_v2.test.ts",
     "category_visibility_scope_v1.test.ts",
     "family_static_text_scope_v1.test.ts",
     "requested_family_scope_readback_v1.test.ts",
-    "requested_family_scope_dispatch_v1.test.ts"
+    "requested_family_scope_dispatch_v1.test.ts",
+    "native_schedule_presentation_v2.test.ts",
+    "safe_committed_read_retry_v2.test.ts",
+    "circuit_wiring_feedback.test.ts",
+    "project_parameter_binding_v2.test.ts",
+    "regular_schedule_column_width_v2.test.ts",
+    "assignment_schedule_filter_restoration.test.ts",
+    "schedule_filter_postcondition_v2.test.ts",
+    "native_phase_filter_v2.test.ts",
+    "native_phase_filter_runtime.test.ts",
+    "visibility_phasing_readback_v2.test.ts",
+    "visibility_phasing_runtime.test.ts",
+    "native_property_comparison_v2.test.ts",
+    "native_comparison_feedback_runtime.test.ts",
+    "visibility_refresh_runtime.test.ts",
+    "visibility_refresh_plan_v2.test.ts",
+    "current_work_packet_verification.test.ts",
+    "regular_schedule_presentation_v2.test.ts",
+    "schedule_field_formats_v2.test.ts",
+    "schedule_field_refresh_plan_v2.test.ts",
+    "advisory_readback_guidance.test.ts",
+    "desktop_scoped_handoff.test.ts",
+    "desktop_conversation.test.ts",
+    "desktop_conversation_http.test.ts",
+    "scoped_helper_projection.test.ts",
+    "visual_review_baseline.test.ts",
+    "desktop_helper_budget.test.ts",
+    "checklist_remaining_presentation.test.ts",
+    "created_schedule_runtime.test.ts",
+    "created_schedule_postcondition_v2.test.ts",
+    "excel_table_import_v2.test.ts",
+    "drawing_spec_import_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -315,9 +358,12 @@
     "captureViewArguments.test.ts",
     "lib/viewOwnedDetailingAgentProjection.test.ts",
     "lib/category_visibility_scope_schema.test.ts",
-    "lib/family_static_text_scope_schema.test.ts"
+    "lib/family_static_text_scope_schema.test.ts",
+    "lib/excelOutputContracts.test.ts"
   ],
   "desktop_tests": [
+    "test/saved_computer_owner.test.js",
+    "test/cad_attachment.test.js",
     "test/server_smoke.test.js",
     "test/sidecar_supporting_receipt.test.js",
     "test/benchmark_verified_ui_close.test.js",
@@ -333,11 +379,22 @@
     "test/conversation_rendering.test.js",
     "test/sidecar_revit_listener_identity.test.js",
     "test/task_navigation.test.js",
-    "test/delegated_assignment_recovery.test.mjs"
+    "test/task_navigation_review.test.js",
+    "test/delegated_assignment_recovery.test.mjs",
+    "test/provider_usage_hold_ui.test.js",
+    "test/native_change_feedback.test.js",
+    "test/visual_work_review.test.js",
+    "test/scoped_helper_projection.test.js",
+    "test/work_report.test.js"
   ],
   "dotnet_test_classes": [
+    "CadLinkOptionPolicyTests",
+    "CadLinkNativeContractTests",
+    "CadLinkPreflightCapabilityTests",
+    "OperatorNativePresentationPropertyReadPolicyTests",
     "RenameViewPlanSettlementTests",
     "NativeApiPolicyMethodBoundaryContractTests",
+    "OperatorNativeDependencyReadPolicyTests",
     "ViewOwnedDetailingInventoryContractTests",
     "OperatorDesktopLaunchPlanTests",
     "OperatorDuplicateSheetContractTests",
@@ -428,9 +485,56 @@
     "SourceCircuitRequestBoundaryTests",
     "CircuitMoveCreateRequestBoundaryTests",
     "SheetPlacementReadContractTests",
-    "SheetViewportPlacementTests"
+    "SheetViewportPlacementTests",
+    "ScheduleCellAppearanceContractTests",
+    "PanelScheduleReadWindowTests",
+    "ScheduleInventoryWindowTests",
+    "ProjectParameterBindingContractTests",
+    "OperatorNativeFailureDiagnosticTests",
+    "OperatorNativeOwnedValueTests",
+    "SchedulePresentationContractTests",
+    "ScheduleFieldFormatContractTests",
+    "ScheduleRowHeightPolicyTests",
+    "BoundedNativeSequenceTests",
+    "ParameterValuePreservationDigestTests",
+    "OperatorDelegatedBatchTruthTests",
+    "OperatorDocumentChangeObservationTests",
+    "ExportedImagePathResolverTests",
+    "NativeApiSearchScoreTests",
+    "XlsxTableImportContractTests",
+    "XlsxTableCellFlowTests",
+    "XlsxTableLayoutTests",
+    "XlsxTableTextTests",
+    "XlsxTableStylesTests",
+    "XlsxSourceInspectionTests",
+    "XlsxOutputSourceTests",
+    "DrawingSpecSourceTests",
+    "DrawingSpecRichParagraphTests",
+    "DrawingSpecNativeFontProfileTests",
+    "DrawingSpecManagedUpdateTests",
+    "DrawingSpecInspectionTests",
+    "DrawingSpecInlineFlowTests",
+    "DrawingSpecColumnFlowTests",
+    "OperatorRequestSchemaSummaryTests"
   ],
   "failure_families": [
+    {
+      "id": "cad_requested_link_never_silently_imports_and_preserves_explicit_color",
+      "coverage": [
+        "dotnet:CadLinkOptionPolicyTests",
+        "dotnet:CadLinkNativeContractTests",
+        "dotnet:CadLinkPreflightCapabilityTests"
+      ]
+    },
+    {
+      "id": "cad_upload_retains_binary_source_not_visual_image",
+      "coverage": [
+        "backend:attachment_upload_store.test.ts",
+        "backend:attachments_extract.test.ts",
+        "desktop:test/cad_attachment.test.js",
+        "dotnet:CadLinkNativeContractTests"
+      ]
+    },
     {
       "id": "sidecar-v2-stopped-execution-preserves-native-unknown",
       "coverage": [
@@ -3651,6 +3755,22 @@
       ]
     },
     {
+      "id": "document-checkpoint-boolean-registry-hint-is-not-native-request-identity",
+      "coverage": [
+        "backend:assignment_document_checkpoint.test.ts",
+        "backend:native_artifact_contract_v2.test.ts"
+      ]
+    },
+    {
+      "id": "saved-history-discovery-bounds-record-retention-and-validates-journals-off-request-thread",
+      "coverage": [
+        "backend:goal_listing_resources.test.ts",
+        "backend:goals_service.test.ts",
+        "backend:task_navigation.test.ts",
+        "backend:content_verified_projection.test.ts"
+      ]
+    },
+    {
       "id": "provider-usage-hold-requires-current-authentic-typed-completion-and-durable-brain-handoff",
       "coverage": [
         "backend:codex_provider_usage_authority.test.ts",
@@ -4008,6 +4128,583 @@
         "backend:advisory_verification_policy.test.ts",
         "mcp:lib/workPlanStdio.test.ts"
       ]
+    },
+    {
+      "id": "passive_table_shading_property_load_substring_refusal",
+      "coverage": [
+        "dotnet:OperatorNativePresentationPropertyReadPolicyTests",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "native_dependent_change_receipts_above_256_without_verification_credit",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:native_change_inventory_v2.test.ts",
+        "dotnet:OperatorNativeChangeInventoryTests"
+      ]
+    },
+    {
+      "id": "uploaded_text_specification_scoped_read_and_turn_authority",
+      "coverage": [
+        "backend:read_text_attachment.test.ts",
+        "backend:assignment_kernel_v2_controls.test.ts"
+      ]
+    },
+    {
+      "id": "schedule_cell_background_preservation_fresh_readback",
+      "coverage": [
+        "dotnet:ScheduleCellAppearanceContractTests",
+        "backend:schedule_cell_appearance_v2.test.ts"
+      ]
+    },
+    {
+      "id": "complete_native_inventory_planning_allowance_without_completion_credit",
+      "coverage": [
+        "backend:native_inventory_work_budget_v2.test.ts",
+        "backend:assignment_kernel_v2.test.ts",
+        "backend:advisory_verification_policy.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "panel_schedule_native_cell_circuit_identity_and_bounded_discovery",
+      "coverage": [
+        "dotnet:PanelScheduleReadWindowTests",
+        "dotnet:ScheduleInventoryWindowTests",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "native_sdk_schedule_text_height_host_readback_and_proof_binding",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "checkpoint_continuation_verified_progress_budget_parity",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:assignment_work_allowance_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_annotation_placement_and_text_fresh_postconditions",
+      "coverage": [
+        "backend:native_annotation_postcondition_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "verified_work_time_and_multi_schedule_readback",
+      "coverage": [
+        "backend:progress_execution_time_v2.test.ts",
+        "backend:codex_assignment_timeout.test.ts",
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:advisory_verification_policy.test.ts"
+      ]
+    },
+    {
+      "id": "active_view_sdk_receiver_identity_and_typed_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "verified_principal_target_progress_credit_and_legacy_budget_replay",
+      "coverage": [
+        "backend:verified_target_work_credit_v2.test.ts",
+        "backend:codex_assignment_timeout.test.ts",
+        "backend:assignment_kernel_v2_provider_usage_hold.test.ts"
+      ]
+    },
+    {
+      "id": "native_schedule_column_width_complete_batch_integral_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "earned_operations_at_journal_and_dynamic_dispatch_admission",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:verified_target_work_credit_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_schedule_scope_exact_set_order_and_internal_readback",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_schedule_bounded_read_batches_and_complete_retained_coverage",
+      "coverage": [
+        "backend:native_schedule_presentation_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "settled_non_dispatch_read_recovery_preserves_failed_receipt_and_never_replays_apply",
+      "coverage": [
+        "backend:safe_committed_read_retry_v2.test.ts",
+        "backend:native_schedule_presentation_v2.test.ts"
+      ]
+    },
+    {
+      "id": "dependent_circuit_wiring_settlement_is_feedback_not_design_or_installation_verdict",
+      "coverage": [
+        "backend:circuit_wiring_feedback.test.ts",
+        "dotnet:SetParameterFailureHandlingTests"
+      ]
+    },
+    {
+      "id": "projected_evidence_expansion_callable_without_deferred_tool_discovery",
+      "coverage": [
+        "backend:codex_tool_catalog.test.ts",
+        "mcp:lib/evidenceRetrievalSelectorContract.test.ts"
+      ]
+    },
+    {
+      "id": "source_consultation_does_not_invent_human_gate_and_explicit_conditions_remain_authoritative",
+      "coverage": [
+        "backend:semantic_operation_scope.test.ts",
+        "backend:conversation_intake_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "resume_control_acknowledged_view_survives_superseded_poll_without_weakening_fences",
+      "coverage": [
+        "backend:assignment_kernel_v2_controls.test.ts",
+        "javascript:package/operator-assistant-ui/assignment_mutation.test.mjs",
+        "desktop:test/provider_usage_hold_ui.test.js"
+      ]
+    },
+    {
+      "id": "explicit_same_conversation_history_open_preserves_canonical_target_without_execution",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/assignment_mutation.test.mjs",
+        "desktop:test/task_navigation.test.js",
+        "desktop:test/assignment_workspace_v2.test.js"
+      ]
+    },
+    {
+      "id": "outer_orchestration_earned_deadline_and_fixed_legacy_caps",
+      "coverage": [
+        "backend:progress_outer_deadline_v2.test.ts",
+        "backend:thin_reference_execution.test.ts",
+        "backend:thin_reference_dynamic_boundary.test.ts",
+        "backend:progress_execution_time_v2.test.ts",
+        "backend:codex_assignment_timeout.test.ts"
+      ]
+    },
+    {
+      "id": "ready_work_premature_final_handoff_with_ample_budget",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:thin_reference_execution.test.ts",
+        "backend:thin_reference_dynamic_boundary.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "schedulable_instance_parameter_discovery_and_bound_native_verification",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "backend:project_parameter_binding_v2.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "regular_schedule_column_width_preservation_and_bound_native_read",
+      "coverage": [
+        "backend:regular_schedule_column_width_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "dotnet:SchedulePresentationContractTests"
+      ]
+    },
+    {
+      "id": "schedule_final_readback_after_later_commits",
+      "coverage": [
+        "backend:regular_schedule_column_width_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "backend:work_review_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "native_dependency_read_null_filter_signature",
+      "coverage": [
+        "dotnet:OperatorNativeDependencyReadPolicyTests",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests",
+        "dotnet:NativeApiArgumentDocumentationTests",
+        "dotnet:BoundedNativeSequenceTests"
+      ]
+    },
+    {
+      "id": "project_binding_preserves_old_instance_and_type_values",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "dotnet:ParameterValuePreservationDigestTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "native_binding_invalid_object_failure_context",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "dotnet:OperatorNativeFailureDiagnosticTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "cad_link_supported_discovery_after_exact_predispatch_rejection",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
+    },
+    {
+      "id": "cad_capability_probe_is_not_an_executed_preview_and_has_no_transaction",
+      "coverage": [
+        "dotnet:CadLinkPreflightCapabilityTests",
+        "dotnet:OperatorAttemptSettlementTests"
+      ]
+    },
+    {
+      "id": "cad_named_drafting_owner_before_sheet_creation",
+      "coverage": [
+        "dotnet:CadLinkOptionPolicyTests",
+        "dotnet:CadLinkNativeContractTests"
+      ]
+    },
+    {
+      "id": "new_external_definition_native_owner_lifetime",
+      "coverage": [
+        "backend:project_parameter_binding_v2.test.ts",
+        "dotnet:OperatorNativeOwnedValueTests",
+        "dotnet:ProjectParameterBindingContractTests"
+      ]
+    },
+    {
+      "id": "schedule_filter_restoration_requires_exact_single_use_native_counter_state",
+      "coverage": [
+        "backend:assignment_schedule_filter_restoration.test.ts",
+        "javascript:package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs"
+      ]
+    },
+    {
+      "id": "phase_filter_creation_requires_complete_bound_native_status_read_and_kernel_settlement",
+      "coverage": [
+        "backend:native_phase_filter_v2.test.ts",
+        "backend:native_phase_filter_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "schedule_filters_require_exact_native_rule_identity_complete_set_and_fresh_read",
+      "coverage": [
+        "backend:schedule_filter_postcondition_v2.test.ts",
+        "backend:assignment_schedule_filter_restoration.test.ts"
+      ]
+    },
+    {
+      "id": "view_phase_assignment_requires_separate_exact_fresh_native_get_and_normal_kernel_settlement",
+      "coverage": [
+        "backend:visibility_phasing_readback_v2.test.ts",
+        "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "bounded_schedule_field_formats_native_census_and_separate_readback",
+      "coverage": [
+        "backend:schedule_field_formats_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts",
+        "dotnet:ScheduleFieldFormatContractTests"
+      ]
+    },
+    {
+      "id": "schedule_field_format_stale_proof_refresh_after_disjoint_presentation_commit",
+      "coverage": [
+        "backend:schedule_field_refresh_plan_v2.test.ts",
+        "backend:schedule_field_formats_v2.test.ts",
+        "backend:regular_schedule_presentation_v2.test.ts"
+      ]
+    },
+    {
+      "id": "schedule_row_failure_cannot_commit_success_and_pending_rollback_stays_unknown",
+      "coverage": [
+        "dotnet:ScheduleRowHeightPolicyTests",
+        "dotnet:OperatorNativeTransportTests",
+        "backend:regular_schedule_presentation_v2.test.ts"
+      ]
+    },
+    {
+      "id": "explicit_desktop_ui_fresh_intake_preserves_existing_backend_assignment_owner",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/composer_intake.test.mjs",
+        "desktop:test/composer_intake.test.js"
+      ]
+    },
+    {
+      "id": "native_scalar_mismatch_feedback_and_corrective_readback_without_proof_promotion",
+      "coverage": [
+        "backend:native_property_comparison_v2.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts",
+        "backend:advisory_readback_guidance.test.ts"
+      ]
+    },
+    {
+      "id": "stale_view_check_refresh_without_replaying_or_reviving_superseded_intent",
+      "coverage": [
+        "backend:visibility_refresh_runtime.test.ts",
+        "backend:visibility_refresh_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "work_packet_pass_requires_current_exact_native_read_not_historical_or_other_read_credit",
+      "coverage": [
+        "backend:current_work_packet_verification.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "native_delegated_batch_failure_never_enters_success_outbox_or_loses_document_fence",
+      "coverage": [
+        "dotnet:OperatorDelegatedBatchTruthTests",
+        "backend:revit_batch_service.test.ts"
+      ]
+    },
+    {
+      "id": "saved_desktop_owner_and_pause_survive_cold_continuation_without_unbound_input",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/saved_computer_assignment.test.mjs",
+        "desktop:test/saved_computer_owner.test.js"
+      ]
+    },
+    {
+      "id": "desktop_provider_receives_current_shared_native_discrepancy_feedback",
+      "coverage": [
+        "backend:desktop_computer_telemetry.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "backend:desktop_scoped_handoff.test.ts",
+        "backend:thin_reference_execution.test.ts"
+      ],
+      "id": "scoped_backend_inspection_must_return_to_desktop_owner_without_closing_parent"
+    },
+    {
+      "id": "scoped_helper_input_return_drains_and_exits_inner_runner_without_global_input",
+      "coverage": [
+        "backend:desktop_scoped_handoff.test.ts",
+        "backend:thin_reference_execution.test.ts"
+      ]
+    },
+    {
+      "id": "desktop_human_conversation_and_review_are_distinct_from_internal_helper_turns",
+      "coverage": [
+        "backend:desktop_conversation.test.ts",
+        "backend:desktop_conversation_http.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "dotnet:OperatorDocumentChangeObservationTests",
+        "javascript:package/operator-assistant-ui/native_change_observations.test.mjs",
+        "desktop:test/native_change_feedback.test.js"
+      ],
+      "id": "desktop_native_change_observations_require_fresh_target_readback_not_actor_or_commit_proof"
+    },
+    {
+      "id": "desktop_visual_review_uses_fresh_actual_pixels_exact_owner_remaining_budget_and_no_native_proof",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "dotnet:OperatorUiContextSnapshotTests",
+        "backend:external_provider_lifecycle.test.ts",
+        "backend:desktop_computer_telemetry.test.ts"
+      ]
+    },
+    {
+      "id": "ordinary_work_admission_needs_no_ui_keywords_or_unrelated_text_operand",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/composer_intake.test.mjs",
+        "backend:opaque_text_input_scope.test.ts",
+        "backend:teammate_mutation_intent_binding.test.ts"
+      ]
+    },
+    {
+      "id": "optional_visual_review_reference_absence_is_valid_without_weakening_named_image_identity",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ]
+    },
+    {
+      "id": "visual_review_feedback_stays_inside_bounded_evidence_envelope_with_whole_scoped_findings",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "backend:evidence_projection.test.ts"
+      ]
+    },
+    {
+      "id": "visual_review_excludes_worker_conversation_and_desktop_using_exact_native_view_or_owned_modal",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "desktop:test/visual_work_review.test.js",
+        "dotnet:OperatorUiContextSnapshotTests"
+      ]
+    },
+    {
+      "id": "scoped_helper_findings_survive_large_wrapper_without_native_authority_promotion",
+      "coverage": [
+        "backend:scoped_helper_projection.test.ts",
+        "desktop:test/scoped_helper_projection.test.js"
+      ]
+    },
+    {
+      "id": "target_view_exports_resolve_single_suffixed_artifact_and_bind_delivered_pixels",
+      "coverage": [
+        "dotnet:ExportedImagePathResolverTests",
+        "mcp:viewFrameImage.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs",
+        "javascript:package/operator-assistant-ui/native_target_review_image.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ],
+      "id": "independent_review_uses_native_target_pixels_with_document_binding_and_modal_safe_reads"
+    },
+    {
+      "id": "native_target_review_bounds_resolution_once_and_ignores_unused_screen_export_hint",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ]
+    },
+    {
+      "id": "visual_rechecks_restore_bound_before_pixels_and_immutable_checks_without_prior_verdicts",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
+        "backend:visual_review_baseline.test.ts",
+        "desktop:test/visual_work_review.test.js"
+      ]
+    },
+    {
+      "id": "native_focused_visual_review_binds_active_viewport_and_pixels_without_tooltip_or_full_sheet_fallback",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_region.test.mjs",
+        "javascript:package/operator-assistant-ui/native_target_review_image.test.mjs",
+        "dotnet:OperatorViewImageContractTests"
+      ]
+    },
+    {
+      "id": "scoped_helper_preserves_parent_call_allowance_and_returns_without_parent_completion_or_native_retry",
+      "coverage": [
+        "backend:desktop_helper_budget.test.ts",
+        "backend:desktop_scoped_handoff.test.ts"
+      ]
+    },
+    {
+      "coverage": [
+        "backend:committed_saved_document_readback_plan_v2.test.ts",
+        "backend:checklist_remaining_presentation.test.ts"
+      ],
+      "id": "partial_saved_copy_handoff_preserves_native_evidence_without_certifying_content"
+    },
+    {
+      "id": "finite_native_readbacks_drain_at_paid_call_limit_without_new_provider_calls_or_control_bypass",
+      "coverage": [
+        "backend:committed_saved_document_readback_plan_v2.test.ts",
+        "backend:committed_readback_reservations_v2.test.ts",
+        "backend:multi_sheet_move_verification_v2.test.ts",
+        "backend:safe_committed_read_retry_v2.test.ts"
+      ]
+    },
+    {
+      "id": "saved_review_is_distinct_from_required_input_without_completion_or_control_promotion",
+      "coverage": [
+        "backend:task_navigation.test.ts",
+        "javascript:package/operator-assistant-ui/task_navigation_review.test.mjs"
+      ]
+    },
+    {
+      "id": "desktop_review_handoff_retains_whole_qualified_claims_in_compact_summary_and_details",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/work_report.test.mjs",
+        "backend:work_review_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "created_schedule_requires_independent_native_identity_and_retained_preclone_definition",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:created_schedule_postcondition_v2.test.ts",
+        "mcp:lib/genericToolPreflight.test.ts",
+        "dotnet:OperatorConditionalRequestContractsTests"
+      ]
+    },
+    {
+      "id": "schedule_clone_natural_duplicate_view_path_needs_retained_definition_and_independent_read",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:created_schedule_postcondition_v2.test.ts",
+        "backend:view_owned_detailing_v2.test.ts"
+      ]
+    },
+    {
+      "id": "producer_supplied_postcondition_fact_cannot_bypass_host_native_comparison",
+      "coverage": [
+        "backend:created_schedule_runtime.test.ts",
+        "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "excel_native_existing_owner_inventory_does_not_negate_part_scoped_source_format_and_bounds_proof_or_inflate_deliverable_credit",
+      "coverage": [
+        "backend:excel_table_import_v2.test.ts",
+        "mcp:lib/excelOutputContracts.test.ts",
+        "dotnet:XlsxTableImportContractTests"
+      ]
+    },
+    {
+      "id": "native_fragment_target_inventory_stays_complete_in_evidence_without_repeating_thousands_of_ids_in_worker_and_desktop_context",
+      "coverage": [
+        "backend:advisory_readback_guidance.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts",
+        "backend:excel_table_import_v2.test.ts"
+      ]
+    },
+    {
+      "id": "created_tag_association_context_not_a_deletion_or_changed_target",
+      "coverage": [
+        "backend:verification_capability_admission_v2.test.ts",
+        "backend:created_tag_postcondition_v2.test.ts"
+      ]
+    },
+    {
+      "id": "conditional_request_summary_does_not_promote_one_alternatives_fields_globally",
+      "coverage": [
+        "dotnet:OperatorRequestSchemaSummaryTests",
+        "mcp:lib/excelOutputContracts.test.ts",
+        "backend:excel_table_import_v2.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4019,6 +4716,9 @@
     "BootstrapReadRetryTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/task_navigation_review.test.mjs",
+    "package/operator-assistant-ui/saved_computer_assignment.test.mjs",
+    "package/assignment-kernel-v2-contracts/native-affected-targets.test.mjs",
     "package/assignment-kernel-v2-contracts/native-continuation.test.mjs",
     "package/operator-assistant-ui/session_start.test.mjs",
     "package/operator-assistant-ui/composer_intake.test.mjs",
@@ -4026,7 +4726,17 @@
     "package/operator-assistant-ui/chat_submission_admission.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
     "package/operator-assistant-ui/assignment_input_controls.test.mjs",
+    "package/operator-assistant-ui/assignment_mutation.test.mjs",
     "package/operator-assistant-ui/checkpoint_followup.test.mjs",
-    "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs"
+    "package/assignment-kernel-v2-contracts/provider-usage-hold.test.mjs",
+    "package/assignment-kernel-v2-contracts/schedule-filter-state.test.mjs",
+    "package/operator-assistant-ui/native_change_observations.test.mjs",
+    "package/operator-assistant-ui/visual_work_review.test.mjs",
+    "package/operator-assistant-ui/visual_review_capture.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_target.test.mjs",
+    "package/operator-assistant-ui/native_target_review_image.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_region.test.mjs",
+    "package/operator-assistant-ui/work_report.test.mjs"
   ]
 }

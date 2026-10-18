@@ -4,6 +4,132 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/import-excel-output",
+      "examples": [
+        {
+          "name": "Import the chosen output tab using the actual inspected source digest",
+          "request": {
+            "sourcePath": "artifacts/uploads/table.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "viewName": "Ventilation Table",
+            "layout": {
+              "repeatHeaderRows": 3
+            }
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "partIndex": 0,
+            "calculationPerformed": false,
+            "sheetsPlaced": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-import",
+      "examples": [
+        {
+          "name": "Read one entire native part against original source, not just a list or producer verdict",
+          "request": {
+            "sourcePath": "artifacts/uploads/table.xlsx",
+            "manifestElementId": 123,
+            "partIndex": 0
+          },
+          "expected_response_shape": {
+            "schema": "operator.xlsx_import_inspection.v1",
+            "read_only": true,
+            "completeNativePartRead": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-source",
+      "examples": [
+        {
+          "name": "Discover the actual output worksheet instead of assuming a calculation tab",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx"
+          },
+          "expected_response_shape": {
+            "schema": "operator.xlsx_source_inspection.v1",
+            "readOnly": true,
+            "nativeImportVerified": false
+          }
+        },
+        {
+          "name": "Inspect selected output cells with complete source records",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "section": "cells",
+            "pageSize": 20
+          },
+          "expected_response_shape": {
+            "status": "Ok",
+            "calculationPerformed": false
+          }
+        },
+        {
+          "name": "Continue only against the same exact source bytes",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "section": "cells",
+            "pageOffset": 20,
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expected_response_shape": {
+            "status": "Ok"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec",
+      "examples": [
+        {
+          "name": "Inspect imported source text and native formatting using the actual returned manifest ID",
+          "request": {
+            "sourcePath": "artifacts/specs/Project_Spec.docx",
+            "manifestElementId": 12345,
+            "pageSize": 20
+          },
+          "expected_response_shape": {
+            "schema": "operator.drawing_spec_inspection.v1",
+            "read_only": true,
+            "completeNativeRead": true,
+            "inspectionSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "checks": {
+              "WholeTaskVerified": false,
+              "VisualFidelityVerified": false,
+              "SheetPlacementVerified": false
+            }
+          }
+        },
+        {
+          "name": "Read the next note page only while the observed source/native snapshot remains unchanged",
+          "request": {
+            "sourcePath": "artifacts/specs/Project_Spec.docx",
+            "manifestElementId": 12345,
+            "pageOffset": 20,
+            "pageSize": 20,
+            "expectedSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expected_response_shape": {
+            "read_only": true,
+            "notesPage": [],
+            "hasMore": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-exported-files",
       "examples": [
         {
@@ -1116,6 +1242,26 @@
       "path": "/revit/project-parameters",
       "examples": [
         {
+          "name": "Inspect exact shared instance binding and complete owner values",
+          "request": {
+            "action": "detail",
+            "parameterId": 1544000
+          },
+          "expected_response_shape": {
+            "status": "Ok",
+            "action": "detail",
+            "read_only": true,
+            "schema": "operator.project_parameter_binding.v1",
+            "complete": true,
+            "parameter": {
+              "id": 1544000,
+              "isInstance": true,
+              "guid": "00000000-0000-0000-0000-000000000001"
+            },
+            "owners": []
+          }
+        },
+        {
           "name": "List project parameters",
           "request": {
             "action": "list",
@@ -1152,7 +1298,7 @@
             "action": "create",
             "plan": {
               "name": "ClashPilot_Status",
-              "categoryCount": 1
+              "instance": true
             }
           }
         },
@@ -1174,7 +1320,7 @@
             "action": "create",
             "plan": {
               "name": "QA_Checked",
-              "dataType": "yesno"
+              "instance": true
             }
           }
         },

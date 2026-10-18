@@ -1,22 +1,25 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
-import path from "node:path";
+import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
+import {DESKTOP_HELPER_RETURN_REASON,takeDesktopHelperReturnV1,desktopHelperReturnAfterDrainV1,type DesktopHelperReturnV1} from './desktop_helper_return.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent, setCodexThreadId, hasCodexThreadStartedTurn } from "../memory/sqlite_store.js";
 import { recoverAssignmentVisualAttachments } from "../attachments/assignment_visual_recovery.js";
 import { recordProviderStartFailureDiagnostic } from "../assignments/chat_execution_failure_diagnostic.js";
-import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
+import { CodexAppServer, type CodexNotificationEnvelope } from "../codex/app_server.js";
 import { CodexTurnFailedError } from "../codex/turn_error.js";
+import { CodexWorkTimeExpiredError } from '../codex/turn_completions.js';
 import { readCodexWorkerIdentity } from "./codex_worker_identity.js";
 import { recordCodexProviderUsageHoldV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
 import type { UserInput } from "../codex/generated/app_server_0_157_0/v2/UserInput.js";
 import { buildCodexTurnInput } from "./codex_turn_input.js";
 import { withCodexCapabilityHandoff } from "./codex_tool_catalog.js";
-import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
+import {getCodexProfilePaths,buildCodexSpawnEnv} from "../codex/profile_environment.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
-import { codexAssignmentTurnTimeLimits } from "../codex/assignment_timeout.js";
+import { codexAssignmentTurnTimeLimits, createCodexAssignmentProgressTimeMonitor } from "../codex/assignment_timeout.js";
+import { createExecutionDeadlineV2 } from "./execution_deadline_v2.js";
 import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
@@ -62,7 +65,8 @@ import {
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
-import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
+import {handleCodexServerRequest,handleCertifiedCodexServerRequest} from "./codex_server_request.js";
+export {handleCodexServerRequest,handleCertifiedCodexServerRequest} from "./codex_server_request.js";
 import { getRequestContext, runWithRequestContext, getRequestOperatorBackendAuth } from "../request_context.js";
 import { assignmentDirections, observeSteeringDelivery } from "../assignments/task_steering.js";
 import type { AssignmentKernelTurnLeaseV2, OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
@@ -174,44 +178,6 @@ export function __testOnlyTrackCodexBrainTurnAbort(
 
 function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
-}
-
-function getCodexProfilePaths(workspaceRoot: string, profile: CodexThreadStartProfile): { codexHome: string; cwd: string } {
-  if (profile.certified) return prepareCertifiedCodexIsolation({ workspaceRoot });
-  const codexHome = path.join(workspaceRoot, ".codex");
-  ensureCodexHomeAuth({ codexHome });
-  ensureCodexHomeConfig({ codexHome });
-  return { codexHome, cwd: workspaceRoot };
-}
-
-function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // Do not leak OpenAI keys into child Codex processes; prefer login-backed auth.
-  delete env.OPENAI_API_KEY;
-  delete env.OPERATOR_OPENAI_API_KEY;
-  env.OPERATOR_WORKSPACE_ROOT = workspaceRoot;
-  return env;
-}
-
-export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
-  if (request.method === "item/tool/call") return await handleCodexDynamicToolCall(runtime, request);
-  if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
-  if (request.method === "mcpServer/elicitation/request") return { action: "decline", content: null, _meta: null };
-  if (request.method === "item/tool/requestUserInput") return { answers: {} };
-  if (request.method === "currentTime/read") return { currentTimeAt: Math.floor(Date.now() / 1000) };
-  throw new Error(`Unsupported Codex server request: ${request.method}`);
-}
-
-export async function handleCertifiedCodexServerRequest(request: CodexServerRequest): Promise<unknown> {
-  const method = request.method.toLowerCase();
-  if (/(?:^|\/)(?:dynamic)?tool\/call$/.test(method) || (method.startsWith("mcp") && request.method !== "mcpServer/elicitation/request")) {
-    return { contentItems: [{ type: "inputText", text: "Certified direct mode does not permit dynamic, MCP, or Revit tool execution." }], success: false };
-  }
-  if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
-  if (request.method === "mcpServer/elicitation/request") return { action: "decline", content: null, _meta: null };
-  if (request.method === "item/tool/requestUserInput") return { answers: {} };
-  if (request.method === "currentTime/read") return { currentTimeAt: Math.floor(Date.now() / 1000) };
-  throw new Error(`Unsupported certified Codex server request: ${request.method}`);
 }
 
 function clientCacheKey(workspaceRoot: string, profile: CodexThreadStartProfile): string {
@@ -351,16 +317,24 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const abort = () => controller.abort("request_interrupted");
   if (cb.abortSignal?.aborted) abort();
   else cb.abortSignal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort("experiment_wall_limit"), limits.max_wall_ms);
-  timer.unref();
+  let stopDeadline:()=>void=()=>{};
   try {
+    const startedAt=new Date().toISOString();
+    const timeLimits=codexAssignmentTurnTimeLimits({snapshot:assignment.snapshot,now:startedAt,
+      configuredTimeout:process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS});
+    const progressTime=timeLimits.maxWallMs>0?createCodexAssignmentProgressTimeMonitor({initial:assignment.snapshot,
+      readCurrent:()=>currentCodexAssignmentSnapshotV2(assignment.binding),startedAt}):undefined;
+    const deadline=createExecutionDeadlineV2({maxWallMs:limits.max_wall_ms,...(progressTime?{
+      remainingWorkMs:progressTime,maxWallCeilingMs:timeLimits.progressWallCeilingMs??timeLimits.maxWallMs}: {})});
+    stopDeadline=deadline.arm(controller);
     const result = await runThinReferenceTurns({ request: req, binding: assignment.binding, limits, signal: controller.signal,
+      remainingWallMs:deadline.remainingMs,
       inspect: () => advanceAssignmentKernelProgressV2({ binding: assignment.binding }),
       invoke: request => decideCodexSingleTurn(request, { onProgress: cb.onProgress, abortSignal: controller.signal }, true, workProfile),
       onContinue: () => cb.onProgress?.("Continuing the saved task.") });
     const snapshot = result.stop_reason === THIN_REFERENCE_NO_WORK_STOP
       ? currentCodexAssignmentSnapshotV2(assignment.binding) ?? undefined : result.response.assignment_snapshot_v2;
-    let message = finalCodexAssignmentMessageV2(snapshot ?? null, result.response.assistant_message);
+    let message = finalCodexAssignmentMessageV2(snapshot ?? null, result.response.assistant_message, desktopHelperScopeFromContextV1(req.context));
     if (!snapshot?.terminal && result.stop_reason.startsWith("experiment_")) {
       message += `\n\nThe local experiment reached its ${result.stop_reason === "experiment_turn_limit" ? "provider-turn" : "time"} limit. Completed work and remaining checks are saved.`;
     }
@@ -374,7 +348,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     return { ...result.response, assignment_snapshot_v2: snapshot, assistant_message: message, local_execution_experiment: receipt,
       ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {}) };
   } finally {
-    clearTimeout(timer); cb.abortSignal?.removeEventListener("abort", abort);
+    stopDeadline(); cb.abortSignal?.removeEventListener("abort", abort);
     if (thinReferenceAborts.get(key) === controller) thinReferenceAborts.delete(key);
   }
 }
@@ -569,11 +543,18 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     return [...await buildCodexTurnInput(recovered, inputContextBlocks, thinReference), ...input.slice(initialInputLength)];
   };
 
+  const timeSnapshot=assignmentKernelV2?currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding):null;
+  const timeStartedAt=new Date().toISOString();
   const turnTimeLimits = codexAssignmentTurnTimeLimits({
-    snapshot: assignmentKernelV2 ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) : null,
-    now: new Date().toISOString(), configuredTimeout: process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS
+    snapshot: timeSnapshot,
+    now: timeStartedAt, configuredTimeout: process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS
   });
-  const turnDeadlineMs = Date.now() + turnTimeLimits.maxWallMs;
+  const remainingWorkMs=createCodexAssignmentProgressTimeMonitor({initial:timeSnapshot,
+    readCurrent:()=>assignmentKernelV2?currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding):null,startedAt:timeStartedAt});
+  const turnTransportMaxWallMs=turnTimeLimits.progressWallCeilingMs??turnTimeLimits.maxWallMs;
+  // Transport/receipt leases cover the frozen ceiling; every operation still
+  // needs controller admission under the currently earned cumulative budget.
+  const turnDeadlineMs = Date.parse(timeStartedAt) + turnTransportMaxWallMs;
   if (turnTimeLimits.maxWallMs === 0) {
     return stopBeforeProvider(
       "The saved task is stopped or has no remaining execution time. Its edits and evidence are retained; no new provider work was started.",
@@ -584,7 +565,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   if (requirementsReceipt) {
     try {
       const plannedReceiptSha256 = requirementsReceipt.receipt_sha256;
-      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, turnTimeLimits.maxWallMs + 60_000);
+      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, turnTransportMaxWallMs + 60_000);
       const leasedReceipt = resolveRequirementsForChat(req);
       if (leasedReceipt.status !== "resolved" || leasedReceipt.receipt_sha256 !== plannedReceiptSha256) {
         endRequirementsPlanningLease(requirementsLease);
@@ -664,7 +645,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       courierContext = beginRevitCourierTurnContext({
         session_id: req.session_id,
         message_id: req.message_id,
-        ttl_ms: turnTimeLimits.maxWallMs + 60_000,
+        ttl_ms: turnTransportMaxWallMs + 60_000,
         ...courierTarget!
       });
       if (assignmentKernelV2 && assignmentKernelV2.snapshot.in_flight_operation_ids.length > 0) {
@@ -681,7 +662,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         }
       }
       if (assignmentKernelV2) {
-        const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference);
+        const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding, thinReference,desktopHelperScopeFromContextV1(req.context));
         if (!progression.prompt) {
           const message = progression.message;
           const canonicalAssignmentOutcome = canonicalAssignmentOutcomeForBinding({
@@ -994,6 +975,8 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   let providerTurnUsage: ReturnType<typeof modelTelemetry.finish> | undefined;
   let providerReceiptReconciliationError: unknown = null;
   let usageHoldError: unknown = null;
+  let workTimeExpired=false;
+  let desktopHelperReturn:DesktopHelperReturnV1|null=null;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id
     ?? (isIndependentAssistantTurn(req) ? null : getActiveGoalForSession(req.session_id)?.id ?? null);
   try {
@@ -1009,12 +992,14 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
         turnId,
         timeoutMs: turnTimeLimits.timeoutMs,
         maxWallMs: Math.max(0, turnDeadlineMs - Date.now()),
+        ...(remainingWorkMs?{remainingWorkMs}:{}),
         abortSignal: activeTurnAbort.signal
       });
     });
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
     providerTurnDisposition = turnCancelled ? "interrupted" : "completed";
   } catch (error) {
+    workTimeExpired=error instanceof CodexWorkTimeExpiredError;
     if (!activeTurnAbort.signal.aborted && assignmentKernelV2 && recordCodexProviderUsageHoldV2({
       binding: assignmentKernelV2.binding, attempt_id: req.message_id, thread_id: threadId, turn_id: turnId,
       error, is_current_failure: failure => c.isCurrentTurnFailure(failure),
@@ -1051,7 +1036,8 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     reconcileStartedProviderTurn = null;
     providerTurnUsage = modelTelemetry.finish(req.message_id, providerTurnDisposition);
     teammateReceipt = teammateContext && !thinReference ? teammateLoopReceiptForLease(teammateContext) : undefined;
-    await releaseStartedProviderTurn(false);
+    try { await releaseStartedProviderTurn(workTimeExpired); }
+    finally { desktopHelperReturn=mcpRuntime?takeDesktopHelperReturnV1(mcpRuntime,turnId):null; }
   }
 
   if (providerReceiptReconciliationError) {
@@ -1072,6 +1058,20 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}) };
   }
 
+  if(desktopHelperReturn&&assignmentKernelV2&&assignmentControllerStopReason===DESKTOP_HELPER_RETURN_REASON
+    &&providerTurnUsage&&['completed','interrupted'].includes(providerTurnUsage.disposition)
+    &&providerTurnUsage.session_id===req.session_id&&providerTurnUsage.message_id===req.message_id
+    &&providerTurnUsage.turn_id===desktopHelperReturn.turn_id){
+    const snapshot=settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
+    const message=desktopHelperReturnAfterDrainV1(desktopHelperReturn,desktopHelperScopeFromContextV1(req.context),snapshot,assignmentControllerStopReason);
+    if(message){
+      cb.onDone?.(message);
+      return {version:OPERATOR_BACKEND_CONTRACT_VERSION,assistant_message:message,actions:[],
+        desktop_helper_return:desktopHelperReturn,
+        model_call_receipts:modelTelemetry.receipts,provider_turn_usage:providerTurnUsage,
+        ...(snapshot?{assignment_snapshot_v2:snapshot}:{}),...(teammateReceipt?{teammate_loop_receipt:teammateReceipt}:{})};
+    }
+  }
   if (turnCancelled) {
     if (!assignmentKernelV2 && assignmentIdForTurn) {
       cancelAssignmentInFlight(assignmentIdForTurn);
@@ -1172,7 +1172,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   const terminalSnapshot = assignmentKernelV2
     ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
     : null;
-  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
+  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText,desktopHelperScopeFromContextV1(req.context));
   if ((assignmentKernelV2 || freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0

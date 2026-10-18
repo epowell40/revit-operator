@@ -823,6 +823,11 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/project-parameters", StringComparison.OrdinalIgnoreCase))
             {
+                if (body.HasValue && body.Value.ValueKind == JsonValueKind.Object && body.Value.TryGetProperty("action", out var bindingAction) && bindingAction.ValueKind == JsonValueKind.String)
+                {
+                    if (bindingAction.GetString() == "detail") return ProjectParameterBindingContract.ValidateDetail(body.Value, out error);
+                    if (bindingAction.GetString() == "create") return ProjectParameterBindingContract.ValidateCreate(body.Value, out error);
+                }
                 // { action?: "list"|"create"|"validate_required", name?, categoryNames?, instanceBinding?, parameterGroup?, dataType?, visible?, userModifiable?, rebindIfExists?, query?, max?, dryRun?, requiredParameters?, requiredParameterNames? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
@@ -5284,6 +5289,32 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/inspect-excel-source", StringComparison.OrdinalIgnoreCase))
+            {
+                try { XlsxSourceInspectionRequest.Parse(body?.GetRawText() ?? "null"); return true; }
+                catch (Exception ex) when (ex is ArgumentException || ex is JsonException || ex is InvalidOperationException)
+                { error = ex.Message; return false; }
+            }
+
+            if (string.Equals(path, "/revit/import-excel-output", StringComparison.OrdinalIgnoreCase) || string.Equals(path, "/revit/inspect-excel-import", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (string.Equals(path, "/revit/import-excel-output", StringComparison.OrdinalIgnoreCase)) XlsxTableImportRequest.Parse(body?.GetRawText() ?? "null");
+                    else XlsxTableInspectionRequest.Parse(body?.GetRawText() ?? "null");
+                    return true;
+                }
+                catch (Exception ex) when (ex is ArgumentException || ex is JsonException || ex is InvalidOperationException)
+                { error = ex.Message;return false; }
+            }
+
+            if (string.Equals(path, "/revit/inspect-drawing-spec", StringComparison.OrdinalIgnoreCase))
+            {
+                try { DrawingSpecInspectionRequest.Parse(body?.GetRawText() ?? "null"); return true; }
+                catch (Exception ex) when (ex is ArgumentException || ex is JsonException || ex is InvalidOperationException)
+                { error = ex.Message; return false; }
+            }
+
             if (string.Equals(path, "/revit/import-drawing-spec", StringComparison.OrdinalIgnoreCase))
             {
                 // { sourcePath, viewId?, viewName?, textTypeName?, columns?, columnWidthInches?, columnHeightInches?, gutterInches?, marginInches?, startXInches?, startYInches?, dryRun? }
@@ -5294,6 +5325,23 @@ namespace RevitBridge.Operator
                 }
 
                 if (!ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "action", maxLen: 12, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "manifestElementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedSourceSha256", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedNativeSnapshotSha256", maxLen: 64, out error)) return false;
+                var mode = obj.Value.TryGetProperty("action", out var specMode) ? specMode.GetString() : "import";
+                if (mode != "import" && mode != "update") { error = "Drawing specification action must be import or update."; return false; }
+                if (mode == "update")
+                {
+                    if (!obj.Value.TryGetProperty("manifestElementId", out var manifest) || !manifest.TryGetInt64(out var manifestId) || manifestId <= 0 || manifestId > 9007199254740991 ||
+                        obj.Value.TryGetProperty("viewId", out _) || obj.Value.TryGetProperty("viewName", out _))
+                    { error = "Update requires an exact manifestElementId and preserves its existing views."; return false; }
+                    foreach (var field in new[] { "expectedSourceSha256", "expectedNativeSnapshotSha256" })
+                        if (!obj.Value.TryGetProperty(field, out var digest) || digest.ValueKind != JsonValueKind.String || digest.GetString()!.Length != 64 || digest.GetString()!.Any(c => !"0123456789abcdef".Contains(c)))
+                        { error = "Update requires the retained source and unchanged native SHA256 snapshots."; return false; }
+                }
+                else if (new[] { "manifestElementId", "expectedSourceSha256", "expectedNativeSnapshotSha256" }.Any(field => obj.Value.TryGetProperty(field, out _)))
+                { error = "Managed revision fields require action=update."; return false; }
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "viewName", maxLen: 140, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "textTypeName", maxLen: 140, out error)) return false;
@@ -5875,25 +5923,43 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/link-cad", StringComparison.OrdinalIgnoreCase))
             {
-                // { sourcePath, sheetNumber?, sheetViewId?, placement?, link?, dryRun? }
+                // Source plus existing/named view or sheet. A named drafting owner can precede sheet creation.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "link-cad body must be an object.";
                     return false;
                 }
 
-                if (!ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "preflightOnly", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                var capabilityOnly = obj.Value.TryGetProperty("preflightOnly", out var cadPreflight) && cadPreflight.ValueKind == JsonValueKind.True
+                    && obj.Value.TryGetProperty("dryRun", out var cadDryRun) && cadDryRun.ValueKind == JsonValueKind.True;
+                if (!capabilityOnly && !ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "sheetNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "sheetViewId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "viewName", maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "viewQuery", maxLen: 240, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "createDraftingView", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "placeOnSheet", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "placement", maxLen: 24, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "colorMode", maxLen: 32, out error)) return false;
+                try
+                {
+                    CadLinkOptionPolicy.ResolveColorMode(obj.Value.TryGetProperty("colorMode", out var cadColor) && cadColor.ValueKind == JsonValueKind.String ? cadColor.GetString() : null);
+                }
+                catch (ArgumentException ex) { error = ex.Message; return false; }
                 if (!ValidateOptionalBool(obj.Value, "link", out error)) return false;
-                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (capabilityOnly) return true;
 
                 var hasSheetViewId = obj.Value.TryGetProperty("sheetViewId", out var svid) && svid.ValueKind == JsonValueKind.Number && svid.TryGetInt64(out var svidV) && svidV > 0;
                 var hasSheetNumber = obj.Value.TryGetProperty("sheetNumber", out var sn) && sn.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sn.GetString());
-                if (!hasSheetViewId && !hasSheetNumber)
+                var hasViewId = obj.Value.TryGetProperty("viewId", out var cadView) && cadView.ValueKind == JsonValueKind.Number && cadView.TryGetInt64(out var cadViewId) && cadViewId > 0;
+                var hasViewName = obj.Value.TryGetProperty("viewName", out var cadName) && cadName.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cadName.GetString());
+                var hasViewQuery = obj.Value.TryGetProperty("viewQuery", out var cadQuery) && cadQuery.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cadQuery.GetString());
+                if (!hasSheetViewId && !hasSheetNumber && !hasViewId && !hasViewName && !hasViewQuery)
                 {
-                    error = "link-cad requires sheetViewId or sheetNumber.";
+                    error = "link-cad requires viewId, viewName, viewQuery, sheetViewId, or sheetNumber.";
                     return false;
                 }
 
@@ -8237,7 +8303,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
             {
-                // list:   { action?: "list", query?: string, exact?: bool, max?: int }
+                // list:   { action?: "list", kind?: regular|panel|all, offset?, query?, exact?, max? }
                 // detail: { action: "detail", scheduleId?|query?, exact?, requireUniqueQuery?, includeFields? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
@@ -8245,7 +8311,14 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("action", out var presentationAction) && presentationAction.ValueKind == JsonValueKind.String && presentationAction.GetString() == "presentation")
+                    return RevitBridge.Common.SchedulePresentationContract.ValidateRead(obj.Value, out error);
+                if (obj.Value.TryGetProperty("action", out var cellAction) && cellAction.ValueKind == JsonValueKind.String && cellAction.GetString() == "cell_styles")
+                    return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, false, out error);
+                if (obj.Value.TryGetProperty("cells", out _)) { error = "schedules.cells requires action=cell_styles."; return false; }
                 if (!ValidateOptionalString(obj.Value, "action", maxLen: 16, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "kind", maxLen: 16, out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "offset", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (obj.Value.TryGetProperty("scheduleId", out var scheduleId) && scheduleId.ValueKind == JsonValueKind.Number && scheduleId.GetInt64() <= 0)
                 {
@@ -8256,6 +8329,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "requireUniqueQuery", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeDefinitionSnapshot", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeSchedulableFields", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "schedulableFieldOffset", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxSchedulableFields", out error)) return false;
@@ -8269,13 +8343,21 @@ namespace RevitBridge.Operator
                 if (obj.Value.TryGetProperty("action", out var actionEl) && actionEl.ValueKind != JsonValueKind.Null)
                 {
                     schedulesAction = (actionEl.GetString() ?? "").Trim().ToLowerInvariant();
-                    if (!(schedulesAction == "list" || schedulesAction == "detail"))
+                    if (!(schedulesAction == "list" || schedulesAction == "detail" || schedulesAction == "circuits"))
                     {
-                        error = "schedules.action must be 'list' or 'detail'.";
+                        error = "schedules.action must be 'list', 'detail' or 'circuits'.";
                         return false;
                     }
                 }
 
+                if (obj.Value.TryGetProperty("includeDefinitionSnapshot", out var definitionSnapshot) && definitionSnapshot.ValueKind == JsonValueKind.True
+                    && (schedulesAction != "detail" || !obj.Value.TryGetProperty("scheduleId", out var snapshotScheduleId)
+                        || snapshotScheduleId.ValueKind != JsonValueKind.Number || !snapshotScheduleId.TryGetInt64(out var snapshotId) || snapshotId <= 0
+                        || obj.Value.TryGetProperty("query", out _) || obj.Value.TryGetProperty("includeFields", out var snapshotFields) && snapshotFields.ValueKind == JsonValueKind.False))
+                {
+                    error = "includeDefinitionSnapshot requires exact scheduleId detail with fields enabled and no query.";
+                    return false;
+                }
                 if (obj.Value.TryGetProperty("max", out var mx) && mx.ValueKind != JsonValueKind.Null)
                 {
                     if (mx.ValueKind != JsonValueKind.Number || !mx.TryGetInt32(out var v))
@@ -8290,6 +8372,26 @@ namespace RevitBridge.Operator
                     }
                 }
 
+                if (schedulesAction == "list")
+                {
+                    var kind = obj.Value.TryGetProperty("kind", out var inventoryKind) && inventoryKind.ValueKind != JsonValueKind.Null
+                        ? inventoryKind.GetString() : null;
+                    int? offset = obj.Value.TryGetProperty("offset", out var inventoryOffset) && inventoryOffset.ValueKind != JsonValueKind.Null
+                        ? inventoryOffset.GetInt32() : (int?)null;
+                    int? max = obj.Value.TryGetProperty("max", out var inventoryMax) && inventoryMax.ValueKind != JsonValueKind.Null
+                        ? inventoryMax.GetInt32() : (int?)null;
+                    if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate(kind, offset, max, out _, out error)) return false;
+                }
+                if (schedulesAction == "circuits")
+                {
+                    if (obj.Value.TryGetProperty("kind", out var circuitKind) && circuitKind.ValueKind != JsonValueKind.Null || obj.Value.TryGetProperty("query", out var circuitQuery)
+                        && circuitQuery.ValueKind != JsonValueKind.Null && !string.IsNullOrWhiteSpace(circuitQuery.GetString()))
+                    { error = "Circuit inventory uses scheduleId for a panel, not query/kind."; return false; }
+                    int? offset = obj.Value.TryGetProperty("offset", out var start) && start.ValueKind != JsonValueKind.Null ? start.GetInt32() : (int?)null;
+                    int? max = obj.Value.TryGetProperty("max", out var size) && size.ValueKind != JsonValueKind.Null ? size.GetInt32() : (int?)null;
+                    if (!RevitBridge.Common.ScheduleInventoryWindow.TryCreate("panel", offset, max, out var window, out error)) return false;
+                    if (window!.Max > 500) { error = "Circuit inventory max must be 1..500."; return false; }
+                }
                 foreach (var field in new[] { "rowOffset", "columnOffset", "schedulableFieldOffset" })
                 {
                     if (obj.Value.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null &&
@@ -8460,6 +8562,12 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (obj.Value.TryGetProperty("combinedField", out _))
+                    return RevitBridge.Common.ScheduleCombinedFieldContract.ValidateEdit(obj.Value, out error);
+                if (obj.Value.TryGetProperty("cellStyles", out _))
+                    return RevitBridge.Common.ScheduleCellAppearanceContract.Validate(obj.Value, true, out error);
+                if (!RevitBridge.Common.SchedulePresentationContract.Validate(obj.Value, out error)) return false;
+                var hasFieldOrder = obj.Value.TryGetProperty("fieldOrder", out var fieldOrder) && fieldOrder.ValueKind == JsonValueKind.Array;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "query", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
@@ -8816,7 +8924,7 @@ namespace RevitBridge.Operator
                 var hasItemization = obj.Value.TryGetProperty("isItemized", out var itemized) && itemized.ValueKind != JsonValueKind.Null;
                 var hasGrandTotals = obj.Value.TryGetProperty("showGrandTotals", out var gt) && gt.ValueKind != JsonValueKind.Null;
                 var hasFilterBySheet = obj.Value.TryGetProperty("filterBySheet", out var fbs) && fbs.ValueKind != JsonValueKind.Null;
-                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
+                if (!hasFieldOrder && !hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet && !hasItemization)
                 {
                     error = "configure-schedule requires at least one operation.";
                     return false;

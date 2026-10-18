@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:55dcfc87aae6beff11f857821365dd20e9f7c9a7f7540259bef94db19a76ad15";
+        public const string InventoryHash = "sha256:4c479314e5aa5ad76354d537821da737945d675a7593d7e0623923206c0512c2";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -63,8 +63,14 @@ namespace RevitBridge.Common
             "POST /revit/get-parameters",
             "POST /revit/get-placement-context",
             "POST /revit/get-titleblock-info",
+            "POST /revit/import-drawing-spec",
+            "POST /revit/import-excel-output",
+            "POST /revit/inspect-drawing-spec",
+            "POST /revit/inspect-excel-import",
+            "POST /revit/inspect-excel-source",
             "POST /revit/inspect-exported-files",
             "POST /revit/inspect-family-content",
+            "POST /revit/link-cad",
             "POST /revit/linked-room-boundaries",
             "POST /revit/list-element-types",
             "POST /revit/load-family",
@@ -87,6 +93,7 @@ namespace RevitBridge.Common
             "POST /revit/plan-family-evolution",
             "POST /revit/print",
             "POST /revit/print-sets",
+            "POST /revit/project-parameters",
             "POST /revit/query",
             "POST /revit/read-family-evolution",
             "POST /revit/replace-text-note",

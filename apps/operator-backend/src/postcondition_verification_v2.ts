@@ -1,4 +1,7 @@
+import { isRegularSchedulePresentationEditV2 } from "./verification/regular_schedule_presentation_v2.js";
 import { updatedScheduleCellReadbackMatches } from "./verification/schedule_cell_postcondition_v2.js";
+import { isScheduleCellBackgroundEditV2 } from "./verification/schedule_cell_appearance_v2.js";
+import { isNativeSchedulePresentationEditV2 } from "./verification/native_schedule_presentation_v2.js";
 import { createdViewFilterSatisfiedV2 } from "./verification/view_filter_postcondition_v2.js";
 import { createdPlanSatisfiedV2 } from './verification/created_plan_postcondition_v2.js';
 import { createdTemplateSatisfiedV2 } from './verification/created_template_postcondition_v2.js';
@@ -6,6 +9,8 @@ import { existingTagRepairReadbackMatchesV2 } from './verification/tag_property_
 import { circuitMembershipSatisfiedV2 } from './verification/circuit_membership_postcondition_v2.js';
 import { elementTypeSatisfiedV2 } from './verification/element_type_postcondition_v2.js';
 import { nativeElementBooleanReadbackV1 } from './verification/native_element_property_readback_v1.js';
+import { scheduleFilterExpectedValuesV2, scheduleFilterObservedValuesV2 } from './verification/schedule_filter_postcondition_v2.js';
+import {isNativePhaseFilterEditV2}from './verification/native_phase_filter_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -16,7 +21,7 @@ import { nativeElementBooleanReadbackV1 } from './verification/native_element_pr
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { savedDocumentPostconditionV2 } from './verification/saved_document_postcondition_v2.js';
-import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
+import { visibilityExpectedValuesV2, visibilityObservedValuesV2, isVisibilityPhasingEditV2, visibilityPhasingReadbackMatchesV2 } from "./verification/visibility_view_contract_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
   isExcludedEvidenceContainerV2,
@@ -194,19 +199,6 @@ function setParameterSemanticInput(value: unknown): unknown {
   }) };
 }
 
-function scheduleFilterToken(value: unknown): string | null {
-  const row = objectValue(value);
-  const field = typeof row.field === "string" ? row.field.trim().toLowerCase() : "";
-  const op = typeof row.op === "string" ? row.op.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
-  if (!field || !op) return null;
-  const filterValue = Object.prototype.hasOwnProperty.call(row, "value") ? row.value : null;
-  return `schedule_filter:${JSON.stringify({ field, op, value: filterValue })}`;
-}
-
-function scheduleFilterSetToken(values: readonly string[]): string {
-  return `schedule_filter_set:${JSON.stringify([...new Set(values)].sort())}`;
-}
-
 function scheduleSortGroupTokens(value: unknown, index: number): readonly string[] {
   const row = objectValue(value);
   const field = typeof row.field === "string" ? row.field.trim().toLowerCase() : "";
@@ -331,15 +323,6 @@ function observedScheduleContractTokens(value: unknown, contract: PostconditionO
         if (typeof source.isItemized === "boolean")
           tokens.add(targetPropertyValueToken(String(scheduleId), "isItemized", source.isItemized));
       }
-    }
-    const filterEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitions");
-    if (filterEntry && Array.isArray(filterEntry[1])) {
-      const filterTokens = filterEntry[1]
-        .map(scheduleFilterToken)
-        .filter((token): token is string => token !== null);
-      for (const token of filterTokens) tokens.add(token);
-      const complete = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitionscomplete")?.[1] === true;
-      if (complete && filterTokens.length === filterEntry[1].length) tokens.add(scheduleFilterSetToken(filterTokens));
     }
     const sortGroupEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "sortgroupdefinitions");
     if (sortGroupEntry && Array.isArray(sortGroupEntry[1])
@@ -502,18 +485,7 @@ export function expectedPostconditionValuesV2(
   visit(semanticInput);
   if (operationPath === "/revit/configure-schedule") {
     const scheduleInput = objectValue(semanticInput);
-    const filters = scheduleInput.filters;
-    const filterTokens: string[] = [];
-    for (const candidate of Array.isArray(filters) ? filters : []) {
-      const token = scheduleFilterToken(candidate);
-      if (token) {
-        values.add(token);
-        filterTokens.push(token);
-      }
-    }
-    if (Array.isArray(filters) && scheduleInput.replaceFilters !== false) {
-      values.add(scheduleFilterSetToken(filterTokens));
-    }
+    for (const token of scheduleFilterExpectedValuesV2(scheduleInput)) values.add(token);
     const sortGroup = scheduleInput.sortGroup;
     if (Array.isArray(sortGroup)) {
       if (scheduleInput.replaceSortGroup !== false) values.add(`schedule_sort_group_count:${sortGroup.length}`);
@@ -552,6 +524,8 @@ export function expectedPostconditionValuesV2(
 
 export function observedPostconditionValuesV2(value: unknown, contract: PostconditionOperationContractV2 = {}): ReadonlySet<string> {
   const values = new Set<string>();
+  if (operationContractPath({}, contract) === '/revit/configure-schedule')
+    for (const token of scheduleFilterObservedValuesV2(value, contract.apply_input, contract.verification_input)) values.add(token);
   if (operationContractPath({}, contract) === "/revit/create-view")
     for (const token of observedTargetViewNames(value)) values.add(token);
   for (const token of visibilityObservedValuesV2(value)) values.add(token);
@@ -638,6 +612,20 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  // Binding creation needs retained native identity, full scope and a separate
+  // read. Matching a name/value in an echoed request is never sufficient.
+  if (operationPath === '/revit/import-drawing-spec') return false;
+  if (operationPath === '/revit/project-parameters') return false;
+  // Creation needs immutable native created identity and, for a clone, the
+  // native source definition captured before the transaction.
+  if (operationPath === '/revit/create-schedule') return false;
+  // Cell appearance requires the durable native before/preservation inventory
+  // and fresh readback. Generic token matching has neither and cannot grant it.
+  if (operationPath === "/revit/configure-schedule" && (isScheduleCellBackgroundEditV2(applyInput) || isRegularSchedulePresentationEditV2(applyInput))) return false;
+  if (operationPath === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(applyInput)) return false;
+  if (operationPath === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(applyInput)) return false;
+  if(operationPath==='/revit/visibility'&&isVisibilityPhasingEditV2(applyInput))
+    return visibilityPhasingReadbackMatchesV2(applyInput,verificationPayload,contract.verification_input);
   if (operationPath === '/revit/save-as')
     return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")

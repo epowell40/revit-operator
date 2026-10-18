@@ -284,6 +284,16 @@ export function criteriaPendingEvaluationV2(snapshot: AssignmentSnapshotV2): Rea
 
 export function assignmentProgressBudgetBlockerV2(snapshot: AssignmentSnapshotV2, budget: AssignmentProgressBudgetV2, now: string): string | null {
   const providerCalls = Object.keys(snapshot.provider_calls).length;
+  const reasoningTurns = Object.values(snapshot.provider_calls).filter((call) => call.state !== "admitted").length;
+  if (providerCalls >= budget.max_provider_calls) return "provider_call_budget_exhausted";
+  if (reasoningTurns >= budget.max_reasoning_turns) return "reasoning_turn_budget_exhausted";
+  if (Object.keys(snapshot.operations).length>=budget.max_operations)return 'operation_budget_exhausted';
+  return assignmentNativeReadbackResourceBlockerV2(snapshot,budget,now,0);
+}
+
+/** Finite host readbacks consume operations/time, but no paid provider turn. */
+export function assignmentNativeReadbackResourceBlockerV2(snapshot: AssignmentSnapshotV2, budget: AssignmentProgressBudgetV2, now: string, additionalOperations:number): string | null {
+  if(!Number.isSafeInteger(additionalOperations)||additionalOperations<0)return 'invalid_readback_operation_count';
   const operationCount = Object.keys(snapshot.operations).length;
   const latest = snapshot.progress_epochs.at(-1);
   const noProgress = latest && !latest.genuine_progress
@@ -291,11 +301,8 @@ export function assignmentProgressBudgetBlockerV2(snapshot: AssignmentSnapshotV2
       || canonicalJsonV2(epoch.unresolved_gap_ids) !== canonicalJsonV2(latest.unresolved_gap_ids))
     : 0;
   const consecutiveNoProgress = noProgress < 0 ? snapshot.progress_epochs.length : noProgress;
-  const reasoningTurns = Object.values(snapshot.provider_calls).filter((call) => call.state !== "admitted").length;
   const tokens = Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0);
-  if (providerCalls >= budget.max_provider_calls) return "provider_call_budget_exhausted";
-  if (reasoningTurns >= budget.max_reasoning_turns) return "reasoning_turn_budget_exhausted";
-  if (operationCount >= budget.max_operations) return "operation_budget_exhausted";
+  if (operationCount+additionalOperations>budget.max_operations) return "operation_budget_exhausted";
   if (!advisoryVerificationV2(snapshot) && consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
   if (tokens >= budget.max_total_tokens) return "token_budget_exhausted";
   if (assignmentActiveExecutionTimeMsV2(snapshot, now) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";

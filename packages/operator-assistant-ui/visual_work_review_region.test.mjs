@@ -1,0 +1,52 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createHash}from'node:crypto';import fs from 'node:fs';
+import {reviewCurrentWork,normalizeVisualReviewRequest,visualWorkReviewModelOutput}from'./visual_work_review.mjs';import {reviewTestPng}from'./fixtures/visual-review-image.mjs';
+const fixture=JSON.parse(fs.readFileSync(new URL('./fixtures/visual-review-frame-drift169.json',import.meta.url),'utf8'));
+const bytes=reviewTestPng(40,40),image=bytes.toString('base64'),sha=createHash('sha256').update(bytes).digest('hex');
+const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'},request={view_id:41,capture_mode:fixture.requested_mode,checks:[{id:'gap',expected:'No extra blank row below headings; keep visible borders.'}]};
+function setup(){let clock=Date.now();const calls={contexts:0,captures:[],providers:[],images:[]};
+ const context=()=>({process_id:123,document:{sessionId:'doc',title:'Mechanical',projectIdentity:{fingerprint:'project'},activeView:{id:41,name:'Notes, Symbols & Schedules',type:'DrawingSheet'}},nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:123,epoch:'epoch',documentSessionId:'doc',throughSequence:0,retainedFromSequence:1,maxEvents:16,maxIdsPerEvent:64,events:[]},canonical_attempt_settlement:{method:'GET',path:'/revit/context',requested_effect:'read',effect_state:'none'}});
+ const capture=()=>({image_base64:image,mime_type:'image/png',native_result:{processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:41,activeViewId:41,viewUniqueId:'target-unique',viewName:'Notes, Symbols & Schedules',viewType:'DrawingSheet',sheetNumber:'M002',timestamp:new Date(clock).toISOString(),exportMode:'visible_region',widthPx:40,heightPx:40,bytes:bytes.length,sha256:sha,viewport:{source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'DrawingSheet',zoomCornersXyz:[[-1,1,0],[1,-1,0]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false},canonical_attempt_settlement:{method:'POST',path:'/revit/export-image',requested_effect:'read',effect_state:'none'}}});
+ const h={owner:()=>owner,assertControl:async()=>{},now:()=>clock,readContext:async()=>{throw Error('No screenshot context fallback');},capture:async()=>{throw Error('No UI pixels/tooltips fallback');},readTargetContext:async()=>{calls.contexts++;return context();},captureTarget:async(location,args)=>{calls.captures.push(args);return capture();},retainImage:async pixels=>{calls.images.push(pixels);const b=Buffer.from(pixels,'base64');return{ref:{evidence_id:'ev1_image'+calls.images.length,content_hash:'sha256:'+createHash('sha256').update(b).digest('hex'),byte_count:b.length}};},settings:()=>({model:'gpt-6.1-sol',reasoning_effort:'medium'}),userRequest:()=> 'Fix blank row in AIR DEVICE SCHEDULE on M002 and preserve borders.',requestResponse:async body=>{calls.providers.push(body);clock+=60000;return{id:'resp_region',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'Synthetic relevant native view pixels.',correction:''}]})};}};
+ return{h,calls,context,capture};}
+test('retained169 sheet-margin/tooltip failure can use native visible-region pixels with explicit parent sheet and observed viewport',async()=>{
+ const f=setup(),r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'matched');assert.equal(f.calls.providers.length,1);assert.equal(f.calls.captures.length,2);assert.equal(r.capture.frame.export_mode,'visible_region');assert.equal(r.capture.frame.viewport.coordinateUnits,'feet');assert.equal(r.capture.frame.pixel_to_model_mapping,false);assert.equal(r.location.sheet_number,'M002');
+ const prompt=JSON.parse(f.calls.providers[0].input[0].content[0].text);assert.match(prompt.limits,/visible region/);assert.equal(prompt.capture.frame.viewport.viewId,41);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const o=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');const feedback=JSON.parse(o.output).evidence_projections[0].visual_work_review;assert.equal(feedback.capture.export_mode,'visible_region');assert.deepEqual(feedback.capture.viewport.zoomCornersXyz,[[-1,1,0],[1,-1,0]]);
+});
+test('region mode validates width and refuses an inactive requested target before export or reviewer',async()=>{
+ assert.equal(normalizeVisualReviewRequest(request).image_size,4000);const f=setup();f.h.readTargetContext=async()=>{const c=f.context();c.document.activeView.id=7;return c;};const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.captures.length,0);assert.equal(f.calls.providers.length,0);
+});
+test('wrong export extent, missing/unbound/invalid viewport, active mismatch and fictitious mapping stop before provider',async()=>{
+ for(const alter of [n=>n.exportMode='full_view',n=>delete n.viewport,n=>n.activeViewId=7,n=>n.viewport.viewId=7,n=>n.viewport.source='actor',n=>n.viewport.coordinateUnits='meters',n=>n.viewport.placementMappingAvailable=true,n=>n.viewport.zoomCornersXyz=[[0,0,0],[0,0,0]],n=>n.viewport.zoomCornersXyz=[[0,0,0],[NaN,1,0]]]){const f=setup();f.h.captureTarget=async()=>{const c=f.capture();alter(c.native_result);return c;};const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);}
+});
+test('viewport changes while reviewer reasons invalidate even identical pixel bytes, retaining both observed frames',async()=>{
+ const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture();if(++n===2)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.equal(r.reason,'visual_review_visible_frame_changed_during_review');assert.equal(f.calls.providers.length,1);assert.equal(f.calls.images.length,2);
+});
+
+test('render drift exposes both complete retained captures for inspection but accepts no reviewer verdict',async()=>{
+ const f=setup(),next=reviewTestPng(40,40,254);let n=0;
+ f.h.captureTarget=async()=>{const c=f.capture();if(++n===2){c.image_base64=next.toString('base64');c.native_result.bytes=next.length;c.native_result.sha256=createHash('sha256').update(next).digest('hex');}return c;};
+ const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.deepEqual(r.checks,[]);assert.equal(r.ok,false);
+ assert.equal(r.capture.content_hash,'sha256:'+sha);assert.equal(r.changed_capture.content_hash,'sha256:'+createHash('sha256').update(next).digest('hex'));
+ assert.equal(r.changed_capture.frame.view_id,41);assert.equal(r.changed_capture.frame.export_mode,'visible_region');
+ const wire=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');
+ const feedback=JSON.parse(wire.output).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.changed_capture.evidence_id,r.changed_capture.evidence_id);assert.deepEqual(feedback.checks,[]);assert.equal(feedback.recheck_evidence_id,null);
+ assert.match(feedback.guidance,/showElementIds/);assert.match(feedback.guidance,/outside it/);assert.equal(f.calls.providers.length,1);
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+});
+
+test('a changed capture cannot expose a forged retention identity',async()=>{
+ const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture();if(++n===2)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};
+ const retain=f.h.retainImage;let saved=0;f.h.retainImage=async image=>{const r=await retain(image);if(++saved===2)r.ref.content_hash='sha256:'+'f'.repeat(64);return r;};
+ const r=await reviewCurrentWork(request,f.h);assert.equal(r.reason,'visual_review_recheck_retention_mismatch');assert.equal(r.changed_capture,null);assert.equal(r.ok,false);
+});
+test('resolution retry cannot silently change visible-region framing before the reviewer',async()=>{
+ const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture(),first=++n===1,b=first?reviewTestPng(6000,4285):bytes;c.image_base64=b.toString('base64');Object.assign(c.native_result,{widthPx:first?6000:40,heightPx:first?4285:40,bytes:b.length,sha256:createHash('sha256').update(b).digest('hex')});if(!first)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};const r=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);assert.match(r.reason,/identity_changed_during_resolution/);
+});
+
+test('historical recheck inherits native-region mode, carries before pixels and keeps the same intended checks',async()=>{
+ const f=setup(),prior=f.capture(),baselineId='ev1_prior_region',ref={evidence_id:'ev1_before_region',content_hash:'sha256:'+sha,byte_count:bytes.length,media_type:'image/png'};
+ f.h.readBaseline=async()=>({evidence_ref:{evidence_id:baselineId},review:{schema:'operator.visual_work_review.v1',ok:true,state:'mismatch',authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,owner,request:{...request,image_size:3000},location:{process_id:123,document_session_id:'doc',epoch:'epoch',through_sequence:0,view_id:41,view_unique_id:'target-unique'},capture:{...ref,frame:{kind:'native_target_view',export_mode:'visible_region',viewport:prior.native_result.viewport}},reference:null},capture:{evidence_ref:ref,image_url:'data:image/png;base64,'+image},reference:null});
+ const r=await reviewCurrentWork({view_id:41,recheck_evidence_id:baselineId},f.h);assert.equal(r.state,'matched');assert.deepEqual(r.request.checks,request.checks);assert.equal(r.request.capture_mode,'native_visible_region');assert(f.calls.captures.every(c=>c.image_size===3000));assert.equal(f.calls.providers[0].input[0].content.filter(c=>c.type==='input_image').length,2);assert.equal(r.whole_task_verified,false);
+});

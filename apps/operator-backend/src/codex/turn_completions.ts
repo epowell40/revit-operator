@@ -6,6 +6,11 @@ type Receipt = { status: "completed" | "interrupted" | "failed"; error: CodexTur
 type Waiter = { settle: (receipt: Receipt) => void; reject: (error: Error) => void; progress: () => void };
 const keyFor = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId]);
 
+/** A host execution allowance expired, not an account quota or network failure. */
+export class CodexWorkTimeExpiredError extends Error {
+  constructor() { super('The task reached its allotted execution time. Its edits and evidence remain recorded for review.'); this.name='CodexWorkTimeExpiredError'; }
+}
+
 export class CodexTurnCompletions {
   private readonly receipts = new Map<string, Receipt>();
   private readonly waiters = new Map<string, Set<Waiter>>();
@@ -50,7 +55,7 @@ export class CodexTurnCompletions {
     for (const waiter of [...(this.waiters.get(keyFor(threadId, turnId)) ?? [])]) waiter.progress();
   }
 
-  wait(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; abortSignal?: AbortSignal }): Promise<ProviderTurnCompletion> {
+  wait(opts: { threadId: string; turnId: string; timeoutMs: number; maxWallMs?: number; remainingWorkMs?:()=>number; abortSignal?: AbortSignal }): Promise<ProviderTurnCompletion> {
     const { threadId, turnId, timeoutMs, maxWallMs, abortSignal } = opts;
     if (!threadId || !turnId || !Number.isFinite(timeoutMs) || timeoutMs < 0) return Promise.reject(new Error("Invalid Codex completion wait."));
     if (maxWallMs !== undefined && (!Number.isFinite(maxWallMs) || maxWallMs < 0)) return Promise.reject(new Error("Invalid Codex completion wall limit."));
@@ -61,9 +66,11 @@ export class CodexTurnCompletions {
       let settled = false;
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       let wallTimer: ReturnType<typeof setTimeout> | undefined;
+      let workTimer: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => {
         if (idleTimer) clearTimeout(idleTimer);
         if (wallTimer) clearTimeout(wallTimer);
+        if (workTimer) clearTimeout(workTimer);
         abortSignal?.removeEventListener("abort", onAbort);
         const entries = this.waiters.get(key);
         if (entries?.delete(waiter)) this.pendingCount -= 1;
@@ -80,6 +87,14 @@ export class CodexTurnCompletions {
         if (settled) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => fail(new Error("Timed out waiting for Codex turn completion after provider inactivity.")), Math.min(timeoutMs, 2_147_483_647));
+      };
+      const checkWorkTime = () => {
+        if(settled||!opts.remainingWorkMs)return;
+        let remaining:number;
+        try { remaining=opts.remainingWorkMs(); } catch(error) { return fail(error instanceof Error?error:new Error('Unable to read task time allowance.')); }
+        if(!Number.isFinite(remaining)||remaining<0)return fail(new Error('Invalid task time allowance.'));
+        if(remaining===0)return fail(new CodexWorkTimeExpiredError());
+        workTimer=setTimeout(checkWorkTime,Math.min(1000,remaining));
       };
       const waiter: Waiter = {
         reject: fail,
@@ -104,7 +119,8 @@ export class CodexTurnCompletions {
       this.pendingCount += 1;
       abortSignal?.addEventListener("abort", onAbort, { once: true });
       armIdleTimer();
-      if (maxWallMs !== undefined) wallTimer = setTimeout(() => fail(new Error("Timed out waiting for Codex turn completion at maximum duration.")), Math.min(maxWallMs, 2_147_483_647));
+      if (maxWallMs !== undefined) wallTimer = setTimeout(() => fail(opts.remainingWorkMs?new CodexWorkTimeExpiredError():new Error("Timed out waiting for Codex turn completion at maximum duration.")), Math.min(maxWallMs, 2_147_483_647));
+      checkWorkTime();
     });
   }
 

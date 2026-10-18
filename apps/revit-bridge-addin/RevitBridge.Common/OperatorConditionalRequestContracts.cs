@@ -35,6 +35,19 @@ namespace RevitBridge.Common
             return value.Clone();
         }
 
+        public static void ApplyScheduleCombinedFragment(Dictionary<string, object> schema)
+        {
+            var properties = (Dictionary<string, object>)schema["properties"];
+            var legacy = new Dictionary<string, object>(properties);
+            legacy.Remove("combinedField");
+            var combined = Fragment("schedule_combined_field");
+            properties["combinedField"] = combined.GetProperty("properties").GetProperty("combinedField").Clone();
+            schema["oneOf"] = new object[] {
+                new Dictionary<string, object> { ["type"] = "object", ["properties"] = legacy, ["additionalProperties"] = false },
+                combined
+            };
+        }
+
         public static bool TryGet(string path, out JsonElement schema)
         {
             if (Contracts.TryGetProperty(path, out var value))

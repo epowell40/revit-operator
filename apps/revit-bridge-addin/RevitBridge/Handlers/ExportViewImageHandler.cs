@@ -28,6 +28,8 @@ namespace RevitBridge.Handlers
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new Exception("No active UI document.");
             var doc = uidoc.Document;
+            string? projectUniqueId = null;
+            try { projectUniqueId = doc.ProjectInformation?.UniqueId; } catch { }
             
             View view = null;
             if (p.viewId.HasValue)
@@ -56,7 +58,7 @@ namespace RevitBridge.Handlers
             string tempDir = WorkspacePaths.ResolveDirectoryUnderWorkspace(p.folder, "artifacts", "captures");
             
             string fileName = $"Revit_{RevitBridge.Common.ElementIdCompat.GetValue(view.Id)}_{DateTime.Now:yyyyMMddHHmmss}";
-            if (visibleRegion) fileName += "_" + Guid.NewGuid().ToString("N");
+            fileName += "_" + Guid.NewGuid().ToString("N");
             string filePath = Path.Combine(tempDir, fileName);
 
             ImageExportOptions options = new ImageExportOptions
@@ -72,22 +74,23 @@ namespace RevitBridge.Handlers
             doc.ExportImage(options);
             if (viewport != null) OperatorViewImageContract.RequireUnchanged(viewport, ObserveViewport());
 
-            var actualFile = ExportedImagePathResolver.Resolve(filePath);
-            if (string.IsNullOrWhiteSpace(actualFile) || !File.Exists(actualFile))
-            {
-                throw new FileNotFoundException("Revit image export completed, but no exported image file was found.", filePath);
-            }
-
-            int? widthPx = null, heightPx = null;
-            if (visibleRegion)
-            {
-                using (var image = System.Drawing.Image.FromFile(actualFile)) { widthPx = image.Width; heightPx = image.Height; }
-            }
+            var artifact = ExportedImagePathResolver.ReadRequired(filePath);
+            var actualFile = artifact.Path;
+            int widthPx, heightPx;
+            using (var image = System.Drawing.Image.FromFile(actualFile)) { widthPx = image.Width; heightPx = image.Height; }
 
             return Task.FromResult<object>(new
             {
+                processId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                documentSessionId = OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                projectFingerprint = OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId),
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                 viewName = view.Name,
+                viewUniqueId = view.UniqueId,
+                viewType = view.ViewType.ToString(),
+                sheetNumber = (view as ViewSheet)?.SheetNumber,
+                bytes = artifact.Bytes,
+                sha256 = artifact.Sha256,
                 exportMode,
                 activeViewId = uidoc.ActiveView == null ? (long?)null : ElementIdCompat.GetValue(uidoc.ActiveView.Id),
                 widthPx, heightPx,

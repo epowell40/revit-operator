@@ -49,7 +49,13 @@ profile. The default `local` mode alone does not enable it; hosted principals,
 remote origins and hosted mode/flags cannot select it. Outside this explicit
 profile, existing routing and experiment allowlists remain unchanged.
 
-The authenticated backend advertises `local_executor` for executor selection.
+For fresh conversations, ready computer-use capability selects a working owner
+that can use native tools and inspect/operate Revit without special UI keywords
+in the request. Explicit API-only/no-computer-use requests use the backend.
+Existing conversations and active turns keep their owner. This changes neither
+model/billing selection nor native authority and settlement controls.
+Without computer-use availability, the authenticated backend advertises
+`local_executor` for executor selection.
 It is not a CLI/provider readiness check or native write authorization. Use
 the supported pinned Codex CLI and the existing deterministic and actual Revit
 UI qualification steps before claiming the profile qualified.
