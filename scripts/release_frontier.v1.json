@@ -4646,7 +4646,8 @@
     {
       "id": "desktop_review_handoff_retains_whole_qualified_claims_in_compact_summary_and_details",
       "coverage": [
-        "javascript:package/operator-assistant-ui/work_report.test.mjs"
+        "javascript:package/operator-assistant-ui/work_report.test.mjs",
+        "backend:work_review_handoff.test.ts"
       ]
     },
     {
