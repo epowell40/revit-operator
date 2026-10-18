@@ -1,6 +1,10 @@
 {
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
+    {"id":"xlsx_original_source_read","method":"POST","path":"/revit/inspect-excel-source","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"read"},
+    {"id":"xlsx_original_source_serialized_read","method":"POST","path":"/revit/inspect-excel-source","body":"{\"sourcePath\":\"artifacts/uploads/ventilation.xlsx\",\"section\":\"worksheets\",\"expectedSourceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}","expected_effect":"read"},
+    {"id":"xlsx_source_lookalike_stays_apply","method":"POST","path":"/revit/inspect-excel-source-apply","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"apply"},
+    {"id":"xlsx_legacy_import_stays_apply","method":"POST","path":"/revit/import-excel-table","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","sheetName":"Ventilation Schedule","range":"A1:Y434"},"expected_effect":"apply"},
     {
       "id": "drawing_spec_inspection_read",
       "method": "POST",

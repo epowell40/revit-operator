@@ -209,6 +209,9 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
   }]
 ]);
 
+// Typed schedule reads have the same reviewed outputs and argument predicates as their native route.
+REVIT_ROUTE_CONTRACTS.set("revit_list_schedules", REVIT_ROUTE_CONTRACTS.get("/revit/schedules")!);
+
 function normalizedText(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -400,7 +403,7 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
       && body.docId==null && body.familyDocumentId==null ? contract.semantic_outputs
       : contract.semantic_outputs.filter(output=>output!=='text_note.created_attributes');
   }
-  if (pathOf(verification) === "/revit/schedules") {
+  if (["/revit/schedules", "revit_list_schedules"].includes(pathOf(verification))) {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args);
     if(body.action==='detail'&&Number.isSafeInteger(body.scheduleId)&&Number(body.scheduleId)>0&&body.includeFields!==false)
       return ['schedule.created_definition','view.identity'];
@@ -466,12 +469,14 @@ export function verificationCapabilityAdmissionV2(input: Readonly<{
 
 export function verificationCapabilityAdmissionForPathsV2(
   applyPath: string,
-  verificationPath: string
+  verificationPath: string,
+  applyArguments?: unknown,
+  verificationArguments?: unknown
 ): VerificationCapabilityAdmissionV2 {
-  const contract = (path: string): OperationContract => path.startsWith("/")
-    ? { capability_id: "revit_call_tool", path }
-    : { capability_id: path, tool: path };
-  return verificationCapabilityAdmissionV2({ apply: contract(applyPath), verification: contract(verificationPath) });
+  const contract = (path: string, args: unknown): OperationContract => path.startsWith("/")
+    ? { capability_id: "revit_call_tool", path, arguments: { body: args } }
+    : { capability_id: path, tool: path, arguments: args };
+  return verificationCapabilityAdmissionV2({ apply: contract(applyPath, applyArguments), verification: contract(verificationPath, verificationArguments) });
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {

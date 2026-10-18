@@ -906,7 +906,8 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     }
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
-  const verificationAdmission = verificationCapabilityAdmissionForPathsV2(state.apply_call?.path ?? "", pending.path);
+  const verificationAdmission = verificationCapabilityAdmissionForPathsV2(
+    state.apply_call?.path ?? "", pending.path, state.apply_call?.raw_body, pending.raw_body);
   if (state.apply_succeeded && succeeded && pending.effect === "read"
       && verificationAdmission.admissible && state.apply_artifact_receipt
       && nativeArtifactPostconditionV2(state.apply_artifact_receipt, verificationPayload)) {

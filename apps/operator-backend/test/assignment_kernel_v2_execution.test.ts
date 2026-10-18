@@ -3745,3 +3745,25 @@ test("C48 failed parameter ordering remains unverified; a fresh combined native 
   const corrupt={...read,raw_payload_hash:"0".repeat(64)};
   assert.equal(openDuctPostconditionSatisfiedV2(verified,verified.operations[apply.operation_id]!,corrupt,combined),false);
 }));
+
+import { revitRouteEffect as sourceInspectionEffect } from '../src/action_path_mutability.js';
+test('original XLSX read crosses no-write operation admission without permitting import or lookalikes',()=>{
+ for(const serialized of [false,true]) workspace(()=>{
+  const objective='Check the ventilation table in the attached workbook and tell me whether it is ready to add to this project. Leave the model unchanged.';
+  const {goal,snapshot}=setup('read',objective);
+  const body={sourcePath:'artifacts/uploads/ventilation.xlsx',section:'worksheets',expectedSourceSha256:'a'.repeat(64)};
+  const args={method:'POST',path:'/revit/inspect-excel-source',body:serialized?JSON.stringify(body):body};
+  const effect=sourceInspectionEffect(args.path,args.method,args.body);
+  assert.equal(effect,'read');
+  const lease=openAssignmentKernelOperationV2({snapshot,controller_request_id:'source',provider_turn_id:'read-source',
+   capability_id:'revit_call_tool',classified_effect:effect,arguments:args});
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id].requested_effect,'read');
+  for(const route of ['/revit/inspect-excel-source-apply','/revit/import-excel-table','/revit/set-parameter']){
+   const blockedEffect=sourceInspectionEffect(route,'POST',body);assert.equal(blockedEffect,'apply');
+   assert.throws(()=>openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id:route,provider_turn_id:'read-source',capability_id:'revit_call_tool',classified_effect:blockedEffect,
+    arguments:{method:'POST',path:route,body}}),/assignment_kernel_v2_user_no_model_write_limit/);
+  }
+  assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length,1);
+ });
+});
