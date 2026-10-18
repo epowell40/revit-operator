@@ -1516,5 +1516,242 @@
         ]
       }
     ]
+  },
+  "/revit/inspect-excel-source": {
+    "type": "object",
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520,
+        "pattern": "\\S"
+      },
+      "sheetName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "\\S"
+      },
+      "section": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "worksheets",
+          "cells",
+          "rows",
+          "columns",
+          "merges",
+          "issues",
+          "formatting",
+          "printContext"
+        ]
+      },
+      "pageOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "expectedSourceSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "sourcePath"
+    ],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "pageOffset",
+          "expectedSourceSha256"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets",
+              "cells",
+              "rows",
+              "columns",
+              "merges",
+              "issues",
+              "formatting",
+              "printContext"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520,
+            "pattern": "\\S"
+          },
+          "sheetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "\\S"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "worksheets",
+              "cells",
+              "rows",
+              "columns",
+              "merges",
+              "issues",
+              "formatting",
+              "printContext"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "sourcePath",
+          "sheetName",
+          "pageOffset",
+          "expectedSourceSha256"
+        ],
+        "additionalProperties": false
+      }
+    ]
   }
 }

@@ -10,6 +10,18 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void ExcelSourceInspectionIsDiscoverableWithoutEnablingLegacyMutation()
+        {
+            const string path = "/revit/inspect-excel-source";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            Assert.Equal(OperatorActionRisk.Low, Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path).RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/import-excel-table"));
+            Assert.True(OperatorConditionalRequestContracts.TryGet(path, out var schema));
+            Assert.Equal(4, schema.GetProperty("oneOf").GetArrayLength());
+        }
+        [Fact]
         public void SourceBoundWordInspectionIsExposedAsReadWithoutAdjacentMutationRoutes()
         {
             const string path = "/revit/inspect-drawing-spec";
@@ -56,9 +68,9 @@ namespace RevitBridge.Common.Tests
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
-            Assert.Equal(218, implemented.Count);
-            Assert.Equal(113, OperatorToolManifest.Tools.Count);
-            Assert.Equal(113, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(219, implemented.Count);
+            Assert.Equal(114, OperatorToolManifest.Tools.Count);
+            Assert.Equal(114, OperatorActionAllowlist.EnumerateAllowed().Count());
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));

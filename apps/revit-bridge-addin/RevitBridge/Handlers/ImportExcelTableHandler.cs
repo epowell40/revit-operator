@@ -534,45 +534,7 @@ namespace RevitBridge.Handlers
 
             private static string ResolveWorksheetPath(ZipArchive zip, string requestedSheetName, out string resolvedSheetName)
             {
-                resolvedSheetName = "";
-                var wbEntry = zip.GetEntry("xl/workbook.xml");
-                if (wbEntry == null) throw new InvalidOperationException("Invalid .xlsx: missing xl/workbook.xml");
-                XDocument wb;
-                using (var s = wbEntry.Open()) { wb = XDocument.Load(s); }
-                var ns = wb.Root?.Name.Namespace ?? XNamespace.None;
-                var relNs = XNamespace.Get("http://schemas.openxmlformats.org/officeDocument/2006/relationships");
-
-                var sheets = wb.Descendants(ns + "sheet")
-                    .Select(x => new
-                    {
-                        Name = (string?)x.Attribute("name") ?? "",
-                        Rid = (string?)x.Attribute(relNs + "id") ?? ""
-                    })
-                    .Where(x => !string.IsNullOrWhiteSpace(x.Name) && !string.IsNullOrWhiteSpace(x.Rid))
-                    .ToList();
-                if (sheets.Count == 0) throw new InvalidOperationException("Invalid .xlsx: no sheets found.");
-
-                var chosen = !string.IsNullOrWhiteSpace(requestedSheetName)
-                    ? sheets.FirstOrDefault(x => string.Equals(x.Name, requestedSheetName, StringComparison.OrdinalIgnoreCase))
-                    : sheets[0];
-                if (chosen == null) chosen = sheets[0];
-                resolvedSheetName = chosen.Name;
-
-                var relEntry = zip.GetEntry("xl/_rels/workbook.xml.rels");
-                if (relEntry == null) throw new InvalidOperationException("Invalid .xlsx: missing xl/_rels/workbook.xml.rels");
-
-                XDocument rels;
-                using (var s = relEntry.Open()) { rels = XDocument.Load(s); }
-                var rns = XNamespace.Get("http://schemas.openxmlformats.org/package/2006/relationships");
-                var rel = rels.Descendants(rns + "Relationship")
-                    .FirstOrDefault(x => string.Equals((string?)x.Attribute("Id"), chosen.Rid, StringComparison.OrdinalIgnoreCase));
-                var target = (string?)rel?.Attribute("Target") ?? "";
-                if (string.IsNullOrWhiteSpace(target)) throw new InvalidOperationException("Invalid .xlsx: worksheet relationship missing target.");
-
-                // Targets are relative to xl/
-                var path = "xl/" + target.TrimStart('/');
-                if (zip.GetEntry(path) == null) throw new InvalidOperationException($"Invalid .xlsx: missing worksheet entry {path}");
-                return path;
+                return XlsxSourcePackage.ResolveWorksheetPath(zip, requestedSheetName, out resolvedSheetName);
             }
 
             private static Dictionary<string, string> ReadCells(ZipArchive zip, string sheetPath, List<string> sharedStrings)

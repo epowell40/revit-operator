@@ -65,6 +65,7 @@ namespace RevitBridge.Common
             "POST /revit/get-titleblock-info",
             "POST /revit/import-drawing-spec",
             "POST /revit/inspect-drawing-spec",
+            "POST /revit/inspect-excel-source",
             "POST /revit/inspect-exported-files",
             "POST /revit/inspect-family-content",
             "POST /revit/link-cad",

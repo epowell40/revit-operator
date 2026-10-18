@@ -19,12 +19,14 @@ const excluded = implemented.filter(route => !isSupportedNativeTool(route.method
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
   assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
-  assert.equal(implemented.length, 218);
+  assert.equal(implemented.length, 219);
   assert.equal(excluded.length, 105);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 113);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 114);
+    assert.equal(isToolRouteExposedForSearch("POST", "/revit/inspect-excel-source", env), true);
+    assert.equal(isToolRouteExposedForSearch("GET", "/revit/inspect-excel-source", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/inspect-drawing-spec", env), true);
     assert.equal(isToolRouteExposedForSearch("GET", "/revit/inspect-drawing-spec", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/import-drawing-spec", env), true);
@@ -41,7 +43,7 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   }
 });
 
-for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec'])
+for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec', '/revit/inspect-excel-source'])
 test(`actual MCP documentation discovers ${documentedRoute} without executing its mutation`,async()=>{
  const requests:string[]=[];
  const schema=JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute];

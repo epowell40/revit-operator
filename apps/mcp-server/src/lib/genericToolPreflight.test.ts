@@ -657,6 +657,17 @@ test('project-parameter discovery publishes separate bounded instance creation a
 });
 
 
+test("Excel source inspection requires selection and source-bound continuation without enabling mutations",()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-excel-source',request_schema:contracts['/revit/inspect-excel-source']},body);
+ const sourcePath='vent.xlsx',sheetName='Ventilation Schedule',expectedSourceSha256='a'.repeat(64);
+ for(const good of [{sourcePath},{sourcePath,section:'worksheets'},{sourcePath,sheetName},{sourcePath,sheetName,section:'cells',pageSize:100},
+  {sourcePath,sheetName,section:'cells',pageOffset:100,expectedSourceSha256}]) assert.equal(check(good),null,JSON.stringify(good));
+ for(const bad of [{},{sourcePath,section:'cells'},{sourcePath,sheetName,section:'cells',pageOffset:100},
+  {sourcePath,sheetName,pageSize:101},{sourcePath,sheetName,apply:true},{sourcePath,sheetName,expectedSourceSha256:'x'},
+  {sourcePath,sheetName:'',section:'cells'},{sourcePath,sheetName,section:'unknown'}]) assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
+});
+
 test("Word inspection preflight retains source and page identity and rejects invented apply or clipping",()=>{
  const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
  const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-drawing-spec',request_schema:contracts['/revit/inspect-drawing-spec']},body);

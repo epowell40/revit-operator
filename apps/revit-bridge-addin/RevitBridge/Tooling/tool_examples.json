@@ -4,6 +4,49 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/inspect-excel-source",
+      "examples": [
+        {
+          "name": "Discover the actual output worksheet instead of assuming a calculation tab",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx"
+          },
+          "expected_response_shape": {
+            "schema": "operator.xlsx_source_inspection.v1",
+            "readOnly": true,
+            "nativeImportVerified": false
+          }
+        },
+        {
+          "name": "Inspect selected output cells with complete source records",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "section": "cells",
+            "pageSize": 20
+          },
+          "expected_response_shape": {
+            "status": "Ok",
+            "calculationPerformed": false
+          }
+        },
+        {
+          "name": "Continue only against the same exact source bytes",
+          "request": {
+            "sourcePath": "artifacts/uploads/vent.xlsx",
+            "sheetName": "Ventilation Schedule",
+            "section": "cells",
+            "pageOffset": 20,
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expected_response_shape": {
+            "status": "Ok"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-drawing-spec",
       "examples": [
         {

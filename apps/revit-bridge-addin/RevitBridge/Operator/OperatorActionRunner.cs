@@ -172,6 +172,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-text", new CreateTextNoteHandler() },
                 { "/revit/import-drawing-spec", new ImportDrawingSpecHandler() },
                 { "/revit/inspect-drawing-spec", new InspectDrawingSpecHandler() },
+                { "/revit/inspect-excel-source", new InspectExcelSourceHandler() },
                 { "/revit/import-excel-table", new ImportExcelTableHandler() },
                 { "/revit/export-elements-xlsx", new ExportElementsXlsxHandler() },
                 { "/revit/import-elements-xlsx-updates", new ImportElementsXlsxUpdatesHandler() },
