@@ -83,8 +83,10 @@ namespace RevitBridge.Common
                 block.Kind = "paragraph";
                 block.StyleId = DocxSourceStyles.Val(source.Element(W + "pPr")?.Element(W + "pStyle"));
                 var properties = styles.Paragraph(source);
-                block.PropertiesXml = properties.ToString(SaveOptions.DisableFormatting);
                 numbering.Apply(properties, block, code => Warn(manifest, code, path, code == "numbering_unresolved"));
+                if (block.NumberingDefinitionXml != null)
+                    properties = styles.Paragraph(source, XElement.Parse(block.NumberingDefinitionXml).Element(W + "pPr"));
+                block.PropertiesXml = properties.ToString(SaveOptions.DisableFormatting);
                 var text = new StringBuilder();
                 foreach (var run in source.Descendants(W + "r").Where(r => r.Ancestors(W + "p").FirstOrDefault() == source))
                 {

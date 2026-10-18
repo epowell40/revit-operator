@@ -146,6 +146,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NumberingIndentIsInheritedBeforeExplicitParagraphStyleIndent()
+        {
+            var numbering = Numbering.Replace("<w:lvl w:ilvl='0'>", "<w:lvl w:ilvl='0'><w:pPr><w:ind w:left='1440' w:hanging='360'/></w:pPr>")
+                .Replace("<w:lvl w:ilvl='1'>", "<w:lvl w:ilvl='1'><w:pPr><w:ind w:left='1440' w:hanging='360'/></w:pPr>");
+            var result = DocxDrawingSpecSourceReader.Read(Package(P("Top", "Heading") + P("Child", "Part"), Styles, numbering));
+            Assert.Equal("1440", (string?)XElement.Parse(result.Blocks[0].PropertiesXml).Element(W + "ind")?.Attribute(W + "left"));
+            Assert.Equal("720", (string?)XElement.Parse(result.Blocks[1].PropertiesXml).Element(W + "ind")?.Attribute(W + "left"));
+            Assert.Equal("360", (string?)XElement.Parse(result.Blocks[1].PropertiesXml).Element(W + "ind")?.Attribute(W + "hanging"));
+            Assert.Contains("1440", result.Blocks[0].NumberingDefinitionXml);
+        }
+
+        [Fact]
         public void CyclicStyleInheritanceDuplicatePartsAndExternalEntitiesAreRejected()
         {
             var styles = "<w:style w:styleId='Loop'><w:basedOn w:val='Loop'/></w:style>";

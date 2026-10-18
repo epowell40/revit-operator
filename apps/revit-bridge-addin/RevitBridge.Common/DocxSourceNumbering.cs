@@ -39,6 +39,7 @@ namespace RevitBridge.Common
                 if (level < 0 || level > 8) throw new InvalidOperationException("Invalid numbering level.");
                 block.NumberingLevel = level;
                 var definition = Level(id, level);
+                block.NumberingDefinitionXml = definition.ToString(SaveOptions.DisableFormatting);
                 var pattern = DocxSourceStyles.Val(definition.Element(W + "lvlText"));
                 if (pattern == null) throw new InvalidOperationException("Missing numbering pattern.");
                 if (!counters.TryGetValue(id, out var state)) counters[id] = state = new int?[9];

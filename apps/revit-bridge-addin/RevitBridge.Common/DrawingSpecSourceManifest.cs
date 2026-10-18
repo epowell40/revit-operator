@@ -38,6 +38,7 @@ namespace RevitBridge.Common
         public string Text { get; set; } = "";
         public string? NumberingMarker { get; set; }
         public string NumberingSuffix { get; set; } = "";
+        public string? NumberingDefinitionXml { get; set; }
         public int? NumberingLevel { get; set; }
         public string PropertiesXml { get; set; } = "";
         public List<DrawingSpecRun> Runs { get; } = new List<DrawingSpecRun>();

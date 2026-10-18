@@ -22,10 +22,11 @@ namespace RevitBridge.Common
                 .Select(s => (string?)s.Attribute(W + "styleId")).SingleOrDefault();
         }
 
-        internal XElement Paragraph(XElement paragraph)
+        internal XElement Paragraph(XElement paragraph, XElement? numberingProperties = null)
         {
             var properties = new XElement(W + "pPr");
             Merge(properties, defaults.Element(W + "pPrDefault")?.Element(W + "pPr"));
+            Merge(properties, numberingProperties);
             foreach (var style in Chain(Val(paragraph.Element(W + "pPr")?.Element(W + "pStyle")) ?? defaultParagraph))
                 Merge(properties, style.Element(W + "pPr"));
             Merge(properties, paragraph.Element(W + "pPr"));
