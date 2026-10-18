@@ -50,6 +50,8 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a" },
       { ...binding, kernelVersion: 2 });
     assert.equal(requests, 1);
+    assert.match(upstreamRequest.instructions, /normally omit source revision clouds and revision tags/);
+    assert.match(upstreamRequest.instructions, /actual authorized project revision/);
     assert.match(JSON.stringify(upstreamRequest.input), /operator.desktop-assignment-feedback.v1/);
     assert.match(JSON.stringify(upstreamRequest.input), /Inspect PDF/);
     assert.equal(result.model_call_receipt.call_id, "bound-upstream");

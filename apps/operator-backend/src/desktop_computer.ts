@@ -1,3 +1,4 @@
+import { REUSED_DETAIL_GUIDANCE } from "./brains/redline_package_guidance.js";
 import { parseProviderResponseUsageV1, type ProviderResponseUsageV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import type { ModelCallReceipt } from "./contracts.js";
@@ -198,7 +199,8 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
     response = await client.responses.create({
       model,
       reasoning: { effort: reasoningEffort },
-      instructions: body.instructions,
+      instructions: body.instructions?.includes(REUSED_DETAIL_GUIDANCE)
+        ? body.instructions : [body.instructions, REUSED_DETAIL_GUIDANCE].filter(Boolean).join("\n"),
       tools: body.tools,
       input: body.input,
       previous_response_id: body.previous_response_id

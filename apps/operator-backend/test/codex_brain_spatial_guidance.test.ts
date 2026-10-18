@@ -48,6 +48,8 @@ test("certified Codex threads are isolated from MCP and Revit turn runtimes", ()
   assert.equal(normal.startRevitTurnRuntime, true);
   assert.match(normal.baseInstructions, /Do not add unrequested previews or dry runs/);
   assert.match(normal.baseInstructions, /Honor read-only requests, review checkpoints and contract-required preflight/);
+  assert.match(normal.baseInstructions, /normally omit source revision clouds and revision tags/);
+  assert.match(normal.baseInstructions, /actual authorized project revision/);
 });
 
 test("executable Codex turns bind backend auth before provider start and clean the lease", () => {
