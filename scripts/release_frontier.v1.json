@@ -4705,6 +4705,13 @@
         "mcp:lib/excelOutputContracts.test.ts",
         "backend:excel_table_import_v2.test.ts"
       ]
+    },
+    {
+      "id": "provider_prose_after_rejected_work_report_needs_bounded_structured_handoff_without_replaying_effects",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "javascript:package/operator-assistant-ui/work_report.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

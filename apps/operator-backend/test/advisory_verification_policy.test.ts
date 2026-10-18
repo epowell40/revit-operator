@@ -36,6 +36,31 @@ import { assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work
 import {projectWorkReviewV2} from '../src/assignments/work_review_handoff.js';
 import {validLocalAdvisoryPolicyV1} from '../src/domain/assignment-kernel/execution_policy.js';
 import {ADVISORY_HANDOFF_GUIDANCE} from '../src/brains/work_continuation_guidance.js';
+import { pathToFileURL } from 'node:url';
+
+test('shared reporting continuation reaches real advisory review after ready-item rejection without certifying claims',()=>readyWorkFixture(async f=>{
+ const uiRoot=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui','../operator-desktop'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'work_report.mjs')))!;
+ const ui=await import(pathToFileURL(path.join(uiRoot,'work_report.mjs')).href);
+ const owner={kernel_version:2,session_id:f.binding.session_id,goal_id:f.binding.assignment_id,run_id:f.binding.run_id,generation:f.binding.generation};
+ const request=async(route:string,options:any)=>{
+  assert.equal(route,'/api/assignments/v2/work-plan');const body=JSON.parse(options.body);
+  assert.equal(body.assignment_id,f.binding.assignment_id);assert.equal(body.run_id,f.binding.run_id);
+  return manageAssignmentWorkPlan({binding:f.binding,action:body.action,completion_proposal:body.completion_proposal});
+ };
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'drawing',description:'Retained drawing work',source_basis:'User attachment'},{item_id:'sheet',description:'Retained sheet placement',source_basis:'User request'}],assumptions:[]}});
+ const before=structuredClone(f.state());
+ await assert.rejects(ui.submitWorkReportForReview(owner,proposal,request),/ready_work_remaining/);
+ assert.deepEqual(f.state(),before,'rejecting a report must not settle, edit or certify anything');
+ for(const item_id of ['drawing','sheet'])manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id});
+ const claimed=structuredClone(f.state());assert.equal(claimed.outcome,'active');
+ const reminder=await ui.missingWorkReportContinuation(owner,request,0);
+ assert.equal(reminder.kind,'continue');assert.deepEqual(f.state(),claimed,'status/reminder is read-only');
+ const reported=await ui.submitWorkReportForReview(owner,proposal,request);
+ assert.equal(reported.outcome,'awaiting_user_review');assert.equal(f.state().completion_proposal?.verified,false);
+ assert.equal(projectWorkReviewV2(f.state()).counts.reported_unverified,2);
+ assert.equal(projectWorkReviewV2(f.state()).counts.checked,0);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independently verified/);
+}));
 
 test('retained74 omitted-reference completion reaches durable advisory claim without inventing an edit or certifying work',()=>fixture(true,f=>{
  const retained=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/work-plan-completion-refusal-74.json'),'utf8'));

@@ -28,6 +28,37 @@ export async function submitWorkReportForReview(assignment, proposal, request, o
   return send({ action: "propose_completion", completion_proposal: proposal });
 }
 
+// Provider termination is not a report receipt. Read current host state before
+// asking the owner to finish reporting; never replay a proposal or any work.
+export async function missingWorkReportContinuation(assignment, request, reminderCount = 0) {
+  if (assignment?.kernel_version !== 2) return null;
+  if (!assignment.session_id || !assignment.goal_id || !assignment.run_id
+      || !Number.isSafeInteger(assignment.generation) || assignment.generation < 1)
+    throw new Error("work_report_current_binding_required");
+  if (!Number.isSafeInteger(reminderCount) || reminderCount < 0 || reminderCount > 2)
+    throw new Error("work_report_reminder_count_invalid");
+  const status = await request("/api/assignments/v2/work-plan", { method: "POST", body: JSON.stringify({
+    action: "status", session_id: assignment.session_id, assignment_id: assignment.goal_id,
+    run_id: assignment.run_id, generation: assignment.generation
+  }) });
+  if (status?.ok !== true) throw new Error("work_report_status_unavailable");
+  if (status.verification_policy !== "advisory") return null;
+  if (status.completion_proposal) {
+    const message = retainedWorkReportMessage({ name: "report_work_for_review" }, { output: JSON.stringify(status) });
+    if (!message) throw new Error("work_report_retained_receipt_invalid");
+    return { kind: "retained", message };
+  }
+  if (status.outcome !== "active") return null;
+  if (reminderCount === 2) throw new Error("work_report_required: No structured work report was retained after two reporting reminders. Preserve existing work and evidence; do not replay model actions.");
+  return { kind: "continue", input: { role: "user", content: [{ type: "input_text", text:
+    "Your text reply did not retain the required structured work report. The current host status has no accepted report. " +
+    "Finish by calling report_work_for_review with inspected results, remaining work and uncertainties. This is a reporting step, not permission to repeat completed or uncertain model, save, print or external actions. " +
+    "If an earlier report was rejected, it was not accepted: address its exact reason using retained evidence and the current checklist, then call report_work_for_review again. " +
+    "Keep unverified claims and unresolved work explicit; do not manufacture verification, clear unknown effects, change grants or override Pause. Ordinary controls and the existing task budget still apply. " +
+    "A plain-text reply cannot establish the saved assignment outcome."
+  }] } };
+}
+
 export function retainedWorkReportMessage(toolCall, functionOutput) {
   if (toolCall?.name !== "report_work_for_review") return null;
   let result; try { result = JSON.parse(functionOutput?.output || ""); } catch { return null; }
