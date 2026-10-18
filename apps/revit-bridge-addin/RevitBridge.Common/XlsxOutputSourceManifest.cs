@@ -36,6 +36,8 @@ namespace RevitBridge.Common
         public string ReportedDimension { get; set; } = "";
         public double? DefaultRowHeightPoints { get; set; }
         public double? DefaultColumnWidthCharacters { get; set; }
+        public double BaseColumnWidthCharacters { get; set; } = 8;
+        public bool DefaultRowsHidden { get; set; }
         public string PrintContextXml { get; set; } = "";
         public XlsxSourceRange Bounds { get; set; } = new XlsxSourceRange();
         public List<XlsxSourceRow> Rows { get; } = new List<XlsxSourceRow>();

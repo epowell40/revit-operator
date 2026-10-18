@@ -55,6 +55,8 @@ namespace RevitBridge.Common
                 var result = new XlsxSourceSheet { Identity = identity, SourcePartSha256 = Hash(sheetBytes),
                     ReportedDimension = (string?)xml.Element(S + "dimension")?.Attribute("ref") ?? "",
                     DefaultRowHeightPoints = Number(xml.Element(S + "sheetFormatPr")?.Attribute("defaultRowHeight")),
+                    BaseColumnWidthCharacters = Number(xml.Element(S + "sheetFormatPr")?.Attribute("baseColWidth")) ?? 8,
+                    DefaultRowsHidden = Flag(xml.Element(S + "sheetFormatPr")?.Attribute("zeroHeight")),
                     DefaultColumnWidthCharacters = Number(xml.Element(S + "sheetFormatPr")?.Attribute("defaultColWidth")) };
                 ReadColumns(xml, result, styleCount);ReadRows(xml, result, strings, styleCount, manifest);ReadMerges(xml, result);
                 var print = new XElement("printContext", xml.Elements().Where(e => new[] { "sheetPr", "sheetFormatPr", "pageMargins", "pageSetup", "printOptions", "headerFooter", "rowBreaks", "colBreaks" }.Contains(e.Name.LocalName)).Select(e => new XElement(e)));
@@ -89,7 +91,7 @@ namespace RevitBridge.Common
                 var index = row.Attribute("r") == null ? previousRow + 1 : Integer(row.Attribute("r"), 1, 1048576);previousRow = index;
                 if (index > 1048576 || !rowIds.Add(index)) throw new InvalidOperationException("Duplicate or invalid XLSX row identity.");
                 var rowProperties = new XElement(row.Name, row.Attributes());
-                result.Rows.Add(new XlsxSourceRow { Index = index, HeightPoints = Number(row.Attribute("ht")), Hidden = Flag(row.Attribute("hidden")), StyleIndex = Style(row.Attribute("s"), styleCount), PropertiesXml = rowProperties.ToString(SaveOptions.DisableFormatting) });
+                result.Rows.Add(new XlsxSourceRow { Index = index, HeightPoints = Number(row.Attribute("ht")), Hidden = row.Attribute("hidden") == null ? result.DefaultRowsHidden : Flag(row.Attribute("hidden")), StyleIndex = Style(row.Attribute("s"), styleCount), PropertiesXml = rowProperties.ToString(SaveOptions.DisableFormatting) });
                 int column = 1;
                 foreach (var element in row.Elements(S + "c"))
                 {
