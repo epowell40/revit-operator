@@ -26,7 +26,8 @@ export const READ_ATTACHMENT_TOOL = {
     type: "object", additionalProperties: false,
     properties: {
       mode: { type: "string", enum: ["overview", "detail", "text", "vector"] },
-      vector_section: { type: "string", enum: ["summary", "contours", "text", "clips"] },
+      vector_section: { type: "string", enum: ["summary", "contours", "text", "clips", "native_plan"] },
+      native_layout: {type:"object",additionalProperties:false,required:["paperWidthInches","viewScale"],properties:{paperWidthInches:{type:"number",minimum:1,maximum:120},viewScale:{type:"integer",minimum:1,maximum:1000},partSize:{type:"integer",minimum:50,maximum:1000},fontMap:{type:"object",additionalProperties:{type:"string",minLength:1,maxLength:128}},lineWeightMap:{type:"object",additionalProperties:{type:"integer",minimum:1,maximum:16}}}},
       vector_offset: { type: "integer", minimum: 0 },
       vector_limit: { type: "integer", minimum: 1, maximum: 100 },
       expected_plan_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },

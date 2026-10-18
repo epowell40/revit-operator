@@ -43,6 +43,22 @@ test("whole records require matching source plan and retain spatial context",asy
  await assert.rejects(result({...request,expected_plan_sha256:undefined}),/summary first/);
  await assert.rejects(result({...request,region:{min_u:0,min_v:0,max_u:.5,max_v:.5}}),/plan changed/);
 });
+test("registered native plan is immutable, source-bound and compact while retaining full entities outside context",async t=>{
+ const root=workspace(t),attachment=upload(),base={attachment_id:attachment.id,mode:"vector",pages:[1]},summary=await result(base);
+ const request={...base,vector_section:"native_plan",expected_plan_sha256:summary.plan_sha256,native_layout:{paperWidthInches:4,viewScale:100,partSize:50}};
+ new McpInputValidator().validate(READ_ATTACHMENT_TOOL.name,request,[READ_ATTACHMENT_TOOL]);
+ const info=await result(request),ref=info.native_plan_artifact,packed=fs.readFileSync(path.join(root,ref.relative_path));
+ assert.equal(crypto.createHash("sha256").update(packed).digest("hex"),ref.sha256);
+ const raw=gunzipSync(packed),plan=JSON.parse(raw.toString());assert.equal(crypto.createHash("sha256").update(raw).digest("hex"),ref.unpacked_sha256);
+ assert.equal(plan.nativePlanSha256,info.native_plan_sha256);assert.equal(plan.sourceSha256,attachment.sha256);assert.equal(plan.sourcePlanSha256,summary.plan_sha256);
+ assert.equal(plan.entities.length,2);assert.equal(plan.entities[0].kind,"line");assert.equal(plan.entities[1].text,"Fixture page 1");
+ assert.equal(plan.nativeWriteAllowed,false);assert.equal(info.native_write_allowed,false);assert(!("entities" in info));assert(Buffer.byteLength(JSON.stringify(info))<8000);
+ assert.deepEqual((await result(request)).native_plan_artifact,ref);
+ await assert.rejects(result({...request,vector_limit:1}),/without record paging/);
+ await assert.rejects(result({...base,native_layout:request.native_layout}),/only to native_plan/);
+ fs.writeFileSync(path.join(root,ref.relative_path),"previous evidence");await assert.rejects(result(request),/no overwrite/);
+ assert.equal(fs.readFileSync(path.join(root,ref.relative_path),"utf8"),"previous evidence");
+});
 test("explicit historical revision omissions retain source identities and cannot delete another record implicitly",async t=>{
  const root=workspace(t),attachment=upload(),base={attachment_id:attachment.id,mode:"vector",pages:[1]},info=await result(base);
  const plan=JSON.parse(gunzipSync(fs.readFileSync(path.join(root,info.plan_artifact.relative_path))).toString());
