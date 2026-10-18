@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { ensureWorkspaceLayout, resolveFileUnderWorkspace } from "../workspace.js";
 import { appendUploadIndexRecord } from "./upload_index.js";
+import { buildAttachmentSourceAccess, type AttachmentSourceAccess } from './source_access.js';
 
 export type AttachmentUploadInput = {
   id?: string;
@@ -24,6 +25,7 @@ export type StoredAttachment = {
   mime?: string;
   created_at: string;
   session_id?: string;
+  source_access?: AttachmentSourceAccess;
 };
 
 const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -232,6 +234,8 @@ export function storeAttachmentUpload(input: AttachmentUploadInput): StoredAttac
     ...(session_id ? { session_id } : {})
   };
 
+  const sourceAccess = buildAttachmentSourceAccess(rec);
+  if (sourceAccess) rec.source_access = sourceAccess;
   appendUploadIndexRecord(rec as unknown as Record<string, unknown>);
   return rec;
 }
