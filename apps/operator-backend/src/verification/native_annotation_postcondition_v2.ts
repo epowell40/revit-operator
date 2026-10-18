@@ -11,15 +11,20 @@ const near = (a: unknown, b: unknown) => finite(a) && finite(b) && Math.abs(a - 
 const ids = (v: unknown): v is number[] => Array.isArray(v) && v.length <= 64 && v.every(positive) && new Set(v).size === v.length;
 const equalIds = (a: number[], b: number[]) => a.length === b.length && a.every(id => b.includes(id));
 const uid = (v: unknown) => typeof v === 'string' && v.length >= 10 && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v);
+const typeName = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0
+  && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v);
+const sameTypeName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /** Deliberately bounded contracts. Name/query resolution, text repair/type
- * creation, viewport type/pinning changes and cross-sheet deletion are not
- * certified by a position/text check. Unsupported requests remain unchecked. */
+ * creation, viewport pinning changes and cross-sheet deletion are not certified
+ * by a position/text check. Requested viewport type changes also require a
+ * separate native type-identity read, never just the position or apply echo. */
 export function nativeAnnotationRequestV2(input: unknown) {
   const q = object(input), b = object(q.body);
   if (q.method !== 'POST' || b.dryRun != null && b.dryRun !== false) return null;
   if (q.path === '/revit/place-view' && positive(b.sheetId) && positive(b.viewId)
-      && b.lockViewport == null && b.viewportTypeId == null && b.viewportTypeName == null
+      && b.lockViewport == null && (b.viewportTypeId == null || positive(b.viewportTypeId))
+      && (b.viewportTypeName == null || typeName(b.viewportTypeName))
       && (b.x == null || finite(b.x)) && (b.y == null || finite(b.y))
       && (b.avoidOverlap == null || typeof b.avoidOverlap === 'boolean')
       && (b.moveIfAlreadyPlaced == null || typeof b.moveIfAlreadyPlaced === 'boolean'))
@@ -55,6 +60,14 @@ export function nativeAnnotationCommitTargetV2(input: unknown, payload: unknown)
         || tx.modified_element_ids.some(id => ![p.id, p.sheetId, p.viewId].includes(id))) return null;
     const automatic = p.placementType !== 'Viewport' && (b.avoidOverlap ?? (b.x == null && b.y == null));
     if (!automatic && (!near(p.x, b.x ?? 0) || !near(p.y, b.y ?? 0))) return null;
+    if (b.viewportTypeId != null || b.viewportTypeName != null) {
+      const type = object(p.viewportType), requested = object(type.requested);
+      if (p.placementType !== 'Viewport' || type.applied !== true || !positive(type.typeId) || !typeName(type.typeName)
+          || (requested.viewportTypeId ?? null) !== (b.viewportTypeId ?? null)
+          || (requested.viewportTypeName ?? null) !== (b.viewportTypeName ?? null)
+          || b.viewportTypeId != null && type.typeId !== b.viewportTypeId
+          || b.viewportTypeName != null && !sameTypeName(type.typeName, b.viewportTypeName)) return null;
+    }
     return {kind: q.kind, id: p.id as number, read: {method: 'POST', path: '/revit/sheets',
       body: {action: 'detail', sheetId: p.sheetId, placementIds: [p.id], includeViewportGeometry: true}}};
   }
@@ -85,6 +98,10 @@ export function nativeAnnotationReadbackMatchesV2(input: unknown, applied: unkno
     const matches = all.filter(v => v.id === c.id);
     if (matches.length !== 1) return false;
     const v = matches[0], viewport = a.placementType === 'Viewport', point = object(viewport ? v.center : v.point);
+    if (b.viewportTypeId != null || b.viewportTypeName != null) {
+      const expected = object(a.viewportType), actual = object(v.viewportType);
+      if (!viewport || actual.id !== expected.typeId || actual.name !== expected.typeName) return false;
+    }
     return (viewport ? v.viewportId === c.id && v.viewId === b.viewId
       : v.instanceId === c.id && v.scheduleId === b.viewId && v.placementType === a.placementType)
       && near(point.u, a.x) && near(point.v, a.y) && near(point.z, 0);
