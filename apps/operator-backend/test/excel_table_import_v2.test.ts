@@ -9,6 +9,9 @@ import {runWithRequestContext} from '../src/request_context.js';import {createOp
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 import {excelTableImportReadbackMatchesV2,excelTableImportPostconditionSatisfiedV2} from '../src/verification/excel_table_import_v2.js';
+import {verifiedNativeWorkTargetIdentitiesV2} from '../src/domain/assignment-kernel/verified_work_targets.js';
+
+const retainedParts=JSON.parse(fs.readFileSync('test/fixtures/excel-import196-native-parts.json','utf8')).parts;
 
 function fixture(){
  const input={method:'POST',path:'/revit/import-excel-output',body:{sourcePath:'uploads/table.xlsx',sheetName:'Output',viewName:'Output Table',expectedSourceSha256:'a'.repeat(64)}};
@@ -40,12 +43,24 @@ test('Excel part verification binds source, part, complete native inventory, bor
   (v:any)=>v.applied.transaction.added_element_ids.pop(),(v:any)=>v.affected.pop(),(v:any)=>v.input.body.dryRun=true,
  ]){const v=fixture();edit(v);assert.equal(excelTableImportReadbackMatchesV2(v.input,v.applied,v.readInput,v.read,v.affected),false);}
 });
-for(const variant of ['exact','wrong_source','wrong_part','bad_native_format','unretained_apply','paused_after_commit','read_failure'] as const)
+test('retained native first and continuation parts prove content without claiming preservation of incidental owners',()=>{
+ for(const f of retainedParts){
+  assert.equal(excelTableImportReadbackMatchesV2(f.input,f.applied,f.readInput,f.read,f.affected),true);
+  for(const change of [
+   (v:any)=>v.affected.pop(),(v:any)=>v.applied.transaction.modified_element_ids.push(12345),
+   (v:any)=>v.applied.transaction.deleted_element_ids.push(12345),
+   (v:any)=>v.read.checks.Text.NativeTextMatches=false,(v:any)=>v.read.checks.NativeBordersMatch=false,
+   (v:any)=>v.read.observedNoteIds.pop(),(v:any)=>v.read.partNativeSnapshotSha256='f'.repeat(64),
+   (v:any)=>v.applied.transaction.modified_element_ids=v.applied.transaction.modified_element_ids.filter((n:number)=>n!==v.applied.manifestElementId),
+  ]){const v=structuredClone(f);change(v);if(JSON.stringify(v)===JSON.stringify(f))continue;assert.equal(excelTableImportReadbackMatchesV2(v.input,v.applied,v.readInput,v.read,v.affected),false);}
+ }
+});
+for(const variant of ['exact','retained_first_part','retained_continuation','wrong_source','wrong_part','bad_native_format','unretained_apply','paused_after_commit','read_failure'] as const)
 test(`ordinary Excel part ${variant} schedules one separate authoritative check without replay`,async()=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'operator-excel-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=folder;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=fixture(),goal=createGoal({title:'Add the ventilation table',objective:'Add the attached ventilation table.',acceptance_criteria:['The table is present.'],
+  const f=variant==='retained_first_part'?structuredClone(retainedParts[0]):variant==='retained_continuation'?structuredClone(retainedParts[1]):fixture(),positive=['exact','retained_first_part','retained_continuation'].includes(variant),goal=createGoal({title:'Add the ventilation table',objective:'Add the attached ventilation table.',acceptance_criteria:['The table is present.'],
    status:'active',related_session_id:'excel-session',created_by:'excel-principal',work_budget:{requested_effect:'apply',document_fingerprint:'excel-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'excel-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
@@ -74,17 +89,18 @@ test(`ordinary Excel part ${variant} schedules one separate authoritative check 
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path===f.input.path).length,1);
    assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','paused_after_commit'].includes(variant)?0:1,JSON.stringify({response,operations:s.operations}));
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,variant==='exact');
-   if(variant==='exact'){
+   assert.equal(verified,positive);
+   if(positive){
+    assert.deepEqual(verifiedNativeWorkTargetIdentitiesV2(s,apply.operation_id),[`element_id:${f.applied.viewId}`]);
     const read=s.operations[apply.verification_operation_ids[0]!]!,result=read.result!;
     assert.equal(excelTableImportPostconditionSatisfiedV2(s,apply,result,f.read),true);
     for(const edit of [(v:any)=>v.unresolved_unknown_operation_ids.push('prior-unknown'),(v:any)=>(v.input_invalidated_operation_ids??=[]).push(apply.operation_id),
-     (v:any)=>v.operations[read.operation_id].input.body.partIndex=1]){
+     (v:any)=>v.operations[read.operation_id].input.body.partIndex+=1]){
      const v=structuredClone(s);edit(v);assert.equal(excelTableImportPostconditionSatisfiedV2(v,v.operations[apply.operation_id]!,result,f.read),false);
     }
     assert.equal(excelTableImportPostconditionSatisfiedV2(s,apply,{...result,completed_at:new Date(Date.parse(apply.result!.completed_at)-1).toISOString()},f.read),false);
    }
-   if(variant!=='unretained_apply')assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),variant!=='exact');
+   if(variant!=='unretained_apply')assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!positive);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(folder,{recursive:true,force:true});}
 });

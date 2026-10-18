@@ -316,7 +316,9 @@
     "desktop_helper_budget.test.ts",
     "checklist_remaining_presentation.test.ts",
     "created_schedule_runtime.test.ts",
-    "created_schedule_postcondition_v2.test.ts"
+    "created_schedule_postcondition_v2.test.ts",
+    "excel_table_import_v2.test.ts",
+    "drawing_spec_import_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -356,7 +358,8 @@
     "captureViewArguments.test.ts",
     "lib/viewOwnedDetailingAgentProjection.test.ts",
     "lib/category_visibility_scope_schema.test.ts",
-    "lib/family_static_text_scope_schema.test.ts"
+    "lib/family_static_text_scope_schema.test.ts",
+    "lib/excelOutputContracts.test.ts"
   ],
   "desktop_tests": [
     "test/saved_computer_owner.test.js",
@@ -497,7 +500,21 @@
     "OperatorDelegatedBatchTruthTests",
     "OperatorDocumentChangeObservationTests",
     "ExportedImagePathResolverTests",
-    "NativeApiSearchScoreTests"
+    "NativeApiSearchScoreTests",
+    "XlsxTableImportContractTests",
+    "XlsxTableCellFlowTests",
+    "XlsxTableLayoutTests",
+    "XlsxTableTextTests",
+    "XlsxTableStylesTests",
+    "XlsxSourceInspectionTests",
+    "XlsxOutputSourceTests",
+    "DrawingSpecSourceTests",
+    "DrawingSpecRichParagraphTests",
+    "DrawingSpecNativeFontProfileTests",
+    "DrawingSpecManagedUpdateTests",
+    "DrawingSpecInspectionTests",
+    "DrawingSpecInlineFlowTests",
+    "DrawingSpecColumnFlowTests"
   ],
   "failure_families": [
     {
@@ -4654,6 +4671,22 @@
       "coverage": [
         "backend:created_schedule_runtime.test.ts",
         "backend:visibility_phasing_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "excel_native_existing_owner_inventory_does_not_negate_part_scoped_source_format_and_bounds_proof_or_inflate_deliverable_credit",
+      "coverage": [
+        "backend:excel_table_import_v2.test.ts",
+        "mcp:lib/excelOutputContracts.test.ts",
+        "dotnet:XlsxTableImportContractTests"
+      ]
+    },
+    {
+      "id": "native_fragment_target_inventory_stays_complete_in_evidence_without_repeating_thousands_of_ids_in_worker_and_desktop_context",
+      "coverage": [
+        "backend:advisory_readback_guidance.test.ts",
+        "backend:native_comparison_feedback_runtime.test.ts",
+        "backend:excel_table_import_v2.test.ts"
       ]
     }
   ],

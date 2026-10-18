@@ -42,8 +42,11 @@ function committed(input:unknown,payload:unknown,affected:readonly string[]){
   ||!ids(added)||!added.length||!ids(modified)||!ids(deleted)||deleted.length||added.some(v=>modified.includes(v))
   ||!added.includes(a.partManifestElementId)||!added.includes(a.viewId)||![...a.createdTextNoteIds,...a.createdBorderIds].every(v=>added.includes(v))
   ||new Set([...a.createdTextNoteIds,...a.createdBorderIds]).size!==a.createdTextNoteIds.length+a.createdBorderIds.length
-  ||(wanted.manifestElementId!==undefined?(a.manifestElementId!==wanted.manifestElementId||!modified.includes(a.manifestElementId)||modified.some(v=>v!==a.manifestElementId))
-    :(!added.includes(a.manifestElementId)||modified.length>0))
+  // Native creation can also mark existing internal Revit owners modified.
+  // Keep their exhaustive inventory, but do not confuse a part-content proof
+  // with a claim that no other native owner changed. No element-ID exception.
+  ||(wanted.manifestElementId!==undefined?(a.manifestElementId!==wanted.manifestElementId||!modified.includes(a.manifestElementId))
+    :!added.includes(a.manifestElementId))
   ||!isCanonicalNativeAffectedTargetSetV2(affected)||!equal([...added,...modified].map(v=>'element_id:'+v).sort(),[...affected].sort()))return null;
  return {wanted,applied:a};
 }
@@ -88,6 +91,11 @@ function settled(s:AssignmentSnapshotV2,op:OperationV2){
 export function committedExcelTableImportReadbackPlanV2(s:AssignmentSnapshotV2,op:OperationV2){
  if(s.terminal||s.outcome!=='active'||s.completion_proposal||s.execution_control?.state==='paused'||op.verification_operation_ids.length)return null;
  const c=settled(s,op);return c?{method:'POST',path:readRoute,body:{sourcePath:c.wanted.sourcePath,manifestElementId:c.applied.manifestElementId,partIndex:c.applied.partIndex,pageSize:1}}:null;
+}
+/** One independently inspected table view is the deliverable, not its thousands
+ * of text fragments, managed storage records, or incidental modified owners. */
+export function excelTableImportDeliverableTargetsV2(s:AssignmentSnapshotV2,op:OperationV2):string[]{
+ const c=settled(s,op);return c?[`element_id:${c.applied.viewId}`]:[];
 }
 export function excelTableImportPostconditionSatisfiedV2(s:AssignmentSnapshotV2,op:OperationV2,result:OperationResultV2,payload:unknown):boolean{
  const read=s.operations[result.operation_id],c=settled(s,op);

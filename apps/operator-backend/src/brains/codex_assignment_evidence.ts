@@ -26,6 +26,17 @@ function latestNativeComparison(snapshot:AssignmentSnapshotV2,operationId:string
  return {read_operation_id:read.operation_id,state:'unavailable',reason:'native_comparison_not_established'};
 }
 
+function affectedTargetIndex(snapshot:AssignmentSnapshotV2,operationId:string){
+ const operation=snapshot.operations[operationId],all=operation?.result?.affected_target_identities??[];
+ const observation=Object.values(snapshot.observations).find(o=>o.operation_id===operationId&&o.authority==='native-host'
+   &&o.raw_payload_hash===operation?.result?.raw_payload_hash&&sameAssignmentBindingV2(o.binding,snapshot.current_binding));
+ const shown=all.slice(0,16);
+ return {affected_targets:shown,target_id:operation?.target.target_id,request_path:operation?.request_identity?.path,
+   affected_targets_projection:{total_count:all.length,returned_count:shown.length,complete:shown.length===all.length,
+     evidence_id:observation?.raw_payload_ref.replace(/^evidence:/,'' )??null,
+     usage:'Index sample only when incomplete. Retrieve the retained native result for the full affected inventory; never infer unlisted targets or repeat the edit.'}};
+}
+
 /** Bounded identity mapping; native payloads remain behind focused retrieval. */
 export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2, operationId?: string,
   budgetStatus?: ReturnType<typeof assignmentWorkBudgetStatusV2>): string {
@@ -43,7 +54,7 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
       && sameAssignmentBindingV2(op.binding, snapshot.current_binding)
       && !snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
       && !checkedEditIsCurrentV2(snapshot, op.operation_id))
-    .slice(0, 8).map(op => ({ operation_id: op.operation_id, affected_targets: op.result?.affected_target_identities ?? [],
+    .slice(0, 8).map(op => ({ operation_id: op.operation_id, ...affectedTargetIndex(snapshot,op.operation_id),
       next_inspection: pendingDuctVerificationRequestV2(op),
       check_state: appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)?'previous_check_stale':'no_recognized_postcondition',
       latest_check: latestNativeComparison(snapshot,op.operation_id),

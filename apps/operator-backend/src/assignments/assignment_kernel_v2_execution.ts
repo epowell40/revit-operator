@@ -1,5 +1,5 @@
 import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
-import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
+import {excelTableImportPostconditionSatisfiedV2,excelTableImportDeliverableTargetsV2} from '../verification/excel_table_import_v2.js';
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -829,6 +829,11 @@ function commitInput(
     // read's containing sheet is not itself the edited deliverable. Keep
     // this platform mapping here; the generic domain consumes only the fact.
     const deletion=verificationSubject&&deletionRequestV2(verificationSubject.input);
+    if(verificationSubject?.request_identity?.path==='/revit/import-excel-output'){
+      const deliverables=excelTableImportDeliverableTargetsV2(snapshot!,verificationSubject);
+      if(deliverables.length!==1)throw new Error('verified_deliverable_targets_invalid');
+      semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',value:deliverables,cardinality:'many'});
+    }
     if(deletion)semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',
       value:deletion.ids.length<=256?deletion.ids.map(id=>'element_id:'+id):[],cardinality:'many'});
     if (verificationSubject && ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")) {
