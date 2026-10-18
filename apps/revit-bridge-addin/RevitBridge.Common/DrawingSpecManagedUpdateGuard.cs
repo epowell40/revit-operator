@@ -6,6 +6,14 @@ namespace RevitBridge.Common
 {
     public static class DrawingSpecManagedUpdateGuard
     {
+        // Canonical settlement requires a complete bounded affected-target set.
+        // Check the known native inventory inside the transaction, before commit.
+        public static void RequireBoundedInventory(IEnumerable<long> affected)
+        {
+            if (affected.Where(id => id > 0).Distinct().Take(4097).Count() > 4096)
+                throw new InvalidOperationException("Drawing-spec change exceeds the complete settlement inventory bound. Roll back and split the source into separately managed sections.");
+        }
+
         private static bool Hash(string? value) => value != null && value.Length == 64 && value.All(c => "0123456789abcdef".Contains(c));
 
         public static void RequireCurrent(string? expectedSource, string? expectedNative, string retainedSource, string retainedNative, string currentNative)

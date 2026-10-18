@@ -146,6 +146,8 @@ namespace RevitBridge.Handlers
                 stored.NativeStateSha256 = DrawingSpecNativeImportState.CurrentSnapshotHash(document, stored);
                 if (updating) DrawingSpecNativeImportState.Replace(document, prior!, stored);
                 else DrawingSpecNativeImportState.Store(document, stored, created);
+                DrawingSpecManagedUpdateGuard.RequireBoundedInventory(created.Concat(stored.ViewIds).Append(stored.StorageId)
+                    .Concat(revision?.ReplacedTextNoteIds ?? new List<long>()));
                 return new Dictionary<string, object?> { ["viewId"] = layout.ViewIds[0], ["viewIds"] = stored.ViewIds,
                     ["activeViewIds"] = layout.ViewIds, ["unusedContinuationViewIds"] = stored.ViewIds.Except(layout.ViewIds).ToArray(),
                     ["updated"] = updating, ["managedUpdate"] = DrawingSpecNativeUpdate.InspectRevision(document, stored),

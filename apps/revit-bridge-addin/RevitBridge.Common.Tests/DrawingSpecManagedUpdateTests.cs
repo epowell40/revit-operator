@@ -9,6 +9,14 @@ namespace RevitBridge.Common.Tests
     {
         private static readonly string Source = new string('a', 64), Native = new string('b', 64);
         [Fact]
+        public void OversizedReplacementRollsBackBeforeSettlementCanLoseItsInventory()
+        {
+            var ids = Enumerable.Range(1,4096).Select(i => (long)i).ToArray();
+            DrawingSpecManagedUpdateGuard.RequireBoundedInventory(ids.Concat(ids));
+            Assert.Throws<InvalidOperationException>(() => DrawingSpecManagedUpdateGuard.RequireBoundedInventory(ids.Append(4097L)));
+        }
+
+        [Fact]
         public void OwnershipDiscoveryDoesNotPretendToInspectOrChangeSource()
         {
             Assert.Equal("list", DrawingSpecInspectionRequest.Parse("{\"action\":\"list\",\"pageSize\":3}").action);
