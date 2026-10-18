@@ -29,6 +29,15 @@ test('shared instance parameter route survives fixed inventory and allowlist wit
   assert.equal(isSupportedToolRoute('POST','/revit/project-parameters-unreviewed'),false);
 });
 
+test('Word specification route reaches the existing mutation policy without admitting unrelated imports',()=>{
+  assert.equal(isSupportedToolRoute('POST','/revit/import-drawing-spec'),true);
+  assert.equal(isAllowlisted('POST','/revit/import-drawing-spec'),true);
+  assert.equal(isSupportedNativeTransport('POST','/revit/import-drawing-spec'),true);
+  assert.equal(isSupportedToolRoute('GET','/revit/import-drawing-spec'),false);
+  assert.equal(isSupportedToolRoute('POST','/revit/import-excel-table'),false);
+  assert.equal(isSupportedToolRoute('POST','/revit/import-drawing-spec-unreviewed'),false);
+});
+
 test('CAD link first predispatch rejection is repaired through fixed inventory without opening adjacent routes',()=>{
   const here=new URL('./fixtures/cad-link-product-inventory-predispatch130.json',import.meta.url);
   const fixture=JSON.parse(fs.readFileSync(fs.existsSync(here)?here:new URL('../../test/fixtures/cad-link-product-inventory-predispatch130.json',import.meta.url),'utf8'));
@@ -44,7 +53,7 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(implemented.length, 217);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 111);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 112);
   assert.equal(isSupportedToolRoute("POST", "/revit/locate-elements"), true);
   assert.equal(isSupportedToolRoute("GET", "/revit/locate-elements"), false);
   assert.equal(isAllowlisted("POST", "/revit/locate-elements"), true);
@@ -60,7 +69,7 @@ test("supported inventory rejects every excluded source route before transport d
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
-  assert.equal(excluded.length, 105);
+  assert.equal(excluded.length, 104);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

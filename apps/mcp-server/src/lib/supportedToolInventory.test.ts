@@ -20,11 +20,14 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
   assert.equal(implemented.length, 217);
-  assert.equal(excluded.length, 106);
+  assert.equal(excluded.length, 105);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 111);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 112);
+    assert.equal(isToolRouteExposedForSearch("POST", "/revit/import-drawing-spec", env), true);
+    assert.equal(isToolRouteExposedForSearch("GET", "/revit/import-drawing-spec", env), false);
+    assert.equal(isToolRouteExposedForSearch("POST", "/revit/import-excel-table", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/link-cad", env), true);
     assert.equal(isToolRouteExposedForSearch("GET", "/revit/link-cad", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/locate-elements", env), true);
@@ -36,16 +39,19 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   }
 });
 
-test('actual MCP documentation can discover the new instance-parameter operation without executing it',async()=>{
+for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec'])
+test(`actual MCP documentation discovers ${documentedRoute} without executing its mutation`,async()=>{
  const requests:string[]=[];
- const schema=JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/project-parameters'];
+ const schema=documentedRoute==='/revit/project-parameters'
+  ? JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute]
+  : {type:'object',required:['sourcePath'],properties:{sourcePath:{type:'string'}}};
  const token='p'.repeat(32),epoch=Buffer.alloc(32,7).toString('base64url');
  const backend=http.createServer(async(request,response)=>{const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
   assert.equal(request.url,NATIVE_TRANSPORT_PATH);response.setHeader('content-type',NATIVE_TRANSPORT_CONTENT_TYPE);
   response.end(protectedSmokeResponse(Buffer.concat(chunks).toString('utf8'),token,200,inner=>{
    requests.push(inner.path);assert.equal(inner.method,'POST');assert.equal(inner.path,'/revit/tool-doc');
-   assert.deepEqual(JSON.parse(inner.body_json),{method:'POST',path:'/revit/project-parameters'});
-   return JSON.stringify({method:'POST',path:'/revit/project-parameters',request_schema:schema});
+   assert.deepEqual(JSON.parse(inner.body_json),{method:'POST',path:documentedRoute});
+   return JSON.stringify({method:'POST',path:documentedRoute,request_schema:schema});
   }));});
  await new Promise<void>(resolve=>backend.listen(0,'127.0.0.1',resolve));const address=backend.address();assert(address&&typeof address!=='string');
  const workspace=fs.mkdtempSync(path.join(os.tmpdir(),'parameter-discovery-stdio-'));
@@ -56,11 +62,12 @@ test('actual MCP documentation can discover the new instance-parameter operation
    OPERATOR_WORKSPACE_ROOT:workspace,OPERATOR_API_BASE_URL:`http://127.0.0.1:${address.port}`,REVIT_BRIDGE_URL:`http://127.0.0.1:${address.port}`}});
  transport.stderr?.on('data',()=>{});const client=new Client({name:'parameter-discovery',version:'1.0.0'},{capabilities:{}});
  try{
-  await client.connect(transport);const doc=await client.callTool({name:'revit_tool_doc',arguments:{method:'POST',path:'/revit/project-parameters'}});
+  await client.connect(transport);const doc=await client.callTool({name:'revit_tool_doc',arguments:{method:'POST',path:documentedRoute}});
   assert.notEqual(doc.isError,true,JSON.stringify(doc.content));
   const value=JSON.parse((doc.content as Array<{type:string,text?:string}>).find(c=>c.type==='text')!.text!);
-  assert.equal(value.path,'/revit/project-parameters');
-  assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
+  assert.equal(value.path,documentedRoute);
+  if(documentedRoute==='/revit/project-parameters') assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
+  else assert.deepEqual(value.request_schema.required,['sourcePath']);
   assert(requests.length>0);assert(requests.every(p=>p.endsWith('/revit/tool-doc')),'Discovery must never execute the parameter mutation.');
  }finally{await client.close();await transport.close();await new Promise<void>((resolve,reject)=>backend.close(error=>error?reject(error):resolve()));fs.rmSync(workspace,{recursive:true,force:true});}
 });
