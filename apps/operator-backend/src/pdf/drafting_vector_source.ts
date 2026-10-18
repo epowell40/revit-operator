@@ -84,7 +84,7 @@ function assertInput(bytes: Uint8Array, input: DraftingVectorSourceInput) {
 export async function inspectDraftingVectorSource(bytes: Uint8Array, input: DraftingVectorSourceInput): Promise<DraftingVectorSource> {
   assertInput(bytes,input);
   const pdfjs=await loadPdfJsForNode(), O=pdfjs.OPS;
-  const doc=await pdfjs.getDocument(buildPdfJsDocumentOptions(new Uint8Array(bytes))).promise;
+  const doc=await pdfjs.getDocument({...buildPdfJsDocumentOptions(new Uint8Array(bytes)),isEvalSupported:false}).promise;
   try {
     if(input.page>doc.numPages)throw Error("PDF page exceeds source page count");
     const page=await doc.getPage(input.page), viewport=page.getViewport({scale:1}), ops=await page.getOperatorList();

@@ -3736,12 +3736,12 @@ server.tool("revit_create_drafting_view", "Create (or reuse) a Drafting View by 
   }
 );
 
-server.tool("revit_draw_detail_curves", "Draw detail curves in a view (lines/polylines/arcs).",
+server.tool("revit_draw_detail_curves", "Draw editable detail curves in a view (lines/polylines/arcs/cubic Beziers).",
   {
     viewId: z.number(),
     frameId: z.string().optional().describe("Optional frameId from /revit/export-view-frame (enables xPx/yPx points)."),
     lineStyleName: z.string().optional().describe("Optional Revit line style name (subcategory under Lines)."),
-    curves: z.array(z.any()).describe("Curve specs. Each item: {kind:\"line\",a,b} | {kind:\"polyline\",points:[...]} | {kind:\"arc\",a,b,c}. Points support xyz (feet), xPx/yPx (with frameId), or xIn/yIn (inches)."),
+    curves: z.array(z.any()).describe("Curve specs. Each item: {kind:\"line\",a,b} | {kind:\"polyline\",points:[...]} | {kind:\"arc\",a,b,c} | {kind:\"cubic_bezier\",points:[start,control1,control2,end]}. Cubics use degree3 NURBS data and actual native short-curve tolerance; no manual faceting or short-curve omission. Revit may return a simpler line/arc; inspect the returned native kind and geometry. Points support xyz (feet), xPx/yPx (with frameId), or xIn/yIn (inches)."),
     dryRun: z.boolean().default(false),
   },
   async (args) => {

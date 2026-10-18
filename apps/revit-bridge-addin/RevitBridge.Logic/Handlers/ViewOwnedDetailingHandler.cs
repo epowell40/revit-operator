@@ -175,6 +175,7 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 var curve = element.GeometryCurve;
+                if (curve is NurbSpline) return NativeDraftingCurveGeometry.Read(curve);
                 return curve == null ? null : new { kind = curve.GetType().Name,
                     start = Point(curve.GetEndPoint(0)), end = Point(curve.GetEndPoint(1)) };
             }
@@ -208,6 +209,10 @@ namespace RevitBridge.Logic.Handlers
                     var curve = curveElement.GeometryCurve;
                     if (curve != null)
                     {
+                        if (curve is NurbSpline spline) return NativeDraftingCurveGeometry.NurbsRelativeKey(spline, view);
+                        // Endpoints plus a midpoint determine a line/arc, but cannot certify
+                        // an arbitrary spline or ellipse. Unsupported geometry stays incomplete.
+                        if (!(curve is Line) && !(curve is Arc)) return null;
                         var ends = new[] { Position(curve.GetEndPoint(0)), Position(curve.GetEndPoint(1)) };
                         Array.Sort(ends, StringComparer.Ordinal);
                         // Midpoint distinguishes arcs that share endpoints but bow in opposite directions.
