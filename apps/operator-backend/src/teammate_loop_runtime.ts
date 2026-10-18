@@ -1,3 +1,4 @@
+import {checkedTeammateVerificationAssertionV2,type TeammateVerificationAssertionV2} from "./teammate_verification_assertion.js";
 import { resultSucceeded, mcpResultSucceeded } from "./teammate_result_status.js";
 import {createDesktopHelperCallLeaseV1,type DesktopHelperCallLeaseV1} from './brains/desktop_helper_budget.js';
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
@@ -118,12 +119,7 @@ export type TeammateLoopState = {
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
 export type TeammateMcpGate = { allowed: boolean; message?: string; call?: PendingCall; state?: TeammateLoopState };
-export type TeammateVerificationAssertionV2 = Readonly<{
-  schema: "revit-operator.teammate-verification-assertion/v2";
-  action_id: string;
-  mode: "target_bound_readback";
-  evidence_sha256: string;
-}>;
+export type {TeammateVerificationAssertionV2} from "./teammate_verification_assertion.js";
 
 const statesByTurn = new Map<string, TeammateLoopState>();
 const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>; by_turn: Map<string, TeammateLoopOwnerLease> }>();
@@ -1245,17 +1241,7 @@ export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, re
     }
   }
   recordResult(state, actionId, succeeded, result);
-  return state.verified
-      && state.verification_mode === "target_bound_readback"
-      && state.verification_action_id === actionId
-      && state.verification_evidence_sha256
-    ? {
-        schema: "revit-operator.teammate-verification-assertion/v2",
-        action_id: actionId,
-        mode: "target_bound_readback",
-        evidence_sha256: state.verification_evidence_sha256
-      }
-    : null;
+  return checkedTeammateVerificationAssertionV2(state,actionId);
 }
 
 export function teammateLoopReceiptForOwner(owner: object): NonNullable<ChatResponse["teammate_loop_receipt"]> | undefined {

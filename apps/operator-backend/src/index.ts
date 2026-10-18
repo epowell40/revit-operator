@@ -1,3 +1,4 @@
+import {stopBackgroundWorker} from "./background_worker_lifecycle.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from "./desktop_response_store.js";
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
@@ -4103,22 +4104,12 @@ function persistServerPlannedStep(sessionId: string, messageId: string, userText
 let uploadQueueWorker: { stop: () => void } | null = null;
 let improvementJobWorker: { stop: () => void } | null = null;
 function refreshImprovementJobWorker(): void {
-  try {
-    improvementJobWorker?.stop();
-  } catch {
-    // ignore
-  }
-  improvementJobWorker = null;
+  improvementJobWorker = stopBackgroundWorker(improvementJobWorker);
   improvementJobWorker = startImprovementJobWorker();
 }
 
 function refreshUploadQueueWorker(): void {
-  try {
-    uploadQueueWorker?.stop();
-  } catch {
-    // ignore
-  }
-  uploadQueueWorker = null;
+  uploadQueueWorker = stopBackgroundWorker(uploadQueueWorker);
   uploadQueueWorker = startUploadQueueWorker();
 }
 

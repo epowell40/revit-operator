@@ -1,5 +1,6 @@
+import {verifiedDeliverableTargetGroupsV2} from "../verification/verified_deliverable_targets_v2.js";
 import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
-import {excelTableImportPostconditionSatisfiedV2,excelTableImportDeliverableTargetsV2} from '../verification/excel_table_import_v2.js';
+import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -825,37 +826,8 @@ function commitInput(
       fact_class: "verification",
       value: true
     });
-    // The native sheet comparator checked every requested placement. The
-    // read's containing sheet is not itself the edited deliverable. Keep
-    // this platform mapping here; the generic domain consumes only the fact.
-    const deletion=verificationSubject&&deletionRequestV2(verificationSubject.input);
-    if(verificationSubject?.request_identity?.path==='/revit/import-excel-output'){
-      const deliverables=excelTableImportDeliverableTargetsV2(snapshot!,verificationSubject);
-      if(deliverables.length!==1)throw new Error('verified_deliverable_targets_invalid');
-      semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',value:deliverables,cardinality:'many'});
-    }
-    if(deletion)semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',
-      value:deletion.ids.length<=256?deletion.ids.map(id=>'element_id:'+id):[],cardinality:'many'});
-    if (verificationSubject && ["/revit/place-view", "/revit/create-text"].includes(verificationSubject.request_identity?.path ?? "")) {
-      // Matching succeeded against retained authoritative commit evidence, not
-      // this read's contextual sheet/view identity. A single created/moved
-      // annotation is the deliverable; its owner is never continuation credit.
-      const ids = verificationSubject.result?.affected_target_identities ?? [];
-      const requested = verificationSubject.input.body as Record<string, unknown>;
-      const contextual = new Set([`element_id:${requested?.sheetId}`, `element_id:${requested?.viewId}`]);
-      const deliverables = ids.filter(id => !contextual.has(id));
-      if (deliverables.length !== 1) throw new Error("verified_deliverable_targets_invalid");
-      semanticFacts.push({fact_id: VERIFIED_DELIVERABLE_TARGETS_FACT_V2, fact_class: "verification", value: deliverables, cardinality: "many"});
-    }
-    if (verificationSubject?.request_identity?.path === "/revit/move-elements"
-        && result.request_identity?.path === "/revit/sheets") {
-      const body = verificationSubject.input?.body as Record<string, unknown> | undefined;
-      const ids = body?.ids;
-      if (!Array.isArray(ids) || !ids.length || ids.length > 256
-          || ids.some(id => !Number.isSafeInteger(id) || Number(id) <= 0)
-          || new Set(ids).size !== ids.length) throw new Error("verified_deliverable_targets_invalid");
-      semanticFacts.push({fact_id: VERIFIED_DELIVERABLE_TARGETS_FACT_V2, fact_class: "verification",
-        value: ids.map(id => `element_id:${id}`), cardinality: "many"});
+    for(const targets of verifiedDeliverableTargetGroupsV2(snapshot!,verificationSubject,result)){
+      semanticFacts.push({fact_id:VERIFIED_DELIVERABLE_TARGETS_FACT_V2,fact_class:'verification',value:targets,cardinality:'many'});
     }
   }
   return {
