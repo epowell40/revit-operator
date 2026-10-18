@@ -188,7 +188,7 @@ export async function reviewCurrentWork(input,host){
   const nativeExportMode=()=>request.capture_mode==='native_visible_region'?'visible_region':'full_view';
   const same=(a,b)=>target?sameTargetScene(a,b):sameScene(a,b);
   const base={schema:'operator.visual_work_review.v1',authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,request,owner};
-  let captureRef=null,initial=null,responseId=null,effectiveWidth=request.image_size,resolutionAdjusted=false,priorBaseline=null;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
+  let captureRef=null,changedCapture=null,initial=null,responseId=null,effectiveWidth=request.image_size,resolutionAdjusted=false,priorBaseline=null;const raw={native_identity_observations:[],reviewer_response:null,reviewer_instructions:VISUAL_WORK_REVIEW_INSTRUCTIONS};
   const observed=async()=>{const value=await (target?host.readTargetContext():host.readContext());raw.native_identity_observations.push(value);return value;};
   const captured=async location=>{
     if(target){
@@ -249,14 +249,17 @@ export async function reviewCurrentWork(input,host){
     if(recheck.image!==image||mime!==recheck.mime||frame.kind!==recheck.frame.kind||!frameUnchanged){
       const retainedRecheck=await host.retainImage(recheck.image,{mime_type:recheck.mime,capture_mode:request.capture_mode??'visible_work'});
       raw.capture_recheck.evidence_ref=retainedRecheck?.ref??null;
+      const ref=retainedRecheck?.ref,bytes=Buffer.from(recheck.image,'base64');
+      if(!safeId(ref?.evidence_id)||ref.content_hash!=='sha256:'+createHash('sha256').update(bytes).digest('hex')||ref.byte_count!==bytes.length)throw Error('visual_review_recheck_retention_mismatch');
+      changedCapture={evidence_id:ref.evidence_id,content_hash:ref.content_hash,byte_count:ref.byte_count,frame:recheck.frame};
       throw Error('visual_review_visible_frame_changed_during_review');
     }
     if(target){await control();if(!same(initial,makeScene(await observed())))throw Error('visual_review_scene_changed_during_recheck');}
     const result=parseVisualWorkReview(response,request);
     return retained({...base,ok:true,request_dispatched:true,...result,location:initial,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
       guidance:result.state==='mismatch'?'Inspect each discrepancy, correct only the confirmed in-scope mismatch, then obtain fresh native readback and another visual review. Do not replay an uncertain write.':result.state==='uncertain'?'Obtain a closer view, relevant source or native attributes for the uncertain checks; do not treat missing evidence as an instruction to repeat edits.':'These visible checks match at this observation. Preserve native/readback and scope requirements; this is not whole-task completion.'});
-  }catch(error){return retained({...base,ok:false,request_dispatched:raw.native_identity_observations.length>0,state:'unavailable',checks:[],reason:error instanceof Error?error.message:'visual_review_failed',location:initial,capture:captureRef?{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash}:null,reviewer_response_id:responseId,
-    guidance:'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' For sheet/drawing work, activate and zoom to the relevant area and use native_visible_region to render the observed viewport without UI tooltips. Keep native identity and pixel/viewport recheck guards; do not mask differences.':'')});}
+  }catch(error){return retained({...base,ok:false,request_dispatched:raw.native_identity_observations.length>0,state:'unavailable',checks:[],reason:error instanceof Error?error.message:'visual_review_failed',location:initial,capture:captureRef?{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame:raw.capture_frame}:null,changed_capture:changedCapture,reviewer_response_id:responseId,
+    guidance:'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For checks about drafting work, activate the parent sheet and zoom to the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz, then use native_visible_region. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture.':'')});}
 }
 
 export function visualWorkReviewModelOutput(modelOutput,result,evidenceId){
@@ -271,6 +274,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId){
     capture:result.capture?{evidence_id:result.capture.evidence_id,content_hash:result.capture.content_hash,
       kind:result.capture.frame?.kind,width:result.capture.frame?.rectangle?.width??result.capture.frame?.width,height:result.capture.frame?.rectangle?.height??result.capture.frame?.height,
       export_mode:result.capture.frame?.export_mode??null,viewport:result.capture.frame?.viewport??null}:null,
+    changed_capture:result.changed_capture?{evidence_id:result.changed_capture.evidence_id,content_hash:result.changed_capture.content_hash,byte_count:result.changed_capture.byte_count,frame:result.changed_capture.frame}:null,
     reference:result.reference??null,baseline:result.baseline??null,recheck_evidence_id:result.ok&&['matched','mismatch','uncertain'].includes(result.state)?evidenceId:null,capture_resolution:result.capture_resolution??null,reviewer_response_id:result.reviewer_response_id??null,
     reason_code:typeof result.reason==='string'?result.reason.match(/(?:^|\n)(visual_review_[a-z0-9_]+)(?=\s|$)/)?.[1]??null:null,
     reason_summary:typeof result.reason==='string'?result.reason.slice(0,500):null,

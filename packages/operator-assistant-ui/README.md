@@ -8,6 +8,8 @@ Generic local assistant components, independent of hosted authentication and dep
 - `conversation.css` supplies a conversation-first layout with optional work details and settings.
 - `composer_draft.mjs` saves unsent text and attachment bytes in local, per-tab IndexedDB recovery records. Records expire after 24 hours, are bounded to eight attachments and 144 MiB of encoded string storage, and contain no execution grants or task controls. The UI clears the record after submission, new chat or sign-out, reports failed recovery honestly, and never resends a recovered draft automatically.
 - `revit_health_display.mjs` identifies cached health as display-only. Idle polling returns an empty display state when no cache exists; explicit actions use their normal model checks.
+- `assignment_display_context.mjs` refreshes cached identity during active work without dispatching model reads. Explicit control reads cannot join an older cached read; late cached responses cannot replace newer identity.
+- Rejected visual reviews retain both original and changed capture references for scoped image inspection. Guidance supports actual Revit focus/zoom and separate checks of relevant areas. Changed pixels or viewports still invalidate the verdict; no pixels are masked and no model mutation is justified by an unavailable review.
 
 The Desktop integration copies these assets into its runtime so bundle dependency verification covers them. The backend test suite exercises the public modules; Desktop route and UI tests cover the integration. A direct context answer is conversational information, not an assignment completion or a model change receipt.
 

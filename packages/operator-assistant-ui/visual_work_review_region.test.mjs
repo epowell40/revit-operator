@@ -22,6 +22,25 @@ test('wrong export extent, missing/unbound/invalid viewport, active mismatch and
 test('viewport changes while reviewer reasons invalidate even identical pixel bytes, retaining both observed frames',async()=>{
  const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture();if(++n===2)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.equal(r.reason,'visual_review_visible_frame_changed_during_review');assert.equal(f.calls.providers.length,1);assert.equal(f.calls.images.length,2);
 });
+
+test('render drift exposes both complete retained captures for inspection but accepts no reviewer verdict',async()=>{
+ const f=setup(),next=reviewTestPng(40,40,254);let n=0;
+ f.h.captureTarget=async()=>{const c=f.capture();if(++n===2){c.image_base64=next.toString('base64');c.native_result.bytes=next.length;c.native_result.sha256=createHash('sha256').update(next).digest('hex');}return c;};
+ const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'unavailable');assert.deepEqual(r.checks,[]);assert.equal(r.ok,false);
+ assert.equal(r.capture.content_hash,'sha256:'+sha);assert.equal(r.changed_capture.content_hash,'sha256:'+createHash('sha256').update(next).digest('hex'));
+ assert.equal(r.changed_capture.frame.view_id,41);assert.equal(r.changed_capture.frame.export_mode,'visible_region');
+ const wire=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');
+ const feedback=JSON.parse(wire.output).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.changed_capture.evidence_id,r.changed_capture.evidence_id);assert.deepEqual(feedback.checks,[]);assert.equal(feedback.recheck_evidence_id,null);
+ assert.match(feedback.guidance,/showElementIds/);assert.match(feedback.guidance,/outside it/);assert.equal(f.calls.providers.length,1);
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+});
+
+test('a changed capture cannot expose a forged retention identity',async()=>{
+ const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture();if(++n===2)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};
+ const retain=f.h.retainImage;let saved=0;f.h.retainImage=async image=>{const r=await retain(image);if(++saved===2)r.ref.content_hash='sha256:'+'f'.repeat(64);return r;};
+ const r=await reviewCurrentWork(request,f.h);assert.equal(r.reason,'visual_review_recheck_retention_mismatch');assert.equal(r.changed_capture,null);assert.equal(r.ok,false);
+});
 test('resolution retry cannot silently change visible-region framing before the reviewer',async()=>{
  const f=setup();let n=0;f.h.captureTarget=async()=>{const c=f.capture(),first=++n===1,b=first?reviewTestPng(6000,4285):bytes;c.image_base64=b.toString('base64');Object.assign(c.native_result,{widthPx:first?6000:40,heightPx:first?4285:40,bytes:b.length,sha256:createHash('sha256').update(b).digest('hex')});if(!first)c.native_result.viewport.zoomCornersXyz[0][0]=-2;return c;};const r=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);assert.match(r.reason,/identity_changed_during_resolution/);
 });

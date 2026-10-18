@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
@@ -10,7 +11,7 @@ function snapshot(seq=0){return{schema:'revit-operator.ui-context/v1',authority:
 function response(status='matched'){return{id:'resp_review',status:'completed',output:[],output_text:JSON.stringify({checks:request.checks.map((c,i)=>({id:c.id,status:i===0?status:'matched',observed:i===0?'The blank-row checkbox is '+(status==='mismatch'?'checked.':'unchecked.'):'Grid selector reads Medium Lines.',correction:i===0&&status==='mismatch'?'Clear only the blank-row checkbox.':''}))})};}
 function host(status='matched'){
  const calls={contexts:0,captures:0,providers:[],controls:0,retained:0};let owner=structuredClone(binding);
- const h={owner:()=>owner,assertControl:async()=>{calls.controls++;},readContext:async()=>{calls.contexts++;return snapshot();},capture:async()=>{calls.captures++;return focused();},retainImage:async()=>{calls.retained++;return{ref:{evidence_id:'ev1_capture',content_hash:'sha256:'+'a'.repeat(64),byte_count:69}};},settings:()=>({model:'gpt-6.1-sol',reasoning_effort:'medium'}),userRequest:()=> 'Remove the extra gap below the air-device schedule headings and preserve borders.',now:()=>now,evidenceScope:()=>({session_id:binding.session_id,assignment_id:binding.assignment_id}),requestResponse:async body=>{calls.providers.push(body);return response(status);}};
+ const h={owner:()=>owner,assertControl:async()=>{calls.controls++;},readContext:async()=>{calls.contexts++;return snapshot();},capture:async()=>{calls.captures++;return focused();},retainImage:async pixels=>{calls.retained++;const bytes=Buffer.from(pixels,'base64');return{ref:{evidence_id:'ev1_capture',content_hash:'sha256:'+createHash('sha256').update(bytes).digest('hex'),byte_count:bytes.length}};},settings:()=>({model:'gpt-6.1-sol',reasoning_effort:'medium'}),userRequest:()=> 'Remove the extra gap below the air-device schedule headings and preserve borders.',now:()=>now,evidenceScope:()=>({session_id:binding.session_id,assignment_id:binding.assignment_id}),requestResponse:async body=>{calls.providers.push(body);return response(status);}};
  return {h,calls,setOwner:b=>{owner=b;}};
 }
 
