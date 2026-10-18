@@ -19,7 +19,11 @@ namespace RevitBridge.Handlers
     {
         public sealed class Params
         {
+            public string? action { get; set; }
             public string? sourcePath { get; set; }
+            public long? manifestElementId { get; set; }
+            public string? expectedSourceSha256 { get; set; }
+            public string? expectedNativeSnapshotSha256 { get; set; }
             public long? viewId { get; set; }
             public string? viewName { get; set; }
             public string? textTypeName { get; set; }
@@ -40,6 +44,18 @@ namespace RevitBridge.Handlers
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? throw new ArgumentException("Import body is required.");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            bool updating = p.action == "update";
+            if (p.action != null && p.action != "import" && !updating) throw new ArgumentException("action must be import or update.");
+            if (updating && (!p.manifestElementId.HasValue || p.manifestElementId.Value <= 0 || p.viewId.HasValue || p.viewName != null))
+                throw new ArgumentException("Update the exact manifestElementId; its existing view identities cannot be redirected or renamed.");
+            if (!updating && (p.manifestElementId.HasValue || p.expectedSourceSha256 != null || p.expectedNativeSnapshotSha256 != null))
+                throw new ArgumentException("Managed revision fields require action=update.");
+            var prior = updating ? DrawingSpecNativeImportState.ReadById(document, p.manifestElementId!.Value) : null;
+            if (prior != null)
+            {
+                DrawingSpecNativeUpdate.RequireCurrent(document, prior, p.expectedSourceSha256, p.expectedNativeSnapshotSha256);
+                if (prior.FlowGeometry == null) throw new InvalidOperationException("Legacy import has no retained column geometry; reconcile its layout explicitly first.");
+            }
             var path = WorkspacePaths.ResolveExistingFileUnderWorkspace((p.sourcePath ?? "").Trim());
             if (new FileInfo(path).Length > 64 * 1024 * 1024) throw new InvalidOperationException("Specification source exceeds64MiB; no text was truncated.");
             var source = ReadSource(path);
@@ -51,8 +67,11 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException("Running matter or footnotes need explicit placement support; no content was silently omitted.");
             var baseType = ResolveType(document, p.textTypeName);
             var baseFont = DrawingSpecNativeFontProfile.Capture(baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString());
+            string fallbackFont = p.textTypeName == null ? prior?.SourceFallbackFont ?? baseFont.FontFamily : baseFont.FontFamily;
+            double fallbackPoints = p.textTypeName == null && prior?.SourceFallbackPoints != null ? prior.SourceFallbackPoints.Value
+                : baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble());
             var paragraphs = source.Blocks.Where(b => b.Kind == "paragraph").Select(b => DrawingSpecRichParagraph.Build(b,
-                baseType.get_Parameter(BuiltInParameter.TEXT_FONT).AsString(), baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble()))).ToArray();
+                fallbackFont, fallbackPoints)).ToArray();
             if (!paragraphs.Any(item => !string.IsNullOrWhiteSpace(item.SourceText))) throw new InvalidOperationException("Specification has no body content.");
             var fonts = DrawingSpecNativeFontProfile.CaptureAll(paragraphs);
             if (paragraphs.Any(item => item.NativeText.Length > 1000000)) throw new InvalidOperationException("An individual source paragraph exceeds the bounded native layout limit; split it explicitly before import. No content was truncated.");
@@ -63,29 +82,35 @@ namespace RevitBridge.Handlers
                 nativeTextSha256 = DrawingSpecNativeImportState.Hash(item.NativeText), characters = item.NativeText.Length,
                 sourceFormattingSha256 = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(item))
             }));
-            double margin = p.marginInches ?? .25;
-            var geometry = new DrawingSpecFlowGeometry { Columns = p.columns ?? 4, ColumnWidthInches = (p.columnWidthInches ?? 8.5) - margin * 2,
-                ColumnHeightInches = (p.columnHeightInches ?? 27) - margin * 2, GutterInches = (p.gutterInches ?? .25) + margin * 2 };
+            double margin = p.marginInches ?? (updating ? 0 : .25);
+            var geometry = new DrawingSpecFlowGeometry { Columns = p.columns ?? prior?.FlowGeometry?.Columns ?? 4,
+                ColumnWidthInches = p.columnWidthInches.HasValue ? p.columnWidthInches.Value - margin * 2 : prior?.FlowGeometry?.ColumnWidthInches ?? 8.5 - margin * 2,
+                ColumnHeightInches = p.columnHeightInches.HasValue ? p.columnHeightInches.Value - margin * 2 : prior?.FlowGeometry?.ColumnHeightInches ?? 27 - margin * 2,
+                GutterInches = p.gutterInches.HasValue ? p.gutterInches.Value + margin * 2 : prior?.FlowGeometry?.GutterInches ?? .25 + margin * 2 };
             DrawingSpecColumnFlow.Plan(Array.Empty<DrawingSpecFlowItem>(), geometry, (_, __, ___, ____) => throw new InvalidOperationException("Validation must not measure text."));
-            double x = (p.startXInches ?? 0) + margin, y = (p.startYInches ?? 0) - margin;
+            double x = p.startXInches.HasValue ? p.startXInches.Value + margin : prior?.StartXInches ?? margin;
+            double y = p.startYInches.HasValue ? p.startYInches.Value - margin : prior?.StartYInches ?? -margin;
             if (double.IsNaN(margin) || double.IsInfinity(margin) || margin < 0 || margin > 12 || !Finite(x) || !Finite(y)) throw new ArgumentException("Invalid printed margins/origin.");
-            var target = p.viewId.HasValue ? document.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View : null;
+            var target = updating ? document.GetElement(ElementIdCompat.Create(prior!.ViewIds[0])) as View
+                : p.viewId.HasValue ? document.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View : null;
             if (p.viewId.HasValue && (target == null || target.IsTemplate || target.ViewType != ViewType.DraftingView)) throw new ArgumentException("viewId must identify a non-template drafting view.");
             string name = !string.IsNullOrWhiteSpace(p.viewName) ? p.viewName!.Trim() : target?.Name ?? "Drawing Spec " + Path.GetFileNameWithoutExtension(path);
             if (name.Length > 110) throw new ArgumentException("Specification view name exceeds110characters; no name was silently truncated.");
-            string importKey = JsonSerializer.Serialize(new { filename = Path.GetFileName(path), viewId = p.viewId, name });
+            string importKey = prior?.ImportKey ?? JsonSerializer.Serialize(new { filename = Path.GetFileName(path), viewId = p.viewId, name });
             string inputHash = DrawingSpecNativeImportState.Hash(JsonSerializer.Serialize(new { source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, fonts = fonts.Values.Select(f => f.Signature).ToArray(), geometry, x, y, p.textTypeName }));
-            var prior = DrawingSpecNativeImportState.Find(document, importKey);
-            if (prior != null && (prior.InputSha256 != inputHash || prior.SourceSha256 != source.SourceSha256))
+            if (!updating) prior = DrawingSpecNativeImportState.Find(document, importKey);
+            if (!updating && prior != null && (prior.InputSha256 != inputHash || prior.SourceSha256 != source.SourceSha256))
                 throw new InvalidOperationException("Imported source/settings changed. Retain the prior result for managed-update reconciliation; do not duplicate or overwrite it.");
             if (prior != null && DrawingSpecNativeImportState.CurrentSnapshotHash(document, prior) != prior.NativeStateSha256)
                 throw new InvalidOperationException("Imported native content changed since its saved manifest. Reconcile those edits before repeating the import.");
-            var plan = new { sourcePath = p.sourcePath, sourceSha256 = source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, paragraphs = paragraphs.Length,
+            bool unchanged = prior != null && prior.InputSha256 == inputHash && prior.SourceSha256 == source.SourceSha256;
+            var plan = new { action = updating ? "update" : "import", sourcePath = p.sourcePath, sourceSha256 = source.SourceSha256, renderer = DrawingSpecNativeLayout.RendererVersion, paragraphs = paragraphs.Length,
                 geometry, fontProfiles = fonts.Values.ToArray(), startXInches = x, startYInches = y, viewName = name,
+                replacedTextNoteCount = updating ? prior!.Notes.Count : 0,
                 sourceWarnings = source.Warnings, sheetsPlaced = false, independentVerificationComplete = false };
-            if (p.dryRun == true || prior != null)
+            if (p.dryRun == true || unchanged)
                 return new { status = p.dryRun == true ? "Dry Run" : "Success", dryRun = p.dryRun == true,
-                    previewExecuted = false, applied = false, alreadyImported = prior != null,
+                    previewExecuted = false, applied = false, alreadyImported = prior != null && !updating, alreadyUpdated = unchanged && updating,
                     transaction = OperatorNativeTransactionReceipt.NotStarted(), plan,
                     viewIds = prior?.ViewIds.ToArray() ?? Array.Empty<long>(), manifestElementId = prior?.StorageId };
             var family = new FilteredElementCollector(document).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().FirstOrDefault(t => t.ViewFamily == ViewFamily.Drafting)
@@ -93,10 +118,17 @@ namespace RevitBridge.Handlers
             if (target == null && ViewNameExists(document, name)) throw new InvalidOperationException("Target view name already exists without this import's ownership record. Select its viewId or use a new name.");
             DrawingSpecStoredImport? stored = null;
             enterNativeScope();
-            var result = NativeSingleTransaction.Execute(app, document, "Import complete drawing specification", created =>
+            var result = NativeSingleTransaction.Execute(app, document, updating ? "Update owned drawing specification" : "Import complete drawing specification", created =>
             {
+                DrawingSpecUpdateRevision? revision = null;
+                if (updating)
+                {
+                    DrawingSpecNativeUpdate.RequireCurrent(document, prior!, p.expectedSourceSha256, p.expectedNativeSnapshotSha256);
+                    revision = DrawingSpecNativeUpdate.ReplaceOwnedNotes(document, prior!);
+                }
                 View Page(int page)
                 {
+                    if (updating && page < prior!.ViewIds.Count) return (View)document.GetElement(ElementIdCompat.Create(prior.ViewIds[page]));
                     if (page == 0 && target != null) return target;
                     string pageName = page == 0 ? name : name + " - " + (page + 1).ToString("D2");
                     if (ViewNameExists(document, pageName)) throw new InvalidOperationException("Continuation view name collides with unrelated work: " + pageName);
@@ -105,13 +137,18 @@ namespace RevitBridge.Handlers
                 }
                 var layout = DrawingSpecNativeLayout.Render(document, paragraphs, geometry, baseType, Page, created, x, y, fonts);
                 stored = new DrawingSpecStoredImport { ImportKey = importKey, SourceSha256 = source.SourceSha256, InputSha256 = inputHash,
-                    SourceFallbackFont = baseFont.FontFamily, SourceFallbackPoints = baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble()),
+                    SourceFallbackFont = fallbackFont, SourceFallbackPoints = fallbackPoints,
                     FlowGeometry = geometry, StartXInches = x, StartYInches = y,
-                    ViewIds = layout.ViewIds, Notes = layout.Notes, LayoutSpansJson = JsonSerializer.Serialize(layout.LayoutSpans),
+                    ViewIds = updating ? prior!.ViewIds.Concat(layout.ViewIds).Distinct().ToList() : layout.ViewIds,
+                    Notes = layout.Notes, LayoutSpansJson = JsonSerializer.Serialize(layout.LayoutSpans),
+                    StorageId = updating ? prior!.StorageId : 0, LastUpdate = revision,
                     SourceBlocksJson = sourceBlockManifest, SourceWarnings = source.Warnings.Select(w => w.Code + ":" + w.SourcePath).ToList() };
                 stored.NativeStateSha256 = DrawingSpecNativeImportState.CurrentSnapshotHash(document, stored);
-                DrawingSpecNativeImportState.Store(document, stored, created);
-                return new Dictionary<string, object?> { ["viewId"] = layout.ViewIds[0], ["viewIds"] = layout.ViewIds,
+                if (updating) DrawingSpecNativeImportState.Replace(document, prior!, stored);
+                else DrawingSpecNativeImportState.Store(document, stored, created);
+                return new Dictionary<string, object?> { ["viewId"] = layout.ViewIds[0], ["viewIds"] = stored.ViewIds,
+                    ["activeViewIds"] = layout.ViewIds, ["unusedContinuationViewIds"] = stored.ViewIds.Except(layout.ViewIds).ToArray(),
+                    ["updated"] = updating, ["managedUpdate"] = DrawingSpecNativeUpdate.InspectRevision(document, stored),
                     ["createdTextNoteIds"] = layout.Notes.Select(n => n.Id).ToArray(), ["sourceSha256"] = source.SourceSha256,
                     ["manifestElementId"] = stored.StorageId, ["paragraphCount"] = paragraphs.Length, ["remainingParagraphCount"] = 0,
                     ["nativeMetricProbes"] = layout.NativeProbes, ["metricCacheEntries"] = layout.MetricCacheEntries,

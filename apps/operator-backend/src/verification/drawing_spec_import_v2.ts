@@ -10,11 +10,14 @@ const hash=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const equal=(a:unknown,b:unknown)=>canonicalJsonV2(a)===canonicalJsonV2(b);
 const ids=(v:unknown,limit:number):v is number[]=>Array.isArray(v)&&v.length>0&&v.length<=limit&&v.every(id)&&new Set(v).size===v.length;
 const applyRoute='/revit/import-drawing-spec',readRoute='/revit/inspect-drawing-spec';
-const fields=['sourcePath','viewId','viewName','textTypeName','columns','columnWidthInches','columnHeightInches','gutterInches','marginInches','startXInches','startYInches','dryRun'];
+const fields=['action','sourcePath','manifestElementId','expectedSourceSha256','expectedNativeSnapshotSha256','viewId','viewName','textTypeName','columns','columnWidthInches','columnHeightInches','gutterInches','marginInches','startXInches','startYInches','dryRun'];
 export function drawingSpecImportRequestV2(input:unknown){
  const w=object(input),b=object(w.body??input);
  if(w.path!==undefined&&w.path!==applyRoute||typeof b.sourcePath!=='string'||!b.sourcePath.trim()||b.sourcePath.length>520
   ||Object.keys(b).some(k=>!fields.includes(k))||b.dryRun===true||b.dryRun!==undefined&&typeof b.dryRun!=='boolean'
+  ||b.action!==undefined&&!['import','update'].includes(b.action)
+  ||(b.action==='update'?(!id(b.manifestElementId)||!hash(b.expectedSourceSha256)||!hash(b.expectedNativeSnapshotSha256)||b.viewId!==undefined||b.viewName!==undefined)
+   :['manifestElementId','expectedSourceSha256','expectedNativeSnapshotSha256'].some(k=>b[k]!==undefined))
   ||b.viewId!==undefined&&!id(b.viewId)||['viewName','textTypeName'].some(k=>b[k]!==undefined&&(typeof b[k]!=='string'||!b[k].trim()||b[k].length>140))
   ||b.columns!==undefined&&(!Number.isInteger(b.columns)||b.columns<1||b.columns>24)
   ||['columnWidthInches','columnHeightInches','gutterInches','marginInches','startXInches','startYInches'].some(k=>b[k]!==undefined&&(typeof b[k]!=='number'||!Number.isFinite(b[k]))))return null;
@@ -23,7 +26,8 @@ export function drawingSpecImportRequestV2(input:unknown){
 export function drawingSpecInspectionReadIdV2(input:unknown):number|null{
  const w=object(input),b=object(w.body??input);
  return id(b.manifestElementId)&&typeof b.sourcePath==='string'&&!!b.sourcePath.trim()&&b.sourcePath.length<=520
-  &&Object.keys(b).every(k=>['sourcePath','manifestElementId','pageSize','pageOffset','expectedSnapshotSha256'].includes(k))
+  &&(b.action===undefined||b.action==='inspect')
+  &&Object.keys(b).every(k=>['action','sourcePath','manifestElementId','pageSize','pageOffset','expectedSnapshotSha256'].includes(k))
   &&(b.pageSize===undefined||Number.isInteger(b.pageSize)&&b.pageSize>=1&&b.pageSize<=100)
   &&(b.pageOffset===undefined||Number.isInteger(b.pageOffset)&&b.pageOffset>=0&&b.pageOffset<=20000)
   &&(b.expectedSnapshotSha256===undefined||hash(b.expectedSnapshotSha256))?b.manifestElementId:null;
@@ -35,10 +39,19 @@ function committed(input:unknown,payload:unknown,affected:readonly string[]){
   ||tx.committed!==true||tx.status!=='committed'||object(a.changeTracking).exhaustiveChangeInventory!==true
   ||!Array.isArray(added)||!added.length||added.length>MAX_NATIVE_AFFECTED_TARGETS_V2||!added.every(id)||new Set(added).size!==added.length
   ||!Array.isArray(modified)||modified.length>MAX_NATIVE_AFFECTED_TARGETS_V2||!modified.every(id)||new Set(modified).size!==modified.length
-  ||!Array.isArray(deleted)||deleted.length||added.some((v:number)=>modified.includes(v))
-  ||![a.manifestElementId,...a.createdTextNoteIds].every(v=>added.includes(v))
-  ||!a.viewIds.every((v:number)=>added.includes(v)||wanted.viewId===v)
-  ||!isCanonicalNativeAffectedTargetSetV2(affected)||new Set(affected).size!==affected.length||!equal([...added,...modified].map(v=>'element_id:'+v).sort(),[...affected].sort()))return null;
+  ||!Array.isArray(deleted)||deleted.length>MAX_NATIVE_AFFECTED_TARGETS_V2||!deleted.every(id)||new Set(deleted).size!==deleted.length
+  ||added.some((v:number)=>modified.includes(v)||deleted.includes(v))||modified.some((v:number)=>deleted.includes(v))
+  ||!a.createdTextNoteIds.every((v:number)=>added.includes(v))
+  ||!isCanonicalNativeAffectedTargetSetV2(affected)||new Set(affected).size!==affected.length||!equal([...added,...modified,...deleted].map(v=>'element_id:'+v).sort(),[...affected].sort()))return null;
+ if(wanted.action==='update'){
+  const r=object(a.managedUpdate);
+  if(a.updated!==true||a.manifestElementId!==wanted.manifestElementId||!modified.includes(a.manifestElementId)||!id(r.revision)
+   ||r.previousSourceSha256!==wanted.expectedSourceSha256||r.previousNativeStateSha256!==wanted.expectedNativeSnapshotSha256
+   ||!ids(r.replacedTextNoteIds,20000)||!equal([...r.replacedTextNoteIds].sort((a,b)=>a-b),[...deleted].sort((a,b)=>a-b))
+   ||!ids(r.retainedViewIds,1000)||r.retainedViewIds.some((v:number)=>!a.viewIds.includes(v)||added.includes(v))
+   ||!a.viewIds.every((v:number)=>added.includes(v)||r.retainedViewIds.includes(v))
+   ||r.allReplacedNotesAbsent!==true||r.retainedViewIdentitiesMatch!==true)return null;
+ }else if(a.updated===true||deleted.length||!added.includes(a.manifestElementId)||!a.viewIds.every((v:number)=>added.includes(v)||wanted.viewId===v))return null;
  return {wanted,applied:a};
 }
 /** Proves source text/runs/ownership plus column screens; not visual, sheet or engineering completion. */
@@ -52,6 +65,7 @@ export function drawingSpecImportReadbackMatchesV2(input:unknown,applied:unknown
   ||!hash(n.inspectionSnapshotSha256)||!hash(n.currentNativeSnapshotSha256)||n.snapshotError!=null
   ||typeof n.nativeSnapshotMatchesImport!=='boolean'||!equal(n.viewIds,c.applied.viewIds)||!equal(n.observedNoteIds,c.applied.createdTextNoteIds)
   ||(b.expectedSnapshotSha256!==undefined&&b.expectedSnapshotSha256!==n.inspectionSnapshotSha256)
+  ||c.wanted.action==='update'&&(!equal(n.managedUpdate,c.applied.managedUpdate)||n.managedUpdate?.allReplacedNotesAbsent!==true||n.managedUpdate?.retainedViewIdentitiesMatch!==true)
   ||n.totalNotes!==c.applied.createdTextNoteIds.length||checks.SourceParagraphs!==c.applied.paragraphCount||!id(checks.SourceCharacters)||checks.SourceCharacters>4000000
   ||checks.NativeNotes!==c.applied.createdTextNoteIds.length||!id(checks.NativeRanges)||checks.NativeRanges>100000||checks.IssueCount!==0
   ||!['SourceCoverageMatches','NativeTextMatches','NativeIdentityAndOwnershipMatches','SourceFormattingMatches','InsideColumnBounds','ReadingOrderMatches'].every(k=>checks[k]===true))return false;

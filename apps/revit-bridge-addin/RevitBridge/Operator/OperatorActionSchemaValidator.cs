@@ -5306,6 +5306,23 @@ namespace RevitBridge.Operator
                 }
 
                 if (!ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "action", maxLen: 12, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "manifestElementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedSourceSha256", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedNativeSnapshotSha256", maxLen: 64, out error)) return false;
+                var mode = obj.Value.TryGetProperty("action", out var specMode) ? specMode.GetString() : "import";
+                if (mode != "import" && mode != "update") { error = "Drawing specification action must be import or update."; return false; }
+                if (mode == "update")
+                {
+                    if (!obj.Value.TryGetProperty("manifestElementId", out var manifest) || !manifest.TryGetInt64(out var manifestId) || manifestId <= 0 || manifestId > 9007199254740991 ||
+                        obj.Value.TryGetProperty("viewId", out _) || obj.Value.TryGetProperty("viewName", out _))
+                    { error = "Update requires an exact manifestElementId and preserves its existing views."; return false; }
+                    foreach (var field in new[] { "expectedSourceSha256", "expectedNativeSnapshotSha256" })
+                        if (!obj.Value.TryGetProperty(field, out var digest) || digest.ValueKind != JsonValueKind.String || digest.GetString()!.Length != 64 || digest.GetString()!.Any(c => !"0123456789abcdef".Contains(c)))
+                        { error = "Update requires the retained source and unchanged native SHA256 snapshots."; return false; }
+                }
+                else if (new[] { "manifestElementId", "expectedSourceSha256", "expectedNativeSnapshotSha256" }.Any(field => obj.Value.TryGetProperty(field, out _)))
+                { error = "Managed revision fields require action=update."; return false; }
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "viewName", maxLen: 140, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "textTypeName", maxLen: 140, out error)) return false;

@@ -44,9 +44,7 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
 for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec'])
 test(`actual MCP documentation discovers ${documentedRoute} without executing its mutation`,async()=>{
  const requests:string[]=[];
- const schema=documentedRoute!=='/revit/import-drawing-spec'
-  ? JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute]
-  : {type:'object',required:['sourcePath'],properties:{sourcePath:{type:'string'}}};
+ const schema=JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute];
  const token='p'.repeat(32),epoch=Buffer.alloc(32,7).toString('base64url');
  const backend=http.createServer(async(request,response)=>{const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
   assert.equal(request.url,NATIVE_TRANSPORT_PATH);response.setHeader('content-type',NATIVE_TRANSPORT_CONTENT_TYPE);
@@ -69,7 +67,9 @@ test(`actual MCP documentation discovers ${documentedRoute} without executing it
   const value=JSON.parse((doc.content as Array<{type:string,text?:string}>).find(c=>c.type==='text')!.text!);
   assert.equal(value.path,documentedRoute);
   if(documentedRoute==='/revit/project-parameters') assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
-  else assert.deepEqual(value.request_schema.required,documentedRoute==='/revit/inspect-drawing-spec'?['sourcePath','manifestElementId']:['sourcePath']);
+  else if(documentedRoute==='/revit/inspect-drawing-spec')assert(value.request_schema.oneOf.some((m:any)=>m.required.includes('manifestElementId')&&m.required.includes('sourcePath')));
+  else assert.deepEqual(value.request_schema.required,['sourcePath']);
+  if(documentedRoute==='/revit/import-drawing-spec')assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('update')&&m.required.includes('expectedNativeSnapshotSha256')));
   assert(requests.length>0);assert(requests.every(p=>p.endsWith('/revit/tool-doc')),'Discovery must never execute the parameter mutation.');
  }finally{await client.close();await transport.close();await new Promise<void>((resolve,reject)=>backend.close(error=>error?reject(error):resolve()));fs.rmSync(workspace,{recursive:true,force:true});}
 });

@@ -44,12 +44,36 @@ test('a fresh source-matching corrective result need not echo an earlier produce
  assert.equal(drawingSpecImportReadbackMatchesV2(f.input,f.applied,f.readInput,f.read,f.affected),true);
 });
 
-for(const variant of ['exact','large_package','wrong_source','format_mismatch','legacy_bounds','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','corrected_snapshot'] as const)
+function updatedFixture(){
+ const f:any=fixture();
+ Object.assign(f.input.body,{action:'update',manifestElementId:30,expectedSourceSha256:'d'.repeat(64),expectedNativeSnapshotSha256:'e'.repeat(64)});
+ const revision={revision:1,previousSourceSha256:'d'.repeat(64),previousNativeStateSha256:'e'.repeat(64),
+  replacedTextNoteIds:[40,41],retainedViewIds:[20],allReplacedNotesAbsent:true,retainedViewIdentitiesMatch:true};
+ Object.assign(f.applied,{updated:true,managedUpdate:revision});
+ f.applied.transaction.added_element_ids=f.applied.createdTextNoteIds;
+ f.applied.transaction.modified_element_ids=[1,30];f.applied.transaction.deleted_element_ids=[40,41];
+ f.read.managedUpdate=structuredClone(revision);
+ f.affected=[1,30,...f.applied.createdTextNoteIds,40,41].map(n=>'element_id:'+n).sort();return f;
+}
+test('managed Word reflow checks fresh replacement revision, old-note absence and retained view identities',()=>{
+ const f=updatedFixture();assert.equal(drawingSpecImportReadbackMatchesV2(f.input,f.applied,f.readInput,f.read,f.affected),true);
+ for(const edit of [
+  (v:any)=>delete v.input.body.expectedNativeSnapshotSha256,(v:any)=>v.input.body.viewId=20,
+  (v:any)=>v.input.body.action='overwrite',(v:any)=>v.input.body.expectedSourceSha256='f'.repeat(64),
+  (v:any)=>v.applied.managedUpdate.replacedTextNoteIds=[40],(v:any)=>v.applied.transaction.deleted_element_ids.push(99),
+  (v:any)=>v.applied.transaction.modified_element_ids=[1],(v:any)=>v.applied.managedUpdate.retainedViewIds=[99],
+  (v:any)=>v.read.managedUpdate.allReplacedNotesAbsent=false,(v:any)=>v.read.managedUpdate.retainedViewIdentitiesMatch=false,
+  (v:any)=>v.read.managedUpdate.previousNativeStateSha256='f'.repeat(64),(v:any)=>v.read.checks.SourceFormattingMatches=false,
+  (v:any)=>v.readInput.body.action='list'
+ ]){const v=updatedFixture();edit(v);assert.equal(drawingSpecImportReadbackMatchesV2(v.input,v.applied,v.readInput,v.read,v.affected),false);}
+});
+
+for(const variant of ['exact','large_package','wrong_source','format_mismatch','legacy_bounds','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','corrected_snapshot','managed_update','update_old_notes_remain','update_collateral_deletion'] as const)
 test(`ordinary Word import ${variant} gets separate source/native verification without replaying the import`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-word-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=fixture(variant==='large_package'?1400:2),goal=createGoal({title:'Add drawing specifications',objective:'Add the supplied drawing specifications.',
+  const f=variant==='managed_update'||variant.startsWith('update_')?updatedFixture():fixture(variant==='large_package'?1400:2),goal=createGoal({title:'Add drawing specifications',objective:'Add the supplied drawing specifications.',
    acceptance_criteria:['Imported source text is present.'],status:'active',related_session_id:'word-session',created_by:'word-principal',
    work_budget:{requested_effect:'apply',document_fingerprint:'word-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'word-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
@@ -63,7 +87,9 @@ test(`ordinary Word import ${variant} gets separate source/native verification w
     const payload:any=structuredClone(read?f.read:f.applied);
     if(read){if(variant==='wrong_source')payload.sourceSha256='e'.repeat(64);if(variant==='format_mismatch')payload.checks.SourceFormattingMatches=false;
      if(variant==='legacy_bounds')payload.checks.InsideColumnBounds=null;if(variant==='wrong_target')payload.manifestElementId++;
-     if(variant==='corrected_snapshot'){payload.nativeSnapshotMatchesImport=false;payload.currentNativeSnapshotSha256='d'.repeat(64);}}
+     if(variant==='corrected_snapshot'){payload.nativeSnapshotMatchesImport=false;payload.currentNativeSnapshotSha256='d'.repeat(64);}
+     if(variant==='update_old_notes_remain')payload.managedUpdate.allReplacedNotesAbsent=false;}
+    if(!read&&variant==='update_collateral_deletion')payload.transaction.deleted_element_ids.push(99);
     if(!read&&variant==='paused_after_commit')controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
@@ -82,9 +108,9 @@ test(`ordinary Word import ${variant} gets separate source/native verification w
    const response=await handleCodexDynamicToolCall(runtime,{id:'word-import',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'word-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied',JSON.stringify(apply.result));assert.equal(calls.filter(c=>c.path===f.input.path).length,1);
-   assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1,JSON.stringify({response,operations:s.operations}));
+   assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['unretained_apply','read_schema_rejected','paused_after_commit','update_collateral_deletion'].includes(variant)?0:1,JSON.stringify({response,operations:s.operations}));
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   const matched=['exact','large_package','corrected_snapshot'].includes(variant);assert.equal(verified,matched);
+   const matched=['exact','large_package','corrected_snapshot','managed_update'].includes(variant);assert.equal(verified,matched);
    if(variant==='exact'){
     const read=s.operations[apply.verification_operation_ids[0]!]!,result=read.result!;
     assert.equal(drawingSpecImportPostconditionSatisfiedV2(s,apply,result,f.read),true);

@@ -18,6 +18,21 @@ namespace RevitBridge.Handlers
         {
             var p = DrawingSpecInspectionRequest.Parse(jsonData);
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            if (p.action == "list")
+            {
+                var imports = DrawingSpecNativeImportState.All(document).OrderBy(s => s.StorageId).ToArray();
+                int start = p.pageOffset ?? 0, count = p.pageSize ?? 20;
+                if (start > imports.Length) throw new ArgumentException("Import index page starts beyond its current total.");
+                var rows = imports.Skip(start).Take(count).Select(s => new { manifestElementId = s.StorageId,
+                    manifestUniqueId = document.GetElement(ElementIdCompat.Create(s.StorageId)).UniqueId,
+                    sourceIdentity = s.ImportKey, retainedSourceSha256 = s.SourceSha256, retainedNativeSnapshotSha256 = s.NativeStateSha256,
+                    nativeNoteCount = s.Notes.Count, revision = s.LastUpdate?.Number ?? 0,
+                    views = s.ViewIds.Select(id => new { viewId = id, name = document.GetElement(ElementIdCompat.Create(id))?.Name }).ToArray() }).ToArray();
+                bool more = start + rows.Length < imports.Length;
+                return Task.FromResult<object>(new { schema = "operator.drawing_spec_import_index.v1", status = "Ok", read_only = true,
+                    totalImports = imports.Length, imports = rows, offset = start, hasMore = more, nextOffset = more ? (int?)(start + rows.Length) : null,
+                    limits = new[] { "Ownership discovery only. Inspect sourcePath and manifestElementId for fresh current native/source checks before update." } });
+            }
             var state = DrawingSpecNativeImportState.ReadById(document, p.manifestElementId);
             var path = WorkspacePaths.ResolveExistingFileUnderWorkspace(p.sourcePath.Trim());
             if (new FileInfo(path).Length > 64 * 1024 * 1024) throw new InvalidOperationException("Source exceeds64MiB; no text was clipped.");
@@ -68,6 +83,7 @@ namespace RevitBridge.Handlers
                 sourceBodyComplete = source.BodyTextComplete && source.Blocks.All(b => b.Kind == "paragraph" || b.Kind == "section_properties"),
                 sourceWarnings = source.Warnings, checks = inspection.Checks, currentNativeSnapshotSha256 = currentNativeHash,
                 nativeSnapshotMatchesImport = currentNativeHash != null && currentNativeHash == state.NativeStateSha256, snapshotError,
+                managedUpdate = DrawingSpecNativeUpdate.InspectRevision(document, state),
                 inspectionSnapshotSha256 = snapshot, completeNativeRead = true,
                 viewIds = state.ViewIds, observedNoteIds = inspection.Notes.Select(n => n.Id).ToArray(),
                 notesPage = page, offset, nextOffset = stale || next >= state.Notes.Count ? (int?)null : next,

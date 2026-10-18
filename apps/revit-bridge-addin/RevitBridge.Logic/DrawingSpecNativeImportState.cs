@@ -27,6 +27,7 @@ namespace RevitBridge.Logic
         public double StartXInches { get; set; }
         public double StartYInches { get; set; }
         public long StorageId { get; set; }
+        public DrawingSpecUpdateRevision? LastUpdate { get; set; }
         public DrawingSpecNativeLayoutResult Layout()
         {
             var result = new DrawingSpecNativeLayoutResult(); result.ViewIds.AddRange(ViewIds); result.Notes.AddRange(Notes); return result;
@@ -36,25 +37,31 @@ namespace RevitBridge.Logic
     public static class DrawingSpecNativeImportState
     {
         private static readonly Guid SchemaId = new Guid("15153d5f-2f23-4f2e-9ba6-5cde8c857178");
-        public static DrawingSpecStoredImport? Find(Document document, string importKey)
+        public static IReadOnlyList<DrawingSpecStoredImport> All(Document document)
         {
             var schema = Schema.Lookup(SchemaId);
-            if (schema == null) return null;
+            if (schema == null) return Array.Empty<DrawingSpecStoredImport>();
             if (schema.SchemaName != "OperatorDrawingSpecImportV1" || schema.GetField("StateJson")?.ValueType != typeof(string))
                 throw new InvalidOperationException("Drawing-spec storage schema collision.");
             var matches = new List<DrawingSpecStoredImport>();
+            long total = 0;
             foreach (var storage in new FilteredElementCollector(document).OfClass(typeof(DataStorage)).Cast<DataStorage>())
             {
-                var entity = storage.GetEntity(schema);
+                using var entity = storage.GetEntity(schema);
                 if (!entity.IsValid()) continue;
                 var value = entity.Get<string>(schema.GetField("StateJson"));
-                if (value.Length > 8 * 1024 * 1024) throw new InvalidOperationException("Drawing-spec stored manifest is too large.");
+                total += value.Length;
+                if (value.Length > 8 * 1024 * 1024 || total > 16 * 1024 * 1024 || matches.Count >= 1000)
+                    throw new InvalidOperationException("Drawing-spec ownership index exceeds its complete-read bound.");
                 var state = JsonSerializer.Deserialize<DrawingSpecStoredImport>(value)
                     ?? throw new InvalidOperationException("Invalid stored drawing-spec manifest.");
-                if (state.ImportKey == importKey) { state.StorageId = ElementIdCompat.GetValue(storage.Id); matches.Add(state); }
+                state.StorageId = ElementIdCompat.GetValue(storage.Id); matches.Add(state);
             }
-            return matches.SingleOrDefault(); // Never silently pick one of multiple ownership records.
+            return matches;
         }
+
+        public static DrawingSpecStoredImport? Find(Document document, string importKey) =>
+            All(document).Where(state => state.ImportKey == importKey).SingleOrDefault(); // Never select duplicate ownership silently.
 
         public static DrawingSpecStoredImport ReadById(Document document, long storageId)
         {
@@ -96,6 +103,20 @@ namespace RevitBridge.Logic
 
         public static string CurrentSnapshotHash(Document document, DrawingSpecStoredImport state) =>
             Hash(JsonSerializer.Serialize(DrawingSpecNativeLayout.ReadSnapshot(document, state.Layout())));
+
+        public static void Replace(Document document, DrawingSpecStoredImport expected, DrawingSpecStoredImport next)
+        {
+            if (!document.IsModifiable || expected.StorageId <= 0 || next.StorageId != expected.StorageId || next.ImportKey != expected.ImportKey)
+                throw new InvalidOperationException("Managed update requires the existing exact owned manifest and transaction.");
+            var current = ReadById(document, expected.StorageId);
+            if (JsonSerializer.Serialize(current) != JsonSerializer.Serialize(expected))
+                throw new InvalidOperationException("Stored drawing-spec revision changed before replacement.");
+            var json = JsonSerializer.Serialize(next);
+            if (json.Length > 8 * 1024 * 1024) throw new InvalidOperationException("Updated drawing-spec manifest exceeds its complete-storage bound.");
+            var schema = Schema.Lookup(SchemaId) ?? throw new InvalidOperationException("Missing owned import schema.");
+            var storage = (DataStorage)document.GetElement(ElementIdCompat.Create(expected.StorageId));
+            using (var entity = new Entity(schema)) { entity.Set(schema.GetField("StateJson"), json); storage.SetEntity(entity); }
+        }
         public static string Hash(string value)
         {
             using (var hash = SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant();

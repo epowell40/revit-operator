@@ -1235,12 +1235,286 @@
         "minLength": 64,
         "maxLength": 64,
         "pattern": "^[0-9a-f]{64}$"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "inspect",
+          "list"
+        ]
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "expectedSnapshotSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "action": {
+            "enum": [
+              "inspect"
+            ]
+          }
+        },
+        "required": [
+          "sourcePath",
+          "manifestElementId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "list"
+            ]
+          },
+          "pageOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20000
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/import-drawing-spec": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "import",
+          "update"
+        ]
+      },
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520
+      },
+      "manifestElementId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "expectedSourceSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "expectedNativeSnapshotSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "viewId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "viewName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "textTypeName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "columns": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 24
+      },
+      "columnWidthInches": {
+        "type": "number"
+      },
+      "columnHeightInches": {
+        "type": "number"
+      },
+      "gutterInches": {
+        "type": "number"
+      },
+      "marginInches": {
+        "type": "number"
+      },
+      "startXInches": {
+        "type": "number"
+      },
+      "startYInches": {
+        "type": "number"
+      },
+      "dryRun": {
+        "type": "boolean"
       }
     },
     "required": [
-      "sourcePath",
-      "manifestElementId"
+      "sourcePath"
     ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "import"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "viewId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          },
+          "columnWidthInches": {
+            "type": "number"
+          },
+          "columnHeightInches": {
+            "type": "number"
+          },
+          "gutterInches": {
+            "type": "number"
+          },
+          "marginInches": {
+            "type": "number"
+          },
+          "startXInches": {
+            "type": "number"
+          },
+          "startYInches": {
+            "type": "number"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "properties": {
+          "action": {
+            "enum": [
+              "update"
+            ]
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 520
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "expectedNativeSnapshotSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "textTypeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          },
+          "columnWidthInches": {
+            "type": "number"
+          },
+          "columnHeightInches": {
+            "type": "number"
+          },
+          "gutterInches": {
+            "type": "number"
+          },
+          "marginInches": {
+            "type": "number"
+          },
+          "startXInches": {
+            "type": "number"
+          },
+          "startYInches": {
+            "type": "number"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "manifestElementId",
+          "expectedSourceSha256",
+          "expectedNativeSnapshotSha256"
+        ]
+      }
+    ]
   }
 }

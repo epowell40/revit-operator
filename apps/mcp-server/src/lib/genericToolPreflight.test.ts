@@ -8,6 +8,22 @@ import {
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
 
+test('managed Word update uses the real native revision contract at MCP preflight',()=>{
+ const schema=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/import-drawing-spec'];
+ const contract={method:'POST',path:'/revit/import-drawing-spec',request_schema:schema};
+ const request={action:'update',sourcePath:'artifacts/specs/Revised.docx',manifestElementId:30,expectedSourceSha256:'a'.repeat(64),expectedNativeSnapshotSha256:'b'.repeat(64),columnWidthInches:8};
+ assert.equal(preflightKnownGenericToolBody(contract,request),null);
+ assert.equal(preflightKnownGenericToolBody(contract,{sourcePath:'artifacts/specs/Original.docx'}),null);
+ for(const body of [ {...request,expectedNativeSnapshotSha256:undefined},{...request,viewId:20},{...request,expectedSourceSha256:'short'},
+  {...request,action:'import'},{...request,manifestElementId:0},{...request,force:true},{...request,action:undefined}])
+  assert.equal(preflightKnownGenericToolBody(contract,JSON.parse(JSON.stringify(body)))?.request_dispatched,false,JSON.stringify(body));
+ const inspection=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/inspect-drawing-spec'];
+ const read={method:'POST',path:'/revit/inspect-drawing-spec',request_schema:inspection};
+ assert.equal(preflightKnownGenericToolBody(read,{action:'list',pageSize:5}),null);
+ assert.equal(preflightKnownGenericToolBody(read,{sourcePath:request.sourcePath,manifestElementId:30}),null);
+ assert.equal(preflightKnownGenericToolBody(read,{action:'list',manifestElementId:30})?.request_dispatched,false);
+});
+
 test("retained family placement accepts a string map while invalid map entries stay pre-dispatch", () => {
   const retained = JSON.parse(readFileSync(new URL("../../src/lib/fixtures/unit403-place-families-map-rejected.json", import.meta.url), "utf8"));
   const map = { type: "object", additionalProperties: { type: "string" } };
