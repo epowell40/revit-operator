@@ -28,6 +28,21 @@ test('native target review examines actual inactive M002 pixels and keeps sheet 
  const projected=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},result,'ev1_review');
  const feedback=JSON.parse(projected.output).evidence_projections[0].visual_work_review;assert.equal(feedback.location.sheet_number,'M002');assert.equal(feedback.capture.width,40);assert(Buffer.byteLength(projected.output)<=8192);
 });
+
+test('retained target pixels carry exact sheet/view identity and capture role without implying an edit delta',async()=>{
+ const f=setup();await reviewCurrentWork(request,f.h);const m=f.calls.images[0].metadata;
+ assert.equal(m.capture_role,'review_capture');assert.equal(m.capture_frame.view_id,41);
+ assert.equal(m.capture_frame.sheet_number,'M002');assert.equal(m.capture_frame.view_unique_id,'target-unique');
+ assert.equal(m.capture_frame.document_session_id,'doc');assert.equal(m.capture_frame.view_name,'Notes, Symbols & Schedules');
+});
+
+test('changed render retention labels a during-review recheck rather than a post-edit result',async()=>{
+ const f=setup('matched');f.h.captureTarget=async()=>{const c=f.capture();if(++f.calls.captures===2){const b=reviewTestPng(40,40,254);c.image_base64=b.toString('base64');c.native_result.bytes=b.length;c.native_result.sha256=createHash('sha256').update(b).digest('hex');}return c;};
+ const result=await reviewCurrentWork(request,f.h);assert.equal(result.reason,'visual_review_visible_frame_changed_during_review');
+ assert.deepEqual(f.calls.images.map(c=>c.metadata.capture_role),['review_capture','during_review_recheck']);
+ assert(f.calls.images.every(c=>c.metadata.capture_frame.sheet_number==='M002'));
+ assert.equal(result.native_postcondition_verified,false);assert.equal(result.whole_task_verified,false);
+});
 test('unrelated active view may change, but model, project, process, session and sequence cannot change during target review',async()=>{
  const allowed=setup();allowed.h.readTargetContext=async()=>{const c=allowed.context();c.document.activeView.id=++allowed.calls.contexts;return c;};assert.equal((await reviewCurrentWork(request,allowed.h)).state,'mismatch');
  for(const alter of [c=>{c.nativeChangeObservations.throughSequence=1;},c=>{c.document.sessionId='other';c.nativeChangeObservations.documentSessionId='other';},c=>{c.process_id=456;c.nativeChangeObservations.processId=456;},c=>{c.nativeChangeObservations.epoch='other';},c=>{c.document.projectIdentity.fingerprint='foreign';}]){
@@ -60,6 +75,7 @@ test('exact167 high-resolution target is bounded once and its effective resoluti
   if(!cache.has(width))cache.set(width,reviewTestPng(width,height));const bytes=cache.get(width),c=f.capture();c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{widthPx:width,heightPx:height,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return c;};
  const result=await reviewCurrentWork({...request,image_size:6000},f.h);assert.equal(result.state,'mismatch');assert.equal(sizes.length,3);assert.equal(sizes[0],6000);assert(sizes[1]<6000&&sizes[1]>=1024);assert.equal(sizes[1],sizes[2]);
  assert(result.capture.frame.width*result.capture.frame.height<=24000000);assert.equal(result.capture_resolution.requested_width,6000);assert.equal(result.capture_resolution.effective_width,sizes[1]);assert.equal(result.raw_review_evidence.native_target_exports.length,3);assert.equal(f.calls.providers.length,1);assert.equal(result.native_postcondition_verified,false);
+ assert.deepEqual(f.calls.images.map(c=>c.metadata.capture_role),['resolution_attempt','review_capture']);assert(f.calls.images.every(c=>c.metadata.capture_frame.sheet_number==='M002'));
 });
 test('oversized wrong-document image never gets a resolution retry or reviewer call',async()=>{
  const f=setup();let captures=0;f.h.captureTarget=async()=>{captures++;const bytes=reviewTestPng(6000,4285),c=f.capture();c.image_base64=bytes.toString('base64');Object.assign(c.native_result,{documentSessionId:'other',widthPx:6000,heightPx:4285,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return c;};

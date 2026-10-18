@@ -6,6 +6,19 @@ const bounded=(v,max)=>typeof v==='string'&&v.trim().length>0&&v.length<=max&&!/
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(v);
 const positive=v=>Number.isSafeInteger(v)&&v>0;
 const isNativeReviewMode=mode=>['target_view','native_visible_region'].includes(mode);
+
+/** Discovery labels only. These describe when a host capture was taken, not
+ * before/after an edit, and never elevate supporting pixels into native proof. */
+export function visualReviewImageEvidenceOptions(metadata){
+  const f=metadata?.capture_frame,role=metadata?.capture_role;
+  if(!isNativeReviewMode(metadata?.capture_mode)||!positive(f?.view_id)||!bounded(f?.document_session_id,160)
+    ||!['review_capture','during_review_recheck','resolution_attempt'].includes(role))throw Error('visual_review_image_provenance_invalid');
+  const label=(v,max)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';
+  const name=label(f.view_name,120),sheet=label(f.sheet_number,40),unique=label(f.view_unique_id,100);
+  return {targetScope:[`view_id:${f.view_id}`,`document_session:${f.document_session_id}`,`capture_role:${role}`,
+      `capture_mode:${metadata.capture_mode}`,...(unique?[`view_unique_id:${unique}`]:[]),...(sheet?[`sheet_number:${sheet}`]:[])],
+    boundedSummary:`Supporting native capture: ${role}; ${sheet?'sheet '+sheet+'; ':''}view ${f.view_id}${name?' '+name:''}. Not a pre-edit/post-edit comparison or verified outcome.`.slice(0,600)};
+}
 const bindingKeys=['assignment_id','session_id','run_id','generation','principal_id','document_fingerprint'];
 export function visualReviewOwner(binding){
   const owner={...binding,assignment_id:binding?.assignment_id??binding?.goal_id};
@@ -199,7 +212,8 @@ export async function reviewCurrentWork(input,host){
         if(error?.message!=='visual_review_target_pixel_limit_exceeded'||resolutionAdjusted)throw error;
         const native=value.native_result,width=Math.min(effectiveWidth-1,Math.floor(native.widthPx*Math.sqrt(24000000/(native.widthPx*native.heightPx))*.99));
         if(!Number.isSafeInteger(width)||width<1024)throw Error('visual_review_target_aspect_ratio_requires_focused_view');
-        await control();const saved=await host.retainImage(value.image_base64,{mime_type:value.mime_type,capture_mode:request.capture_mode});
+        await control();const saved=await host.retainImage(value.image_base64,{mime_type:value.mime_type,capture_mode:request.capture_mode,capture_role:'resolution_attempt',
+          capture_frame:{view_id:native.viewId,view_unique_id:native.viewUniqueId,view_name:native.viewName,sheet_number:native.sheetNumber,document_session_id:native.documentSessionId}});
         if(!safeId(saved?.ref?.evidence_id)||saved.ref.content_hash!=='sha256:'+native.sha256||saved.ref.byte_count!==native.bytes)throw Error('visual_review_target_retention_mismatch');
         raw.resolution_adjustment={reason:'pixel_limit',initial_width:native.widthPx,initial_height:native.heightPx,initial_evidence_ref:saved.ref};
         await control();if(!same(location,makeScene(await observed())))throw Error('visual_review_scene_changed_before_resolution_adjustment');
@@ -227,7 +241,7 @@ export async function reviewCurrentWork(input,host){
     await control();const before=await observed();initial=makeScene(before);
     await control();const {image,frame,mime}=await captured(initial);raw.capture_frame=frame;
     if(target)Object.assign(initial,{view_name:frame.view_name,view_unique_id:frame.view_unique_id,view_type:frame.view_type,sheet_number:frame.sheet_number});
-    const saved=await host.retainImage(image,{mime_type:mime,capture_mode:request.capture_mode??'visible_work'});captureRef=saved?.ref;
+    const saved=await host.retainImage(image,{mime_type:mime,capture_mode:request.capture_mode??'visible_work',capture_role:'review_capture',capture_frame:frame});captureRef=saved?.ref;
     if(!captureRef||!safeId(captureRef.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(captureRef.content_hash)||!positive(captureRef.byte_count))throw Error('visual_review_capture_not_retained');
     if(target&&(captureRef.content_hash!=='sha256:'+frame.native_image_sha256||captureRef.byte_count!==Buffer.from(image,'base64').length))throw Error('visual_review_target_retention_mismatch');
     await control();const bracket=makeScene(await observed());if(!same(initial,bracket))throw Error('visual_review_scene_changed_during_capture');
@@ -247,7 +261,7 @@ export async function reviewCurrentWork(input,host){
     const frameUnchanged=target?['view_id','view_unique_id','view_name','view_type','sheet_number','width','height','export_mode'].every(k=>frame[k]===recheck.frame[k])&&sameNativeViewport(frame.viewport,recheck.frame.viewport)
       :frame.foreground_window_handle===recheck.frame.foreground_window_handle&&['x','y','width','height'].every(k=>frame.rectangle[k]===recheck.frame.rectangle[k]);
     if(recheck.image!==image||mime!==recheck.mime||frame.kind!==recheck.frame.kind||!frameUnchanged){
-      const retainedRecheck=await host.retainImage(recheck.image,{mime_type:recheck.mime,capture_mode:request.capture_mode??'visible_work'});
+      const retainedRecheck=await host.retainImage(recheck.image,{mime_type:recheck.mime,capture_mode:request.capture_mode??'visible_work',capture_role:'during_review_recheck',capture_frame:recheck.frame});
       raw.capture_recheck.evidence_ref=retainedRecheck?.ref??null;
       const ref=retainedRecheck?.ref,bytes=Buffer.from(recheck.image,'base64');
       if(!safeId(ref?.evidence_id)||ref.content_hash!=='sha256:'+createHash('sha256').update(bytes).digest('hex')||ref.byte_count!==bytes.length)throw Error('visual_review_recheck_retention_mismatch');
