@@ -614,6 +614,7 @@ export function postconditionSatisfiedByPayloadV2(
   const operationPath = operationContractPath(applyInput, contract);
   // Binding creation needs retained native identity, full scope and a separate
   // read. Matching a name/value in an echoed request is never sufficient.
+  if (operationPath === '/revit/import-drawing-spec') return false;
   if (operationPath === '/revit/project-parameters') return false;
   // Creation needs immutable native created identity and, for a clone, the
   // native source definition captured before the transaction.

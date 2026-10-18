@@ -21,6 +21,11 @@ namespace RevitBridge.Logic
         public List<string> SourceWarnings { get; set; } = new List<string>();
         public string LayoutSpansJson { get; set; } = "";
         public string SourceBlocksJson { get; set; } = "";
+        public string? SourceFallbackFont { get; set; }
+        public double? SourceFallbackPoints { get; set; }
+        public DrawingSpecFlowGeometry? FlowGeometry { get; set; }
+        public double StartXInches { get; set; }
+        public double StartYInches { get; set; }
         public long StorageId { get; set; }
         public DrawingSpecNativeLayoutResult Layout()
         {
@@ -49,6 +54,24 @@ namespace RevitBridge.Logic
                 if (state.ImportKey == importKey) { state.StorageId = ElementIdCompat.GetValue(storage.Id); matches.Add(state); }
             }
             return matches.SingleOrDefault(); // Never silently pick one of multiple ownership records.
+        }
+
+        public static DrawingSpecStoredImport ReadById(Document document, long storageId)
+        {
+            var schema = Schema.Lookup(SchemaId) ?? throw new InvalidOperationException("No drawing-spec import schema in this model.");
+            if (schema.SchemaName != "OperatorDrawingSpecImportV1" || schema.GetField("StateJson")?.ValueType != typeof(string))
+                throw new InvalidOperationException("Drawing-spec storage schema collision.");
+            var storage = document.GetElement(ElementIdCompat.Create(storageId)) as DataStorage
+                ?? throw new InvalidOperationException("Manifest ID is not a current native DataStorage.");
+            using (var entity = storage.GetEntity(schema))
+            {
+                if (!entity.IsValid()) throw new InvalidOperationException("This storage does not own a drawing-spec import.");
+                var value = entity.Get<string>(schema.GetField("StateJson"));
+                if (value.Length > 8 * 1024 * 1024) throw new InvalidOperationException("Drawing-spec manifest exceeds inspection bound.");
+                var state = JsonSerializer.Deserialize<DrawingSpecStoredImport>(value) ?? throw new InvalidOperationException("Invalid import manifest.");
+                state.StorageId = storageId;
+                return state;
+            }
         }
 
         public static void Store(Document document, DrawingSpecStoredImport state, ISet<long> created)

@@ -4,6 +4,46 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/inspect-drawing-spec",
+      "examples": [
+        {
+          "name": "Inspect imported source text and native formatting using the actual returned manifest ID",
+          "request": {
+            "sourcePath": "artifacts/specs/Project_Spec.docx",
+            "manifestElementId": 12345,
+            "pageSize": 20
+          },
+          "expected_response_shape": {
+            "schema": "operator.drawing_spec_inspection.v1",
+            "read_only": true,
+            "completeNativeRead": true,
+            "inspectionSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "checks": {
+              "WholeTaskVerified": false,
+              "VisualFidelityVerified": false,
+              "SheetPlacementVerified": false
+            }
+          }
+        },
+        {
+          "name": "Read the next note page only while the observed source/native snapshot remains unchanged",
+          "request": {
+            "sourcePath": "artifacts/specs/Project_Spec.docx",
+            "manifestElementId": 12345,
+            "pageOffset": 20,
+            "pageSize": 20,
+            "expectedSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expected_response_shape": {
+            "read_only": true,
+            "notesPage": [],
+            "hasMore": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-exported-files",
       "examples": [
         {

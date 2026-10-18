@@ -10,6 +10,17 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void SourceBoundWordInspectionIsExposedAsReadWithoutAdjacentMutationRoutes()
+        {
+            const string path = "/revit/inspect-drawing-spec";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path);
+            Assert.Equal(OperatorActionRisk.Low, tool.RiskLevel);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", path + "-apply"));
+        }
+        [Fact]
         public void WordSpecificationImportIsDiscoverableThroughExistingMutationAdmission()
         {
             const string path = "/revit/import-drawing-spec";
@@ -45,9 +56,9 @@ namespace RevitBridge.Common.Tests
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
-            Assert.Equal(217, implemented.Count);
-            Assert.Equal(112, OperatorToolManifest.Tools.Count);
-            Assert.Equal(112, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(218, implemented.Count);
+            Assert.Equal(113, OperatorToolManifest.Tools.Count);
+            Assert.Equal(113, OperatorActionAllowlist.EnumerateAllowed().Count());
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));

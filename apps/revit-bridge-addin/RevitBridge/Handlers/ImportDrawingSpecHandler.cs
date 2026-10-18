@@ -105,6 +105,8 @@ namespace RevitBridge.Handlers
                 }
                 var layout = DrawingSpecNativeLayout.Render(document, paragraphs, geometry, baseType, Page, created, x, y, fonts);
                 stored = new DrawingSpecStoredImport { ImportKey = importKey, SourceSha256 = source.SourceSha256, InputSha256 = inputHash,
+                    SourceFallbackFont = baseFont.FontFamily, SourceFallbackPoints = baseFont.SourcePoints(baseType.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble()),
+                    FlowGeometry = geometry, StartXInches = x, StartYInches = y,
                     ViewIds = layout.ViewIds, Notes = layout.Notes, LayoutSpansJson = JsonSerializer.Serialize(layout.LayoutSpans),
                     SourceBlocksJson = sourceBlockManifest, SourceWarnings = source.Warnings.Select(w => w.Code + ":" + w.SourcePath).ToList() };
                 stored.NativeStateSha256 = DrawingSpecNativeImportState.CurrentSnapshotHash(document, stored);
@@ -138,7 +140,7 @@ namespace RevitBridge.Handlers
         }
         private static bool ViewNameExists(Document document, string name) => new FilteredElementCollector(document).OfClass(typeof(View)).Cast<View>().Any(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase));
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
-        private static DrawingSpecSourceManifest ReadSource(string path)
+        internal static DrawingSpecSourceManifest ReadSource(string path)
         {
             var extension = Path.GetExtension(path);
             if (!string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase) && !string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase))

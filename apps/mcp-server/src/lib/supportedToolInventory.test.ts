@@ -19,12 +19,14 @@ const excluded = implemented.filter(route => !isSupportedNativeTool(route.method
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
   assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
-  assert.equal(implemented.length, 217);
+  assert.equal(implemented.length, 218);
   assert.equal(excluded.length, 105);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 112);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 113);
+    assert.equal(isToolRouteExposedForSearch("POST", "/revit/inspect-drawing-spec", env), true);
+    assert.equal(isToolRouteExposedForSearch("GET", "/revit/inspect-drawing-spec", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/import-drawing-spec", env), true);
     assert.equal(isToolRouteExposedForSearch("GET", "/revit/import-drawing-spec", env), false);
     assert.equal(isToolRouteExposedForSearch("POST", "/revit/import-excel-table", env), false);
@@ -39,10 +41,10 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   }
 });
 
-for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec'])
+for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec'])
 test(`actual MCP documentation discovers ${documentedRoute} without executing its mutation`,async()=>{
  const requests:string[]=[];
- const schema=documentedRoute==='/revit/project-parameters'
+ const schema=documentedRoute!=='/revit/import-drawing-spec'
   ? JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute]
   : {type:'object',required:['sourcePath'],properties:{sourcePath:{type:'string'}}};
  const token='p'.repeat(32),epoch=Buffer.alloc(32,7).toString('base64url');
@@ -67,7 +69,7 @@ test(`actual MCP documentation discovers ${documentedRoute} without executing it
   const value=JSON.parse((doc.content as Array<{type:string,text?:string}>).find(c=>c.type==='text')!.text!);
   assert.equal(value.path,documentedRoute);
   if(documentedRoute==='/revit/project-parameters') assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
-  else assert.deepEqual(value.request_schema.required,['sourcePath']);
+  else assert.deepEqual(value.request_schema.required,documentedRoute==='/revit/inspect-drawing-spec'?['sourcePath','manifestElementId']:['sourcePath']);
   assert(requests.length>0);assert(requests.every(p=>p.endsWith('/revit/tool-doc')),'Discovery must never execute the parameter mutation.');
  }finally{await client.close();await transport.close();await new Promise<void>((resolve,reject)=>backend.close(error=>error?reject(error):resolve()));fs.rmSync(workspace,{recursive:true,force:true});}
 });

@@ -639,3 +639,11 @@ test('project-parameter discovery publishes separate bounded instance creation a
   {...create,categoryNames:[]}, {...create,dataType:'airflow'}, {...create,rebindIfExists:true}, {action:'list',max:5001}, {action:'list',name:'Note'}])
   assert.equal(check(bad)?.request_dispatched,false,JSON.stringify(bad));
 });
+
+
+test("Word inspection preflight retains source and page identity and rejects invented apply or clipping",()=>{
+ const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
+ const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-drawing-spec',request_schema:contracts['/revit/inspect-drawing-spec']},body);
+ assert.equal(check({sourcePath:'spec.docx',manifestElementId:7,pageSize:20,pageOffset:0}),null);
+ for(const body of [{manifestElementId:7},{sourcePath:'spec.docx',manifestElementId:0},{sourcePath:'spec.docx',manifestElementId:7,pageSize:101},{sourcePath:'spec.docx',manifestElementId:7,apply:true}])assert.equal(check(body)?.request_dispatched,false);
+});

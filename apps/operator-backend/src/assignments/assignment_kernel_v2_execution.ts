@@ -1,3 +1,4 @@
+import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -762,6 +763,8 @@ function commitInput(
           ? scheduleCellBackgroundPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/configure-schedule" && isRegularSchedulePresentationEditV2(verificationSubject.input)
           ? regularSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/import-drawing-spec'
+          ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/project-parameters"
           ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)

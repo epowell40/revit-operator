@@ -136,6 +136,7 @@ const defaultAllowed: Allowlist = {
     "/revit/datums",
     "/revit/create-text",
     "/revit/import-drawing-spec",
+    "/revit/inspect-drawing-spec",
     "/revit/import-excel-table",
     "/revit/export-elements-xlsx",
     "/revit/import-elements-xlsx-updates",

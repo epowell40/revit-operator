@@ -1206,5 +1206,41 @@
         "additionalProperties": false
       }
     ]
+  },
+  "/revit/inspect-drawing-spec": {
+    "type": "object",
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 520
+      },
+      "manifestElementId": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "pageOffset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "expectedSnapshotSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "required": [
+      "sourcePath",
+      "manifestElementId"
+    ],
+    "additionalProperties": false
   }
 }

@@ -16,6 +16,13 @@ const manifest = fs.readFileSync(path.join(apps, "revit-bridge-addin/RevitBridge
 const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*"(GET|POST)",\s*"([^"]+)"/g)]
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
+test("source-bound Word inspection is supported without exposing adjacent routes",()=>{
+  assert.equal(isSupportedToolRoute('POST','/revit/inspect-drawing-spec'),true);
+  assert.equal(isAllowlisted('POST','/revit/inspect-drawing-spec'),true);
+  assert.equal(isSupportedToolRoute('GET','/revit/inspect-drawing-spec'),false);
+  assert.equal(isSupportedToolRoute('POST','/revit/inspect-drawing-spec-apply'),false);
+});
+
 test('shared instance parameter route survives fixed inventory and allowlist without opening adjacent routes',()=>{
   const here=new URL('./fixtures/project-parameter-product-inventory-predispatch121.json',import.meta.url);
   const fixture=JSON.parse(fs.readFileSync(fs.existsSync(here)?here:new URL('../../test/fixtures/project-parameter-product-inventory-predispatch121.json',import.meta.url),'utf8'));
@@ -52,8 +59,8 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 });
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
-  assert.equal(implemented.length, 217);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 112);
+  assert.equal(implemented.length, 218);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 113);
   assert.equal(isSupportedToolRoute("POST", "/revit/locate-elements"), true);
   assert.equal(isSupportedToolRoute("GET", "/revit/locate-elements"), false);
   assert.equal(isAllowlisted("POST", "/revit/locate-elements"), true);

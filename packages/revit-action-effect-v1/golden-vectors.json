@@ -2,6 +2,26 @@
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
     {
+      "id": "drawing_spec_inspection_read",
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec",
+      "body": {
+        "sourcePath": "spec.docx",
+        "manifestElementId": 1
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "drawing_spec_inspection_neighbor_stays_apply",
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec-apply",
+      "body": {
+        "sourcePath": "spec.docx",
+        "manifestElementId": 1
+      },
+      "expected_effect": "apply"
+    },
+    {
       "id": "c121_parameter_list",
       "method": "POST",
       "path": "/revit/project-parameters",

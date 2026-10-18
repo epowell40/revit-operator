@@ -293,6 +293,7 @@ namespace RevitBridge.Operator
                 { "/revit/place-pdf-underlay", typeof(RevitBridge.Handlers.PlacePdfUnderlayHandler.Params) },
                 { "/revit/import-zippybim-geometry", typeof(RevitBridge.Handlers.ImportZippyBimGeometryHandler.Params) },
                 { "/revit/import-drawing-spec", typeof(RevitBridge.Handlers.ImportDrawingSpecHandler.Params) },
+                { "/revit/inspect-drawing-spec", typeof(RevitBridge.Common.DrawingSpecInspectionRequest) },
                 { "/revit/import-excel-table", typeof(RevitBridge.Handlers.ImportExcelTableHandler.Params) },
                 { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
                 { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },

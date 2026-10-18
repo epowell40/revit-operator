@@ -449,6 +449,10 @@
     {
       "method": "POST",
       "path": "/revit/visibility"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec"
     }
   ],
   "mcp_aliases": [

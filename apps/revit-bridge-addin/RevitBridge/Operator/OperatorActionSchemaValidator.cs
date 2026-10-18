@@ -5289,6 +5289,13 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/inspect-drawing-spec", StringComparison.OrdinalIgnoreCase))
+            {
+                try { DrawingSpecInspectionRequest.Parse(body?.GetRawText() ?? "null"); return true; }
+                catch (Exception ex) when (ex is ArgumentException || ex is JsonException || ex is InvalidOperationException)
+                { error = ex.Message; return false; }
+            }
+
             if (string.Equals(path, "/revit/import-drawing-spec", StringComparison.OrdinalIgnoreCase))
             {
                 // { sourcePath, viewId?, viewName?, textTypeName?, columns?, columnWidthInches?, columnHeightInches?, gutterInches?, marginInches?, startXInches?, startYInches?, dryRun? }

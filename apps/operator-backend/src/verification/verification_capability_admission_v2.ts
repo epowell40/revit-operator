@@ -1,3 +1,4 @@
+import { drawingSpecInspectionReadIdV2 } from './drawing_spec_import_v2.js';
 import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
 import { projectParameterBindingReadIdV2 } from './project_parameter_binding_v2.js';
 /**
@@ -80,6 +81,8 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ['/revit/import-drawing-spec',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewIds']}],
+  ['/revit/inspect-drawing-spec',{semantic_outputs:['drawing_spec.source_text_format_and_bounds'],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewIds']}],
   ['/revit/project-parameters', {semantic_outputs:['project_parameter.binding'],principal_target_fields:['parameterId']}],
   ["/revit/place-view", {semantic_outputs: [], principal_target_fields: ["id"], contextual_scope_fields: ["sheetId", "viewId"]}],
   ["/revit/create-text", {semantic_outputs: [], principal_target_fields: ["textNoteId"], contextual_scope_fields: ["viewId"]}],
@@ -351,6 +354,7 @@ export function operationTargetSelectorV2(input: Readonly<{
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   const path = pathOf(apply);
   if(path==='/revit/create-schedule')return ['schedule.created_definition'];
+  if(path==='/revit/import-drawing-spec')return ['drawing_spec.source_text_format_and_bounds'];
   if(path==='/revit/project-parameters')return ['project_parameter.binding'];
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
@@ -382,6 +386,7 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
   if (!contract) return [];
   if (normalizedText(verification.capability_id) !== "revit_call_tool"
       && pathOf(verification).startsWith("/revit/")) return [];
+  if(pathOf(verification)==='/revit/inspect-drawing-spec')return drawingSpecInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if(pathOf(verification)==='/revit/project-parameters')return projectParameterBindingReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if (pathOf(verification) === '/revit/find-text-notes') {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), ids=body.elementIds;
@@ -463,6 +468,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if(pathOf(apply)==='/revit/import-drawing-spec')return ' Inspect the returned manifestElementId with POST /revit/inspect-drawing-spec and the same sourcePath. Its complete source/native check is separate from the paged note details. Inspect reported source ranges, expected runs and actual native identities to correct known mismatches; do not repeat an uncertain import. Source text/character-format/bounds checks do not establish visual fidelity or sheet placement.';
   if(pathOf(apply)==='/revit/save-as')return ' Verify the exact output from the native Save As receipt with one separate POST /revit/inspect-exported-files, paths=[the saved RVT/RFA path]. Only the actual active saved document is eligible. Compare stable byte size/SHA256 and saved_document path, native session/project identity and is_modified=false; unknown, changing or dirty state remains unverified. This confirms a saved artifact, not completion of all model-content or visual tasks. Do not save again solely to verify or ask the user to reopen a successfully saved model.';
   if (pathOf(apply) === "/revit/tag-elements" && existingTagRepairRequestV2(apply.arguments))
     return " Verify the repaired existing tag with a separate POST /revit/native-api-ops read: Document.GetElement(ElementId) for repairExistingTagId, then read OwnerViewId plus every requested HasLeader, TagHeadPosition and LeaderEndCondition property from that exact IndependentTag handle. The fresh owner view and all requested values must match the admitted edit; the apply result cannot verify itself. Leader-end or elbow edits need reference-bound readback and remain unverified by this property check. Do not repeat a committed edit to verify it.";
