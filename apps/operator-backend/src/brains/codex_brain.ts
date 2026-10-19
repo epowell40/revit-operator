@@ -1,5 +1,5 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
-import path from 'node:path';
+import {getWorkspaceMcpRuntime} from '../codex/workspace_mcp_runtime.js';
 import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
 import {DESKTOP_HELPER_RETURN_REASON,takeDesktopHelperReturnV1,desktopHelperReturnAfterDrainV1,type DesktopHelperReturnV1} from './desktop_helper_return.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
@@ -185,17 +185,6 @@ function clientCacheKey(workspaceRoot: string, profile: CodexThreadStartProfile)
   return `${workspaceRoot}\u0000${profile.profileNamespace}`;
 }
 
-/** Runtime ownership is required before provider setup. A cold tenant must not
- * depend on startup prewarming a different workspace or on a later CLI call. */
-function getWorkspaceMcpRuntime(workspaceRoot:string,codexHome=path.join(workspaceRoot,'.codex')):CodexMcpToolRuntime {
-  let runtime=mcpRuntimesByWorkspace.get(workspaceRoot);
-  if(!runtime){
-    runtime=new CodexMcpToolRuntime({backendCwd:process.cwd(),workspaceRoot,codexHome,spawnEnv:buildCodexSpawnEnv(workspaceRoot)});
-    mcpRuntimesByWorkspace.set(workspaceRoot,runtime);
-  }
-  return runtime;
-}
-
 async function getClient(workspaceRoot: string, profile: CodexThreadStartProfile): Promise<CodexAppServer> {
   const cacheKey = clientCacheKey(workspaceRoot, profile);
   const existing = clientsByProfile.get(cacheKey);
@@ -204,7 +193,7 @@ async function getClient(workspaceRoot: string, profile: CodexThreadStartProfile
   const spawnEnv = buildCodexSpawnEnv(workspaceRoot);
   let mcpRuntime: CodexMcpToolRuntime | undefined;
   if (!profile.certified) {
-    mcpRuntime = getWorkspaceMcpRuntime(workspaceRoot,codexHome);
+    mcpRuntime = getWorkspaceMcpRuntime(mcpRuntimesByWorkspace,workspaceRoot,codexHome);
   }
 
   const client = new CodexAppServer({
@@ -601,7 +590,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       };
     }
   }
-  const mcpRuntime = threadProfile.startRevitTurnRuntime ? getWorkspaceMcpRuntime(workspaceRoot) : null;
+  const mcpRuntime = threadProfile.startRevitTurnRuntime ? getWorkspaceMcpRuntime(mcpRuntimesByWorkspace,workspaceRoot) : null;
   if (threadProfile.startRevitTurnRuntime && !mcpRuntime) {
     endRequirementsPlanningLease(requirementsLease);
     requirementsLease = null;
