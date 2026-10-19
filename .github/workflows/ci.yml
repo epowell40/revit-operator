@@ -90,6 +90,14 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - run: dotnet test packages/operator-deploy/OperatorDeploy.Tests/OperatorDeploy.Tests.csproj -c Release
+      - name: Installer recovery across all supported Revit years
+        shell: pwsh
+        run: |
+          ./scripts/deploy/tests/install_operator_recovery.tests.ps1
+          ./scripts/deploy/tests/install_operator_recovery.tests.ps1 -RealEngine
+      - name: Installer recovery on Windows PowerShell
+        shell: powershell
+        run: ./scripts/deploy/tests/install_operator_recovery.tests.ps1
       - run: dotnet publish packages/operator-deploy/OperatorDeploy/OperatorDeploy.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
 
   dynamic-runtime:
