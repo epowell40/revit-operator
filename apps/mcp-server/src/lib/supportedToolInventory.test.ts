@@ -19,13 +19,14 @@ const excluded = implemented.filter(route => !isSupportedNativeTool(route.method
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
   assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
+  assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),false);
   assert.equal(implemented.length, 223);
-  assert.equal(excluded.length, 105);
+  assert.equal(excluded.length, 106);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 118);
-    for(const path of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/import-vector-detail','/revit/inspect-vector-detail']){
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 117);
+    for(const path of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/inspect-vector-detail']){
       assert.equal(isToolRouteExposedForSearch('POST',path,env),true);assert.equal(isToolRouteExposedForSearch('GET',path,env),false);
       assert.equal(isToolRouteExposedForSearch('POST',path+'-other',env),false);
     }

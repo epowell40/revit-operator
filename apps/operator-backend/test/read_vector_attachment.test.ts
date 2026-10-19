@@ -52,6 +52,7 @@ test("registered native plan is immutable, source-bound and compact while retain
  const raw=gunzipSync(packed),plan=JSON.parse(raw.toString());assert.equal(crypto.createHash("sha256").update(raw).digest("hex"),ref.unpacked_sha256);
  assert.equal(plan.nativePlanSha256,info.native_plan_sha256);assert.equal(plan.sourceSha256,attachment.sha256);assert.equal(plan.sourcePlanSha256,summary.plan_sha256);
  assert.equal(plan.entities.length,2);assert.equal(plan.entities[0].kind,"line");assert.equal(plan.entities[1].text,"Fixture page 1");
+ assert.equal(info.native_import_available,false);assert.equal(info.native_import_status,"withheld_pending_live_native_commit_qualification");
  assert.equal(plan.nativeWriteAllowed,false);assert.equal(info.native_write_allowed,false);assert(!("entities" in info));assert(Buffer.byteLength(JSON.stringify(info))<8000);
  assert.deepEqual((await result(request)).native_plan_artifact,ref);
  await assert.rejects(result({...request,vector_limit:1}),/without record paging/);

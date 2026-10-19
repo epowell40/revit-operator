@@ -4780,6 +4780,15 @@
         "dotnet:VectorDraftingSourceCommitTests",
         "backend:vector_detail_import_v2.test.ts"
       ]
+    },
+    {
+      "id": "unqualified_native_vector_mutation_withheld_before_dispatch_while_retained_inspection_and_source_preparation_remain_honest",
+      "coverage": [
+        "backend:supported_tool_inventory.test.ts",
+        "backend:read_vector_attachment.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts",
+        "dotnet:OperatorSupportedToolInventoryTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:b4fc313b5aaffd999f5fa4a1cb59639290333d78932393e0af504cbdd7bc3c0a";
+        public const string InventoryHash = "sha256:ac06f351b6e1932000821c6abb2580ec9712a511f08e7da7155f97e678663cec";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -65,7 +65,6 @@ namespace RevitBridge.Common
             "POST /revit/get-titleblock-info",
             "POST /revit/import-drawing-spec",
             "POST /revit/import-excel-output",
-            "POST /revit/import-vector-detail",
             "POST /revit/inspect-drawing-spec",
             "POST /revit/inspect-excel-import",
             "POST /revit/inspect-excel-source",
