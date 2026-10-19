@@ -4,6 +4,88 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/import-vector-detail",
+      "examples": [
+        {
+          "name": "Use the exact source and immutable plan references returned by the registered attachment reader",
+          "request": {
+            "sourcePath": "artifacts/uploads/detail.pdf",
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "nativePlanPath": "artifacts/drafting-vector/source-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json.gz",
+            "expectedNativePlanFileSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expectedNativePlanSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "viewName": "Copied Diagram"
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "partIndex": 0,
+            "nextPartIndex": "number|null"
+          }
+        },
+        {
+          "name": "Continue the same owned diagram using fresh native inspection, never duplicate completed parts",
+          "request": {
+            "sourcePath": "artifacts/uploads/detail.pdf",
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "nativePlanPath": "artifacts/drafting-vector/source-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json.gz",
+            "expectedNativePlanFileSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expectedNativePlanSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "viewName": "Copied Diagram",
+            "partIndex": 1,
+            "manifestElementId": 123,
+            "expectedImportSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "partIndex": 1
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail",
+      "examples": [
+        {
+          "name": "Discover managed vector imports without creating or changing content",
+          "request": {
+            "action": "list"
+          },
+          "expected_response_shape": {
+            "read_only": true,
+            "imports": "array"
+          }
+        },
+        {
+          "name": "Inspect one complete native part and independently compare its original PDF through the backend",
+          "request": {
+            "manifestElementId": 123,
+            "partIndex": 0
+          },
+          "expected_response_shape": {
+            "read_only": true,
+            "sourceProjection": "object",
+            "visualVerified": false
+          }
+        },
+        {
+          "name": "Page whole native records for diagnosis without flooding ordinary context",
+          "request": {
+            "manifestElementId": 123,
+            "partIndex": 0,
+            "includeItems": true,
+            "offset": 0,
+            "limit": 5
+          },
+          "expected_response_shape": {
+            "items": "array",
+            "nextOffset": "number|null"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/import-excel-output",
       "examples": [
         {

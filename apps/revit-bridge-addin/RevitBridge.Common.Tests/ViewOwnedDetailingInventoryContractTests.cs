@@ -48,6 +48,9 @@ namespace RevitBridge.Common.Tests
         {
             Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("Element", null, false, "ExtentElem"));
             Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SketchPlane", null, false));
+            Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("Element", "OST_IOSSketchGrid", false));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("TextNote", "OST_IOSSketchGrid", true));
+            Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("DetailCurve", "OST_IOSSketchGrid", false));
             Assert.True(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("SunAndShadowSettings", "OST_SunStudy", false));
             Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("TextNote", "OST_TextNotes", true));
             Assert.False(ViewOwnedDetailingInventoryContract.IsNonDraftingInfrastructure("DetailCurve", "OST_Lines", false));

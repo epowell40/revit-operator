@@ -1,5 +1,6 @@
 import { drawingSpecInspectionReadIdV2 } from './drawing_spec_import_v2.js';
 import {excelTableInspectionReadIdV2,EXCEL_TABLE_PART_SEMANTIC_V2} from './excel_table_import_v2.js';
+import {vectorDetailInspectionReadIdV2,VECTOR_DETAIL_PART_SEMANTIC_V2} from './vector_detail_import_v2.js';
 import {deletionRequestV2,deletionReadTargetsV2,nativeAbsentElementIdsV2,DELETION_SEMANTIC_OUTPUT_V2}from './deletion_contract_v2.js';
 import { isRegularSchedulePresentationEditV2 } from "./regular_schedule_presentation_v2.js";
 import { projectParameterBindingReadIdV2 } from './project_parameter_binding_v2.js';
@@ -83,6 +84,8 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ['/revit/import-vector-detail',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
+  ['/revit/inspect-vector-detail',{semantic_outputs:[VECTOR_DETAIL_PART_SEMANTIC_V2],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
   ['/revit/import-excel-output',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
   ['/revit/inspect-excel-import',{semantic_outputs:[EXCEL_TABLE_PART_SEMANTIC_V2],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewId']}],
   ['/revit/import-drawing-spec',{semantic_outputs:[],principal_target_fields:['manifestElementId'],contextual_scope_fields:['viewIds']}],
@@ -371,6 +374,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if(path==='/revit/create-schedule')return ['schedule.created_definition'];
   if(path==='/revit/import-drawing-spec')return ['drawing_spec.source_text_format_and_bounds'];
   if(path==='/revit/import-excel-output')return [EXCEL_TABLE_PART_SEMANTIC_V2];
+  if(path==='/revit/import-vector-detail')return [VECTOR_DETAIL_PART_SEMANTIC_V2];
   if(path==='/revit/project-parameters')return ['project_parameter.binding'];
   if (path === '/revit/place-view') return ['sheet.placement_anchors'];
   if (path === '/revit/create-text') return ['text_note.created_attributes'];
@@ -404,6 +408,7 @@ function providedSemanticOutputs(verification: OperationContract): readonly stri
       && pathOf(verification).startsWith("/revit/")) return [];
   if(pathOf(verification)==='/revit/inspect-drawing-spec')return drawingSpecInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if(pathOf(verification)==='/revit/inspect-excel-import')return excelTableInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
+  if(pathOf(verification)==='/revit/inspect-vector-detail')return vectorDetailInspectionReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if(pathOf(verification)==='/revit/project-parameters')return projectParameterBindingReadIdV2(verification.arguments)!==null?contract.semantic_outputs:[];
   if (pathOf(verification) === '/revit/find-text-notes') {
     const args=objectValue(verification.arguments), body=objectValue(args.body??args), ids=body.elementIds;

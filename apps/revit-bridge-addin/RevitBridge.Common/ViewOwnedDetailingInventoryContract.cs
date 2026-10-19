@@ -15,6 +15,7 @@ namespace RevitBridge.Common
             if (isAnnotation) return false;
             return className == "SketchPlane" || className == "SunAndShadowSettings"
                 || (className == "Element" && elementName == "ExtentElem")
+                || (className == "Element" && builtInCategory == "OST_IOSSketchGrid")
                 || builtInCategory == "OST_SunStudy";
         }
         public const int DefaultLimit = 1000;

@@ -1,5 +1,7 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
 import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
+import {committedVectorDetailReadbackPlanV2} from '../verification/vector_detail_import_v2.js';
+import {prepareVectorSourceProofV2} from '../verification/vector_detail_source_proof_v2.js';
 import {committedDeletedElementsReadbackPlansV2}from '../verification/deleted_elements_postcondition_v2.js';
 import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
@@ -397,7 +399,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       // V2 derives postcondition truth from retained native evidence itself.
       // A legacy target-match assertion can precede a complete multi-read check;
       // forwarding it would reject and discard useful partial observations.
-      const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      const sourceProof = await prepareVectorSourceProofV2(lease,rawResult,getAssignmentKernelSnapshotV2(lease.assignment_id));
+      const settled = settleAssignmentKernelOperationV2(lease, rawResult,undefined,undefined,sourceProof);
       if (!teammateGate.state?.canonical_supervision_only) {
         reconcileCanonicalToolVerification(teammateGate.state, settled.snapshot, lease.operation_id);
         reconcileTeammateCanonicalSettlementV2(teammateGate, settled.snapshot.operations[lease.operation_id]);
@@ -425,6 +428,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedRegularSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDrawingSpecImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedExcelTableImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedVectorDetailReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedProjectParameterBindingReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)

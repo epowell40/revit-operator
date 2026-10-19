@@ -1,6 +1,8 @@
 import {verifiedDeliverableTargetGroupsV2} from "../verification/verified_deliverable_targets_v2.js";
 import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
 import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
+import {vectorDetailImportPostconditionSatisfiedV2,VECTOR_DETAIL_SOURCE_FACT_V2} from '../verification/vector_detail_import_v2.js';
+import {vectorSourceProofRecordV2,type PreparedVectorSourceProofV2} from '../verification/vector_detail_source_proof_v2.js';
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -685,7 +687,8 @@ function commitInput(
   envelope: AssignmentKernelMcpResultV2,
   result: OperationResultV2,
   lease: AssignmentKernelOperationLeaseV2,
-  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null,
+  sourceProof?: PreparedVectorSourceProofV2 | null
 ): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
@@ -700,7 +703,7 @@ function commitInput(
   // Proof and inventory completeness are host-derived, never producer claims.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
     .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
-      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied');
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== VECTOR_DETAIL_SOURCE_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied');
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
   if (nativeChangeInventoryCompleteV2(operation, result, envelope.observation.raw_payload)) {
@@ -771,6 +774,8 @@ function commitInput(
           ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/import-excel-output'
           ? excelTableImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/import-vector-detail'
+          ? vectorDetailImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload, sourceProof)
         : deletionRequestV2(verificationSubject.input)
           ? deletedElementsPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/project-parameters"
@@ -804,6 +809,10 @@ function commitInput(
   const comparisonFact = nativePropertyComparisonControlFactV2(snapshot, operation, verificationSubject, result,
     lease, envelope.observation.raw_payload, deterministicallyTargetBound, deterministicallySatisfied);
   if (comparisonFact) semanticFacts.push(comparisonFact);
+  const originalSourceComparison = vectorSourceProofRecordV2(sourceProof,result);
+  if (originalSourceComparison && sourceProof) semanticFacts.push({fact_id:VECTOR_DETAIL_SOURCE_FACT_V2,fact_class:'control',
+    value:JSON.stringify({state:originalSourceComparison.matches?'matched':'mismatch',evidence_id:sourceProof.evidence.evidence_id,
+      content_hash:sourceProof.evidence.content_hash,scope:originalSourceComparison.scope,...(originalSourceComparison.error?{error:originalSourceComparison.error}:{})})});
   if (trustedVerification) {
     if (lease.purpose !== "verification"
         || lease.fulfillment_role !== "verification"
@@ -857,14 +866,15 @@ export function settleAssignmentKernelOperationV2(
   lease: AssignmentKernelOperationLeaseV2,
   rawResult: unknown,
   observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME,
-  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null,
+  sourceProof?: PreparedVectorSourceProofV2 | null
 ): AssignmentKernelOperationSettlementV2 {
   const envelope = explicitMcpEnvelope(rawResult);
   const result = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: envelope.operation_result_v2 } });
   if (result.operation_id !== lease.operation_id || !sameAssignmentBindingV2(result.binding, lease.binding)) {
     throw new Error("assignment_kernel_v2_result_binding_mismatch");
   }
-  const commit = commitInput(envelope, result, lease, trustedVerification);
+  const commit = commitInput(envelope, result, lease, trustedVerification, sourceProof);
   if (commit) assertEvidenceStoreInputSafe(evidenceInput(lease, result, commit));
   recordNativeDispatchIfNeeded(lease, result);
   const resultEvent = {

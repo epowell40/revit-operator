@@ -357,6 +357,8 @@ namespace RevitBridge.Handlers
         {
             var type = note.Document.GetElement(note.GetTypeId()) as TextNoteType;
             var point = note.Coord;
+            var baseline = note.BaseDirection;
+            var up = note.UpDirection;
             var paperWidthFt = TryGetTextNoteWidth(note);
             var viewScale = view?.Scale;
             return new
@@ -366,6 +368,10 @@ namespace RevitBridge.Handlers
                 viewName = view?.Name,
                 text = note.Text,
                 point = new { x = point.X, y = point.Y, z = point.Z },
+                orientation = TextNoteOrientationReadback.Create(
+                    new[] { point.X, point.Y, point.Z },
+                    new[] { baseline.X, baseline.Y, baseline.Z },
+                    new[] { up.X, up.Y, up.Z }),
                 widthFt = paperWidthFt,
                 widthSpace = "paper",
                 modelSpaceWidthFt = paperWidthFt.HasValue && viewScale.HasValue

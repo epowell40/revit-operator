@@ -2236,5 +2236,234 @@
         "additionalProperties": false
       }
     ]
+  },
+  "/revit/import-vector-detail": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "pattern": "^artifacts/uploads/[^/\\\\\\r\\n]+$",
+            "maxLength": 520
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nativePlanPath": {
+            "type": "string",
+            "pattern": "^artifacts/drafting-vector/source-[a-f0-9]{64}\\.json\\.gz$",
+            "maxLength": 520
+          },
+          "expectedNativePlanFileSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expectedNativePlanSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "partIndex": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sourcePath",
+          "expectedSourceSha256",
+          "nativePlanPath",
+          "expectedNativePlanFileSha256",
+          "expectedNativePlanSha256",
+          "viewName"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "pattern": "^artifacts/uploads/[^/\\\\\\r\\n]+$",
+            "maxLength": 520
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nativePlanPath": {
+            "type": "string",
+            "pattern": "^artifacts/drafting-vector/source-[a-f0-9]{64}\\.json\\.gz$",
+            "maxLength": 520
+          },
+          "expectedNativePlanFileSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expectedNativePlanSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "viewName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1999
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedImportSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "sourcePath",
+          "expectedSourceSha256",
+          "nativePlanPath",
+          "expectedNativePlanFileSha256",
+          "expectedNativePlanSha256",
+          "viewName",
+          "partIndex",
+          "manifestElementId",
+          "expectedImportSnapshotSha256"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/inspect-vector-detail": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1999
+          },
+          "offset": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "includeItems": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "manifestElementId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "inspect"
+            ]
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1999
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "includeItems": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "manifestElementId",
+          "partIndex",
+          "includeItems"
+        ],
+        "additionalProperties": false
+      }
+    ]
   }
 }

@@ -24,9 +24,13 @@ namespace RevitBridge.Logic.Handlers.Drafting
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enterNativeScope =>
+                HandleCore(app, jsonData, enterNativeScope)));
+
+        private object HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            var doc = app.ActiveUIDocument.Document;
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
 
             if (p.viewId <= 0) throw new InvalidOperationException("create-revision-cloud.viewId is required.");
             var view = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.viewId)) as View;
@@ -48,51 +52,78 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     throw new InvalidOperationException($"Frame {frameId} belongs to viewId={frame.viewId}, but request.viewId={p.viewId}.");
             }
 
-            using (var t = new Transaction(doc, dryRun ? "Create Revision Cloud (dry run)" : "Create Revision Cloud"))
+            var revId = ResolveRevisionId(doc, p.revisionId);
+            var curves = BuildCurves(pts, frameId, p.closed ?? true);
+            var failureGuard = new OperatorNativeFailureGuard();
+            long cloudId = 0;
+            long? tagId = null;
+            string? tagMessage = null;
+            enterNativeScope();
+            var response = NativeSingleTransaction.Execute(app, doc,
+                dryRun ? "Create Revision Cloud (dry run)" : "Create Revision Cloud", created =>
             {
-                t.Start();
-
-                var revId = ResolveRevisionId(doc, p.revisionId);
-                var curves = BuildCurves(pts, frameId, p.closed ?? true);
-
-                // RevisionCloud.Create overloads vary by Revit version; try common signatures.
-                var rcId = TryCreateRevisionCloud(doc, view, revId, curves);
-
-                if (dryRun)
-                {
-                    t.RollBack();
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Dry Run",
-                        dryRun = true,
-                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                        curves = curves.Count,
-                        revisionCloud = new { revisionId = RevitBridge.Common.ElementIdCompat.GetValue(revId) },
-                        tag = tagCreatedCloud ? new { requested = true, hasLeader = tagHasLeader } : null
-                    });
-                }
-
-                long? tagId = null;
-                string? tagMessage = null;
+                // Supported Revit versions take View, not ElementId. The former
+                // reflection lookup could never find the actual 2024 API.
+                var cloud = RevisionCloud.Create(doc, view, revId, curves);
+                cloudId = ElementIdCompat.GetValue(cloud.Id);
+                created.Add(cloudId);
                 if (tagCreatedCloud)
                 {
-                    var tag = TryCreateRevisionCloudTag(doc, view, rcId, tagHasLeader, out tagMessage);
-                    if (tag != null) tagId = RevitBridge.Common.ElementIdCompat.GetValue(tag.Id);
+                    var tag = TryCreateRevisionCloudTag(doc, view, cloud.Id, tagHasLeader, out tagMessage);
+                    if (tag != null)
+                    {
+                        tagId = ElementIdCompat.GetValue(tag.Id);
+                        created.Add(tagId.Value);
+                    }
                 }
-
-                t.Commit();
-                return Task.FromResult<object>(new
+                return new Dictionary<string, object?>
                 {
-                    status = "Success",
-                    dryRun = false,
-                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                    revisionCloudId = RevitBridge.Common.ElementIdCompat.GetValue(rcId),
-                    curves = curves.Count,
-                    tag = tagCreatedCloud
+                    ["dryRun"] = dryRun,
+                    ["previewExecuted"] = dryRun,
+                    ["viewId"] = ElementIdCompat.GetValue(view.Id),
+                    ["curves"] = curves.Count,
+                    ["tag"] = tagCreatedCloud
                         ? new { requested = true, hasLeader = tagHasLeader, tagId, message = tagMessage }
                         : null
-                });
-            }
+                };
+            }, disposition: dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
+                configureTransaction: tx => NativeNonInteractiveFailureHandling.Configure(tx, failureGuard));
+            OperatorNativeTransactionExecution.ReadCommitted(response, () =>
+            {
+                var cloud = doc.GetElement(ElementIdCompat.Create(cloudId)) as RevisionCloud
+                    ?? throw new InvalidOperationException("Created revision cloud is missing after commit.");
+                if (cloud.OwnerViewId != view.Id || cloud.RevisionId != revId)
+                    throw new InvalidOperationException("Created cloud has a different owner view or revision.");
+                if (tagId.HasValue && !(doc.GetElement(ElementIdCompat.Create(tagId.Value)) is IndependentTag))
+                    throw new InvalidOperationException("Created revision cloud tag is missing after commit.");
+                var sketch = cloud.GetSketchCurves();
+                return new Dictionary<string, object?>
+                {
+                    ["revisionCloudId"] = cloudId,
+                    ["revisionCloud"] = new
+                    {
+                        id = cloudId, uniqueId = cloud.UniqueId,
+                        ownerViewId = ElementIdCompat.GetValue(cloud.OwnerViewId),
+                        revisionId = ElementIdCompat.GetValue(cloud.RevisionId),
+                        sketchCurveCount = sketch.Count,
+                        sketchCurves = sketch.Select(c => new
+                        {
+                            kind = c.GetType().Name,
+                            start = new[] { c.GetEndPoint(0).X, c.GetEndPoint(0).Y, c.GetEndPoint(0).Z },
+                            end = new[] { c.GetEndPoint(1).X, c.GetEndPoint(1).Y, c.GetEndPoint(1).Z }
+                        }).ToArray()
+                    },
+                    ["tagComplete"] = !tagCreatedCloud || tagId.HasValue
+                };
+            }, requestedChangesComplete: !tagCreatedCloud || tagId.HasValue);
+            response["nativeFailures"] = failureGuard.Failures;
+            response["status"] = OperatorNativeTransactionExecution.OutcomeStatus(response, "Success");
+            if (Equals(response["status"], "Success") && tagCreatedCloud && !tagId.HasValue) response["status"] = "Partial";
+            // Native receipt/readback describes this bounded effect, not the
+            // requested diagram's visual or whole-task correctness.
+            response.Remove("verified");
+            response.Remove("ok");
+            return response;
         }
 
         private static ElementId ResolveRevisionId(Document doc, long? requested)
@@ -100,7 +131,9 @@ namespace RevitBridge.Logic.Handlers.Drafting
             if (requested.HasValue && requested.Value > 0)
             {
                 var r = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(requested.Value)) as Revision;
-                if (r != null) return r.Id;
+                if (r == null) throw new InvalidOperationException($"Revision {requested.Value} not found.");
+                if (r.Issued) throw new InvalidOperationException($"Revision {requested.Value} is issued and cannot receive a cloud.");
+                return r.Id;
             }
 
             var any = new FilteredElementCollector(doc)
@@ -110,6 +143,7 @@ namespace RevitBridge.Logic.Handlers.Drafting
                 .FirstOrDefault();
 
             if (any == null) throw new InvalidOperationException("No revisions exist in this project. Create a Revision first, or pass revisionId.");
+            if (any.Issued) throw new InvalidOperationException("The latest Revision is issued. Pass an unissued revisionId explicitly.");
             return any.Id;
         }
 
@@ -129,31 +163,6 @@ namespace RevitBridge.Logic.Handlers.Drafting
             }
             if (curves.Count == 0) throw new InvalidOperationException("Revision cloud polyline produced no non-degenerate segments.");
             return curves;
-        }
-
-        private static ElementId TryCreateRevisionCloud(Document doc, View view, ElementId revisionId, IList<Curve> curves)
-        {
-            var t = typeof(RevisionCloud);
-
-            // (Document, ElementId viewId, ElementId revisionId, IList<Curve>)
-            var m = t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                .FirstOrDefault(x =>
-                {
-                    if (x.Name != "Create") return false;
-                    var ps = x.GetParameters();
-                    return ps.Length == 4 &&
-                           ps[0].ParameterType == typeof(Document) &&
-                           ps[1].ParameterType == typeof(ElementId) &&
-                           ps[2].ParameterType == typeof(ElementId) &&
-                           typeof(IList<Curve>).IsAssignableFrom(ps[3].ParameterType);
-                });
-            if (m != null)
-            {
-                var rc = (RevisionCloud)m.Invoke(null, new object[] { doc, view.Id, revisionId, curves });
-                return rc.Id;
-            }
-
-            throw new InvalidOperationException("RevisionCloud.Create overload not found for this Revit version.");
         }
 
         private static IndependentTag? TryCreateRevisionCloudTag(Document doc, View view, ElementId revisionCloudId, bool addLeader, out string? message)

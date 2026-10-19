@@ -1,9 +1,9 @@
 const record = value => value && typeof value === "object" && !Array.isArray(value) ? value : null;
 const text = (value, max = Infinity) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
 const invalid = (code, message) => ({ code, message });
-const constraintKinds = new Set(["required", "json_type", "enum", "numeric_range", "string_length", "array_length",
+const constraintKinds = new Set(["required", "json_type", "enum", "numeric_range", "string_length", "string_pattern", "array_length",
   "property_set", "schema_depth", "schema_bounds", "schema_alternative", "unique_items"]);
-const constraintKeys = new Set(["kind", "type", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"]);
+const constraintKeys = new Set(["kind", "type", "pattern", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"]);
 
 /** Optional correction diagnostics. This validates no dispatch/effect authority; callers must validate the independent result core. */
 export function operationInputSchemaGapErrorV2(value, core) {
@@ -28,7 +28,9 @@ export function operationInputSchemaGapErrorV2(value, core) {
     let encoded;
     try { encoded = JSON.stringify(constraint); } catch { return invalid("operation_input_schema_constraint_invalid", "The constraint is not JSON data."); }
     if (!constraintKinds.has(constraint.kind) || !Object.keys(constraint).every(key => constraintKeys.has(key)) || encoded.length > 4096
-        || (constraint.type !== undefined && !text(constraint.type, 160)))
+        || (constraint.type !== undefined && !text(constraint.type, 160))
+        || (constraint.pattern !== undefined && (!text(constraint.pattern, 512) || /[\u0000-\u001f]/.test(constraint.pattern)))
+        || (constraint.kind === "string_pattern" && constraint.pattern === undefined))
       return invalid("operation_input_schema_constraint_invalid", "Input-schema expected constraint must use the bounded shared shape.");
     if (constraint.allowed_values !== undefined && (!Array.isArray(constraint.allowed_values) || constraint.allowed_values.length > 32
         || !constraint.allowed_values.every(value => value === null || typeof value === "boolean"

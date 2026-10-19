@@ -10,6 +10,7 @@ Generic local assistant components, independent of hosted authentication and dep
 - `revit_health_display.mjs` identifies cached health as display-only. Idle polling returns an empty display state when no cache exists; explicit actions use their normal model checks.
 - `assignment_display_context.mjs` refreshes cached identity during active work without dispatching model reads. Explicit control reads cannot join an older cached read; late cached responses cannot replace newer identity.
 - Rejected visual reviews retain both original and changed capture references for scoped image inspection. Guidance supports actual Revit focus/zoom and separate checks of relevant areas. Changed pixels or viewports still invalidate the verdict; no pixels are masked and no model mutation is justified by an unavailable review.
+- `work_report.mjs` keeps structured advisory reporting separate from provider prose. If the owner ends without an accepted report, a fresh status read may request up to two reporting continuations within the existing controls and budget. The host never resubmits a proposal or repeats model work; an already retained report is recovered read-only. Strict and nonactive outcomes retain their existing settlement boundary.
 
 The Desktop integration copies these assets into its runtime so bundle dependency verification covers them. The backend test suite exercises the public modules; Desktop route and UI tests cover the integration. A direct context answer is conversational information, not an assignment completion or a model change receipt.
 

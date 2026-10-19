@@ -234,6 +234,20 @@ namespace RevitBridge.Logic.Handlers
 
         private static object SnapshotLocation(Element e, bool requireKnown = false)
         {
+            // TextNote commonly has no LocationPoint/LocationCurve or model-space bbox.
+            // Read its native annotation coordinates and orientation directly. A read
+            // failure must remain a failure, not fall back to a bbox as rotation proof.
+            if (e is TextNote note)
+            {
+                var point = note.Coord;
+                var baseline = note.BaseDirection;
+                var up = note.UpDirection;
+                return TextNoteOrientationReadback.Create(
+                    new[] { point.X, point.Y, point.Z },
+                    new[] { baseline.X, baseline.Y, baseline.Z },
+                    new[] { up.X, up.Y, up.Z });
+            }
+
             try
             {
                 if (e.Location is LocationPoint lp)

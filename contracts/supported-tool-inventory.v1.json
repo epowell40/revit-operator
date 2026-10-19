@@ -465,6 +465,10 @@
     {
       "method": "POST",
       "path": "/revit/inspect-drawing-spec"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail"
     }
   ],
   "mcp_aliases": [
@@ -652,5 +656,5 @@
       "executor_id": "revit-operator.safe-read-host.v1"
     }
   ],
-  "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route."
+  "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route. Editable PDF vector mutation POST /revit/import-vector-detail is intentionally withheld after live commit-normalization failures213/214. POST /revit/inspect-vector-detail remains available for honest inspection/reconciliation of retained attempts. Source extraction/preparation is not importer qualification."
 }

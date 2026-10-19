@@ -54,6 +54,7 @@
     "mammoth": "^1.8.0",
     "openai": "^5.13.1",
     "pdfjs-dist": "^4.10.38",
+    "polygon-clipping": "0.15.7",
     "tesseract.js": "^5.1.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },

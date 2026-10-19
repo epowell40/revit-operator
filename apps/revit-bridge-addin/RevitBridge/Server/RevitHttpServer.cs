@@ -106,6 +106,8 @@ namespace RevitBridge.Server
                 { "/revit/import-drawing-spec", new ImportDrawingSpecHandler() },
                 { "/revit/inspect-drawing-spec", new InspectDrawingSpecHandler() },
                 { "/revit/inspect-excel-source", new InspectExcelSourceHandler() },
+                { "/revit/import-vector-detail", new ImportVectorDetailHandler() },
+                { "/revit/inspect-vector-detail", new InspectVectorDetailHandler() },
                 { "/revit/import-excel-output", new ImportExcelOutputHandler() },
                 { "/revit/inspect-excel-import", new InspectExcelImportHandler() },
                 { "/revit/import-excel-table", new ImportExcelTableHandler() },

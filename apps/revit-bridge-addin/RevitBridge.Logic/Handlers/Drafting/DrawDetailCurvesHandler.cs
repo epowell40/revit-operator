@@ -14,11 +14,11 @@ namespace RevitBridge.Logic.Handlers.Drafting
     {
         public sealed class CurveSpec
         {
-            public string? kind { get; set; } // line|polyline|arc
+            public string? kind { get; set; } // line|polyline|arc|cubic_bezier
             public DraftPoint? a { get; set; }
             public DraftPoint? b { get; set; }
             public DraftPoint? c { get; set; } // for arc: 3-point arc (start=a, end=b, pointOnArc=c)
-            public List<DraftPoint>? points { get; set; } // for polyline
+            public List<DraftPoint>? points { get; set; } // polyline, or exactly four ordered cubic controls
         }
 
         public sealed class Params
@@ -97,6 +97,23 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     throw new InvalidOperationException($"Frame not found (expired?): {frameId}");
                 if (frame.viewId != p.viewId)
                     throw new InvalidOperationException($"Frame {frameId} belongs to viewId={frame.viewId}, but request.viewId={p.viewId}.");
+            }
+
+            // Geometry construction is not a model edit. Preflight every cubic before entering
+            // native mutation scope; a short or invalid source curve fails without partial drawing.
+            var preparedCubics = new Dictionary<CurveSpec, Curve>();
+            foreach (var spec in curveSpecs.Where(c => string.Equals(c.kind?.Trim(), "cubic_bezier", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (spec.points == null || spec.points.Count != 4 || spec.points.Any(point => point == null))
+                    throw new ArgumentException("cubic_bezier requires points:[start,control1,control2,end].");
+                var points = spec.points.Select(point => ResolvePoint(point, frameId, view, projectToViewPlane)).ToList();
+                DraftingCubicBezier.ValidateControlPoints(points.Select(point => new[] { point.X, point.Y, point.Z }));
+                var planeOrigin = ResolveViewPlaneOrigin(view); var normal = view.ViewDirection.Normalize();
+                if (points.Any(point => Math.Abs((point - planeOrigin).DotProduct(normal)) > 1e-7))
+                    throw new ArgumentException("Cubic controls must lie in the target view plane; supply projectToViewPlane only when that projection is intended.");
+                var curve = NurbSpline.CreateCurve(3, DraftingCubicBezier.ClampedKnots(), points);
+                DraftingCubicBezier.RequireNativeLength(curve.Length, doc.Application.ShortCurveTolerance);
+                preparedCubics.Add(spec, curve);
             }
 
             var createdIds = new List<long>();
@@ -183,6 +200,14 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
                         segmentsCreated++;
                     }
+                    else if (kind == "cubic_bezier")
+                    {
+                        var dc = CreateDetailCurve(doc, view, preparedCubics[cs], style);
+                        createdIds.Add(ElementIdCompat.GetValue(dc.Id));
+                        nativeCreated.Add(ElementIdCompat.GetValue(dc.Id));
+                        UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
+                        segmentsCreated++;
+                    }
                     else
                     {
                         throw new InvalidOperationException($"Unsupported curve kind: {cs.kind}");
@@ -228,7 +253,10 @@ namespace RevitBridge.Logic.Handlers.Drafting
                 if (projectToViewPlane && distance > 1e-7)
                     throw new InvalidOperationException("Committed DetailCurve geometry is off the target view plane.");
                 return new Dictionary<string, object?> { ["detailCurveIds"] = createdIds.ToArray(),
-                    ["maximumCreatedCurveViewPlaneDistanceFt"] = distance };
+                    ["maximumCreatedCurveViewPlaneDistanceFt"] = distance,
+                    ["nativeCurveGeometry"] = createdIds.Select(id => new { elementId = id,
+                        geometry = NativeDraftingCurveGeometry.Read(((DetailCurve)doc.GetElement(ElementIdCompat.Create(id))).GeometryCurve) }).ToArray(),
+                    ["shortCurveToleranceFt"] = doc.Application.ShortCurveTolerance };
             });
             response["nativeFailures"] = failureGuard.Failures;
             // Persisted values are evidence; this handler does not certify all requested semantics.

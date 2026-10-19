@@ -674,3 +674,17 @@ test("Word inspection preflight retains source and page identity and rejects inv
  assert.equal(check({sourcePath:'spec.docx',manifestElementId:7,pageSize:20,pageOffset:0}),null);
  for(const body of [{manifestElementId:7},{sourcePath:'spec.docx',manifestElementId:0},{sourcePath:'spec.docx',manifestElementId:7,pageSize:101},{sourcePath:'spec.docx',manifestElementId:7,apply:true}])assert.equal(check(body)?.request_dispatched,false);
 });
+test("published bounded string patterns reject invalid hashes/paths before dispatch and unsafe regexes fail closed",()=>{
+ const contract=(pattern:string)=>({method:'POST',path:'/revit/example',request_schema:{type:'object',required:['value'],properties:{value:{type:'string',pattern}},additionalProperties:false}});
+ assert.equal(preflightKnownGenericToolBody(contract('^[a-f0-9]{64}$'),{value:'a'.repeat(64)}),null);
+ assert.equal(preflightKnownGenericToolBody(contract('\\S'),{value:'source.xlsx'}),null);
+ assert.equal(preflightKnownGenericToolBody(contract('\\S'),{value:'   '})?.request_dispatched,false);
+ const invalid=preflightKnownGenericToolBody(contract('^[a-f0-9]{64}$'),{value:'x'.repeat(64)})!;
+ assert.equal(invalid.request_dispatched,false);assert.equal(invalid.validation_issues?.[0]?.expected_constraint.kind,'string_pattern');
+ assert.equal(invalid.validation_issues?.[0]?.expected_constraint.pattern,'^[a-f0-9]{64}$');
+ for(const pattern of ['(a+)+$','^(a+)+$','^a*a*b$','[','^a{999999}$']){
+  const failure=preflightKnownGenericToolBody(contract(pattern),{value:'a'.repeat(1000)})!;
+  assert.equal(failure.request_dispatched,false);assert.equal(failure.validation_issues?.[0]?.expected_constraint.kind,'schema_bounds');
+ }
+ assert.equal(preflightKnownGenericToolBody(contract('^a+$'),{value:'a'.repeat(4097)})?.request_dispatched,false);
+});

@@ -414,6 +414,39 @@
       "path": "/revit/import-excel-output",
       "body": {},
       "expected_effect": "apply"
+    },
+    {
+      "id": "vector_import_inspection_read",
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail",
+      "body": {
+        "manifestElementId": 123,
+        "partIndex": 0
+      },
+      "expected_effect": "read"
+    },
+    {
+      "id": "vector_import_inspection_near_name_apply",
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail-other",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "vector_detail_import_apply",
+      "method": "POST",
+      "path": "/revit/import-vector-detail",
+      "body": {},
+      "expected_effect": "apply"
+    },
+    {
+      "id": "vector_detail_import_preview",
+      "method": "POST",
+      "path": "/revit/import-vector-detail",
+      "body": {
+        "dryRun": true
+      },
+      "expected_effect": "preview"
     }
   ]
 }
