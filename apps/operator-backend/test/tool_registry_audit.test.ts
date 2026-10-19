@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { isAllowlisted } from "../src/allowlist.js";
 import { buildRegistryAudit, productNativeInventoryKeys, canonicalRegistryDigestSha256, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
+
+test("repository discovery retains shared inventory root in direct and apps layouts", () => {
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),"registry-audit-layout-"));
+  try {
+    for(const prefix of ["direct","nested"]) {
+      const root=path.join(temp,prefix),container=prefix==="nested"?path.join(root,"apps"):root;
+      const source=path.join(container,"operator-backend","src");
+      fs.mkdirSync(source,{recursive:true});fs.writeFileSync(path.join(source,"allowlist.ts"),"");
+      for(const start of [root,container,path.dirname(source),source])assert.equal(findRepoRoot(start),root);
+    }
+  } finally { fs.rmSync(temp,{recursive:true,force:true}); }
+});
 
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());

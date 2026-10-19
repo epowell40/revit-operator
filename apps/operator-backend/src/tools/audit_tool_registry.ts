@@ -165,7 +165,15 @@ export function findRepoRoot(startDir: string): string {
   for (let i = 0; i < 10; i++) {
     const direct = fs.existsSync(path.join(current, "operator-backend", "src", "allowlist.ts"));
     const apps = fs.existsSync(path.join(current, "apps", "operator-backend", "src", "allowlist.ts"));
-    if (direct || apps) return current;
+    if (apps) return current;
+    if (direct) {
+      // An apps/ source container is not the repository root: contracts and
+      // other shared inputs live beside it in the enclosing repository.
+      const parent = path.dirname(current);
+      return path.basename(current) === "apps" &&
+        fs.existsSync(path.join(parent, "apps", "operator-backend", "src", "allowlist.ts"))
+        ? parent : current;
+    }
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
