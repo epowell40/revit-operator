@@ -3,14 +3,14 @@ import {preflightKnownGenericToolBody} from './genericToolPreflight.js';import {
 const contracts=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'));
 const hash='a'.repeat(64),request={sourcePath:'artifacts/uploads/detail.pdf',expectedSourceSha256:hash,nativePlanPath:`artifacts/drafting-vector/source-${hash}.json.gz`,
  expectedNativePlanFileSha256:hash,expectedNativePlanSha256:hash,viewName:'Copied diagram'};
-test('vector import preflight requires immutable source/plan identity and owned continuation',()=>{
+test('withheld vector import retains immutable source/plan schema and owned continuation checks',()=>{
  const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/import-vector-detail',request_schema:contracts['/revit/import-vector-detail']},body);
  for(const body of [request,{...request,partIndex:0},{...request,partIndex:1,manifestElementId:123,expectedImportSnapshotSha256:hash}])assert.equal(check(body),null);
  for(const body of [{...request,sourcePath:'C:/outside.pdf'},{...request,nativePlanPath:'artifacts/uploads/plan.json'},
   {...request,expectedSourceSha256:undefined},{...request,expectedNativePlanFileSha256:'short'},{...request,partIndex:1},
   {...request,manifestElementId:123},{...request,partIndex:2000,manifestElementId:123,expectedImportSnapshotSha256:hash},{...request,viewId:4}])
   assert.equal(check(body)?.request_dispatched,false,JSON.stringify(body));
- assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),true);assert.equal(isSupportedNativeTool('GET','/revit/import-vector-detail'),false);
+ assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),false);assert.equal(isSupportedNativeTool('GET','/revit/import-vector-detail'),false);
 });
 test('vector discovery and summary cannot pose as complete part or record-page inspection',()=>{
  const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/inspect-vector-detail',request_schema:contracts['/revit/inspect-vector-detail']},body);
