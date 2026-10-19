@@ -30,7 +30,8 @@ namespace RevitBridge.Common.Tests
             return output.ToArray();
         }
         private static VectorDraftingImportRequest Request() => new VectorDraftingImportRequest { expectedSourceSha256 = H,
-            expectedNativePlanSha256 = new string('d', 64), expectedNativePlanFileSha256 = new string('e', 64), viewName = "Copied diagram", partIndex = 0 };
+            expectedNativePlanSha256 = new string('d', 64), expectedNativePlanFileSha256 = new string('e', 64), viewName = "Copied diagram", partIndex = 0,
+            sourcePath = "artifacts/uploads/source.pdf", nativePlanPath = "artifacts/drafting-vector/source-" + H + ".json.gz" };
 
         [Fact]
         public void CompleteArtifactRoundtripBindsBothFileBytesAndOriginalSource()
@@ -133,5 +134,41 @@ namespace RevitBridge.Common.Tests
         [InlineData("artifacts/drafting-vector/not-immutable.json.gz", true)]
         public void UnregisteredNamespacesCannotSupplyAPlan(string input, bool plan)
             => Assert.Throws<ArgumentException>(() => VectorDraftingPlanCodec.SourceFile(input, plan));
+
+        [Fact]
+        public void NativeRequestParsersRejectHiddenFieldsAndIncompleteContinuation()
+        {
+            var json = JsonSerializer.Serialize(Request()); VectorDraftingImportRequest.Parse(json);
+            Assert.Throws<ArgumentException>(() => VectorDraftingImportRequest.Parse(json.TrimEnd('}') + ",\"viewId\":123}"));
+            Assert.Throws<ArgumentException>(() => VectorDraftingImportRequest.Parse(json.TrimEnd('}') + ",\"partIndex\":2}"));
+            var request = Request(); request.manifestElementId = 123;
+            Assert.Throws<ArgumentException>(() => VectorDraftingImportRequest.Parse(JsonSerializer.Serialize(request)));
+            request.expectedImportSnapshotSha256 = H; VectorDraftingImportRequest.Parse(JsonSerializer.Serialize(request));
+            Assert.Equal(Operator.OperatorActionEffect.Apply, Operator.OperatorApprovalPolicy.GetEffect("POST", "/revit/import-vector-detail", json));
+            Assert.Equal(Operator.OperatorActionEffect.Preview, Operator.OperatorApprovalPolicy.GetEffect("POST", "/revit/import-vector-detail", "{\"dryRun\":true}"));
+        }
+
+        [Fact]
+        public void DiscoverySummaryAndWholeNativeRecordPagesHaveSeparateContracts()
+        {
+            VectorDraftingInspectionRequest.Parse("{\"action\":\"list\"}");
+            VectorDraftingInspectionRequest.Parse("{\"manifestElementId\":123,\"partIndex\":0}");
+            VectorDraftingInspectionRequest.Parse("{\"manifestElementId\":123,\"partIndex\":0,\"includeItems\":true,\"offset\":20,\"limit\":5}");
+            foreach (var json in new[] { "{\"action\":\"list\",\"manifestElementId\":123}", "{\"manifestElementId\":123,\"includeItems\":true}",
+                "{\"manifestElementId\":123,\"offset\":20}", "{\"manifestElementId\":123,\"partIndex\":2000}",
+                "{\"manifestElementId\":123,\"limit\":101}", "{\"manifestElementId\":123,\"apply\":true}" })
+                Assert.Throws<ArgumentException>(() => VectorDraftingInspectionRequest.Parse(json));
+            Assert.Equal(Operator.OperatorActionEffect.Read, Operator.OperatorApprovalPolicy.GetEffect("POST", "/revit/inspect-vector-detail", "{\"manifestElementId\":123}"));
+            Assert.Equal(Operator.OperatorActionEffect.Apply, Operator.OperatorApprovalPolicy.GetEffect("POST", "/revit/inspect-vector-detail-other", "{}"));
+        }
+
+        [Fact]
+        public void ExplicitNativeFontAndPenMappingsSurviveRetainedPlanRoundtrip()
+        {
+            var plan = Plan(); plan.layout.fontMap = new System.Collections.Generic.Dictionary<string, string> { ["Helvetica"] = "Arial" };
+            plan.layout.lineWeightMap = new System.Collections.Generic.Dictionary<string, int> { ["0.24"] = 2 };
+            var packed = Pack(plan); var decoded = VectorDraftingPlanCodec.Decode(packed, VectorDraftingPlanCodec.Hash(packed), plan.nativePlanSha256, plan.sourceSha256);
+            Assert.Equal("Arial", decoded.layout.fontMap!["Helvetica"]); Assert.Equal(2, decoded.layout.lineWeightMap!["0.24"]);
+        }
     }
 }

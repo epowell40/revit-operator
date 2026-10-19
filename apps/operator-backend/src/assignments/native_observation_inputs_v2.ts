@@ -25,7 +25,7 @@ export function parameterReadIsFreshNativeV2(applied: OperationV2, read: Operati
     && opened >= commitAt && completed >= opened);
 }
 export function nativePropertyReadIsFreshNativeV2(applied: OperationV2, read: OperationV2 | undefined, result: OperationResultV2,
-  route: '/revit/native-api-ops'|'/revit/visibility'|'/revit/schedules'|'/revit/inspect-drawing-spec'|'/revit/inspect-excel-import' = '/revit/native-api-ops'): boolean {
+  route: '/revit/native-api-ops'|'/revit/visibility'|'/revit/schedules'|'/revit/inspect-drawing-spec'|'/revit/inspect-excel-import'|'/revit/inspect-vector-detail' = '/revit/native-api-ops'): boolean {
   const commit = applied.result;
   const commitAt = Date.parse(commit?.completed_at ?? "");
   const readOpened = Date.parse(read?.opened_at ?? "");

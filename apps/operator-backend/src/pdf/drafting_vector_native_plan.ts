@@ -12,7 +12,12 @@ export type VectorNativePlan={schema:"operator.drafting_vector_native_plan.v1";s
  layout:Required<Pick<VectorNativeLayout,"paperWidthInches"|"viewScale"|"partSize">>&Pick<VectorNativeLayout,"fontMap"|"lineWeightMap">;paperHeightInches:number;coordinateSpace:"paper inches, right/up, lower-left of selected source region";
  entities:NativeVectorEntity[];partCount:number;zeroLengthSourceCommands:number;omissions:SourceOmission[];limits:string[];nativeWriteAllowed:false;nativePlanSha256:string};
 const epsilon=1e-9;
-const hash=(v:unknown)=>crypto.createHash("sha256").update(JSON.stringify(v)).digest("hex");
+export function canonicalVectorJson(value:unknown):string{
+ if(Array.isArray(value))return"["+value.map(v=>canonicalVectorJson(v)).join(",")+"]";
+ if(value&&typeof value==="object")return"{"+Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>JSON.stringify(k)+":"+canonicalVectorJson(v)).join(",")+"}";
+ const result=JSON.stringify(value);if(result===undefined)throw Error("Incomplete vector JSON value.");return result;
+}
+const hash=(v:unknown)=>crypto.createHash("sha256").update(canonicalVectorJson(v)).digest("hex");
 const finite=(n:unknown):n is number=>typeof n==="number"&&Number.isFinite(n);
 const cross=(a:PaperPoint,b:PaperPoint,c:PaperPoint)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
 const same=(a:PaperPoint,b:PaperPoint)=>Math.hypot(a[0]-b[0],a[1]-b[1])<epsilon;

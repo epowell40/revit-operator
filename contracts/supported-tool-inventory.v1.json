@@ -465,6 +465,14 @@
     {
       "method": "POST",
       "path": "/revit/inspect-drawing-spec"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-vector-detail"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail"
     }
   ],
   "mcp_aliases": [

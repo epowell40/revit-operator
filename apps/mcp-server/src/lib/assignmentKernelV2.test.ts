@@ -1699,6 +1699,19 @@ test("pre-dispatch schema rejection becomes a structured no-effect correction ga
   assert.equal((decorated as any).structuredContent.observation, undefined);
 });
 
+test("published string-pattern failures retain a bounded correction across the MCP/domain boundary",async()=>{
+  const {preflightKnownGenericToolBody,mcpPreDispatchFailureResult}=await import('./genericToolPreflight.js');
+  const request={method:'POST' as const,path:'/revit/import-vector-detail',body:{expectedSourceSha256:'not-a-digest'}};
+  const failure=preflightKnownGenericToolBody({method:'POST',path:request.path,request_schema:{type:'object',required:['expectedSourceSha256'],properties:{expectedSourceSha256:{type:'string',pattern:'^[a-f0-9]{64}$'}}}},request.body)!;
+  const decorated:any=await runWithAssignmentKernelV2(meta('apply','work',request),async()=>decorateAssignmentKernelMcpResultV2(mcpPreDispatchFailureResult(failure),'revit_call_tool'));
+  const result=decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status,'failed_before_dispatch');assert.equal(result.persistent_effect,'none');assert.equal(result.dispatch_state,'not_dispatched');
+  assert.equal(operationInputSchemaGapErrorV2(result.input_schema_gap,result),null);
+  assert.equal(result.input_schema_gap.issues[0].expected_constraint.kind,'string_pattern');assert.equal(result.input_schema_gap.issues[0].expected_constraint.pattern,'^[a-f0-9]{64}$');
+  const invalid=structuredClone(result.input_schema_gap);delete invalid.issues[0].expected_constraint.pattern;
+  assert(operationInputSchemaGapErrorV2(invalid,result));
+});
+
 test("retained placement schema alternative crosses the real MCP boundary without claiming native dispatch", async () => {
   const fixture = JSON.parse(readFileSync(path.resolve(process.cwd(), "../operator-backend/test/fixtures/unit403-predispatch-schema-gap.json"), "utf8"));
   const request = fixture.request;

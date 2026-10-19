@@ -14,12 +14,10 @@ namespace RevitBridge.Handlers
 {
     public sealed class ImportVectorDetailHandler : IRequestHandler
     {
-        public sealed class Params : VectorDraftingImportRequest { }
         public Task<object> Handle(UIApplication app, string jsonData) => Task.FromResult(NativeMutationPreflightBoundary.Execute(enter => Execute(app, jsonData, enter)));
         private static object Execute(UIApplication app, string jsonData, Action enterNativeScope)
         {
-            var request = JsonSerializer.Deserialize<Params>(jsonData) ?? throw new ArgumentException("Vector import request required.");
-            VectorDraftingPlanCodec.ValidateRequest(request);
+            var request = VectorDraftingImportRequest.Parse(jsonData);
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit project.");
             if (doc.IsFamilyDocument) throw new InvalidOperationException("Vector detail import requires a project document.");
             string sourcePath = VectorDraftingPlanCodec.SourceFile(request.sourcePath, false), planPath = VectorDraftingPlanCodec.SourceFile(request.nativePlanPath, true);
@@ -79,6 +77,8 @@ namespace RevitBridge.Handlers
                     ["partIndex"] = request.partIndex, ["partsTotal"] = plan.partCount, ["completedParts"] = stored.Parts.Count,
                     ["nextPartIndex"] = stored.Parts.Count < plan.partCount ? stored.Parts.Count : (int?)null,
                     ["sourceSha256"] = stored.SourceSha256, ["nativePlanSha256"] = stored.NativePlanSha256,
+                    ["nativePlanFileSha256"] = stored.NativePlanFileSha256, ["sourcePath"] = stored.SourcePath,
+                    ["remainingPartIndices"] = Enumerable.Range(stored.Parts.Count, plan.partCount - stored.Parts.Count).ToArray(),
                     ["createdEntityIds"] = part.Entities.Select(e => e.Id).ToArray(), ["createdContentCount"] = part.Entities.Count,
                     ["contentKindCounts"] = part.Entities.GroupBy(e => e.Kind).ToDictionary(g => g.Key, g => g.Count()),
                     ["paperWidthInches"] = plan.layout.paperWidthInches, ["paperHeightInches"] = plan.paperHeightInches, ["viewScale"] = view.Scale,

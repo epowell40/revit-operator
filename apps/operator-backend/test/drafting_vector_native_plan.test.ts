@@ -91,3 +91,10 @@ test("malformed native mapping values cannot masquerade as dictionaries",async()
  for(const value of [null,"Arial",[],true,42])for(const key of ["fontMap","lineWeightMap"])
   assert.throws(()=>compileDraftingVectorNativePlan(s,s.planSha256,{...layout,[key]:value} as never),/objects/);
 });
+
+test("equivalent native layout key order has one source-bound plan identity",async()=>{
+ const s=await source("10 10 m 20 20 l S");
+ const a=compileDraftingVectorNativePlan(s,s.planSha256,{paperWidthInches:4,viewScale:100,partSize:50,fontMap:{Helvetica:"Arial"},lineWeightMap:{"1":3,"2":5}});
+ const b=compileDraftingVectorNativePlan(s,s.planSha256,{lineWeightMap:{"2":5,"1":3},fontMap:{Helvetica:"Arial"},partSize:50,viewScale:100,paperWidthInches:4});
+ assert.equal(a.nativePlanSha256,b.nativePlanSha256);
+});

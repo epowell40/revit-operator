@@ -18,6 +18,29 @@ const MAX_SCHEMA_VISITS = 100_000;
 const MAX_SCHEMA_ALTERNATIVES = 16;
 type ValidationBudget = { remaining: number; exhausted: boolean };
 
+// Current native string contracts use nonbranching identifiers/paths or a fixed
+// non-whitespace search. Variable repetition requires a start anchor.
+// Bound this subset explicitly; never run arbitrary nested/branching regexes on
+// provider data or silently ignore a published pattern we cannot safely check.
+function boundedPatternMatch(pattern:string,value:string):boolean{
+  if(pattern.length>512||value.length>4096)throw Error('unsupported_pattern_bounds');
+  let insideClass=false,variable=0;
+  for(let i=0;i<pattern.length;i++){
+    const c=pattern[i];
+    if(c==='\\'){if(!insideClass&&/[1-9]/.test(pattern[i+1]??''))throw Error('unsupported_pattern_backreference');i++;continue;}
+    if(c==='['&&!insideClass){insideClass=true;continue;}if(c===']'&&insideClass){insideClass=false;continue;}if(insideClass)continue;
+    if(c==='('||c===')'||c==='|')throw Error('unsupported_pattern_branch');
+    if(c==='*'||c==='+'||c==='?')variable++;
+    if(c==='{'){
+      const match=/^\{(\d+)(?:,(\d*))?\}/.exec(pattern.slice(i));if(!match||Number(match[1])>4096||match[2]!==undefined&&match[2]!==''&&Number(match[2])>4096)throw Error('unsupported_pattern_quantifier');
+      if(match[2]!==undefined&&match[1]!==match[2])variable++;i+=match[0].length-1;
+    }
+    if(variable>1)throw Error('unsupported_pattern_repetition');
+  }
+  if(variable&&!pattern.startsWith('^'))throw Error('unsupported_unanchored_repetition');
+  return new RegExp(pattern,'u').test(value);
+}
+
 function boundedScalar(value: unknown): string | number | boolean | null | undefined {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -208,6 +231,14 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
     if (maxLength !== null && value.length > maxLength) {
       const message = `${field} must contain at most ${maxLength} characters`;
       pushIssue(violations, { field_path: field, expected_type: `maxLength:${maxLength}`, actual_type: "string", safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit", expected_constraint: { kind: "string_length", ...(minLength !== null ? { min_length: minLength } : {}), max_length: maxLength }, message });
+    }
+    if(schema.pattern!==undefined){
+      let valid=false,unsupported=false;
+      try{if(typeof schema.pattern!=='string')throw Error('invalid_pattern');valid=boundedPatternMatch(schema.pattern,value);}catch{unsupported=true;}
+      if(!valid)pushIssue(violations,{field_path:field,expected_type:unsupported?'supported_bounded_string_pattern':'string_pattern',actual_type:'string',
+        safe_correction_eligibility:'provider_corrected_arguments_required',correction_action:'provider_resubmit',
+        expected_constraint:unsupported?{kind:'schema_bounds'}:{kind:'string_pattern',pattern:schema.pattern as string},
+        message:unsupported?`${field} uses a string pattern outside bounded native preflight support`:`${field} must match the published string pattern ${schema.pattern}`});
     }
   }
 

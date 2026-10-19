@@ -67,9 +67,9 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 });
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
-  assert.equal(implemented.length, 221);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 116);
-  for(const route of ['/revit/import-excel-output','/revit/inspect-excel-import']){
+  assert.equal(implemented.length, 223);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 118);
+  for(const route of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/import-vector-detail','/revit/inspect-vector-detail']){
     assert.equal(isSupportedToolRoute('POST',route),true);assert.equal(isAllowlisted('POST',route),true);
     assert.equal(isSupportedToolRoute('GET',route),false);assert.equal(isSupportedToolRoute('POST',route+'-other'),false);
   }

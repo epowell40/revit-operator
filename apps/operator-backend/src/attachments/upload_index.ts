@@ -107,6 +107,12 @@ export function findSessionUploadById(sessionId: string, id: string): UploadInde
   return readLatestSessionUploadIndexRecords(sessionId, 500)
     .find(record => record.id === id && record.session_id === sessionId) ?? null;
 }
+/** A native retained source must still belong to the live host-owned conversation.
+ * No fallback to another session's upload index. Reattach an older source if needed. */
+export function findSessionUploadBySource(sessionId:string,relativePath:string,sha256:string):UploadIndexRecord|null{
+ if(!sessionId||!relativePath||!sha256)return null;
+ return readLatestSessionUploadIndexRecords(sessionId,500).find(r=>r.session_id===sessionId&&r.relative_path===relativePath&&r.sha256===sha256)??null;
+}
 
 function looksLikeImagePath(relPath: string): boolean {
   const ext = path.extname(relPath).toLowerCase();

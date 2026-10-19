@@ -1,6 +1,7 @@
 import type {AssignmentSnapshotV2,OperationV2,OperationResultV2} from "../domain/assignment-kernel/index.js";
 import {deletionRequestV2} from "./deletion_contract_v2.js";
 import {excelTableImportDeliverableTargetsV2} from "./excel_table_import_v2.js";
+import {vectorDetailImportDeliverableTargetsV2} from "./vector_detail_import_v2.js";
 
 /** Called only after the independent native postcondition has passed.
  * Platform owners/collateral are not principal work-credit targets. */
@@ -10,8 +11,9 @@ export function verifiedDeliverableTargetGroupsV2(snapshot:AssignmentSnapshotV2,
     // read's containing sheet is not itself the edited deliverable. Keep
     // this platform mapping here; the generic domain consumes only the fact.
     const deletion=verificationSubject&&deletionRequestV2(verificationSubject.input);
-    if(verificationSubject?.request_identity?.path==='/revit/import-excel-output'){
-      const deliverables=excelTableImportDeliverableTargetsV2(snapshot,verificationSubject);
+    if(verificationSubject&&['/revit/import-excel-output','/revit/import-vector-detail'].includes(verificationSubject.request_identity?.path??'')){
+      const deliverables=verificationSubject.request_identity?.path==='/revit/import-vector-detail'
+        ?vectorDetailImportDeliverableTargetsV2(snapshot,verificationSubject):excelTableImportDeliverableTargetsV2(snapshot,verificationSubject);
       if(deliverables.length!==1)throw new Error('verified_deliverable_targets_invalid');
       groups.push(deliverables);
     }

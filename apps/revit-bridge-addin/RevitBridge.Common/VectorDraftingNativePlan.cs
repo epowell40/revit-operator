@@ -15,6 +15,8 @@ namespace RevitBridge.Common
         public double paperWidthInches { get; set; }
         public int viewScale { get; set; }
         public int partSize { get; set; }
+        public Dictionary<string, string>? fontMap { get; set; }
+        public Dictionary<string, int>? lineWeightMap { get; set; }
     }
     public sealed class VectorDraftingNativeStyle
     {
@@ -83,6 +85,33 @@ namespace RevitBridge.Common
         public long? manifestElementId { get; set; }
         public string? expectedImportSnapshotSha256 { get; set; }
         public bool dryRun { get; set; }
+        public static VectorDraftingImportRequest Parse(string json)
+        {
+            VectorDraftingPlanCodec.RequestFields(json, new[] { "sourcePath", "expectedSourceSha256", "nativePlanPath", "expectedNativePlanFileSha256",
+                "expectedNativePlanSha256", "viewName", "partIndex", "manifestElementId", "expectedImportSnapshotSha256", "dryRun" });
+            var result = JsonSerializer.Deserialize<VectorDraftingImportRequest>(json) ?? throw new ArgumentException("Vector import request required.");
+            VectorDraftingPlanCodec.ValidateRequest(result); return result;
+        }
+    }
+    public sealed class VectorDraftingInspectionRequest
+    {
+        public string action { get; set; } = "inspect";
+        public long? manifestElementId { get; set; }
+        public int? partIndex { get; set; }
+        public int offset { get; set; }
+        public int limit { get; set; } = 20;
+        public bool includeItems { get; set; }
+        public static VectorDraftingInspectionRequest Parse(string json)
+        {
+            VectorDraftingPlanCodec.RequestFields(json, new[] { "action", "manifestElementId", "partIndex", "offset", "limit", "includeItems" });
+            var r = JsonSerializer.Deserialize<VectorDraftingInspectionRequest>(json) ?? throw new ArgumentException("Vector inspection request required.");
+            if (r.offset < 0 || r.offset > 100000 || r.limit < 1 || r.limit > 100 || r.partIndex < 0 || r.partIndex > 1999
+                || (r.action != "list" && r.action != "inspect") || r.action == "inspect" && (!r.manifestElementId.HasValue || r.manifestElementId <= 0)
+                || r.action == "list" && (r.manifestElementId.HasValue || r.partIndex.HasValue || r.includeItems)
+                || r.action == "inspect" && (!r.partIndex.HasValue && r.includeItems || !r.includeItems && r.offset != 0))
+                throw new ArgumentException("Exact vector manifest, optional partIndex and bounded whole-record page required; list cannot inspect native content.");
+            return r;
+        }
     }
 
     /// <summary>Bounded immutable artifact consumption. Source data is not permission to mutate.
@@ -94,6 +123,13 @@ namespace RevitBridge.Common
         { using var sha = SHA256.Create(); return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(); }
         public static string Hash(string text) => Hash(Encoding.UTF8.GetBytes(text));
         public static bool IsHash(string? value) => value != null && Regex.IsMatch(value, "^[a-f0-9]{64}$");
+        public static void RequestFields(string json, string[] allowed)
+        {
+            using var parsed = JsonDocument.Parse(json);
+            if (parsed.RootElement.ValueKind != JsonValueKind.Object || parsed.RootElement.EnumerateObject().Any(p => !allowed.Contains(p.Name))
+                || parsed.RootElement.EnumerateObject().Select(p => p.Name).Distinct().Count() != parsed.RootElement.EnumerateObject().Count())
+                throw new ArgumentException("Only explicit vector request fields accepted; duplicate/unknown fields were not ignored.");
+        }
         public static byte[] ReadBounded(Stream input, int maximum)
         {
             using var output = new MemoryStream(); var buffer = new byte[8192]; int count;
@@ -185,9 +221,10 @@ namespace RevitBridge.Common
         public static void ValidateRequest(VectorDraftingImportRequest r)
         {
             if (!IsHash(r.expectedSourceSha256) || !IsHash(r.expectedNativePlanFileSha256) || !IsHash(r.expectedNativePlanSha256)
-                || r.partIndex < 0 || r.manifestElementId.HasValue && r.manifestElementId.Value <= 0
+                || r.partIndex < 0 || r.partIndex > 1999 || r.manifestElementId.HasValue && r.manifestElementId.Value <= 0
                 || r.expectedImportSnapshotSha256 != null && !IsHash(r.expectedImportSnapshotSha256)
-                || string.IsNullOrWhiteSpace(r.viewName) || r.viewName.Trim().Length > 160)
+                || string.IsNullOrWhiteSpace(r.viewName) || r.viewName.Trim().Length > 160
+                || string.IsNullOrWhiteSpace(r.sourcePath) || r.sourcePath.Length > 520 || string.IsNullOrWhiteSpace(r.nativePlanPath) || r.nativePlanPath.Length > 520)
                 throw new ArgumentException("Exact source/native plan hashes, viewName and nonnegative partIndex required.");
             if (r.manifestElementId.HasValue != (r.expectedImportSnapshotSha256 != null))
                 throw new ArgumentException("Managed continuation requires exact manifestElementId and current snapshot together.");
