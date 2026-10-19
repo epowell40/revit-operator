@@ -24,6 +24,27 @@ namespace RevitBridge.Common
                 throw new ArgumentException("Cubic curve must exceed the actual native ShortCurveTolerance; no source curve was silently dropped.");
         }
 
+        /// <summary>Conservative exact-locus simplification for PDF cubics that are
+        /// straight, monotonically ordered spans. A zero chord, turnback or any
+        /// non-collinearity must retain all four controls; no curve is flattened.</summary>
+        public static bool IsExactMonotoneLine(IEnumerable<double[]> points)
+        {
+            var p = ValidateControlPoints(points);
+            var delta = Enumerable.Range(0, 3).Select(i => p[3][i] - p[0][i]).ToArray();
+            int axis = 0;
+            for (int i = 1; i < 3; i++) if (Math.Abs(delta[i]) > Math.Abs(delta[axis])) axis = i;
+            if (delta[axis] == 0 || delta.Any(n => !Finite(n))) return false;
+            foreach (var control in p)
+                for (int i = 0; i < 3; i++)
+                {
+                    double crossA = (control[i] - p[0][i]) * delta[axis], crossB = (control[axis] - p[0][axis]) * delta[i];
+                    if (!Finite(crossA) || !Finite(crossB) || crossA != crossB) return false;
+                }
+            double a = (p[1][axis] - p[0][axis]) / delta[axis];
+            double b = (p[2][axis] - p[0][axis]) / delta[axis];
+            return a >= 0 && a <= b && b <= 1;
+        }
+
         /// <summary>Copy-stable representation of a complete native spline, including its bounded domain.
         /// Relative controls are quantized at 1e-9ft only for this comparison key. Raw native controls
         /// remain available separately; a key is not independent source or visual verification.</summary>

@@ -24,9 +24,23 @@ namespace RevitBridge.Logic
                 .ToDictionary(f => f, DrawingSpecNativeFontProfile.Capture, StringComparer.OrdinalIgnoreCase);
             foreach (var e in plan.entities)
             {
-                if (e.points != null) RequireCurveLength(Curve(e.kind, e.points, p => new XYZ(p[0] / 12 * plan.layout.viewScale, p[1] / 12 * plan.layout.viewScale, 0)), doc.Application.ShortCurveTolerance);
-                if (e.loops != null) foreach (var loop in e.loops) foreach (var s in loop)
-                    RequireCurveLength(Curve(s.kind, Controls(s), p => new XYZ(p[0] / 12 * plan.layout.viewScale, p[1] / 12 * plan.layout.viewScale, 0)), doc.Application.ShortCurveTolerance);
+                void Check(string kind, double[][] points, string boundary)
+                {
+                    try
+                    {
+                        using var curve = Curve(kind, points, p => new XYZ(p[0] / 12 * plan.layout.viewScale, p[1] / 12 * plan.layout.viewScale, 0));
+                        RequireCurveLength(curve, doc.Application.ShortCurveTolerance);
+                    }
+                    catch (Exception error)
+                    {
+                        throw new ArgumentException("Vector source entity '" + e.id + "' (source '" + e.sourceId + "', " + kind + boundary
+                            + ") failed before transaction start; actual ShortCurveTolerance=" + doc.Application.ShortCurveTolerance.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                            + "ft. " + error.Message, error);
+                    }
+                }
+                if (e.points != null) Check(e.kind, e.points, "");
+                if (e.loops != null) for (int loop = 0; loop < e.loops.Length; loop++) for (int segment = 0; segment < e.loops[loop].Length; segment++)
+                { var s = e.loops[loop][segment]; Check(s.kind, Controls(s), ", loop " + loop + " segment " + segment); }
                 if (e.style != null && e.style.dashInches.Where((v, i) => i % 2 == 1).Any(v => v == 0)) throw new ArgumentException("Zero-length native dash gaps require explicit continuous-stroke conversion.");
             }
             return result;
@@ -70,7 +84,11 @@ namespace RevitBridge.Logic
         internal static Autodesk.Revit.DB.Curve Curve(string kind, double[][] p, Func<double[], XYZ> point)
         {
             if (kind == "line" || kind == "close") return Line.CreateBound(point(p[0]), point(p[1]));
-            if (kind == "cubic_bezier") return NurbSpline.CreateCurve(3, DraftingCubicBezier.ClampedKnots(), p.Select(point).ToList());
+            if (kind == "cubic_bezier")
+            {
+                if (DraftingCubicBezier.IsExactMonotoneLine(p.Select(v => new[] { v[0], v[1], 0d }))) return Line.CreateBound(point(p[0]), point(p[3]));
+                return NurbSpline.CreateCurve(3, DraftingCubicBezier.ClampedKnots(), p.Select(point).ToList());
+            }
             throw new ArgumentException("Unknown source curve kind.");
         }
         private static void RequireCurveLength(Autodesk.Revit.DB.Curve curve, double tolerance) => DraftingCubicBezier.RequireNativeLength(curve.Length, tolerance);

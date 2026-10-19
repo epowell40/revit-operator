@@ -15,7 +15,7 @@ import {vectorDetailImportPostconditionSatisfiedV2} from '../src/verification/ve
 import {readEvidenceRef,readAuthoritativeEvidence} from '../src/evidence/evidence_store.js';
 import {vectorImportFixture} from './vector_detail_import.fixtures.js';
 
-for(const variant of ['exact_first','exact_continuation','exact_last','tampered_plan','missing_source','foreign_source','bad_native_projection','wrong_part','read_failure','paused_after_commit','incomplete_inventory']as const)
+for(const variant of ['exact_first','exact_continuation','exact_last','tampered_plan','missing_source','foreign_source','bad_native_projection','wrong_part','read_failure','paused_after_commit','incomplete_inventory','native_preflight_blocked']as const)
 test(`ordinary vector import ${variant} keeps source/native verification integral without replay`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-vector-proof-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
@@ -38,12 +38,13 @@ test(`ordinary vector import ${variant} keeps source/native verification integra
    async callTool(_tool:string,args:any,context:any){
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();const isRead=args.path===f.readInput.path;
     if(isRead&&variant==='read_failure')throw Error('native-vector-read-failed');
-    const payload=structuredClone(isRead?f.nativeRead:f.applied);
+    const blocked=variant==='native_preflight_blocked'&&!isRead;
+    const payload=blocked?{status:'Blocked',error:"Curve length is too small for Revit's tolerance (as identified by Application.ShortCurveTolerance).\r\nParameter name: controlPoints",transaction:{status:'not_started',persistentEffect:'none'}}:structuredClone(isRead?f.nativeRead:f.applied);
     if(!isRead&&variant==='paused_after_commit')controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     return{content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
      operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
-      status:'succeeded',dispatch_state:'dispatched',persistent_effect:isRead?'none':'applied',native_transaction_state:isRead?'not_applicable':'committed',authority:'native-host',
-      affected_target_identities:isRead?['element_id:30']:f.affected,result_schema_id:'operator-native/POST:'+args.path+'/v2',observation_required:true,
+      status:blocked?'failed_after_dispatch':'succeeded',dispatch_state:'dispatched',persistent_effect:isRead||blocked?'none':'applied',native_transaction_state:blocked?'not_started':isRead?'not_applicable':'committed',authority:'native-host',
+      affected_target_identities:blocked?[]:isRead?['element_id:30']:f.affected,result_schema_id:'operator-native/POST:'+args.path+'/v2',observation_required:true,
       raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:new Date().toISOString()},
      observation:{raw_payload:payload,semantic_facts:[{fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true},
@@ -54,6 +55,13 @@ test(`ordinary vector import ${variant} keeps source/native verification integra
   try{
    const response=await handleCodexDynamicToolCall(runtime,{id:'vector-import',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'vector-turn',tool:'revit_call_tool',arguments:f.input}}as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
+   if(variant==='native_preflight_blocked'){
+    assert.equal(apply.result?.status,'failed_after_dispatch');assert.equal(apply.persistent_effect,'none');
+    assert.equal(apply.result?.native_transaction_state,'not_started');assert.equal(calls.length,1);
+    assert.equal(apply.verification_operation_ids.length,0);assert.equal(s.unresolved_unknown_operation_ids.length,0);
+    assert(!apply.observation_ids.flatMap(id=>s.observations[id]!.facts).some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true));
+    assert.deepEqual(verifiedNativeWorkTargetIdentitiesV2(s,apply.operation_id),[]);return;
+   }
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path===f.input.path).length,1);
    assert.equal(calls.filter(c=>c.path===f.readInput.path).length,['paused_after_commit','incomplete_inventory'].includes(variant)?0:1,JSON.stringify({response,calls}));
    const read=apply.verification_operation_ids.map(id=>s.operations[id]!).find(Boolean);

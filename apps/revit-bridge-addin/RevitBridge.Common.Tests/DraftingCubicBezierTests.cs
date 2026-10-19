@@ -38,6 +38,27 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ExactMonotoneStraightCubicsAvoidInvalidRepeatedNativeControlsWithoutFlatteningRealCurves()
+        {
+            var actual = new[] { new[] { 15.406722752100835, 6.231932610644249, 0d },
+                new[] { 15.40567233193277, 6.231932610644249, 0d },
+                new[] { 15.405042079831928, 6.231932610644249, 0d },
+                new[] { 15.405042079831928, 6.231932610644249, 0d } };
+            Assert.True(DraftingCubicBezier.IsExactMonotoneLine(actual));
+            Assert.True(DraftingCubicBezier.IsExactMonotoneLine(actual.Reverse()));
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(Enumerable.Repeat(actual[0], 4)));
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(Controls()));
+            var bowed = actual.Select(p => p.ToArray()).ToArray(); bowed[1][1] += 1e-10;
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(bowed));
+            var loop = Controls(); loop[3] = loop[0].ToArray();
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(loop));
+            var turnback = new[] { new[] { 0d, 0d, 0d }, new[] { 3d, 0d, 0d }, new[] { -1d, 0d, 0d }, new[] { 2d, 0d, 0d } };
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(turnback));
+            Assert.False(DraftingCubicBezier.IsExactMonotoneLine(actual.Select(p => p.Select(v => v * 1e200).ToArray())));
+            Assert.Throws<ArgumentException>(() => DraftingCubicBezier.IsExactMonotoneLine(actual.Take(3)));
+        }
+
+        [Fact]
         public void DifferentCubicsWithIdenticalEndpointsAndMidpointHaveDifferentFullKeys()
         {
             var a = Controls(1); var b = Controls(2);

@@ -49,6 +49,50 @@ test("native parts are deterministic and zero-length source commands are counted
  assert.equal(p.entities.length,120);assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.partCount,3);assert.equal(p.nativePlanSha256,again.nativePlanSha256);
  assert(new Set(p.entities.map(e=>e.id)).size===120);
 });
+
+test("constant cubic commands count as zero while exact monotone straight cubics become editable lines",async()=>{
+ const s=await source("10 10 m 10 10 10 10 10 10 c S 20 20 m 20 20 30 20 30 20 c S 40 40 m 40 50 40 55 40 60 c S");
+ const p=compileDraftingVectorNativePlan(s,s.planSha256,layout);
+ assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.entities.length,2);
+ assert(p.entities.every(e=>e.kind==="line"&&e.points!.length===2));
+ for(const [i,points] of [[[20/72,20/72],[30/72,20/72]],[[40/72,40/72],[40/72,60/72]]].entries())
+  for(let n=0;n<2;n++)for(let axis=0;axis<2;axis++)assert(Math.abs(p.entities[i].points![n][axis]-points[n][axis])<1e-14);
+});
+
+test("closed, backtracking and slightly curved cubic source geometry is never mistaken for a straight span",async()=>{
+ const s=await source("10 10 m 20 20 30 20 10 10 c S [1 1] 0 d 20 20 m 60 20 10 20 50 20 c S [] 0 d 10 30 m 10 30.00000001 20 30 30 30 c S");
+ const p=compileDraftingVectorNativePlan(s,s.planSha256,layout);
+ assert.equal(p.zeroLengthSourceCommands,0);assert.equal(p.entities.length,3);
+ assert(p.entities.every(e=>e.kind==="cubic_bezier"&&e.points!.length===4));
+});
+
+test("solid collinear backtracking cubics retain their analytic extent beyond the endpoint",async()=>{
+ const s=await source("10 10 m 10 10 50 10 30 10 c S");
+ const p=compileDraftingVectorNativePlan(s,s.planSha256,layout),line=p.entities[0];
+ assert.equal(line.kind,"line");assert(line.points![1][0]>30/72);
+ const sourcePoints:PaperPoint[]=[[10,10],[10,10],[50,10],[30,10]];
+ const atPeak=evaluate(sourcePoints,.8);assert(Math.abs(line.points![1][0]-atPeak[0]/72)<1e-12);
+ for(let i=0;i<=1000;i++){
+  const point=evaluate(sourcePoints,i/1000);assert(point[0]/72>=line.points![0][0]-1e-14&&point[0]/72<=line.points![1][0]+1e-14);
+ }
+});
+
+test("round-cap degenerate subpaths cannot silently lose painted dots while internal constant commands are counted",async()=>{
+ for(const command of ["10 10 l","10 10 10 10 10 10 c","h"]){
+  const s=await source("1 J 10 10 m "+command+" S 20 20 m 30 30 l S");
+  assert.throws(()=>compileDraftingVectorNativePlan(s,s.planSha256,layout),/paints a dot/);
+ }
+ const internal=await source("1 J 10 10 m 10 10 10 10 10 10 c 20 20 l S");
+ const p=compileDraftingVectorNativePlan(internal,internal.planSha256,layout);
+ assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.entities.length,1);assert.equal(p.entities[0].kind,"line");
+});
+
+test("constant and straight cubics in closed fill boundaries preserve the complete rectangular region",async()=>{
+ const s=await source("10 10 m 10 10 10 10 10 10 c 10 10 30 10 30 10 c 30 30 l 10 30 l h f");
+ const p=compileDraftingVectorNativePlan(s,s.planSha256,layout);
+ assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.entities.length,1);assert.equal(p.entities[0].kind,"fill");
+ assert.equal(p.entities[0].loops![0].length,4);assert(p.entities[0].loops![0].every(s=>s.kind==="line"));
+});
 test("unsupported source cases cannot be silently approximated into a native plan",async()=>{
  const dash=await source("[2 1] 1 d 10 10 m 20 20 l S");assert.throws(()=>compileDraftingVectorNativePlan(dash,dash.planSha256,layout),/dash phase/);
  const shear=await source("2 0 0 1 0 0 cm 10 10 m 20 20 l S");assert.throws(()=>compileDraftingVectorNativePlan(shear,shear.planSha256,layout),/Nonuniform/);

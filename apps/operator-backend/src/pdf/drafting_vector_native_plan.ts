@@ -91,6 +91,29 @@ function polygon(segments:Segment[]):Polygon{
  return points;
 }
 const segmentPoints=(s:Segment)=>s.kind==="cubic_bezier"?[s.start,...s.controlPoints,s.end]:[s.start,s.end];
+// PDF producers also encode straight or constant commands as cubics. Only
+// algebraically collinear controls may become a line. Ordered controls retain
+// their endpoints. A solid backtracking stroke retains its full analytic range;
+// dashed strokes and fill boundaries must keep their traversal. Never flatten
+// even a slightly bowed curve to its endpoints.
+export function normalizeNativeDraftingSegment(s:Segment,solidStrokeLocus=false):Segment|null{
+ if(s.kind!=="cubic_bezier")return same(s.start,s.end)?null:s;
+ const p=segmentPoints(s),equal=(a:PaperPoint,b:PaperPoint)=>a[0]===b[0]&&a[1]===b[1];
+ if(p.every(v=>equal(v,p[0])))return null;
+ const dx=s.end[0]-s.start[0],dy=s.end[1]-s.start[1];
+ if(dx===0&&dy===0)return s;
+ if(p.some(v=>dx*(v[1]-s.start[1])!==dy*(v[0]-s.start[0])))return s;
+ const axis=Math.abs(dx)>=Math.abs(dy)?0:1,d=s.end[axis]-s.start[axis];
+ const a=(p[1][axis]-s.start[axis])/d,b=(p[2][axis]-s.start[axis])/d;
+ if(a>=0&&a<=b&&b<=1)return{kind:"line",start:s.start,end:s.end};
+ if(!solidStrokeLocus)return s;
+ const v=p.map(pt=>pt[axis]-p[0][axis]),A=3*v[1]-3*v[2]+v[3],B=-6*v[1]+3*v[2],C=3*v[1];
+ const candidates=[0,1];
+ if(A===0){if(B!==0)candidates.push(-C/(2*B));}
+ else{const disc=4*B*B-12*A*C;if(disc>=0)candidates.push((-2*B-Math.sqrt(disc))/(6*A),(-2*B+Math.sqrt(disc))/(6*A));}
+ const points=candidates.filter(t=>t>=0&&t<=1).map(t=>evalCubic(p,t)).sort((a,b)=>a[axis]-b[axis]);
+ return{kind:"line",start:d>0?points[0]:points.at(-1)!,end:d>0?points.at(-1)!:points[0]};
+}
 const lineLoop=(p:Polygon):Segment[]=>p.map((point,i)=>({kind:"line",start:point,end:p[(i+1)%p.length]}));
 
 /** Deterministic source conversion, not model authorization. Native creation must independently
@@ -124,7 +147,7 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
    const loops:Segment[][]=[],linear:Polygon[]=[];let curved=false;
    for(const contour of path.contours){
     let segments=contour.commands.filter(c=>c.kind!=="move") as Segment[];
-    segments=segments.filter(s=>{if(s.kind!=="cubic_bezier"&&same(s.start,s.end)){zero++;return false;}return true;});
+    segments=segments.flatMap(s=>{const normalized=normalizeNativeDraftingSegment(s);if(!normalized){zero++;return[];}return[normalized];});
     if(!segments.length)continue;
     if(segments.some(s=>s.kind==="cubic_bezier")){
      if(masks.some(mask=>!convex(mask)||!segments.every(s=>segmentPoints(s).every(p=>inside(p,mask)))))throw Error("A clipped curved fill needs explicit boolean conversion; no source fill was approximated.");
@@ -144,11 +167,22 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
    }
   }
   if(path.paint.stroke){
-   for(const contour of path.contours)for(const [index,segment]of contour.commands.entries()){
+   for(const contour of path.contours){
+    // ISO32000-1 8.5.3.2: an entire degenerate round-cap subpath paints a
+    // circle. Internal zero-length commands are different; do not erase dots.
+    const drawing=contour.commands.filter(c=>c.kind!=="move") as Segment[];
+    const points=drawing.flatMap(segmentPoints);
+    if(path.style.lineCap===1&&points.length&&points.every(p=>p[0]===points[0][0]&&p[1]===points[0][1]))
+     throw Error("Round-cap degenerate source subpath "+contour.id+" paints a dot and requires explicit native dot conversion; no mark was silently dropped.");
+    for(const [index,segment]of contour.commands.entries()){
     if(segment.kind==="move")continue;
-    if(segment.kind!=="cubic_bezier"&&same(segment.start,segment.end)){zero++;continue;}
-    let parts:Segment[]=[segment];for(const mask of masks)parts=parts.flatMap(s=>clipDraftingSegment(s,mask));
-    for(const [part,s]of parts.entries())entities.push({id:contour.id+":"+index+":"+part,sourceId:contour.id,kind:s.kind==="cubic_bezier"?"cubic_bezier":"line",points:segmentPoints(s).map(point),style});
+    const normalized=normalizeNativeDraftingSegment(segment,style.dashInches.length===0);if(!normalized){zero++;continue;}
+    let parts:Segment[]=[normalized];for(const mask of masks)parts=parts.flatMap(s=>clipDraftingSegment(s,mask));
+    for(const [part,s]of parts.entries()){
+     const native=normalizeNativeDraftingSegment(s,style.dashInches.length===0);if(!native){zero++;continue;}
+     entities.push({id:contour.id+":"+index+":"+part,sourceId:contour.id,kind:native.kind==="cubic_bezier"?"cubic_bezier":"line",points:segmentPoints(native).map(point),style});
+    }
+    }
    }
   }
  }
@@ -167,5 +201,6 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
  if(new Set(entities.map(e=>e.id)).size!==entities.length)throw Error("Duplicate source entity identities.");
  const plan:Omit<VectorNativePlan,"nativePlanSha256">={schema:"operator.drafting_vector_native_plan.v1",sourceSha256:source.sourceSha256,sourcePlanSha256:source.planSha256,selectionSha256:selected.selectionSha256,sourceLabel:source.sourceLabel,sourceSheet:source.sourceSheet,page:source.page,region:source.region,layout:{...options,partSize},paperHeightInches:(r[3]-r[1])*scale,coordinateSpace:"paper inches, right/up, lower-left of selected source region",entities,partCount:Math.ceil(entities.length/partSize),zeroLengthSourceCommands:zero,omissions:selected.omissions,
  limits:["Source plan does not authorize model changes or certify native/visual results.","Text paint order, source text clipping/color/decorations, native text anchor/font metrics, line caps/joins and native pen physical widths require actual visual comparison; native text defaults to black.","Native pen indices preserve relative source widths by a declared default .24point base unless explicitly mapped; native project pen thickness is not assumed.","Path stroke/fill colors, editable text/curves/fills and explicit source omissions are retained. Schematics are not physical engineering scale.","Import each owned part once, inspect fresh source/native geometry/text and then review/iterate actual work-area and sheet visuals."] ,nativeWriteAllowed:false};
+ plan.limits.unshift("Internal constant commands are counted as zero length. Exactly straight cubic spans preserve their full solid-stroke analytic extent as editable lines; dashed traversal, fill traversal and genuinely curved controls are not flattened. Entire round-cap degenerate subpaths require explicit dot support and fail closed.");
  return{...plan,nativePlanSha256:hash(plan)};
 }
