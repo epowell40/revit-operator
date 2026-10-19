@@ -1,4 +1,5 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
+import {getWorkspaceMcpRuntime} from '../codex/workspace_mcp_runtime.js';
 import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
 import {DESKTOP_HELPER_RETURN_REASON,takeDesktopHelperReturnV1,desktopHelperReturnAfterDrainV1,type DesktopHelperReturnV1} from './desktop_helper_return.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
@@ -192,16 +193,7 @@ async function getClient(workspaceRoot: string, profile: CodexThreadStartProfile
   const spawnEnv = buildCodexSpawnEnv(workspaceRoot);
   let mcpRuntime: CodexMcpToolRuntime | undefined;
   if (!profile.certified) {
-    mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
-    if (!mcpRuntime) {
-      mcpRuntime = new CodexMcpToolRuntime({
-        backendCwd: process.cwd(),
-        workspaceRoot,
-        codexHome,
-        spawnEnv
-      });
-      mcpRuntimesByWorkspace.set(workspaceRoot, mcpRuntime);
-    }
+    mcpRuntime = getWorkspaceMcpRuntime(mcpRuntimesByWorkspace,workspaceRoot,codexHome);
   }
 
   const client = new CodexAppServer({
@@ -386,6 +378,15 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
     phase: "request_validation" | "runtime_setup" | "provider_start",
     errorClass: "provider" | "transport" | "runtime" | "canceled" | "resource_exhausted" = "runtime"
   ): ChatResponse => {
+    // Preserve the specific, host-known setup cause even when terminal task
+    // presentation uses a generic failure class. This is diagnostic, not proof
+    // of effects from earlier requests in the same assignment.
+    try { appendEvent(req.session_id,'assistant','codex.execution.setup.error',{
+      schema:'operator.execution-setup-diagnostic.v1',message_id:req.message_id,phase,
+      cause_code:failureId.split(':')[0],message:message.length<=2000?message:message.slice(0,1980)+' ...[truncated]',
+      recorded_at:new Date().toISOString(),provider_started:false,native_dispatch_this_request:false,
+      ...(assignmentKernelV2?{assignment_id:assignmentKernelV2.binding.assignment_id,run_id:assignmentKernelV2.binding.run_id,generation:assignmentKernelV2.binding.generation}:{})
+    }); } catch { /* Diagnostic failure cannot replace canonical settlement. */ }
     const snapshot = assignmentKernelV2
       ? settleAssignmentKernelExecutionFailureV2({
           binding: assignmentKernelV2.binding,
@@ -589,7 +590,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
       };
     }
   }
-  const mcpRuntime = threadProfile.startRevitTurnRuntime ? mcpRuntimesByWorkspace.get(workspaceRoot) : null;
+  const mcpRuntime = threadProfile.startRevitTurnRuntime ? getWorkspaceMcpRuntime(mcpRuntimesByWorkspace,workspaceRoot) : null;
   if (threadProfile.startRevitTurnRuntime && !mcpRuntime) {
     endRequirementsPlanningLease(requirementsLease);
     requirementsLease = null;
