@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "cold_workspace_runtime.test.ts",
     "attachment_upload_store.test.ts",
     "attachments_extract.test.ts",
     "native_inventory_work_budget_v2.test.ts",
@@ -528,6 +529,14 @@
     "VectorDraftingSourceCommitTests"
   ],
   "failure_families": [
+    {
+      "id": "cold_workspace_runtime_initialization_before_delegated_provider_start",
+      "coverage": [
+        "backend:cold_workspace_runtime.test.ts",
+        "backend:chat_execution_failure_diagnostic.test.ts",
+        "backend:external_provider_lifecycle.test.ts"
+      ]
+    },
     {
       "id": "cad_requested_link_never_silently_imports_and_preserves_explicit_color",
       "coverage": [
