@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$PackageRoot = $PSScriptRoot)
+param([string]$PackageRoot = '')
 
 function Get-OperatorBytesSha([byte[]]$Bytes) {
   $sha = [Security.Cryptography.SHA256]::Create()
@@ -173,6 +173,7 @@ function Install-OperatorPackage([string]$Root) {
 
 # Dot-sourcing exposes the same helpers for isolated executable-boundary tests.
 if ($MyInvocation.InvocationName -ne '.') {
+  if ([string]::IsNullOrWhiteSpace($PackageRoot)) { $PackageRoot = $PSScriptRoot }
   try { Install-OperatorPackage $PackageRoot; exit 0 }
   catch { Write-Host "STOP: $($_.Exception.Message)" -ForegroundColor Red; Write-Host 'Do not delete installer state or other add-ins. Send the final output and installer log to support.'; exit 1 }
 }

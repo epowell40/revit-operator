@@ -11,6 +11,14 @@ if ($RealEngine) {
   [void][Reflection.Assembly]::LoadFrom($enginePath)
 }
 $results = [Collections.Generic.List[object]]::new()
+$entryRoot = Join-Path $OutputRoot 'entry point with spaces'
+[void][IO.Directory]::CreateDirectory($entryRoot)
+Copy-Item -LiteralPath (Join-Path $publicRoot 'scripts\deploy\Install-Operator.ps1') -Destination (Join-Path $entryRoot 'Install-Operator.ps1')
+[IO.File]::WriteAllText((Join-Path $entryRoot 'manifest.json'),'{"components":[]}')
+$windowsPowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$entryOutput = (& $windowsPowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $entryRoot 'Install-Operator.ps1') 2>&1 | Out-String)
+if ($LASTEXITCODE -ne 1 -or !$entryOutput.Contains('Expected one Revit year')) { throw "Default package-root entry point failed: $entryOutput" }
+$results.Add(@{case='Windows PowerShell no-arguments entry point';passed=$true;output=$entryOutput})
 $priorLocal = $env:LOCALAPPDATA; $priorRoaming = $env:APPDATA
 
 function Get-Process { param($Name, $ErrorAction) if ($script:revitOpen) { return [pscustomobject]@{Id=123} } }
