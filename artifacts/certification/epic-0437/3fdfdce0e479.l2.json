@@ -1580,7 +1580,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:632ac1d030df86a4c9e8d543962679759e944d8ddb48115e265701c6b98d8177"
+      "sha256": "sha256:ab891878148b6d5161ca2c1b74890b439039285c6b24f8158cf90f7791121728"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain_instructions.ts",
@@ -2778,6 +2778,10 @@
     {
       "path": "apps/operator-backend/src/codex/turn_error.ts",
       "sha256": "sha256:041d6f18cab80f772f7fe990712731c4ff32bb3f7920c81695d5e496d6d60904"
+    },
+    {
+      "path": "apps/operator-backend/src/codex/workspace_mcp_runtime.ts",
+      "sha256": "sha256:6324692c12a230588414d84ea181d2f33bbe4bbb3eabbf99a596462622720984"
     },
     {
       "path": "apps/operator-backend/src/config/cloud_upload.ts",
@@ -5026,6 +5030,10 @@
     {
       "path": "apps/operator-backend/test/codex_worker_identity.test.ts",
       "sha256": "sha256:b6ec61cde53aaf58a7b0ec29a0d5cf5130ed10cec8d122fb73e649fa41594b33"
+    },
+    {
+      "path": "apps/operator-backend/test/cold_workspace_runtime.test.ts",
+      "sha256": "sha256:3bff53164d16ee490f994bd6148329074cd1769576b781e28f41a4b8f5b0fb3e"
     },
     {
       "path": "apps/operator-backend/test/combined_duct_verification_v2.test.ts",
@@ -10577,7 +10585,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:147250ffb8dca34c5646fb3134f8a7f4682ba3795d5d65af9141ca0988dfcc3a",
+  "inputs_hash": "sha256:2c9511bb4885a8c3d31742d5d959a82bad6d2f636e220d11ef46de3669a24cc0",
   "result": {
     "passed": true,
     "checks": [
