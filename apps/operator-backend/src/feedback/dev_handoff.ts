@@ -351,10 +351,17 @@ export function buildDevHandoff(args: {
   const recommendations = new Set<string>();
   const signals = new Set<string>();
 
+  // Codex notifications retain thread/turn IDs rather than the legacy message
+  // ID. Bound those records by the latest request time; never mix earlier turns.
+  const latestRequestTs = requestLog.map(asRecord).filter(rec => rec && asString(rec.kind) === "user.turn").at(-1)?.ts;
+  const requestTime = typeof latestRequestTs === "string" ? Date.parse(latestRequestTs) : NaN;
   const turnScopedToolOutputs = latestAssistantMessageId
     ? toolOutputs.filter((row) => {
         const rec = asRecord(row);
-        return rec && (asString(rec.message_id)?.trim() || "") === latestAssistantMessageId;
+        if (!rec) return false;
+        if (asString(rec.message_id)?.trim()) return asString(rec.message_id)?.trim() === latestAssistantMessageId;
+        const time = typeof rec.ts === "string" ? Date.parse(rec.ts) : NaN;
+        return Boolean(asString(rec.turn_id) && Number.isFinite(requestTime) && time >= requestTime);
       })
     : toolOutputs;
 
@@ -365,7 +372,7 @@ export function buildDevHandoff(args: {
     const tool = normalized.tool;
     const status = normalized.status;
 
-    if (status === "failed") {
+    if (status === "failed" || normalized.error || normalized.failureCode) {
       const key = normalized.failureCode ? `ToolFailed:${tool}:${normalized.failureCode}` : `ToolFailed:${tool}`;
       noteIssue({
         key,

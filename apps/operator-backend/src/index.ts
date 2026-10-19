@@ -3242,6 +3242,9 @@ const server = http.createServer(async (req, res) => {
       let persisted: any;
       try {
         persisted = appendFeedbackAndMaybePromote({
+          assignment_id: typeof parsed.assignment_id === "string" ? parsed.assignment_id : null,
+          run_id: typeof parsed.run_id === "string" ? parsed.run_id : null,
+          generation: Number.isInteger(parsed.generation) ? parsed.generation : null,
           session_id,
           chat_id: chat_id || null,
           rating,
