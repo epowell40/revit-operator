@@ -89,6 +89,7 @@ export type ToolAuditRow = {
   };
   mcp: {
     generic_call_available: boolean;
+    product_inventory_admitted: boolean | null;
     typed_tools: string[];
   };
   live: {
@@ -149,6 +150,7 @@ type Catalog = {
   schemaValidatorPaths: Set<string>;
   mcpWrappersByKey: Map<ToolKey, string[]>;
   mcpGenericAvailable: boolean;
+  productNativeRoutes: Set<ToolKey> | null;
 };
 
 function toolKey(method: string, toolPath: string): ToolKey | null {
@@ -467,8 +469,27 @@ export function canonicalRegistryDigestSha256(source: string): string {
   return createHash("sha256").update(source.replace(/\r\n?/g, "\n"), "utf8").digest("hex").toUpperCase();
 }
 
+/** Source registration is separate from the target repository's product scope. */
+export function productNativeInventoryKeys(value: unknown): Set<ToolKey> | null {
+  if (value === null) return null;
+  const inventory = value as { schema?: unknown; native_routes?: unknown };
+  if (!inventory || inventory.schema !== "revit-operator.supported-tool-inventory.v1" || !Array.isArray(inventory.native_routes))
+    throw new Error("Invalid audited product inventory.");
+  const keys = new Set<ToolKey>();
+  for (const row of inventory.native_routes) {
+    if (!row || typeof row !== "object" || !["GET", "POST"].includes(row.method) || typeof row.path !== "string"
+        || !/^\/revit\/[a-z0-9_/-]+$/.test(row.path)) throw new Error("Invalid audited native product route.");
+    const key = toolKey(row.method, row.path)!;
+    if (keys.has(key)) throw new Error("Duplicate audited native product route.");
+    keys.add(key);
+  }
+  return keys;
+}
+
 function loadCatalog(layout: Layout): Catalog {
   const addinOperator = path.join(layout.addinRoot, "RevitBridge", "Operator");
+  const inventoryPath = path.join(layout.repoRoot, "contracts", "supported-tool-inventory.v1.json");
+  const productNativeRoutes = productNativeInventoryKeys(fs.existsSync(inventoryPath) ? JSON.parse(read(inventoryPath)) : null);
   const mcp = parseMcpWrappers(layout.mcpRoot);
   const schemas = parseSchemaPaths(path.join(addinOperator, "OperatorToolIntrospection.cs"),
     path.join(layout.addinRoot, "RevitBridge.Common", "Contracts", "conditional-requests.v1.json"));
@@ -488,6 +509,7 @@ function loadCatalog(layout: Layout): Catalog {
     reflectedSchemaPaths: schemas.reflected,
     schemaValidatorPaths: new Set([...read(path.join(addinOperator, "OperatorActionSchemaValidator.cs")).matchAll(/"(\/revit\/[^"\s]+)"/g)].map(match => match[1] ?? "")),
     mcpWrappersByKey: mcp.byKey,
+    productNativeRoutes,
     mcpGenericAvailable: mcp.genericAvailable
   };
 }
@@ -736,7 +758,9 @@ export function buildRegistryAudit(options: { repoRoot: string; liveCapabilities
         schema_validator_reference: catalog.schemaValidatorPaths.has(manifest.path)
       },
       mcp: {
-        generic_call_available: surfaceKind === "revit_bridge" && catalog.mcpGenericAvailable,
+        generic_call_available: surfaceKind === "revit_bridge" && catalog.mcpGenericAvailable
+          && catalog.productNativeRoutes?.has(manifest.key) === true,
+        product_inventory_admitted: catalog.productNativeRoutes?.has(manifest.key) ?? null,
         typed_tools: catalog.mcpWrappersByKey.get(manifest.key) ?? []
       },
       live: { advertised: liveAdvertised, metadata_matches_source: liveMatches },

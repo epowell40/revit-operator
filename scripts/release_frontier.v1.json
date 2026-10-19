@@ -4789,6 +4789,14 @@
         "mcp:lib/supportedToolInventory.test.ts",
         "dotnet:OperatorSupportedToolInventoryTests"
       ]
+    },
+    {
+      "id": "catalog_registration_is_not_product_generic_availability_or_live_verification",
+      "coverage": [
+        "backend:tool_registry_audit.test.ts",
+        "backend:supported_tool_inventory.test.ts",
+        "mcp:lib/supportedToolInventory.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [

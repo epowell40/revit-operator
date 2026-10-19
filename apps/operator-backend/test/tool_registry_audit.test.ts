@@ -3,14 +3,14 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { isAllowlisted } from "../src/allowlist.js";
-import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
+import { buildRegistryAudit, productNativeInventoryKeys, canonicalRegistryDigestSha256, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
 
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 221);
+  assert.equal(audit.tools.length, 223);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
-  for(const route of ["/revit/import-drawing-spec","/revit/inspect-drawing-spec","/revit/import-excel-output","/revit/inspect-excel-import"]){
+  for(const route of ["/revit/import-drawing-spec","/revit/inspect-drawing-spec","/revit/import-excel-output","/revit/inspect-excel-import","/revit/import-vector-detail","/revit/inspect-vector-detail"]){
     const tool=audit.tools.find(tool=>tool.path===route);assert(tool,route);assert.equal(tool.evidence.live_safe,null);assert.equal(tool.evidence.useful,null);
   }
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
@@ -147,4 +147,30 @@ test("retired prototype zoning routes are absent from discovery and backend admi
     assert.equal(isAllowlisted("POST", retained), true);
     assert.equal(audit.tools.some(tool => tool.path === retained), true);
   }
+});
+
+
+test("registered tools outside product inventory are not advertised as generic-call available", () => {
+  const audit=buildRegistryAudit({repoRoot:findRepoRoot(process.cwd())});
+  const held=audit.tools.find(tool=>tool.path==="/revit/import-vector-detail")!;
+  assert(held);assert.equal(held.contracts.manifest,true);
+  assert.equal(held.mcp.generic_call_available,false);assert.equal(held.mcp.product_inventory_admitted,false);
+  assert.equal(isAllowlisted("POST",held.path),false);
+  const read=audit.tools.find(tool=>tool.path==="/revit/inspect-vector-detail")!;
+  assert(read);assert.equal(read.mcp.generic_call_available,true);assert.equal(read.mcp.product_inventory_admitted,true);
+  assert(audit.tools.filter(tool=>tool.mcp.generic_call_available).every(tool=>tool.mcp.product_inventory_admitted===true));
+  assert.equal(read.evidence.live_safe,null);assert.equal(read.evidence.useful,null);
+});
+
+
+test("audited product scope rejects malformed route declarations and leaves missing inventory unknown", () => {
+  assert.equal(productNativeInventoryKeys(null),null);
+  const schema="revit-operator.supported-tool-inventory.v1";
+  for(const value of [{schema:"unknown",native_routes:[]},{schema,native_routes:null},
+    {schema,native_routes:[{method:"DELETE",path:"/revit/context"}]},
+    {schema,native_routes:[{method:"GET",path:"/ui/unsafe"}]},
+    {schema,native_routes:[{method:"GET",path:"/revit/context"},{method:"GET",path:"/revit/context"}]}])
+    assert.throws(()=>productNativeInventoryKeys(value),/audited/);
+  const routes=productNativeInventoryKeys({schema,native_routes:[{method:"GET",path:"/revit/context"}]})!;
+  assert.deepEqual([...routes],["GET /revit/context"]);assert.equal(routes.has("POST /revit/context"),false);
 });
