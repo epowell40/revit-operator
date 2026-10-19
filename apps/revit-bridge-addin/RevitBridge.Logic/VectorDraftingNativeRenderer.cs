@@ -41,6 +41,17 @@ namespace RevitBridge.Logic
                 if (e.points != null) Check(e.kind, e.points, "");
                 if (e.loops != null) for (int loop = 0; loop < e.loops.Length; loop++) for (int segment = 0; segment < e.loops[loop].Length; segment++)
                 { var s = e.loops[loop][segment]; Check(s.kind, Controls(s), ", loop " + loop + " segment " + segment); }
+                if (e.kind == "dot")
+                {
+                    try
+                    {
+                        foreach (var boundary in DotBoundary(e, p => new XYZ(p[0] / 12 * plan.layout.viewScale, p[1] / 12 * plan.layout.viewScale, 0)))
+                            using (boundary) RequireCurveLength(boundary, doc.Application.ShortCurveTolerance);
+                    }
+                    catch (Exception error)
+                    { throw new ArgumentException("Vector source dot '" + e.id + "' failed before transaction start; actual ShortCurveTolerance="
+                        + doc.Application.ShortCurveTolerance.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "ft. " + error.Message, error); }
+                }
                 if (e.style != null && e.style.dashInches.Where((v, i) => i % 2 == 1).Any(v => v == 0)) throw new ArgumentException("Zero-length native dash gaps require explicit continuous-stroke conversion.");
             }
             return result;
@@ -56,9 +67,10 @@ namespace RevitBridge.Logic
                     var curve = Curve(e.kind, e.points!, Point); native = doc.Create.NewDetailCurve(view, curve);
                     ApplyStroke(native.Id, e.style!);
                 }
-                else if (e.kind == "fill")
+                else if (e.kind == "fill" || e.kind == "dot")
                 {
-                    var loops = e.loops!.Select(loop => CurveLoop.Create(loop.Select(s => Curve(s.kind, Controls(s), Point)).ToList())).ToList();
+                    var loops = e.kind == "dot" ? new List<CurveLoop> { CurveLoop.Create(DotBoundary(e, Point)) }
+                        : e.loops!.Select(loop => CurveLoop.Create(loop.Select(s => Curve(s.kind, Controls(s), Point)).ToList())).ToList();
                     var fill = FilledRegion.Create(doc, FillType(e.fillColor!).Id, view.Id, loops); native = fill;
                     var invisible = FilledRegion.GetValidLineStyleIdsForFilledRegion(doc).Select(id => doc.GetElement(id) as GraphicsStyle)
                         .FirstOrDefault(style => style?.GraphicsStyleCategory?.BuiltInCategory == BuiltInCategory.OST_InvisibleLines)
@@ -79,6 +91,15 @@ namespace RevitBridge.Logic
             doc.Regenerate(); return part;
         }
         private XYZ Point(double[] p) => view.Origin + view.RightDirection * (p[0] / 12 * view.Scale) + view.UpDirection * (p[1] / 12 * view.Scale);
+        internal static IList<Autodesk.Revit.DB.Curve> DotBoundary(VectorDraftingNativeEntity e, Func<double[], XYZ> point)
+        {
+            var a = e.anchor!; var center = point(a); var radius = e.radiusInches!.Value;
+            var right = point(new[] { a[0] + radius, a[1] }) - center;
+            var up = point(new[] { a[0], a[1] + radius }) - center;
+            return new Autodesk.Revit.DB.Curve[] {
+                Arc.Create(center, right.GetLength(), 0, Math.PI, right.Normalize(), up.Normalize()),
+                Arc.Create(center, right.GetLength(), Math.PI, 2 * Math.PI, right.Normalize(), up.Normalize()) };
+        }
         internal static double[][] Controls(VectorDraftingNativeSegment s) => s.kind == "cubic_bezier"
             ? new[] { s.start, s.controlPoints![0], s.controlPoints[1], s.end } : new[] { s.start, s.end };
         internal static Autodesk.Revit.DB.Curve Curve(string kind, double[][] p, Func<double[], XYZ> point)

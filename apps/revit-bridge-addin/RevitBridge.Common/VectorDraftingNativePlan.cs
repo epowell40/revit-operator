@@ -42,6 +42,7 @@ namespace RevitBridge.Common
         public VectorDraftingNativeSegment[][]? loops { get; set; }
         public VectorDraftingNativeStyle? style { get; set; }
         public int[]? fillColor { get; set; }
+        public double? radiusInches { get; set; }
         public string? text { get; set; }
         public double[]? anchor { get; set; }
         public double? rotation { get; set; }
@@ -196,6 +197,15 @@ namespace RevitBridge.Common
                                 || Math.Abs(loop[i].end[1] - loop[(i + 1) % loop.Length].start[1]) > 1e-8)
                                 throw new ArgumentException("Source fill boundaries are not continuously closed.");
                     }
+                }
+                else if (e.kind == "dot")
+                {
+                    Point(e.anchor); Color(e.fillColor);
+                    var radius = e.radiusInches ?? double.NaN;
+                    if (!Finite(radius) || radius <= 0 || radius > 1000
+                        || e.anchor!.Any(n => Math.Abs(n) + radius > 1000)
+                        || e.points != null || e.loops != null || e.style != null || e.text != null)
+                        throw new ArgumentException("Complete finite positive dot circle required without competing geometry or stroke assumptions.");
                 }
                 else if (e.kind == "text")
                 {

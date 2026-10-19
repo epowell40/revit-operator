@@ -77,14 +77,30 @@ test("solid collinear backtracking cubics retain their analytic extent beyond th
  }
 });
 
-test("round-cap degenerate subpaths cannot silently lose painted dots while internal constant commands are counted",async()=>{
+test("round-cap degenerate subpaths retain exact solid dots while internal constant commands are counted",async()=>{
  for(const command of ["10 10 l","10 10 10 10 10 10 c","h"]){
-  const s=await source("1 J 10 10 m "+command+" S 20 20 m 30 30 l S");
-  assert.throws(()=>compileDraftingVectorNativePlan(s,s.planSha256,layout),/paints a dot/);
+  const s=await source("0.72 w 1 J 10 10 m "+command+" S 20 20 m 30 30 l S");
+  const p=compileDraftingVectorNativePlan(s,s.planSha256,layout);
+  const dot=p.entities.find(e=>String(e.kind)==="dot") as unknown as {anchor:number[];radiusInches:number;fillColor:number[];sourceId:string};
+  assert(dot);assert.deepEqual(dot.anchor,[10/72,10/72]);assert(Math.abs(dot.radiusInches-.36/72)<1e-14);
+  assert.deepEqual(dot.fillColor,[0,0,0]);assert.equal(dot.sourceId,s.paths[0].contours[0].id);
+  assert.equal(p.entities.length,2);assert.equal(p.zeroLengthSourceCommands,0);
  }
  const internal=await source("1 J 10 10 m 10 10 10 10 10 10 c 20 20 l S");
  const p=compileDraftingVectorNativePlan(internal,internal.planSha256,layout);
  assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.entities.length,1);assert.equal(p.entities[0].kind,"line");
+});
+
+test("round dots respect source masks without silently approximating clipped paint, dashes or hairlines",async()=>{
+ const inside=await source("0.2 0.4 0.6 RG 2 w 1 J 10 10 m 10 10 l S");
+ const dot=compileDraftingVectorNativePlan(inside,inside.planSha256,layout).entities[0] as unknown as {kind:string;fillColor:number[];radiusInches:number};
+ assert.equal(dot.kind,"dot");assert.deepEqual(dot.fillColor,inside.paths[0].style.strokeRgb);assert(Math.abs(dot.radiusInches-1/72)<1e-14);
+ for(const stream of ["2 w 1 J 0 100 m 0 100 l S","0 w 1 J 10 10 m 10 10 l S","2 w 1 J [2 1] 0 d 10 10 m 10 10 l S"]){
+  const s=await source(stream);assert.throws(()=>compileDraftingVectorNativePlan(s,s.planSha256,layout),/dot/i);
+ }
+ const clippedOut=await source("0 0 5 5 re W n 2 w 1 J 10 10 m 10 10 l S 1 1 m 2 2 l S");
+ const p=compileDraftingVectorNativePlan(clippedOut,clippedOut.planSha256,layout);
+ assert.equal(p.entities.length,1);assert.equal(p.entities[0].kind,"line");
 });
 
 test("constant and straight cubics in closed fill boundaries preserve the complete rectangular region",async()=>{
@@ -92,6 +108,17 @@ test("constant and straight cubics in closed fill boundaries preserve the comple
  const p=compileDraftingVectorNativePlan(s,s.planSha256,layout);
  assert.equal(p.zeroLengthSourceCommands,1);assert.equal(p.entities.length,1);assert.equal(p.entities[0].kind,"fill");
  assert.equal(p.entities[0].loops![0].length,4);assert(p.entities[0].loops![0].every(s=>s.kind==="line"));
+});
+
+test("nonzero tiny source lines are retained and device-dependent degenerate fill paint is explicit",async()=>{
+ const tiny=await source("0 10 m 0.0000000001 10 l S");
+ const p=compileDraftingVectorNativePlan(tiny,tiny.planSha256,layout);
+ assert.equal(p.entities.length,1);assert.equal(p.zeroLengthSourceCommands,0);
+ assert.notDeepEqual(p.entities[0].points![0],p.entities[0].points![1]);
+ for(const command of ["10 10 l","10 10 10 10 10 10 c","h"]){
+  const s=await source("10 10 m "+command+" f 20 20 m 30 30 l S");
+  assert.throws(()=>compileDraftingVectorNativePlan(s,s.planSha256,layout),/device-dependent single-pixel paint/);
+ }
 });
 test("unsupported source cases cannot be silently approximated into a native plan",async()=>{
  const dash=await source("[2 1] 1 d 10 10 m 20 20 l S");assert.throws(()=>compileDraftingVectorNativePlan(dash,dash.planSha256,layout),/dash phase/);

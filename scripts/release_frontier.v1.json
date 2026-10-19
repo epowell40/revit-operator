@@ -318,7 +318,11 @@
     "created_schedule_runtime.test.ts",
     "created_schedule_postcondition_v2.test.ts",
     "excel_table_import_v2.test.ts",
-    "drawing_spec_import_v2.test.ts"
+    "drawing_spec_import_v2.test.ts",
+    "drafting_vector_source.test.ts",
+    "drafting_vector_native_plan.test.ts",
+    "read_vector_attachment.test.ts",
+    "vector_detail_import_v2.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -359,7 +363,8 @@
     "lib/viewOwnedDetailingAgentProjection.test.ts",
     "lib/category_visibility_scope_schema.test.ts",
     "lib/family_static_text_scope_schema.test.ts",
-    "lib/excelOutputContracts.test.ts"
+    "lib/excelOutputContracts.test.ts",
+    "lib/vectorDetailContracts.test.ts"
   ],
   "desktop_tests": [
     "test/saved_computer_owner.test.js",
@@ -515,7 +520,11 @@
     "DrawingSpecInspectionTests",
     "DrawingSpecInlineFlowTests",
     "DrawingSpecColumnFlowTests",
-    "OperatorRequestSchemaSummaryTests"
+    "OperatorRequestSchemaSummaryTests",
+    "TextNoteOrientationReadbackTests",
+    "RevisionCloudSettlementTests",
+    "DraftingCubicBezierTests",
+    "VectorDraftingNativePlanTests"
   ],
   "failure_families": [
     {
@@ -4711,6 +4720,57 @@
       "coverage": [
         "backend:advisory_verification_policy.test.ts",
         "javascript:package/operator-assistant-ui/work_report.test.mjs"
+      ]
+    },
+    {
+      "id": "textnote_native_orientation_readback_preserves_committed_effect_when_generic_location_is_unavailable",
+      "coverage": [
+        "dotnet:TextNoteOrientationReadbackTests",
+        "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "native_sketchgrid_infrastructure_does_not_hide_drafting_annotations_or_break_complete_owner_inventory",
+      "coverage": [
+        "dotnet:ViewOwnedDetailingInventoryContractTests",
+        "backend:view_owned_detailing_v2.test.ts"
+      ]
+    },
+    {
+      "id": "revision_cloud_api_overload_failure_remains_unknown_while_new_native_preflight_and_commit_have_authoritative_settlement",
+      "coverage": [
+        "dotnet:RevisionCloudSettlementTests",
+        "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "vector_native_parts_require_fresh_original_registered_pdf_proof_not_producer_or_cross_session_claims",
+      "coverage": [
+        "backend:vector_detail_import_v2.test.ts",
+        "mcp:lib/vectorDetailContracts.test.ts",
+        "dotnet:VectorDraftingNativePlanTests"
+      ]
+    },
+    {
+      "id": "pdf_exact_collinear_cubic_strokes_preserve_analytic_extent_without_dropping_real_curves_or_relaxing_native_tolerance",
+      "coverage": [
+        "backend:drafting_vector_native_plan.test.ts",
+        "dotnet:DraftingCubicBezierTests"
+      ]
+    },
+    {
+      "id": "pdf_round_cap_degenerate_subpaths_keep_painted_dots_with_complete_finite_native_circle_contract",
+      "coverage": [
+        "backend:drafting_vector_native_plan.test.ts",
+        "dotnet:VectorDraftingNativePlanTests"
+      ]
+    },
+    {
+      "id": "fixed_mcp_string_patterns_are_enforced_without_unbounded_regex_or_hidden_native_hash_coercion",
+      "coverage": [
+        "mcp:lib/genericToolPreflight.test.ts",
+        "backend:read_vector_attachment.test.ts",
+        "dotnet:VectorDraftingNativePlanTests"
       ]
     }
   ],

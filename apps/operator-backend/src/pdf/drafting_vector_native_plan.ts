@@ -6,7 +6,7 @@ type Segment=VectorSegment;
 type Polygon=PaperPoint[];
 export type VectorNativeLayout={paperWidthInches:number;viewScale:number;partSize?:number;fontMap?:Record<string,string>;lineWeightMap?:Record<string,number>};
 export type NativeVectorStyle={color:number[];weight:number;sourceWidthPoints:number;dashInches:number[];dashPhaseInches:number};
-export type NativeVectorEntity={id:string;sourceId:string;kind:"line"|"cubic_bezier"|"fill"|"text";points?:PaperPoint[];loops?:Segment[][];style?:NativeVectorStyle;fillColor?:number[];
+export type NativeVectorEntity={id:string;sourceId:string;kind:"line"|"cubic_bezier"|"fill"|"dot"|"text";points?:PaperPoint[];loops?:Segment[][];style?:NativeVectorStyle;fillColor?:number[];radiusInches?:number;
  text?:string;anchor?:PaperPoint;rotation?:number;font?:string;emPoints?:number;bold?:boolean;italic?:boolean;widthScale?:number;expectedWidthInches?:number};
 export type VectorNativePlan={schema:"operator.drafting_vector_native_plan.v1";sourceSha256:string;sourcePlanSha256:string;selectionSha256:string;sourceLabel:string;sourceSheet:string|null;page:number;region:number[];
  layout:Required<Pick<VectorNativeLayout,"paperWidthInches"|"viewScale"|"partSize">>&Pick<VectorNativeLayout,"fontMap"|"lineWeightMap">;paperHeightInches:number;coordinateSpace:"paper inches, right/up, lower-left of selected source region";
@@ -97,7 +97,7 @@ const segmentPoints=(s:Segment)=>s.kind==="cubic_bezier"?[s.start,...s.controlPo
 // dashed strokes and fill boundaries must keep their traversal. Never flatten
 // even a slightly bowed curve to its endpoints.
 export function normalizeNativeDraftingSegment(s:Segment,solidStrokeLocus=false):Segment|null{
- if(s.kind!=="cubic_bezier")return same(s.start,s.end)?null:s;
+ if(s.kind!=="cubic_bezier")return s.start[0]===s.end[0]&&s.start[1]===s.end[1]?null:s;
  const p=segmentPoints(s),equal=(a:PaperPoint,b:PaperPoint)=>a[0]===b[0]&&a[1]===b[1];
  if(p.every(v=>equal(v,p[0])))return null;
  const dx=s.end[0]-s.start[0],dy=s.end[1]-s.start[1];
@@ -115,6 +115,15 @@ export function normalizeNativeDraftingSegment(s:Segment,solidStrokeLocus=false)
  return{kind:"line",start:d>0?points[0]:points.at(-1)!,end:d>0?points.at(-1)!:points[0]};
 }
 const lineLoop=(p:Polygon):Segment[]=>p.map((point,i)=>({kind:"line",start:point,end:p[(i+1)%p.length]}));
+function dotWithinMask(center:PaperPoint,radius:number,mask:Polygon):boolean{
+ const distance=Math.min(...mask.map((a,i)=>{
+  const b=mask[(i+1)%mask.length],dx=b[0]-a[0],dy=b[1]-a[1],length=dx*dx+dy*dy;
+  const t=length===0?0:Math.max(0,Math.min(1,((center[0]-a[0])*dx+(center[1]-a[1])*dy)/length));
+  return Math.hypot(center[0]-a[0]-t*dx,center[1]-a[1]-t*dy);
+ }));
+ if(distance<radius)throw Error("A source dot intersects a clip boundary and requires exact clipped-circle support; no paint was approximated.");
+ return inside(center,mask);
+}
 
 /** Deterministic source conversion, not model authorization. Native creation must independently
  * enforce model/view identity, real short-curve tolerance, settlement and fresh native reads. */
@@ -147,8 +156,12 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
    const loops:Segment[][]=[],linear:Polygon[]=[];let curved=false;
    for(const contour of path.contours){
     let segments=contour.commands.filter(c=>c.kind!=="move") as Segment[];
+    const hadDrawing=segments.length>0;
     segments=segments.flatMap(s=>{const normalized=normalizeNativeDraftingSegment(s);if(!normalized){zero++;return[];}return[normalized];});
-    if(!segments.length)continue;
+    if(!segments.length){
+     if(hadDrawing)throw Error("Degenerate source fill has device-dependent single-pixel paint; no fill was silently dropped.");
+     continue;
+    }
     if(segments.some(s=>s.kind==="cubic_bezier")){
      if(masks.some(mask=>!convex(mask)||!segments.every(s=>segmentPoints(s).every(p=>inside(p,mask)))))throw Error("A clipped curved fill needs explicit boolean conversion; no source fill was approximated.");
      curved=true;loops.push(segments.map(mappedSegment));continue;
@@ -172,8 +185,12 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
     // circle. Internal zero-length commands are different; do not erase dots.
     const drawing=contour.commands.filter(c=>c.kind!=="move") as Segment[];
     const points=drawing.flatMap(segmentPoints);
-    if(path.style.lineCap===1&&points.length&&points.every(p=>p[0]===points[0][0]&&p[1]===points[0][1]))
-     throw Error("Round-cap degenerate source subpath "+contour.id+" paints a dot and requires explicit native dot conversion; no mark was silently dropped.");
+    if(path.style.lineCap===1&&points.length&&points.every(p=>p[0]===points[0][0]&&p[1]===points[0][1])){
+     if(width<=0||style.dashInches.length)throw Error("Hairline or dashed source dot requires explicit paint support; no dot was silently dropped.");
+     const radius=width/2;
+     if(masks.every(mask=>dotWithinMask(points[0],radius,mask)))entities.push({id:contour.id+":dot",sourceId:contour.id,kind:"dot",anchor:point(points[0]),radiusInches:radius*scale,fillColor:path.style.strokeRgb});
+     continue;
+    }
     for(const [index,segment]of contour.commands.entries()){
     if(segment.kind==="move")continue;
     const normalized=normalizeNativeDraftingSegment(segment,style.dashInches.length===0);if(!normalized){zero++;continue;}
@@ -201,6 +218,6 @@ export function compileDraftingVectorNativePlan(source:DraftingVectorSource,expe
  if(new Set(entities.map(e=>e.id)).size!==entities.length)throw Error("Duplicate source entity identities.");
  const plan:Omit<VectorNativePlan,"nativePlanSha256">={schema:"operator.drafting_vector_native_plan.v1",sourceSha256:source.sourceSha256,sourcePlanSha256:source.planSha256,selectionSha256:selected.selectionSha256,sourceLabel:source.sourceLabel,sourceSheet:source.sourceSheet,page:source.page,region:source.region,layout:{...options,partSize},paperHeightInches:(r[3]-r[1])*scale,coordinateSpace:"paper inches, right/up, lower-left of selected source region",entities,partCount:Math.ceil(entities.length/partSize),zeroLengthSourceCommands:zero,omissions:selected.omissions,
  limits:["Source plan does not authorize model changes or certify native/visual results.","Text paint order, source text clipping/color/decorations, native text anchor/font metrics, line caps/joins and native pen physical widths require actual visual comparison; native text defaults to black.","Native pen indices preserve relative source widths by a declared default .24point base unless explicitly mapped; native project pen thickness is not assumed.","Path stroke/fill colors, editable text/curves/fills and explicit source omissions are retained. Schematics are not physical engineering scale.","Import each owned part once, inspect fresh source/native geometry/text and then review/iterate actual work-area and sheet visuals."] ,nativeWriteAllowed:false};
- plan.limits.unshift("Internal constant commands are counted as zero length. Exactly straight cubic spans preserve their full solid-stroke analytic extent as editable lines; dashed traversal, fill traversal and genuinely curved controls are not flattened. Entire round-cap degenerate subpaths require explicit dot support and fail closed.");
+ plan.limits.unshift("Internal constant commands are counted as zero length. Exactly straight cubic spans preserve their full solid-stroke analytic extent as editable lines; dashed traversal, fill traversal and genuinely curved controls are not flattened. Solid round-cap degenerate subpaths retain exact filled-circle dots; clipped, dashed and hairline dots fail closed.");
  return{...plan,nativePlanSha256:hash(plan)};
 }

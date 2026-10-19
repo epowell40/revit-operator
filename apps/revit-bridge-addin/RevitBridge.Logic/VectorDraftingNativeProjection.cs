@@ -51,11 +51,12 @@ namespace RevitBridge.Logic
                                     || Math.Abs(actual[n].Length - v / 12) > 1e-9).Any()) Issue(source.id, "Complete native dash pattern differs.");
                         }
                     }
-                    else if (source.kind == "fill")
+                    else if (source.kind == "fill" || source.kind == "dot")
                     {
                         if (!(native is FilledRegion region)) { Issue(source.id, "Source fill is not a native filled region."); continue; }
-                        var wanted = source.loops!.Select(loop => LoopKey(loop.Select(s => VectorDraftingNativeRenderer.Curve(s.kind, VectorDraftingNativeRenderer.Controls(s), Point))))
-                            .OrderBy(v => v, StringComparer.Ordinal).ToArray();
+                        var wanted = source.kind == "dot" ? new[] { LoopKey(VectorDraftingNativeRenderer.DotBoundary(source, Point)) }
+                            : source.loops!.Select(loop => LoopKey(loop.Select(s => VectorDraftingNativeRenderer.Curve(s.kind, VectorDraftingNativeRenderer.Controls(s), Point))))
+                                .OrderBy(v => v, StringComparer.Ordinal).ToArray();
                         var observed = region.GetBoundaries().Select(loop => LoopKey(loop)).OrderBy(v => v, StringComparer.Ordinal).ToArray();
                         if (!wanted.SequenceEqual(observed)) Issue(source.id, "Complete native fill boundaries/holes differ.");
                         var type = doc.GetElement(region.GetTypeId()) as FilledRegionType;

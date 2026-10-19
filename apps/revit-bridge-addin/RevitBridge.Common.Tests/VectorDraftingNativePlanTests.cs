@@ -103,6 +103,23 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void RoundDotRetainsCompleteCircleAndRejectsMalformedOrCompetingGeometry()
+        {
+            VectorDraftingNativeEntity Dot(string radius = "0.005", string anchor = "[1,2]", string extra = "")
+                => JsonSerializer.Deserialize<VectorDraftingNativeEntity>("{\"id\":\"source-dot\",\"sourceId\":\"contour-dot\",\"kind\":\"dot\",\"anchor\":" + anchor
+                    + ",\"radiusInches\":" + radius + ",\"fillColor\":[20,40,60]" + extra + "}")!;
+            var plan = Plan(); plan.entities.Clear(); plan.entities.Add(Dot());
+            VectorDraftingPlanCodec.Validate(plan);
+            var bytes = Pack(plan); var result = VectorDraftingPlanCodec.Decode(bytes, VectorDraftingPlanCodec.Hash(bytes), plan.nativePlanSha256, plan.sourceSha256);
+            using var value = JsonDocument.Parse(JsonSerializer.Serialize(result.entities[0]));
+            Assert.Equal(.005, value.RootElement.GetProperty("radiusInches").GetDouble());
+            Assert.Equal(new[] {1d,2d}, result.entities[0].anchor);
+            foreach (var bad in new[] { Dot("0"), Dot("-1"), Dot("null"), Dot("1001"), Dot("0.005", "[1]"),
+                Dot("0.005", "[999.999,0]"), Dot(extra:",\"points\":[[1,2],[1,3]]"), Dot(extra:",\"loops\":[]") })
+            { plan.entities[0] = bad; Assert.Throws<ArgumentException>(() => VectorDraftingPlanCodec.Validate(plan)); }
+        }
+
+        [Fact]
         public void TextRequiresSourcePlacementAndTypographyWithoutTruncation()
         {
             var plan = Plan(); var e = plan.entities[0]; e.kind = "text"; e.style = null; e.points = null;
