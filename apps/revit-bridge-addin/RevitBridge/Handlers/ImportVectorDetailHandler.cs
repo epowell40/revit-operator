@@ -71,6 +71,10 @@ namespace RevitBridge.Handlers
                 }
                 else view = VectorDraftingImportState.View(doc, stored);
                 part = new VectorDraftingNativeRenderer(doc, view, stored, created, fonts).Render(plan, request.partIndex);
+                // New curves must not silently alter a previously committed part, and a
+                // mismatching new source projection must roll back before persistence.
+                VectorDraftingImportState.CurrentSnapshot(doc, stored);
+                VectorDraftingNativeProjection.RequireMatchBeforeCommit(doc, stored, part);
                 part.NativeSnapshotSha256 = VectorDraftingImportState.PartSnapshot(doc, stored, part); stored.Parts.Add(part);
                 VectorDraftingImportState.Store(doc, stored, created);
                 return new Dictionary<string, object?> { ["manifestElementId"] = stored.StorageId, ["viewId"] = stored.ViewId, ["viewName"] = stored.ViewName,

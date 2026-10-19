@@ -59,12 +59,15 @@ namespace RevitBridge.Logic
         public VectorDraftingOwnedPart Render(VectorDraftingNativePlan plan, int index)
         {
             var part = new VectorDraftingOwnedPart { Index = index };
+            var sourceCurves = new List<(DetailCurve native, VectorDraftingNativeEntity source)>();
             foreach (var e in plan.entities.Skip(index * plan.layout.partSize).Take(plan.layout.partSize))
             {
                 Element native;
                 if (e.kind == "line" || e.kind == "cubic_bezier")
                 {
-                    var curve = Curve(e.kind, e.points!, Point); native = doc.Create.NewDetailCurve(view, curve);
+                    using var curve = Curve(e.kind, e.points!, Point);
+                    var detail = doc.Create.NewDetailCurve(view, curve); native = detail;
+                    sourceCurves.Add((detail, e));
                     ApplyStroke(native.Id, e.style!);
                 }
                 else if (e.kind == "fill" || e.kind == "dot")
@@ -87,6 +90,15 @@ namespace RevitBridge.Logic
                 created.Add(ElementIdCompat.GetValue(native.Id));
                 part.Entities.Add(new VectorDraftingOwnedEntity { Id = ElementIdCompat.GetValue(native.Id), UniqueId = native.UniqueId,
                     PlanEntityId = e.id, SourceId = e.sourceId, Kind = e.kind });
+            }
+            // Native curve creation can snap nearby endpoints. Reapply this part's exact
+            // source curves with join constraints overridden, then read the complete
+            // projection before commit. No geometric tolerance is widened here.
+            doc.Regenerate();
+            foreach (var item in sourceCurves)
+            {
+                using var source = Curve(item.source.kind, item.source.points!, Point);
+                item.native.SetGeometryCurve(source, true);
             }
             doc.Regenerate(); return part;
         }

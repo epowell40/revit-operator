@@ -10,6 +10,14 @@ namespace RevitBridge.Logic
     // the original PDF nor certifies visual fidelity. The backend must bind those separate proofs.
     public static class VectorDraftingNativeProjection
     {
+        public static void RequireMatchBeforeCommit(Document doc, VectorDraftingStoredImport state, VectorDraftingOwnedPart part)
+        {
+            using var check = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(Check(doc, state, part)));
+            var result = check.RootElement;
+            if (!result.GetProperty("completePartRead").GetBoolean() || !result.GetProperty("sourceNativeProjectionMatches").GetBoolean())
+                throw new InvalidOperationException("Native vector source projection differs before commit; this part must roll back. "
+                    + result.GetProperty("issues").GetRawText());
+        }
         public static object Check(Document doc, VectorDraftingStoredImport state, VectorDraftingOwnedPart part)
         {
             var plan = VectorDraftingImportState.Plan(state); var view = VectorDraftingImportState.View(doc, state);

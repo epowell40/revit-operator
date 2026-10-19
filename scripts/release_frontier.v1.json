@@ -524,7 +524,8 @@
     "TextNoteOrientationReadbackTests",
     "RevisionCloudSettlementTests",
     "DraftingCubicBezierTests",
-    "VectorDraftingNativePlanTests"
+    "VectorDraftingNativePlanTests",
+    "VectorDraftingSourceCommitTests"
   ],
   "failure_families": [
     {
@@ -4771,6 +4772,13 @@
         "mcp:lib/genericToolPreflight.test.ts",
         "backend:read_vector_attachment.test.ts",
         "dotnet:VectorDraftingNativePlanTests"
+      ]
+    },
+    {
+      "id": "native_vector_creation_join_adjustments_require_exact_restoration_precommit_projection_and_postcommit_readback",
+      "coverage": [
+        "dotnet:VectorDraftingSourceCommitTests",
+        "backend:vector_detail_import_v2.test.ts"
       ]
     }
   ],
