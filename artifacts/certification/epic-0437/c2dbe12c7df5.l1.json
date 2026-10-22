@@ -15,11 +15,11 @@
   "inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
-      "sha256": "sha256:a32b82a715a590a0cea76612f8eb47a1aaf7aa0e100f13304403fbebc47fb815"
+      "sha256": "sha256:159ddc033efde59224ceff20c26cabd396d8822491f49940dc33200fa973ea0e"
     },
     {
       "path": "apps/mcp-server/package.json",
-      "sha256": "sha256:43f980533c2e686aa1a0353a8efc8acba57896082367c0865c66a2dc03d1bbe3"
+      "sha256": "sha256:808088213aaefabff33254faa9394382c36f6c1268d09f7cef7a35c2d693175b"
     },
     {
       "path": "apps/mcp-server/src/captureViewArguments.test.ts",
@@ -732,11 +732,11 @@
     },
     {
       "path": "apps/operator-backend/package-lock.json",
-      "sha256": "sha256:ac5df41c5210978ac7b5469084d450f231f904ec033df0d40ca25c4197710210"
+      "sha256": "sha256:2431235e78eac916afc18dfac10186d118be5e03d98c6c4c51a0257f0c178211"
     },
     {
       "path": "apps/operator-backend/package.json",
-      "sha256": "sha256:30150c6d0e4e72035e7474980af490cd60225085cbee63f5a84086638498d76b"
+      "sha256": "sha256:5cd2ff87c467f6f86713ef4a44f1497d2ec72221588a25a53807e15c04338f2c"
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
@@ -4041,7 +4041,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
-      "sha256": "sha256:d17ad48e1180d7ba3359f9c9b2a8a9fb7d6e8408c359a5b72d5ef5c39cbe1594"
+      "sha256": "sha256:49b144f7a1deee77ab0ad3ee8f3f7d233c86a6a08051e4e7b3f0a33c335887ff"
     },
     {
       "path": "apps/operator-backend/src/tools/check_skill_library_manifest.ts",
@@ -10585,7 +10585,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:2c9511bb4885a8c3d31742d5d959a82bad6d2f636e220d11ef46de3669a24cc0",
+  "inputs_hash": "sha256:e29fd3e0da675e0330e4a00f4ef952f8d5469b883c2ceec3faa4072058bd4433",
   "result": {
     "passed": true,
     "checks": [
