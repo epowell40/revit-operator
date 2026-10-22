@@ -53,8 +53,8 @@ async function main(): Promise<void> {
 
   const nativeRoot = path.join(repoRoot, "apps", "revit-bridge-addin");
   const mcpRoot = path.join(repoRoot, "apps", "mcp-server");
-  const systemNode = process.platform === "win32" ? path.join(process.env.ProgramW6432 ?? process.env.ProgramFiles ?? "C:\\Program Files", "nodejs", "node.exe") : process.execPath;
-  const gateNode = fs.existsSync(systemNode) ? systemNode : process.execPath;
+  // Child gates must use the exact runtime selected for this certification.
+  const gateNode = process.execPath;
   if (process.argv.includes("--gates-already-run")) throw new Error("--gates-already-run is forbidden; source certification must execute its own gates");
   const builds = [
     await run(gateNode, [path.join(backendRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], backendRoot),
