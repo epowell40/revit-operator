@@ -5,10 +5,15 @@ import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
 import { appendDailyMemory, appendLongtermMemory } from "../memory/jsonl_memory_store.js";
 import { queueRunBundleForUpload } from "./upload_queue.js";
 import { buildDevHandoff, type DevHandoff } from "./dev_handoff.js";
+import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { diagnosticId } from "../persistence/diagnostic_identity.js";
 
 export type FeedbackRating = "worked" | "partial" | "failed";
 
 export type FeedbackEvent = {
+  assignment_id?: string | null;
+  run_id?: string | null;
+  generation?: number | null;
   session_id: string;
   chat_id: string | null;
   rating: FeedbackRating;
@@ -39,6 +44,9 @@ function isRating(x: string): x is FeedbackRating {
 }
 
 export function appendFeedbackAndMaybePromote(args: {
+  assignment_id?: string | null;
+  run_id?: string | null;
+  generation?: number | null;
   session_id: string;
   chat_id?: string | null;
   rating: string;
@@ -49,8 +57,15 @@ export function appendFeedbackAndMaybePromote(args: {
 }): FeedbackPersistResult {
   const layout = ensureWorkspaceLayout();
 
-  const session_id = (args.session_id ?? "").toString().trim();
+  const session_id = diagnosticId((args.session_id ?? "").toString().trim());
   if (!session_id) throw new Error("Missing session_id");
+  const assignment_id = args.assignment_id?.trim() ? diagnosticId(args.assignment_id.trim()) : null;
+  const snapshot = assignment_id ? getAssignmentKernelSnapshotV2(assignment_id) : null;
+  if (assignment_id && (!snapshot || snapshot.current_binding.session_id !== session_id
+    || (args.run_id && args.run_id !== snapshot.current_binding.run_id)
+    || (args.generation != null && args.generation !== snapshot.current_binding.generation))) {
+    throw new Error("Feedback task binding is stale or outside this session.");
+  }
 
   const ratingRaw = (args.rating ?? "").toString().trim().toLowerCase();
   if (!isRating(ratingRaw)) throw new Error("rating must be one of: worked|partial|failed");
@@ -68,6 +83,7 @@ export function appendFeedbackAndMaybePromote(args: {
   });
 
   const evt: FeedbackEvent = {
+    ...(snapshot ? { assignment_id, run_id: snapshot.current_binding.run_id, generation: snapshot.current_binding.generation } : {}),
     session_id,
     chat_id: chat_id || null,
     rating: ratingRaw,

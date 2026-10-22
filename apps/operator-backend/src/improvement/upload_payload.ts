@@ -4,6 +4,7 @@ import zlib from "node:zlib";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { redactString, redactUnknown } from "./redact.js";
 import type { DevHandoff } from "../feedback/dev_handoff.js";
+import { diagnosticFile, diagnosticId } from "../persistence/diagnostic_identity.js";
 
 export type ImprovementUploadPayload = {
   schema_version: 1;
@@ -63,7 +64,7 @@ function readJsonIfExists(filePath: string): unknown | undefined {
 function parseJsonlLines(raw: string, opts: { maxLines: number; workspaceRoot?: string }): { items: unknown[]; dropped: number } {
   const lines = raw.split("\n").filter(Boolean);
   const max = Math.max(1, opts.maxLines);
-  const slice = lines.slice(0, max);
+  const slice = lines.slice(-max);
   const dropped = Math.max(0, lines.length - slice.length);
 
   const items: unknown[] = [];
@@ -120,11 +121,17 @@ function findLatestFeedbackForSession(sessionId: string, opts: { workspaceRoot?:
 export function resolveRunBundleDir(queueDirFull: string): { ok: true; session_id: string; run_bundle_full: string } | { ok: false; error: string } {
   try {
     const base = path.basename(queueDirFull);
-    const session_id = base.split("_")[0] ?? "";
+    const root = ensureWorkspaceLayout().root;
+    const pointerPath = path.join(queueDirFull, "pointer.json");
+    const pointer = fs.existsSync(pointerPath) ? readJsonIfExists(pointerPath) as any : null;
+    const session_id = diagnosticId(typeof pointer?.session_id === "string" ? pointer.session_id : base.replace(/_\d+$/, ""));
     if (!session_id.trim()) return { ok: false, error: "Could not infer session_id from queue folder name." };
 
     const link = path.join(queueDirFull, "run_bundle");
-    if (fs.existsSync(link)) return { ok: true, session_id, run_bundle_full: link };
+    if (fs.existsSync(link)) {
+      diagnosticFile(root, path.relative(root, fs.realpathSync(link)));
+      return { ok: true, session_id, run_bundle_full: link };
+    }
 
     const ptrPath = path.join(queueDirFull, "pointer.json");
     if (fs.existsSync(ptrPath)) {
@@ -132,11 +139,11 @@ export function resolveRunBundleDir(queueDirFull: string): { ok: true; session_i
       const ptr: any = JSON.parse(ptrRaw.replace(/^\uFEFF/, ""));
       const full = typeof ptr?.run_bundle_full === "string" ? ptr.run_bundle_full : "";
       const rel = typeof ptr?.run_bundle === "string" ? ptr.run_bundle : "";
-      if (full && fs.existsSync(full)) return { ok: true, session_id, run_bundle_full: full };
+      if (full && fs.existsSync(full)) return { ok: true, session_id, run_bundle_full: diagnosticFile(root, path.relative(root, full)) };
       if (rel) {
         const layout = ensureWorkspaceLayout();
         const candidate = path.join(layout.root, rel.replace(/\//g, path.sep));
-        if (fs.existsSync(candidate)) return { ok: true, session_id, run_bundle_full: candidate };
+        if (fs.existsSync(candidate)) return { ok: true, session_id, run_bundle_full: diagnosticFile(root, path.relative(root, candidate)) };
       }
     }
 

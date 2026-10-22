@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import { diagnosticId } from "../persistence/diagnostic_identity.js";
 
 export type UploadQueueResult =
   | { ok: true; queue_dir_full: string; queue_dir_rel: string; run_bundle_rel: string; link_kind: "junction" | "pointer" }
@@ -20,7 +21,7 @@ function tryWorkspaceRelative(fullPath: string): string {
 
 export function queueRunBundleForUpload(args: { session_id: string; created_at: string; note?: string | null }): UploadQueueResult {
   try {
-    const session_id = (args.session_id ?? "").toString().trim();
+    const session_id = diagnosticId((args.session_id ?? "").toString().trim());
     if (!session_id) return { ok: false, error: "session_id is required." };
 
     const layout = ensureWorkspaceLayout();
@@ -29,6 +30,11 @@ export function queueRunBundleForUpload(args: { session_id: string; created_at: 
 
     const dir = path.join(layout.feedbackUploadQueue, `${session_id}_${Date.now()}`);
     fs.mkdirSync(dir, { recursive: true });
+    // Explicit identity survives principal-bound IDs containing underscores.
+    fs.writeFileSync(path.join(dir, "pointer.json"), JSON.stringify({
+      queued_at: args.created_at, session_id, run_bundle: run_bundle_rel,
+      note: args.note || undefined
+    }, null, 2), "utf8");
 
     // Prefer a directory junction/symlink (cheap). Fall back to a pointer JSON if blocked.
     try {
