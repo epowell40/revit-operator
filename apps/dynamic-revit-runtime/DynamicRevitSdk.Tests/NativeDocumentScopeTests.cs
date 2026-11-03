@@ -16,12 +16,17 @@ public sealed class NativeDocumentScopeTests
         request.EffectScope="listed_elements";Assert.Throws<InvalidOperationException>(request.Validate);
         request.AllowCreate=true;request.MaxAffectedElements=10;request.Validate();
     }
-    [Fact] public void DocumentScopeChangesTheAuthenticatedBindingAndRetainsDocumentCurrentness()
+    [Theory]
+    [InlineData(2023)] [InlineData(2024)] [InlineData(2025)] [InlineData(2026)] [InlineData(2027)]
+    public void DocumentScopeChangesTheAuthenticatedBindingAndRetainsDocumentCurrentness(int year)
     {
         string H(string s)=>DynamicWire.Sha256(s);
         var bytes=new byte[]{1,2,3};
-        var a=new DynamicNativeProgramArtifactV1{Mode="write",RevitYear=2024,EntryType="Build",SourceHash=H("source"),Assembly=bytes,AssemblyHash=DynamicWire.Sha256(bytes),
-            References=new[]{"RevitAPI","System","System.Core","mscorlib"}.Select(n=>new DynamicNativeReferenceV1{Name=n,Version="1.0",Sha256=H(n)}).ToArray()};
+        var names=year<=2024 ? new[]{"RevitAPI","System","System.Core","mscorlib"}
+            : new[]{"RevitAPI","System.Collections","System.Linq","System.Private.CoreLib","System.Runtime","System.Runtime.Extensions"};
+        var runtimeMajor=year<=2024 ? 4 : year<=2026 ? 8 : 10;
+        var a=new DynamicNativeProgramArtifactV1{Mode="write",RevitYear=year,EntryType="Build",SourceHash=H("source"),Assembly=bytes,AssemblyHash=DynamicWire.Sha256(bytes),
+            References=names.Select(n=>new DynamicNativeReferenceV1{Name=n,Version=$"{(n=="RevitAPI" ? year-2000 : runtimeMajor)}.0.0.0",Sha256=H(n)}).ToArray()};
         var s=new DynamicNativeProgramScopeV1{DocumentFingerprint=H("doc"),DocumentSessionId="session",DocumentRevision=1,NativeScopeHash=H("scope"),DeadlineMs=5000,AllowCreate=true,MaxAffectedElements=32};
         var legacy=DynamicNativeProgramArtifactPolicyV1.BindingHash(a,s);
         s.EffectScope="active_document";s.AllowCreate=false;s.MaxAffectedElements=0;
