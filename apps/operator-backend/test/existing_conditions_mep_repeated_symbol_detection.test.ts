@@ -30,6 +30,28 @@ function drawDevice(context: ReturnType<ReturnType<typeof createCanvas>["getCont
   }
 }
 
+// Raster fixture text must not depend on fonts installed on the test machine.
+function drawFixtureLabel(context: ReturnType<ReturnType<typeof createCanvas>["getContext"]>, text: string, x: number, baseline: number): void {
+  const glyphs: Record<string, string> = {
+    A: "01110/10001/10001/11111/10001/10001/10001", B: "11110/10001/10001/11110/10001/10001/11110",
+    C: "01111/10000/10000/10000/10000/10000/01111", D: "11110/10001/10001/10001/10001/10001/11110",
+    E: "11111/10000/10000/11110/10000/10000/11111", K: "10001/10010/10100/11000/10100/10010/10001",
+    L: "10000/10000/10000/10000/10000/10000/11111", N: "10001/11001/11001/10101/10011/10011/10001",
+    O: "01110/10001/10001/10001/10001/10001/01110", S: "01111/10000/10000/01110/00001/00001/11110",
+    T: "11111/00100/00100/00100/00100/00100/00100", Y: "10001/10001/01010/00100/00100/00100/00100",
+    "1": "00100/01100/00100/00100/00100/00100/01110", "2": "01110/10001/00001/00010/00100/01000/11111",
+    "3": "11110/00001/00001/01110/00001/00001/11110", "4": "00010/00110/01010/10010/11111/00010/00010",
+    "9": "01110/10001/10001/01111/00001/00001/01110"
+  };
+  for (const [index, letter] of [...text].entries()) {
+    if (letter === " ") continue;
+    assert.ok(glyphs[letter], `Missing fixture glyph ${letter}`);
+    glyphs[letter]!.split("/").forEach((row, y) => [...row].forEach((pixel, column) => {
+      if (pixel === "1") context.fillRect(x + index * 12 + column * 2, baseline - 14 + y * 2, 2, 2);
+    }));
+  }
+}
+
 function fixture(): { imagePath: string; input: MepRepeatedSymbolDetectionInputV1 } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mep-symbol-detection-"));
   const imagePath = path.join(directory, "symbols.png");
@@ -41,12 +63,11 @@ function fixture(): { imagePath: string; input: MepRepeatedSymbolDetectionInputV
   drawDevice(context, 110, 42, "left");
   drawDevice(context, 180, 42, "left");
   drawDevice(context, 250, 42, "right");
-  context.font = "18px Arial";
   context.fillStyle = "black";
-  context.fillText("23CA", 52, 70);
-  context.fillText("43N1", 122, 70);
-  context.fillText("19CB", 192, 70);
-  context.fillText("STACKED LABELS ONLY", 30, 125);
+  drawFixtureLabel(context, "23CA", 52, 70);
+  drawFixtureLabel(context, "43N1", 122, 70);
+  drawFixtureLabel(context, "19CB", 192, 70);
+  drawFixtureLabel(context, "STACKED LABELS ONLY", 30, 125);
   fs.writeFileSync(imagePath, canvas.toBuffer("image/png"));
   return {
     imagePath,
