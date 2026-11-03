@@ -10,6 +10,24 @@ namespace RevitBridge.Common.Tests
     public class OperatorConditionalRequestContractsTests
     {
         [Fact]
+        public void SavedFamilyInspectionPublishesItsTrackedSessionAndExactSingleRfaMode()
+        {
+            Assert.True(OperatorConditionalRequestContracts.TryGet("/revit/inspect-exported-files", out var schema));
+            Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+            Assert.Equal(new[] { "paths" }, schema.GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+            var fields = schema.GetProperty("properties");
+            Assert.Equal("^[A-Fa-f0-9]{32}$", fields.GetProperty("familyDocumentId").GetProperty("pattern").GetString());
+            Assert.Equal(2000, fields.GetProperty("paths").GetProperty("maxItems").GetInt32());
+            var modes = schema.GetProperty("oneOf");
+            Assert.Equal(2, modes.GetArrayLength());
+            Assert.False(modes[0].GetProperty("properties").TryGetProperty("familyDocumentId", out _));
+            Assert.False(modes[0].GetProperty("additionalProperties").GetBoolean());
+            Assert.Contains("familyDocumentId", modes[1].GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+            Assert.Equal(1, modes[1].GetProperty("properties").GetProperty("paths").GetProperty("maxItems").GetInt32());
+            Assert.Equal("[.][rR][fF][aA]$", modes[1].GetProperty("properties").GetProperty("paths").GetProperty("items").GetProperty("pattern").GetString());
+        }
+
+        [Fact]
         public void ScheduleDefinitionSnapshotRequiresExplicitExactTargetWithoutExpandingOrdinaryDetail()
         {
             Assert.True(OperatorConditionalRequestContracts.TryGet("/revit/schedules", out var schema));

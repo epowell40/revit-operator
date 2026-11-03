@@ -21,7 +21,7 @@ namespace RevitBridge.Handlers
                 var all = VectorDraftingImportState.All(doc); if (r.offset > all.Count) throw new ArgumentException("Vector list cursor exceeds complete inventory.");
                 return Task.FromResult<object>(new { action = "list", read_only = true, total = all.Count, offset = r.offset,
                     imports = all.Skip(r.offset).Take(r.limit).Select(s => new { manifestElementId = s.StorageId, viewId = s.ViewId, viewName = s.ViewName,
-                        sourcePath = s.SourcePath, sourceSha256 = s.SourceSha256, nativePlanSha256 = s.NativePlanSha256, importedParts = s.Parts.Count }).ToArray(),
+                        sourcePath = s.SourcePath, sourceSha256 = s.SourceSha256, nativePlanSha256 = s.NativePlanSha256, renderer = s.Renderer, importedParts = s.Parts.Count }).ToArray(),
                     nextOffset = r.offset + r.limit < all.Count ? r.offset + r.limit : (int?)null });
             }
             var state = VectorDraftingImportState.Read(doc, r.manifestElementId!.Value); var plan = VectorDraftingImportState.Plan(state);
@@ -33,18 +33,22 @@ namespace RevitBridge.Handlers
             catch (Exception error) { sourceError = error.Message; }
             var part = r.partIndex.HasValue ? state.Parts.SingleOrDefault(p => p.Index == r.partIndex.Value) ?? throw new ArgumentException("Requested vector part is not imported.") : null;
             if (part != null && r.offset > part.Entities.Count) throw new ArgumentException("Vector source page offset exceeds complete part content.");
-            return Task.FromResult<object>(new { schema = "operator.vector-drafting-native-inspection.v1", read_only = true, manifestElementId = state.StorageId,
-                viewId = state.ViewId, viewName = state.ViewName, sourcePath = state.SourcePath, sourceSha256 = state.SourceSha256, nativePlanSha256 = state.NativePlanSha256,
+            var partsTotal = VectorDraftingImportState.PartCount(plan, state);
+            return Task.FromResult<object>(new { schema = state.Renderer == VectorDraftingAnnotationPolicy.Renderer
+                    ? "operator.vector-drafting-annotation-inspection.v1" : "operator.vector-drafting-native-inspection.v1", read_only = true, manifestElementId = state.StorageId,
+                renderer = state.Renderer, viewId = state.ViewId, viewUniqueId = state.ViewUniqueId, viewName = state.ViewName, sourcePath = state.SourcePath, sourceSha256 = state.SourceSha256, nativePlanSha256 = state.NativePlanSha256,
                 nativePlanPath = state.NativePlanPath, nativePlanFileSha256 = state.NativePlanFileSha256,
                 sourceContext = new { sourcePlanSha256 = plan.sourcePlanSha256, selectionSha256 = plan.selectionSha256, sourceLabel = plan.sourceLabel,
                     sourceSheet = plan.sourceSheet, page = plan.page, region = plan.region, layout = plan.layout },
                 sourceFileCurrent = sourceCurrent, sourceFileError = sourceError, nativeSnapshotMatchesImport = snapshotError == null, snapshotError, importSnapshotSha256 = snapshot,
                 sourceGeometryIndependentlyReparsed = false, visualVerified = false, sourceOmissions = plan.omissions, nativePlanLimits = plan.limits,
-                expectedContentCount = plan.entities.Count, importedContentCount = state.Parts.Sum(p => p.Entities.Count), partsTotal = plan.partCount,
-                completedPartIndices = state.Parts.Select(p => p.Index).ToArray(), remainingPartIndices = Enumerable.Range(0, plan.partCount).Except(state.Parts.Select(p => p.Index)).ToArray(),
+                expectedContentCount = VectorDraftingImportState.ContentCount(plan, state), sourcePlanEntityCount = plan.entities.Count,
+                importedContentCount = state.Parts.Sum(p => p.Entities.Count), partsTotal,
+                completedPartIndices = state.Parts.Select(p => p.Index).ToArray(), remainingPartIndices = Enumerable.Range(0, partsTotal).Except(state.Parts.Select(p => p.Index)).ToArray(),
                 partIndex = r.partIndex, partNativeSnapshotSha256 = part?.NativeSnapshotSha256, offset = r.offset, totalPartContent = part?.Entities.Count,
                 sourceProjection = part == null ? null : VectorDraftingNativeProjection.Check(doc, state, part),
                 observedEntityIds = part?.Entities.Select(e => e.Id).ToArray(),
+                observedSourceEntityIds = part?.Entities.Select(e => e.PlanEntityId).ToArray(),
                 items = part != null && r.includeItems ? part.Entities.Skip(r.offset).Take(r.limit).Select(e => ReadEntityOrError(doc, state, e)).ToArray() : null,
                 nextOffset = part != null && r.includeItems && r.offset + r.limit < part.Entities.Count ? r.offset + r.limit : (int?)null,
                 scope = "complete_owned_native_snapshot_against_retained_import_not_independent_source_or_visual_verification" });

@@ -10,6 +10,10 @@ import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
+import {manageAssignmentWorkPlan} from '../src/assignments/assignment_work_plan.js';
+import {advanceAssignmentKernelProgressV2} from '../src/assignments/assignment_kernel_v2_progress.js';
+import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
+import {nativeVerificationAttemptIsRetainedV2} from '../src/domain/assignment-kernel/progress/native_work_progress.js';
 import {projectParameterBindingReadbackMatchesV2,projectParameterBindingRequestV2,projectParameterBindingReadIdV2,projectParameterBindingPostconditionSatisfiedV2} from '../src/verification/project_parameter_binding_v2.js';
 import {postconditionSatisfiedByPayloadV2} from '../src/postcondition_verification_v2.js';
 import {operationTargetSelectorV2,verificationCapabilityAdmissionV2} from '../src/verification/verification_capability_admission_v2.js';
@@ -112,16 +116,24 @@ test('wrong type, GUID, member coverage, request resolution, values or authorita
  }
 });
 
-for(const variant of ['exact','wrong_instance','partial','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','old_type_changed','preservation_missing'] as const)
+for(const variant of ['exact','wrong_instance','partial','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','old_type_changed','preservation_missing','unverified_deferred_checkpoint'] as const)
 test(`ordinary binding ${variant} uses one guarded read and never replays the committed mutation`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-binding-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const f=fixture(),goal=createGoal({title:'Add a per-device schedule note',objective:'Add a per-device schedule note.',acceptance_criteria:['An instance text field is available.'],status:'active',
-   related_session_id:'binding-session',created_by:'binding-principal',work_budget:{requested_effect:'apply',document_fingerprint:'binding-model'}});
+   related_session_id:'binding-session',created_by:'binding-principal',work_budget:{requested_effect:'apply',document_fingerprint:'binding-model',
+    ...(variant==='unverified_deferred_checkpoint'?{source_user_request:'Add a per-device schedule note.',conversation_message_id:'source',mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'}:{})}});
   createAssignmentKernelForGoalV2({goal,run_id:'binding-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
   if(variant==='old_type_changed')for(const value of [f.applied.bindingReadback,f.read])value.preservation.elements.find((r:any)=>r.id===321).parametersHash='e'.repeat(64);
   if(variant==='preservation_missing')for(const value of [f.applied.bindingReadback,f.read])delete value.preservation;
+  if(variant==='unverified_deferred_checkpoint'){
+   f.applied.transaction.modified_element_ids.push(99);
+   manageAssignmentWorkPlan({binding,action:'declare',declaration:{items:[
+    {item_id:'instance-note',description:'Create and populate the per-device note.',source_basis:'Original schedule request',kind:'edit'},
+    {item_id:'inspect-note',description:'Check the requested instance data and schedule.',source_basis:'Original schedule request',kind:'inspection',depends_on:['instance-note']}
+   ],assumptions:[]}});
+  }
   const calls:any[]=[],validations:any[]=[];
   const runtime:any={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop(){},
    async validateToolArguments(_tool:string,args:any){validations.push(args);if(args.body.action==='detail'){
@@ -138,10 +150,11 @@ test(`ordinary binding ${variant} uses one guarded read and never replays the co
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
      operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:read?'none':'applied',native_transaction_state:read?'not_applicable':'committed',authority:'native-host',
-      affected_target_identities:read?['element_id:41']:['element_id:1001','element_id:1002','element_id:41'],result_schema_id:'operator-native/POST:/revit/project-parameters/v2',observation_required:true,
+      affected_target_identities:read?['element_id:41']:['element_id:1001','element_id:1002','element_id:41',...(variant==='unverified_deferred_checkpoint'?['element_id:99']:[])],result_schema_id:'operator-native/POST:/revit/project-parameters/v2',observation_required:true,
       raw_payload_hash:read&&variant==='wrong_digest'?'e'.repeat(64):createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:new Date().toISOString()},observation:{raw_payload:!read&&variant==='unretained_apply'?{status:'Success'}:payload,
-       semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
+       semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true},
+        ...(variant==='unverified_deferred_checkpoint'?[{fact_id:'control.domain_succeeded',fact_class:'control',value:true}]:[])],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'binding-task',user_text:goal.objective,
    assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
@@ -166,6 +179,23 @@ test(`ordinary binding ${variant} uses one guarded read and never replays the co
     assert.equal(projectParameterBindingPostconditionSatisfiedV2(s,apply,{...result,completed_at:apply.result!.completed_at},f.read),false);
    }
    if(variant!=='unretained_apply')assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),variant!=='exact');
+   if(variant==='unverified_deferred_checkpoint'){
+    assert.equal(s.spec.work_plan_required,true);assert.equal(s.outcome,'active');
+    for(const item_id of ['instance-note','inspect-note'])manageAssignmentWorkPlan({binding,action:'defer',item_id,
+     reason:'The binding committed and a separate native detail read settled, but collateral metadata preservation is unproven. Values and schedule are unfinished; retain the partial and do not retry the edit.'});
+    const before=structuredClone(getAssignmentKernelSnapshotV2(goal.id)!);
+    assert.equal(nativeVerificationAttemptIsRetainedV2(before,apply.operation_id),true);
+    const advanced=advanceAssignmentKernelProgressV2({binding}),stopped=advanced.snapshot;
+    assert.equal(stopped.outcome,'blocked');assert.equal(stopped.terminal,true);
+    assert.equal(stopped.progress_blocker?.code,'all_remaining_work_deferred_verification_unresolved');
+    assert(stopped.progress_blocker.gap_ids.includes('verification:'+apply.operation_id));
+    assert.deepEqual(stopped.operations,before.operations);assert.deepEqual(stopped.observations,before.observations);
+    assert.deepEqual(stopped.work_plan,before.work_plan);assert.deepEqual(stopped.criteria,before.criteria);
+    assert.equal(calls.length,2,'the checkpoint performs no additional mutation or native read');
+    const message=finalCodexAssignmentMessageV2(stopped,'Completed.');assert.match(message,/did not complete/i);assert.match(message,/Saved questions/i);
+    __testOnlyResetGoalListCache();const restored=getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(restored.outcome,'blocked');assert.deepEqual(restored.operations,before.operations);
+   }
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });

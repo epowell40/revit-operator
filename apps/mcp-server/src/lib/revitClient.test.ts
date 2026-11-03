@@ -23,6 +23,60 @@ const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
 const sourcePolicyHash = (JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8")) as { policy_hash: string }).policy_hash;
 
+function rejectedCollectorDetails(overrides: Record<string, unknown> = {}) {
+  return {code:"invalid_revit_tool_request", phase:"request_validation", request_dispatched:false,
+    outcome_unknown:false, retryable:false, error:"Native API operation 'elements' failed: The collector does not have a filter applied. Extraction or iteration of elements is not permitted without a filter.",
+    canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1", requested_effect:"read",
+      method:"POST",path:"/revit/native-api-ops",request_dispatched:false,effect_state:"none",effect_authority:"schema_validator"}, ...overrides};
+}
+
+test("rejected collector read gets actionable correction without retry, authority or changed failure flags", async () => {
+  let requests=0;
+  const server=http.createServer((_request,response)=>{requests++;response.statusCode=400;response.setHeader("content-type","application/json");response.end(JSON.stringify(rejectedCollectorDetails()));});
+  const port=await listen(server),restore=setTestEnvironment(`http://127.0.0.1:${port}`,2000);
+  try {
+    await assert.rejects(callRevit("/revit/native-api-ops","POST",{operations:[
+      {id:"collector",op:"construct",memberId:"ctor:Autodesk.Revit.DB.FilteredElementCollector(Autodesk.Revit.DB.Document)",args:[{$ref:"active_document"}]},
+      {id:"elements",op:"call",target:"$collector",memberId:"method:Autodesk.Revit.DB.FilteredElementCollector.ToElements()",args:[]}],returns:["elements"]}), (error:unknown)=>{
+      assert(error instanceof RevitBridgeCallError);const p=revitBridgeFailurePayload(error);
+      assert.match(p.error,/Read-only request correction/);
+      assert.match(p.error,/apply a supported filter before extraction/);
+      assert.match(p.error,/not authorization or verification/);
+      assert.equal(p.retryable,false);assert.equal(p.request_dispatched,false);assert.equal(p.outcome_unknown,false);
+      assert.equal(p.status,400);assert.equal(p.bridge_code,"invalid_revit_tool_request");
+      assert.equal(error.message.includes("Read-only request correction"),false,"original error remains unchanged");return true;
+    });
+    assert.equal(requests,1,"diagnostic must never execute a corrected or identical request");
+  } finally {restore();await close(server);}
+});
+
+test("correction hint stays absent for unknown, foreign, contradictory, non-validation or mutation failures",()=>{
+  const base={code:"revit_bridge_http_error" as const,message:"The collector does not have a filter applied.",retryable:false,
+    requestDispatched:false,outcomeUnknown:false,method:"POST",path:"/revit/native-api-ops",status:400,bridgeDetails:rejectedCollectorDetails()};
+  const details=base.bridgeDetails,settlement=details.canonical_attempt_settlement;
+  for(const change of [
+    {outcomeUnknown:true},{requestDispatched:true},{status:500},{status:403},{code:"revit_bridge_timeout"},
+    {path:"/revit/native-api-mutation-ops"},{method:"GET"},{bridgeDetails:undefined},
+    {bridgeDetails:{...details,phase:"dispatch"}},{bridgeDetails:{...details,code:"policy_denied"}},
+    {bridgeDetails:{...details,outcome_unknown:true}},{bridgeDetails:{...details,request_dispatched:true}},
+    {bridgeDetails:{...details,retryable:true}},{bridgeDetails:{...details,reconciliation_required:true}},
+    {bridgeDetails:{...details,opens_circuit:true}},
+    ...[undefined,{...settlement,path:"/revit/other"},{...settlement,method:"GET"},{...settlement,requested_effect:"apply"},
+      {...settlement,effect_state:"applied"},{...settlement,effect_state:"unknown"},{...settlement,request_dispatched:true},
+      {...settlement,effect_authority:"untrusted"}].map(s=>({bridgeDetails:{...details,canonical_attempt_settlement:s}}))
+  ]) {
+    const e=new RevitBridgeCallError({...base,...change} as ConstructorParameters<typeof RevitBridgeCallError>[0]);
+    assert.equal(revitBridgeFailurePayload(e).error,e.message,JSON.stringify(change));
+  }
+});
+
+test("other valid readonly composition errors get bounded generic correction, never an invented collector diagnosis",()=>{
+  const details=rejectedCollectorDetails({error:"Native property was not found."});
+  const e=new RevitBridgeCallError({code:"revit_bridge_http_error",message:"Native property was not found.",retryable:false,
+    requestDispatched:false,outcomeUnknown:false,method:"POST",path:"/revit/native-api-ops",status:400,bridgeDetails:details});
+  const p=revitBridgeFailurePayload(e);assert.match(p.error,/Read-only request correction/);assert(!p.error.includes("apply a supported filter"));
+});
+
 function canonicalTestValue(value: unknown): unknown {
   if (typeof value === "string") return value.replace(/\r\n?/g, "\n").normalize("NFC");
   if (Array.isArray(value)) return value.map(canonicalTestValue);
@@ -757,6 +811,28 @@ test("family inspection refusal preserves read failure without unknown mutation 
       assert.equal(error.status,500); assert.match(error.message,/already open for editing/); return true;
     });
     assert.equal(requests,1,"inspection refusal is retained, not silently retried");
+  } finally {restore();await close(server);}
+});
+
+test("family connector observations reach the model unchanged without hiding unavailable native facts", async () => {
+  const available=(value:unknown)=>({available:true,value,reason:null,error:null});
+  const payload:any={ok:true,observational:true,mutated:false,source:{elementId:42,uniqueId:'symbol-42',runtimeType:'FamilySymbol',familyId:9,typeId:42},
+    currentTypeName:'Standard',closedWithoutSaving:true,otherElements:[{elementId:123,uniqueId:'connector-123',runtimeType:'ConnectorElement',name:'Global',category:'Connector Element',
+      connector:{coordinateSpace:'family_document_current_type',lengthUnit:'feet',shape:available('Round'),domain:available('DomainHvac'),origin:available([0,0,0]),
+        radius:{available:false,value:null,reason:'getter_failed',error:'native radius unavailable'}}}],inventory:{scannedElementCount:1,returnedElementCount:1,truncated:false,maxElements:500}};
+  let requests=0;
+  const server=http.createServer((_request,response)=>{requests++;response.statusCode=200;response.setHeader('content-type','application/json');response.end(JSON.stringify(payload));});
+  const port=await listen(server),restore=setTestEnvironment(`http://127.0.0.1:${port}`,2000);
+  try {
+    const loaded=await callRevit('/revit/inspect-family-content','POST',{elementId:42,includeOtherElements:true});
+    assert.deepEqual(loaded,payload);
+    assert.equal(loaded.otherElements[0].connector.radius.available,false);
+    payload.source={scope:'external_file',filePath:'artifacts/vendor.rfa',sha256:'a'.repeat(64)};
+    const external=await callRevit('/revit/inspect-family-content','POST',{filePath:'artifacts/vendor.rfa',includeOtherElements:true});
+    assert.deepEqual(external,payload);
+    assert.equal(external.source.scope,'external_file');
+    assert.equal(external.currentTypeName,'Standard');
+    assert.equal(requests,2,'One observation request per source; no retry or mutation fallback');
   } finally {restore();await close(server);}
 });
 

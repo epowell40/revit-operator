@@ -10,6 +10,37 @@ namespace RevitBridge.Common.Tests
     public class OperatorFamilySaveReceiptTests
     {
         [Fact]
+        public void RelativeSavePublishesNativeFullPathResolutionAndSeparateReadDetectsChangedBytes()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "operator-family-resolution-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var file = Path.Combine(directory, "Underlined.rfa");
+            try
+            {
+                File.WriteAllText(file, "saved family fixture");
+                using var saved = JsonDocument.Parse(JsonSerializer.Serialize(OperatorFamilySaveReceipt.Saved(new string('a', 32), file,
+                    true, "Underlined.rfa", directory)));
+                var receipt = saved.RootElement;
+                var resolution = receipt.GetProperty("path_resolution");
+                Assert.Equal("revit-operator.workspace-path-resolution.v1", resolution.GetProperty("schema").GetString());
+                Assert.Equal("Underlined.rfa", resolution.GetProperty("requested_path").GetString());
+                Assert.Equal(directory, resolution.GetProperty("workspace_root").GetString());
+                Assert.Equal(file, resolution.GetProperty("resolved_path").GetString());
+                Assert.True(resolution.GetProperty("inside_workspace").GetBoolean());
+                var read = OperatorNativeSaveAsExecution.InspectSavedFile(file);
+                Assert.True(read.StableRead);
+                Assert.Equal(receipt.GetProperty("sha256").GetString(), read.Sha256);
+                Assert.Throws<InvalidOperationException>(() => OperatorFamilySaveReceipt.Saved(new string('a', 32), file,
+                    true, "Other.rfa", directory));
+                Assert.Throws<InvalidOperationException>(() => OperatorFamilySaveReceipt.Saved(new string('a', 32), file,
+                    true, "../Underlined.rfa", directory));
+                File.WriteAllText(file, "different family fixture");
+                Assert.NotEqual(receipt.GetProperty("sha256").GetString(), OperatorNativeSaveAsExecution.InspectSavedFile(file).Sha256);
+            }
+            finally { File.Delete(file); Directory.Delete(directory); }
+        }
+
+        [Fact]
         public void ExistingTargetRejectsBeforeSaveAndNeverPermitsAnUnknownSaveToBecomeNone()
         {
             var file = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".rfa");

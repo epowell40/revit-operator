@@ -1,5 +1,33 @@
 # Dynamic Revit Runtime packaging
 
+Native C# is a normal read/write execution option for the authenticated local
+or self-hosted General Agent on Revit 2023–2027. Configure the backend and MCP with
+`REVIT_OPERATOR_MODE=local` (or `self_hosted`),
+`OPERATOR_TOOL_EXPOSURE_PROFILE=general`, `OPERATOR_BRAIN=codex`,
+`OPERATOR_AUTH_MODE=shared_token`, `OPERATOR_ASSIGNMENT_KERNEL_V2=1`, and the existing local provider credentials.
+The ordinary desktop catalog exposes the exact C# schema directly to the same
+actor. Keep the native Revit process in its ordinary local/general profile;
+no `OPERATOR_NATIVE_PROGRAM_EXECUTION` developer opt-in is needed.
+
+Named tools remain useful for simple operations. Use custom C# for reads,
+aggregation or bounded edits that benefit from code. Code runs through the
+existing compiler/sandbox and authenticated native launcher, with current task,
+source and document binding, transaction controls, independent readback and
+Pause/unknown-effect safeguards. A successful program is not task verification.
+Hosted/production backends enable the existing assignment kernel with
+`OPERATOR_ASSIGNMENT_KERNEL_V2=1` and `OPERATOR_REVIT_TRANSPORT=courier`.
+This selects the supported task controller, not a development profile or extra
+write authority. Existing tasks keep their recorded owner/history.
+Hosted/production actors use the existing authenticated courier to run source
+on the selected Windows Revit workstation, then retain source/document-bound
+native evidence in the existing task. EC2 does not launch Windows compilers.
+The workstation needs the matching add-in plus packaged dynamic runtime.
+Missing runtime, wrong identity or lost response never cause an automatic retry. Exact development/laboratory
+configuration and the old native opt-in remain compatible for existing tests.
+
+`OPERATOR_CERTIFICATION_PROTECTED_LABORATORY` belongs only to certification
+evidence generation, not ordinary UI qualification.
+
 `DynamicRevitRuntime.sln` is the hermetic build and test boundary for the generated-code worker, trusted sandbox supervisor, SDK, package verifier, and their tests. It intentionally excludes Autodesk-dependent host compilation so ordinary public CI does not need proprietary Revit assemblies.
 
 The trusted host strategy is declared by `manifests/revit-host-capabilities.v1.json`:

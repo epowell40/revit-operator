@@ -12,7 +12,7 @@ import {
   type AssignmentRequestedEffect
 } from "../src/assignments/control_plane.js";
 import type { GoalRecord } from "../src/goals/service.js";
-import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { storeEvidence, readAuthoritativeEvidence } from "../src/evidence/evidence_store.js";
 import { generateVerifiedWorkPacket, verifyVerifiedWorkPacketHash } from "../src/work_packets/generator.js";
 import { listVerifiedWorkPackets, persistVerifiedWorkPacket, readLatestVerifiedWorkPacket } from "../src/work_packets/store.js";
 import { renderVerifiedWorkPacketMarkdown } from "../src/work_packets/renderer.js";
@@ -331,7 +331,7 @@ test("stale evidence is excluded from trust and oversized evidence stays referen
     assert.equal(packet.artifacts.some(artifact => artifact.content_hash === stored.ref.content_hash && artifact.byte_count === stored.ref.byte_count), true);
     assert.equal(packet.issues.some(issue => issue.kind === "stale_evidence"), true);
     assert.doesNotMatch(JSON.stringify(packet.assignment.authorization_envelope), /must-not-survive|also-secret/);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(workspace, stored.ref.artifact_location), "utf8")), raw);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref,{session_id:"session-1",assignment_id:assignmentId,run_id:runId,generation:1}).toString("utf8")), raw);
   } finally {
     if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = prior;
     fs.rmSync(workspace, { recursive: true, force: true });

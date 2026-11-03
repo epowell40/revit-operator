@@ -53,6 +53,10 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /inventory the bounded schedule list[\s\S]*narrow name guess is not evidence/i);
   assert.match(policy, /create-similar preview[\s\S]*dryRun:true, apply:false[\s\S]*linked-face exemplars/i);
   assert.match(policy, /multi-element parameter audit[\s\S]*revit_get_parameters[\s\S]*elementIds plus exact parameter names/i);
+  assert.match(policy, /scoped tag styling[\s\S]*includeTagReferences:true[\s\S]*actual equipment[\s\S]*statusInOwnerViewPhase/);
+  assert.match(policy, /tag creation order do not establish equipment phase[\s\S]*linked phase mapping[\s\S]*preserve tags outside the requested views/);
+  assert.match(policy, /annotation-family typography[\s\S]*open-family-doc[\s\S]*inspect-family-label-styles[\s\S]*set-family-label-style[\s\S]*distinct new workspace RFA[\s\S]*expectedOldTypes/);
+  assert.match(policy, /family-session style check does not verify the loaded project[\s\S]*focused itemRange fields/);
   assert.match(policy, /including sheet\/titleblock values[\s\S]*instead of one tool round per element or parameter/i);
   assert.match(policy, /target-aware single-element verifier only for items the bulk read omitted or left ambiguous/i);
   assert.match(policy, /current source and target counts[\s\S]*expected post-change target\/schedule count[\s\S]*blank values[\s\S]*duplicate\/collision risk/i);
@@ -148,11 +152,11 @@ test("Codex, OpenAI, and external provider prompts all include the per-turn team
   const codexTurnProfile = readRepoFile("operator-backend/src/brains/codex_turn_profile.ts");
   const externalBrain = readRepoFile("operator-backend/src/brains/external_provider_brain.ts");
 
-  assert.match(openAiBrain, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
+  assert.match(openAiBrain, /formatAgentTurnContract\(req\.user_text, req\.context, req\)/);
   assert.match(codexBrain, /formatCodexRequestEnvelope\(req\)/);
   assert.match(codexTurnProfile, /if \(isCertifiedSidecarRequest\(req\)\)/);
-  assert.match(codexTurnProfile, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
-  assert.match(externalBrain, /formatAgentTurnContract\(currentUserRequest, req\.context\)/);
+  assert.match(codexTurnProfile, /formatAgentTurnContract\(req\.user_text, req\.context, req\)/);
+  assert.match(externalBrain, /formatAgentTurnContract\(currentUserRequest, req\.context, req\)/);
 });
 
 test("Codex settles the durable Assignment before publishing turn completion", () => {

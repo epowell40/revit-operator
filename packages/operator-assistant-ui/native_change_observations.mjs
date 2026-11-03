@@ -75,8 +75,22 @@ export function nativeChangeFeedbackModelOutput(modelOutput, interval, evidenceI
   const envelope = JSON.parse(modelOutput.output);
   if (envelope.schema !== 'revit-operator.model-evidence-envelope.v1' || !Array.isArray(envelope.evidence_projections)
     || !envelope.evidence_projections.some(p => p.evidence_id === evidenceId)) throw new Error('native_change_feedback_artifact_binding_missing');
-  const feedback = compareNativeChangeObservations(interval.before, nativeChangeObservationFromContext(interval.context));
-  const output = JSON.stringify({...envelope, native_change_feedback: {...feedback, source_evidence_id: evidenceId}});
-  if (new TextEncoder().encode(output).byteLength > 32768) throw new Error('native_change_feedback_model_budget_exceeded');
-  return {...modelOutput, output};
+  const matches = envelope.evidence_projections.filter(p => p.evidence_id === evidenceId);
+  if (matches.length !== 1) throw new Error('native_change_feedback_artifact_binding_missing');
+  const original = matches[0], feedback = {...compareNativeChangeObservations(interval.before, nativeChangeObservationFromContext(interval.context)), source_evidence_id: evidenceId};
+  const projection = {...original, native_change_feedback: feedback};
+  // Host feedback belongs inside the matching EvidenceRef projection. An extra
+  // top-level field ceases to be the recognized bounded model envelope.
+  const wire = () => JSON.stringify({...envelope, evidence_projections: envelope.evidence_projections.map(p => p === original ? projection : p)});
+  const bytes = () => new TextEncoder().encode(wire()).byteLength;
+  if (bytes() > 8192) {
+    // The raw context is already retained. Drop duplicate generic presentation,
+    // never stored bytes, artifact identity, binding, or host observation limits.
+    Object.assign(projection, {key_facts:{}, key_counts:{}, diagnostics:[], truncated:true});
+    for (const key of ['inline_payload','tool_documentation','connector_graph','helper_findings']) delete projection[key];
+    feedback.generic_context_omitted = true;
+    feedback.full_context_evidence_id = evidenceId;
+  }
+  if (bytes() > 8192) throw new Error('native_change_feedback_model_budget_exceeded');
+  return {...modelOutput, output:wire()};
 }

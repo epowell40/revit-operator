@@ -21,6 +21,9 @@ import {
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2, buildProgressEpochV2 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
+import {storeEvidence} from '../src/evidence/evidence_store.js';
+import {ensureWorkspaceLayout} from '../src/workspace.js';
+import {retainDesktopResponse,prepareDesktopProviderInput,retainDesktopContext} from '../src/desktop_response_store.js';
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { generateVerifiedWorkPacket } from "../src/work_packets/generator.js";
@@ -281,9 +284,37 @@ test("generic contextual read stays active until its native values are delivered
     result_items: [{ ...resultItems[0]!, label: "Changed result" }] }), /delivery_conflict/);
 }));
 
+test('final context written after canonical completion retires pixels and exact retry cannot restore them',async()=>{
+  const old=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),'late-terminal-context-'));process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
+  try{
+    const {goal,binding}=setup(),{session_id,assignment_id,run_id,generation}=binding,b={session_id,assignment_id,run_id,generation,kernelVersion:2 as const};
+    const pixels=Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS0AAAAASUVORK5CYII=','base64'),Buffer.alloc(16_384)]);
+    const image=storeEvidence({scope:b,source:'late-terminal-context',raw:pixels,media_type:'image/png',trust_level:'host_observed',verification_relevance:'supporting'});
+    const profile={model:'gpt-6.1-terra',reasoning_effort:'medium'},request={...profile,input:[{role:'user',content:[{type:'input_text',text:'Inspect the requested result'},{type:'input_image',image_url:'data:image/png;base64,'+pixels.toString('base64'),detail:'original'}]}]};
+    await retainDesktopResponse(b,'late',request,async()=>{prepareDesktopProviderInput(b,'late',request);return{id:'response-late',status:'completed',output:[],model_call_receipt:{call_id:'response-late',success:true,route:'desktop_computer'},provider_response_usage:{disposition:'completed',session_id,message_id:'late',raw_response_ids:['response-late']}};},()=>({}),true);
+    const {settled}=settleRead(goal.id),observation_id=settled.observation!.observation_id;
+    const terminal=evaluateAssignmentObservationCriteriaV2({binding,claims:[{criterion_id:settled.snapshot.spec.criteria[0]!.criterion_id,observation_ids:[observation_id]}]});assert.equal(terminal.outcome,'complete');
+    retainDesktopContext(b,'late',[]);
+    const file=path.join(ensureWorkspaceLayout().runs,'desktop-responses',createHash('sha256').update(canonicalJsonV2([session_id,'owner-context'])).digest('hex')+'.json.context'),after=fs.readFileSync(file);
+    assert.equal(JSON.parse(after.toString()).image_retirement?.images,1,'Late final context must not leave or restore duplicate pixels');
+    retainDesktopContext(b,'late',[]);assert.deepEqual(fs.readFileSync(file),after);
+    assert(fs.existsSync(path.resolve(ensureWorkspaceLayout().root,image.ref.artifact_location)));
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.assignment_version,terminal.assignment_version,'Cleanup/retry cannot mutate canonical history');
+  }finally{__testOnlyResetGoalListCache();if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;assert(root.startsWith(os.tmpdir()+path.sep));fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test("stable criterion plus authoritative Observation terminally settles V2 and projects packet/return exactly once", () => workspace(() => {
   const { goal, binding } = setup();
   const { settled } = settleRead(goal.id);
+  // Literal transport image also has a verified durable evidence object. Only
+  // this duplicate may be retired after actual canonical terminal settlement.
+  const pixels=Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS0AAAAASUVORK5CYII=','base64'),Buffer.alloc(16_384)]);
+  const storedImage=storeEvidence({scope:{...binding},source:'test-completed-context',raw:pixels,media_type:'image/png',trust_level:'host_observed',verification_relevance:'supporting'});
+  const image={type:'input_image',image_url:'data:image/png;base64,'+pixels.toString('base64'),detail:'original'};
+  const contextRoot=path.join(ensureWorkspaceLayout().runs,'desktop-responses');fs.mkdirSync(contextRoot,{recursive:true});
+  const contextFile=path.join(contextRoot,createHash('sha256').update(canonicalJsonV2([binding.session_id,'owner-context'])).digest('hex')+'.json.context');
+  const rawContext={binding:{session_id:binding.session_id,assignment_id:binding.assignment_id,run_id:binding.run_id,generation:binding.generation,kernelVersion:2},complete:true,message_id:'fixture',window:[{role:'user',content:[{type:'input_text',text:'Original task context stays available'},image]}],outputs:[]};
+  fs.writeFileSync(contextFile,JSON.stringify(rawContext));
   const observationId = settled.observation!.observation_id;
   const criterionId = settled.snapshot.spec.criteria[0]!.criterion_id;
   const terminal = evaluateAssignmentObservationCriteriaV2({
@@ -292,6 +323,11 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   });
   assert.equal(terminal.terminal, true);
   assert.equal(terminal.outcome, "complete");
+  const retiredContext=JSON.parse(fs.readFileSync(contextFile,'utf8'));
+  assert.equal(retiredContext.image_retirement?.images,1,'Canonical completion retires duplicate inline image copies');
+  assert(!JSON.stringify(retiredContext).includes(image.image_url));
+  assert(JSON.stringify(retiredContext).includes('Original task context stays available'));
+  assert(fs.existsSync(path.resolve(ensureWorkspaceLayout().root,storedImage.ref.artifact_location)),'Original image evidence survives');
   assert.equal(terminal.criteria[criterionId]!.status, "pass");
   const persistedGoal = getGoal(goal.id)!;
   assert.equal(persistedGoal.status, "complete");

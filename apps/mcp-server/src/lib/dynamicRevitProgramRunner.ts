@@ -5,6 +5,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { getWorkspaceRoot } from "./workspace.js";
 import { resolveDynamicRuntimeInstallation } from "./dynamicRuntimeInstallation.js";
 import { currentAssignmentKernelV2Context, beginAssignmentKernelDynamicDispatchV2, recordAssignmentKernelDynamicResultV2 } from "./assignmentKernelV2.js";
+import { normalizeNativeProgram, readNativeProgramEvidence, type NativeProgramInput } from "./dynamicNativeProgram.js";
+import { runNativeProgramViaCourier } from "./dynamicNativeCourier.js";
 
 export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-program-run.v1" as const;
 
@@ -18,6 +20,7 @@ export type DynamicRevitProgramRunInput = {
   operation_budget?: number;
   worker_deadline_ms?: number;
   apply_deadline_ms?: number;
+  native_program?: NativeProgramInput;
   result_reference?: DynamicResultReferenceRunInput;
   resume?: DynamicExecutionResumeInput;
   continue_from_checkpoint?: DynamicCheckpointContinuationInput;
@@ -85,7 +88,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   if (!input || typeof input.source !== "string" || input.source.length < 1 || input.source.length > 128_000 || input.source.includes("\0")) throw new Error("Dynamic Revit program source is invalid or exceeds 128,000 characters.");
   if (!["read", "preview", "apply"].includes(input.mode)) throw new Error("Dynamic Revit program mode must be read, preview or apply.");
   if (input.mode === "read" && (input.result_reference || input.continue_from_checkpoint)) throw new Error("Read-only reports use the basic snapshot SDK; result-reference edits and committed continuation require preview or apply.");
-  const snapshotLimit = boundedInteger(input.snapshot_limit, 1, 1000, 200);
+  const snapshotLimit = boundedInteger(input.snapshot_limit, 1, input.mode === "read" ? 4096 : 1000, 200);
   const assignment = currentAssignmentKernelV2Context();
   if (assignment && (assignment.capability_id !== "operator_run_dynamic_revit_program" || assignment.requested_effect !== input.mode))
     throw new Error("Dynamic execution mode does not match the admitted assignment operation.");
@@ -96,8 +99,15 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const sourceHash = sha256(Buffer.from(normalizedSource, "utf8"));
   const resultReference = input.result_reference === undefined ? undefined : normalizeResultReference(input.result_reference);
   const year = boundedYear(input.target_revit_year ?? env.OPERATOR_DYNAMIC_RUNTIME_REVIT_YEAR ?? "2024");
+  const native = input.native_program === undefined ? null : normalizeNativeProgram(input.native_program, input.mode, year, assignment?.binding.document_fingerprint, env);
+  if (native && (input.result_reference || input.resume || input.continue_from_checkpoint || input.category !== undefined
+      || input.parameters !== undefined || input.snapshot_limit !== undefined || input.operation_budget !== undefined || input.apply_deadline_ms !== undefined))
+    throw new Error("Native C# cannot mix snapshot/graph/repair/checkpoint options; use its own bounded native_program scope.");
   const workspaceRoot = getWorkspaceRoot();
-  const { supervisor, workerDirectory, tokenFile } = resolveDynamicRuntimeInstallation(year, workspaceRoot, env);
+  const courierNative = native !== null && env.OPERATOR_REVIT_TRANSPORT === "courier";
+  const { supervisor, workerDirectory, tokenFile } = courierNative
+    ? { supervisor: "opaque:target-workstation", workerDirectory: "opaque:target-workstation", tokenFile: "opaque:target-workstation" }
+    : resolveDynamicRuntimeInstallation(year, workspaceRoot, env);
   const runId = `dynamic-${randomUUID().replaceAll("-", "")}`;
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
   ensureRunsRoot(workspaceRoot, runsRoot);
@@ -119,7 +129,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     limit: snapshotLimit, parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
     workerDeadlineMs: boundedInteger(input.worker_deadline_ms, 1000, 30_000, 15_000), apply: input.mode === "apply", readOnly: input.mode === "read",
     ...(assignment?.binding.document_fingerprint ? { expectedDocumentFingerprint: assignment.binding.document_fingerprint } : {}),
-    applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000), compilationCacheDirectory,
+    applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000),
+    ...(native ? { nativeProgram: native.program, expectedDocumentFingerprint: native.expectedDocumentFingerprint } : { compilationCacheDirectory }),
     ...(resultReference ? {
       resultReference: true,
       requireExecutionTrace: true,
@@ -135,17 +146,27 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   };
   fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   beginAssignmentKernelDynamicDispatchV2();
-  const execution = await execute(supervisor, ["--execute-task", configFile], Math.max(config.workerDeadlineMs + 90_000, 120_000));
+  const execution = courierNative
+    ? await (async () => {
+        const remote = await runNativeProgramViaCourier({ source: normalizedSource, targetRevitYear: year,
+          expectedDocumentFingerprint: native!.expectedDocumentFingerprint, nativeProgram: native!.program,
+          workerDeadlineMs: config.workerDeadlineMs }, input.mode as "read" | "apply", assignment?.operation_id);
+        fs.writeFileSync(evidenceFile, JSON.stringify(remote.evidence), { encoding: "utf8", flag: "wx", mode: 0o600 });
+        return { exitCode: remote.exitCode, stdout: "", stderr: "" };
+      })()
+    : await execute(supervisor, ["--execute-task", configFile], Math.max(config.workerDeadlineMs + 90_000, 120_000));
   if (!fs.existsSync(evidenceFile)) throw new Error(`Dynamic supervisor returned ${execution.exitCode} without bounded evidence: ${execution.stderr.slice(0, 2000)}`);
   const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, 8 * 1024 * 1024);
   const evidenceSha256 = sha256(evidenceBytes);
   const evidence = JSON.parse(evidenceBytes.toString("utf8")) as Record<string, unknown>;
+  const nativeEvidence = native ? readNativeProgramEvidence(evidence, sourceHash, input.mode, native.expectedDocumentFingerprint) : null;
+  if (!native && evidence.nativeExecutionReceipt) throw new Error("Native C# evidence cannot replace a snapshot/graph execution.");
   if (activeCheckpoint) validateCheckpointEcho(evidence, activeCheckpoint.receipt);
   const executionStatus = evidence.schema === "dynamic-revit-needs-facts-evidence/v1"
     ? "needs_facts"
     : execution.exitCode === 0 && evidence.ok === true ? "completed" : "failed";
   const emittedSourceHash = workerString(evidence, "sourceHash");
-  if (input.mode === "read" && executionStatus === "completed") {
+  if (!native && input.mode === "read" && executionStatus === "completed") {
     const operations = workerGraph(evidence).operations;
     if (!Array.isArray(operations) || operations.length !== 0 || evidence.applyReceipt || evidence.applyAuthorizationReceipt)
       throw new Error("Read-only runtime evidence contains an operation graph or apply receipt.");
@@ -157,24 +178,29 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   // Compilation can succeed while native admission or read-only policy rejects
   // the resulting graph. Retain that host failure for source repair.
   if (emittedStatus !== null && emittedStatus !== executionStatus
+      && !(native && emittedStatus === "compiled_native")
       && !(emittedStatus === "completed" && executionStatus === "failed"))
     throw new Error("Worker and supervisor execution statuses disagree.");
   const continuation = executionStatus === "needs_facts" ? continuationFromEvidence(evidence) : undefined;
-  const structuredDiagnostics = diagnosticsFromEvidence(evidence, execution.stderr);
+  const structuredDiagnostics = diagnosticsFromEvidence(evidence, execution.stderr, nativeEvidence?.receipt.success === false);
+  if (nativeEvidence && nativeEvidence.receipt.success !== true) structuredDiagnostics.push({ code: "NATIVE_PROGRAM_FAILED",
+    message: String(nativeEvidence.receipt.error ?? "Native execution failed; inspect retained transaction outcome.").slice(0, 2000),
+    phase: "native", severity: "error", repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
+    end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
   const stepPlan = executionStepPlan(evidence);
   const iteration = createIterationReceipt({ runId, sourceHash, requestedMode: input.mode,
-    lane: resultReference ? "result_reference" : "legacy", executionStatus, evidenceSha256,
+    lane: native ? "native" : resultReference ? "result_reference" : "legacy", executionStatus, evidenceSha256,
     executionIdentityHash: workerString(evidence, "executionIdentityHash"),
     diagnosticBundleHash: workerString(evidence, "diagnosticBundleHash"),
     factRequestHash: continuation === undefined ? null : String(continuation.fact_request.requestHash),
     // A worker that completed may already have dispatched an apply. Missing or
     // failed host completion must be reconciled, even when its error says timeout.
-    retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable)
+    retryable: !native && structuredDiagnostics.some(diagnostic => diagnostic.retryable)
       && !(input.mode === "apply" && executionStatus === "failed" && workerString(evidence, "executionStatus") !== "failed"),
     diagnostics: structuredDiagnostics, resume,
     checkpointParent: activeCheckpoint?.parent ?? null });
   fs.writeFileSync(path.join(runRoot, "iteration.json"), JSON.stringify(iteration, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
-  const committedApplyEvidence = input.mode === "apply" && executionStatus === "completed"
+  const committedApplyEvidence = !native && input.mode === "apply" && executionStatus === "completed"
     ? verifyCommittedApplyEvidence(evidence, sourceHash)
     : null;
   const committedCheckpoint = committedApplyEvidence ? createCheckpoint({
@@ -183,7 +209,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const snapshotReport = typeof evidence.previewReceipt === "string" && evidence.previewReceipt.trim().length > 0
     && JSON.parse(evidence.previewReceipt)?.schema === "dynamic-revit-read-report-receipt/v0";
   if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
-  const canonicalAttemptSettlement = executionStatus === "completed" ? {
+  const canonicalAttemptSettlement = executionStatus === "completed" || nativeEvidence ? {
     schema: "revit-operator.native-attempt-settlement.v1" as const,
     assignment_id: null,
     attempt_id: null,
@@ -195,12 +221,12 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     action_signature: null,
     target_fingerprint: null,
     request_dispatched: true,
-    effect_state: input.mode === "apply" ? "applied" as const : "none" as const,
-    effect_reason: input.mode === "apply"
+    effect_state: nativeEvidence?.effect ?? (input.mode === "apply" ? "applied" as const : "none" as const),
+    effect_reason: nativeEvidence ? `native_program_${nativeEvidence.transactionState}` : input.mode === "apply"
       ? "trusted_dynamic_runtime_committed_checkpoint"
       : input.mode === "read" || snapshotReport ? "trusted_dynamic_runtime_read_report" : "trusted_dynamic_runtime_preview_noncommit",
-    effect_authority: input.mode === "apply" ? "native_receipt" as const : input.mode === "read" || snapshotReport ? "worker" as const : "native_rollback" as const,
-    affected_target_identities: committedApplyEvidence?.affectedTargetIdentities ?? [],
+    effect_authority: nativeEvidence ? "native_receipt" as const : input.mode === "apply" ? "native_receipt" as const : input.mode === "read" || snapshotReport ? "worker" as const : "native_rollback" as const,
+    affected_target_identities: nativeEvidence?.affectedTargetIdentities ?? committedApplyEvidence?.affectedTargetIdentities ?? [],
     receipt_refs: [
       `dynamic-run:${runId}`,
       `dynamic-evidence:${evidenceSha256}`,
@@ -212,7 +238,13 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const result = {
     schema: DYNAMIC_REVIT_PROGRAM_RUN_V1, run_id: runId, requested_mode: input.mode,
     execution_status: executionStatus, execution_ok: executionStatus === "completed",
-    report: executionStatus === "completed" ? workerRecord(evidence)?.report ?? {} : {},
+    report: executionStatus === "completed" ? nativeEvidence ? { NativeResult: nativeEvidence.result } : workerRecord(evidence)?.report ?? {} : {},
+    ...(native ? { execution_lane: "native", native_outcome: nativeEvidence ? {
+      effect_scope: nativeEvidence.receipt.effect_scope ?? "listed_elements",
+      persistent_effect: nativeEvidence.effect, native_transaction_state: nativeEvidence.transactionState,
+      verification_required: true, task_verified: false,
+      program_result: nativeEvidence.result, error: nativeEvidence.receipt.error ?? null
+    } : null } : {}),
     logs: workerRecord(evidence)?.logs ?? [],
     evidence: { ...evidence, taskDirectory: "opaque:trusted-task", runtimeImageDirectory: "opaque:trusted-runtime" },
     continuation,
@@ -295,7 +327,7 @@ function normalizeResultReference(value: DynamicResultReferenceRunInput) {
 }
 
 type NormalizedSelector = ReturnType<typeof normalizeResultReference>["selector"];
-type ExecutionLane = "legacy" | "result_reference";
+type ExecutionLane = "legacy" | "result_reference" | "native";
 type ExecutionStatus = "completed" | "needs_facts" | "failed";
 type StructuredDiagnostic = {
   code: string; message: string; phase: string; severity: string; repair_action: string;
@@ -673,7 +705,7 @@ function selectorCovers(current: NormalizedSelector, requested: Record<string, u
     (requested.includeTypeParameters !== true || current.includeTypeParameters === true);
 }
 
-function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: string): StructuredDiagnostic[] {
+function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: string, authenticatedNativeFailure = false): StructuredDiagnostic[] {
   const worker = workerRecord(evidence);
   const raw = worker?.diagnostics;
   if (Array.isArray(raw)) {
@@ -684,6 +716,10 @@ function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: stri
     if (diagnostics.length || evidence.ok === true) return diagnostics;
   }
   if (evidence.ok === true) return [];
+  // A validated native failure already explains the unsuccessful run. Do not
+  // invent a second supervisor error from empty stderr. Preserve real worker
+  // diagnostics and any separately reported supervisor failure.
+  if (authenticatedNativeFailure && !evidence.failure && !stderr.trim()) return [];
   if (evidence.failure === "Revit remained busy before generated-code startup. No worker was launched and no preview or apply was dispatched."
       && evidence.bootstrapAttempts === 8 && evidence.workerStarted === false && evidence.workerOutput === null
       && !evidence.registrationReceipt && !evidence.snapshotReceipt && !evidence.previewReceipt

@@ -1,0 +1,66 @@
+{
+  "provenance": "Exact disposable Snowdon447 native parameter read and schedule-cell request; session/workspace/receipt metadata excluded. Authority/freshness supplied by kernel fixtures.",
+  "native_read": {
+    "items": [
+      {
+        "id": 1543791,
+        "uniqueId": "f519af3e-e71b-4f0a-b907-b475140949de-00178e6f",
+        "name": "GENERIC NTS - Prescribed 500 W 120 V 1 Phase",
+        "category": "Mechanical Equipment",
+        "categoryId": -2001140,
+        "parameters": {
+          "Comments": "GENERIC NTS PLACEHOLDER: PRESCRIBED 500 W, 120 V, 1 PHASE; QMARK CZ1012T SPECIFIED BASIS ONLY. PROVISIONAL LEVEL-PLANE SYMBOL, NOT DESIGNED MOUNTING HEIGHT. MOUNTING HEIGHT TBD; NO PRODUCT DIMENSIONS OR CONNECTORS VERIFIED. REVIEW NOTE: ENGINEERING SELECTION REMAINS PENDING.",
+          "Mark": "WH-P02"
+        },
+        "parameterDetails": [
+          {
+            "name": "Comments",
+            "value": "GENERIC NTS PLACEHOLDER: PRESCRIBED 500 W, 120 V, 1 PHASE; QMARK CZ1012T SPECIFIED BASIS ONLY. PROVISIONAL LEVEL-PLANE SYMBOL, NOT DESIGNED MOUNTING HEIGHT. MOUNTING HEIGHT TBD; NO PRODUCT DIMENSIONS OR CONNECTORS VERIFIED. REVIEW NOTE: ENGINEERING SELECTION REMAINS PENDING.",
+            "valueString": "GENERIC NTS PLACEHOLDER: PRESCRIBED 500 W, 120 V, 1 PHASE; QMARK CZ1012T SPECIFIED BASIS ONLY. PROVISIONAL LEVEL-PLANE SYMBOL, NOT DESIGNED MOUNTING HEIGHT. MOUNTING HEIGHT TBD; NO PRODUCT DIMENSIONS OR CONNECTORS VERIFIED. REVIEW NOTE: ENGINEERING SELECTION REMAINS PENDING.",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010106
+          },
+          {
+            "name": "Mark",
+            "value": "WH-P02",
+            "valueString": "WH-P02",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1001203
+          }
+        ]
+      }
+    ]
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/update-schedule-cell",
+    "body": {
+      "scheduleId": 1543793,
+      "rowKey": "WH-P02",
+      "rowField": "Mark",
+      "targetField": "Comments",
+      "expectedValue": "GENERIC NTS PLACEHOLDER: PRESCRIBED 500 W, 120 V, 1 PHASE; QMARK CZ1012T SPECIFIED BASIS ONLY. PROVISIONAL LEVEL-PLANE SYMBOL, NOT DESIGNED MOUNTING HEIGHT. MOUNTING HEIGHT TBD; NO PRODUCT DIMENSIONS OR CONNECTORS VERIFIED.",
+      "value": "GENERIC NTS PLACEHOLDER: PRESCRIBED 500 W, 120 V, 1 PHASE; QMARK CZ1012T SPECIFIED BASIS ONLY. PROVISIONAL LEVEL-PLANE SYMBOL, NOT DESIGNED MOUNTING HEIGHT. MOUNTING HEIGHT TBD; NO PRODUCT DIMENSIONS OR CONNECTORS VERIFIED. REVIEW NOTE: ENGINEERING SELECTION REMAINS PENDING.",
+      "apply": true,
+      "dryRun": false
+    }
+  },
+  "read_input": {
+    "method": "POST",
+    "path": "/revit/get-parameters",
+    "body": {
+      "elementIds": [
+        1543791
+      ],
+      "names": [
+        "Comments",
+        "Mark"
+      ]
+    }
+  },
+  "affected": [
+    "element_id:1543791"
+  ]
+}

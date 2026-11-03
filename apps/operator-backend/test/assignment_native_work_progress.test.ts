@@ -4,14 +4,66 @@ import test from "node:test";
 import { AssignmentJournalV2, type AssignmentEventV2, type AssignmentSnapshotV2, type OperationV2,
   type OperationResultV2, type ObservationV2, type AssignmentSpecV2 } from "../src/domain/assignment-kernel/index.js";
 import { buildHostProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
-import { deriveProgressGapsV2, decideAssignmentProgressV2 } from "../src/domain/assignment-kernel/progress/controller.js";
+import { deriveProgressGapsV2, decideAssignmentProgressV2,assignmentNativeReadbackResourceBlockerV2 } from "../src/domain/assignment-kernel/progress/controller.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../src/domain/assignment-kernel/outcome.js";
+import { nativeCommitProgressIdentityV2 } from '../src/domain/assignment-kernel/progress/native_work_progress.js';
 
 type Stage = { operation: OperationV2; result: OperationResultV2; observation: ObservationV2 };
 const fixture = JSON.parse(fs.readFileSync("test/fixtures/native-progress-repaired-thin.json", "utf8")) as {
   spec: AssignmentSpecV2; declaration: unknown; stages: Stage[]; prelude: AssignmentEventV2[];
 };
+
+function savedCheckpoint(snapshot:AssignmentSnapshotV2,id='checkpoint-save') {
+ const source=Object.values(snapshot.operations).find(o=>o.requested_effect==='apply'&&o.result?.native_transaction_state==='committed')!;
+ const output='C:/fixture/authorized-result.rvt',identity={session_id:'native-fixture',project_fingerprint:snapshot.current_binding.document_fingerprint!,path:output};
+ const op:OperationV2={...structuredClone(source),operation_id:id,input:{method:'POST',path:'/revit/save-as',body:{filePath:output,overwrite:true}},
+  request_identity:{capability_id:source.capability_id,method:'POST',path:'/revit/save-as',request_signature:'a'.repeat(64)},target:{...source.target,target_id:'artifact_path:'+output.toLowerCase()},
+  observation_ids:[id+':observed'],verification_operation_ids:[],opened_at:'2026-09-26T01:13:00.000Z',settled_assignment_version:9999};
+ op.result={...structuredClone(source.result!),operation_id:id,receipt_id:id+':receipt',native_correlation_id:id+':native',native_transaction_state:'not_applicable',
+  raw_payload_hash:'b'.repeat(64),result_schema_id:'operator-native/POST:/revit/save-as/v2',request_identity:structuredClone(op.request_identity),completed_at:'2026-09-26T01:13:01.000Z',
+  affected_target_identities:['artifact_path:'+output.toLowerCase()],observation_required:true,native_artifact_receipt:{schema:'revit-operator.native-artifact-receipt.v1',method:'POST',path:'/revit/save-as',phase:'apply',status:'complete',
+   expected_output_paths:[output],expected_export_calls:1,export_calls:[true],outputs:[{path:output,size_bytes:4096,sha256:'c'.repeat(64),fresh_output:true,stable_read:true}],
+   save_document:{native_save_returned:true,same_document:true,document_session_changed:false,document_path_changed:false,project_binding_changed:false,before:identity,after:identity}}};
+ const original=snapshot.observations[source.observation_ids[0]!]!;
+ const observation:ObservationV2={...structuredClone(original),observation_id:op.observation_ids[0]!,operation_id:id,capability_id:op.capability_id,
+  raw_payload_hash:op.result!.raw_payload_hash!,observed_at:op.result!.completed_at};
+ const after:any=structuredClone(snapshot);after.operations[id]=op;after.observations[observation.observation_id]=observation;
+ return{after,op,observation};
+}
+
+test('native saved checkpoint after new model work advances once, without certifying its file or resetting hard limits',()=>{
+ const state=replay().j.snapshot(),first=savedCheckpoint(state);
+ assert(nativeCommitProgressIdentityV2(first.after,first.op),'a real native save of current work is progress before its separate file check');
+ const e=epoch(state,first.after);assert(e.progress_reasons.includes('native_change_committed'));
+ assert.equal(appliedOperationHasVerifiedPostconditionV2(first.after,first.op.operation_id),false,'save receipt alone is not an independently checked artifact');
+ const repeated=savedCheckpoint(first.after,'checkpoint-repeat');
+ (repeated.op.result!.native_artifact_receipt!.outputs[0]as any).sha256='d'.repeat(64);
+ assert.equal(nativeCommitProgressIdentityV2(first.after,first.op),nativeCommitProgressIdentityV2(repeated.after,repeated.op),'another path/receipt/hash without new native model work cannot buy progress');
+ assert.equal(epoch(first.after,repeated.after).genuine_progress,false);
+ const noProgress=epoch(state,state),prior=Array.from({length:3},(_,i)=>({...noProgress,epoch_id:'prior-repeat-'+i}));
+ const snapshot={...first.after,progress_epochs:[...prior,e]};
+ assert.equal(assignmentNativeReadbackResourceBlockerV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,first.op.result!.completed_at,1),null,'one ordinary independent read fits unchanged hard budgets after useful save');
+ assert.notEqual(decideAssignmentProgressV2({snapshot,budget:DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,now:first.op.result!.completed_at}).reason,'no_progress_budget_exhausted','separate exact file read remains eligible after useful save');
+ assert.equal(decideAssignmentProgressV2({snapshot,budget:{...DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,max_operations:1},now:first.op.result!.completed_at}).reason,'operation_budget_exhausted');
+ const next:any=structuredClone(first.after),model=Object.values(next.operations as Record<string,OperationV2>).find(o=>o.result?.native_transaction_state==='committed'&&o.requested_effect==='apply')!;
+ const edit=structuredClone(model);edit.operation_id='new-model-edit';edit.result={...edit.result!,operation_id:edit.operation_id,receipt_id:'new-model-receipt',completed_at:'2026-09-26T01:13:02.000Z'};
+ edit.observation_ids=['new-model-observed'];const observed=structuredClone(next.observations[model.observation_ids[0]!]!);observed.observation_id=edit.observation_ids[0]!;observed.operation_id=edit.operation_id;
+ next.operations[edit.operation_id]=edit;next.observations[observed.observation_id]=observed;
+ const updated=savedCheckpoint(next,'checkpoint-updated');updated.op.opened_at='2026-09-26T01:13:03.000Z';updated.op.result!.completed_at='2026-09-26T01:13:04.000Z';
+ assert.notEqual(nativeCommitProgressIdentityV2(first.after,first.op),nativeCommitProgressIdentityV2(updated.after,updated.op),'actual intervening native model work earns the next checkpoint');
+ for(const variant of ['foreign','unsettled','unknown','signature','schema','binding','output','dryrun','invalidated','missing_observation']as const){
+  const bad=structuredClone(first.after),o=bad.operations[first.op.operation_id]!;
+  if(variant==='foreign')o.result!.authority='mcp';if(variant==='unsettled')o.settlement_state='pending' as any;
+  if(variant==='unknown')o.persistent_effect='unknown';if(variant==='signature')o.result!.request_identity!.request_signature='f'.repeat(64);
+  if(variant==='schema')o.result!.result_schema_id='operator-native/POST:/revit/export-pdf/v2';
+  if(variant==='binding')o.result!.binding={...o.binding,generation:o.binding.generation+1};
+  if(variant==='output')(o.result!.native_artifact_receipt!.outputs[0]as any).path='C:/unrelated.rvt';
+  if(variant==='dryrun')(o.input.body as any).dryRun=true;if(variant==='invalidated')bad.input_invalidated_operation_ids=[o.operation_id];
+  if(variant==='missing_observation')o.observation_ids=[];
+  assert.equal(nativeCommitProgressIdentityV2(bad,o),null,variant);
+ }
+});
 function append(j: AssignmentJournalV2, body: object, at = "2026-09-26T01:12:50.072Z") {
   const v = j.events().length + 1;
   return j.append({ schema: "revit-operator.assignment-event/v2", event_id: `progress-replay-${v}`,
@@ -128,4 +180,27 @@ test("a duplicate native receipt or unconfirmed apply cannot masquerade as anoth
     if (variant === "duplicate_receipt") op.result!.receipt_id = fixture.stages[0]!.result.receipt_id;
     assert.equal(epoch(apply.before, bad).genuine_progress, false, variant);
   }
+});
+
+test('vector native pages and annotation parts earn progress once per bounded selector and retained write interval',()=>{
+ const {transitions}=replay(),t=[...transitions].reverse().find(t=>t.stage.operation.purpose==='verification')!;
+ const id=t.stage.operation.operation_id,obsId=t.stage.observation.observation_id;
+ for(const route of ['/revit/view-owned-detailing','/revit/inspect-vector-detail']){
+  const before=structuredClone(t.before),after=structuredClone(t.after),op=after.operations[id]!;
+  op.input={method:'POST',path:route,body:route.endsWith('view-owned-detailing')?{cadTargetOnly:true,cadElementId:42,cadGeometryOffset:0}:{manifestElementId:42,partIndex:0}};
+  op.request_identity={...op.request_identity!,path:route};
+  assert(epoch(before,after).progress_reasons.includes('verification_observation_added'));
+  const cloned=structuredClone(after),duplicate={...cloned,operations:{...cloned.operations},observations:{...cloned.observations}},copyId='new-vector-read',copyObs='new-vector-observation';
+  duplicate.operations[copyId]={...structuredClone(op),operation_id:copyId,observation_ids:[copyObs],
+   result:{...op.result!,operation_id:copyId,receipt_id:'new-vector-receipt',raw_payload_hash:'new-vector-hash'}};
+  duplicate.observations[copyObs]={...structuredClone(after.observations[obsId]!),observation_id:copyObs,operation_id:copyId,raw_payload_hash:'new-vector-hash'};
+  const subject=duplicate.operations[op.verification_of_operation_id!]!;subject.verification_operation_ids=[...subject.verification_operation_ids,copyId];
+  assert.equal(epoch(after,duplicate).genuine_progress,false,'Different receipts do not renew the same page');
+  (duplicate.operations[copyId]!.input.body as any).writeEpoch='invented';
+  assert.equal(epoch(after,duplicate).genuine_progress,false,'Caller-supplied epochs cannot buy progress');
+  (duplicate.operations[copyId]!.input.body as any)[route.endsWith('view-owned-detailing')?'cadGeometryOffset':'partIndex']=1;
+  assert(epoch(after,duplicate).progress_reasons.includes('verification_observation_added'),'A distinct native selector is useful evidence, not whole-drawing proof');
+  duplicate.operations[copyId]!.result!.authority='mcp';
+  assert.equal(epoch(after,duplicate).genuine_progress,false,'Paging cannot replace native authority');
+ }
 });

@@ -103,13 +103,46 @@ namespace RevitBridge.Common.Tests
         {
             var calls = 0;
             using var deadline = new CancellationTokenSource();
+            // Control actual cancellation instead of assuming a20ms timer is
+            // delivered before a250ms backoff under a loaded test scheduler.
+            var failedAttempt = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = OperatorNativeAuthorizationTransport.SendAsync(() =>
+            {
+                calls++;
+                return failedAttempt.Task;
+            }, deadline.Token);
+            deadline.Cancel();
+            failedAttempt.SetException(new HttpRequestException("Disconnected"));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+            Assert.Equal(1, calls);
+        }
+
+        [Fact]
+        public async Task CancellationDuringSecondFailedAuthorizationWinsWithoutAnotherReconnect()
+        {
+            var calls = 0;
+            using var deadline = new CancellationTokenSource();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => OperatorNativeAuthorizationTransport.SendAsync(() =>
             {
                 calls++;
-                deadline.CancelAfter(20);
+                if (calls == 2) deadline.Cancel();
                 throw new HttpRequestException("Disconnected");
             }, deadline.Token));
-            Assert.Equal(1, calls);
+            Assert.Equal(2, calls);
+        }
+
+        [Fact]
+        public async Task AlreadyCanceledDeadlineNeverAuthorizes()
+        {
+            var calls = 0;
+            using var deadline = new CancellationTokenSource();
+            deadline.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => OperatorNativeAuthorizationTransport.SendAsync(() =>
+            {
+                calls++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            }, deadline.Token));
+            Assert.Equal(0, calls);
         }
     }
 }

@@ -18,6 +18,7 @@ namespace RevitBridge.Logic.Handlers
             // Convenience: same as edit-family-from-instance elementId
             public long? titleblockInstanceId { get; set; }
             public long? elementId { get; set; }
+            public bool allowNonTitleblock { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -31,7 +32,7 @@ namespace RevitBridge.Logic.Handlers
             if (tbId.HasValue && tbId.Value != 0)
             {
                 // Delegate to the existing handler (creates a session).
-                var req = new EditFamilyFromInstanceHandler.Params { elementId = tbId.Value };
+                var req = new EditFamilyFromInstanceHandler.Params { elementId = tbId.Value, allowNonTitleblock = p.allowNonTitleblock };
                 var raw = new EditFamilyFromInstanceHandler().Handle(app, JsonSerializer.Serialize(req)).GetAwaiter().GetResult();
                 return Task.FromResult(raw);
             }

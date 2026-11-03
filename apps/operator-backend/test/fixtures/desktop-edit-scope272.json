@@ -1,0 +1,361 @@
+{
+  "provenance": "Projection of actual272 completed snapshot: retain exact request, native edit/verification relationships and times. Omit transport, machine paths and provider payloads. This is not a replacement or migration of the immutable original goal.",
+  "retained_goal_sha256": "43df7d1874a9ff38789d2e42eaae0770a4d2503c013438e3c01d8c7081f571eb",
+  "snapshot": {
+    "current_binding": {
+      "assignment_id": "69a00392-7d3e-400f-adb4-d3e478168df3",
+      "run_id": "sidecar:e9579513-3987-427b-a544-b05acd744956",
+      "generation": 1,
+      "session_id": "3bbb26f7-67ca-5aaf-a229-ebf3aa9b6a47",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "input_values": {},
+    "pending_input_variable_ids": [],
+    "pending_review_ids": [],
+    "quiescent": true,
+    "unresolved_unknown_operation_ids": [],
+    "execution_failure_ids": [],
+    "execution_failures": {},
+    "provider_budget_exhausted": false,
+    "work_unit_states": {
+      "work-discovery": "complete",
+      "work-preview": "complete",
+      "work-primary": "complete",
+      "work-verification": "complete",
+      "work-evidence": "complete"
+    },
+    "criteria": {
+      "criterion-bcd7a9ecadf186542ce5": {
+        "criterion_id": "criterion-bcd7a9ecadf186542ce5",
+        "status": "pass",
+        "basis": "observation",
+        "supporting_operation_ids": [
+          "opv2_bd91318bd2da193a3a9d141fae23ddbb322d24926747f72733b4e0ebaf945249"
+        ],
+        "supporting_facts": [
+          {
+            "observation_id": "obsv2_2a618984c8ec8bf176d7877d4b64ad3baba8e65b60ef7ca126695ffd2bdecbba",
+            "fact_id": "task.result_available"
+          }
+        ],
+        "evaluator_authority": "operator-runtime",
+        "reason": "All required semantic facts are authoritatively supported.",
+        "evaluated_at": "2026-10-20T14:33:59.947Z"
+      }
+    },
+    "spec": {
+      "schema": "revit-operator.assignment-spec/v2",
+      "binding": {
+        "assignment_id": "69a00392-7d3e-400f-adb4-d3e478168df3",
+        "run_id": "sidecar:e9579513-3987-427b-a544-b05acd744956",
+        "generation": 1,
+        "session_id": "3bbb26f7-67ca-5aaf-a229-ebf3aa9b6a47",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "source_user_request": "Apply this marked mechanical drawing note on M103: ADD DETAIL NOTE READING \"TERMINATE DRYER VENT PER MANF. REQUIREMENTS\". The marked callout is at the lower exterior dryer-vent termination near the south facade of the L3 plan, around grid 5. Use the attached marked sheet to locate it. Add a concise legible native note with a leader at that termination, matching the existing annotation style, and check it in the actual M103 sheet. Preserve the model and other notes. Save a separate model named Snowdon HVAC - Dryer Note Result272.rvt. This trial covers only that note; other redlines are deferred.",
+      "requested_effect": "apply",
+      "criteria": [
+        {
+          "criterion_id": "criterion-bcd7a9ecadf186542ce5",
+          "requirement": "Return a truthful, evidence-backed result for the requested work.",
+          "required": true,
+          "semantic_fact_requirements": [
+            "task.result_available"
+          ],
+          "evidence_policy": {
+            "schema": "revit-operator.criterion-evidence-policy/v2",
+            "allowed_evidence_classes": [
+              "task_result"
+            ],
+            "allowed_fulfillment_roles": [
+              "delegated_task_execution"
+            ],
+            "allowed_fact_classes": [
+              "domain"
+            ],
+            "allowed_capability_ids": [],
+            "allowed_result_schema_ids": [],
+            "required_fact_ids": [
+              "task.result_available"
+            ],
+            "require_native_dispatch": true,
+            "require_current_generation": true
+          },
+          "accepted_evaluator_authority_ids": [
+            "operator-runtime"
+          ],
+          "accepted_observation_authority_ids": [
+            "native-host",
+            "dynamic-runtime",
+            "operator-evidence-store"
+          ]
+        }
+      ],
+      "input_variables": [],
+      "work_units": [
+        {
+          "work_unit_id": "work-discovery",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        },
+        {
+          "work_unit_id": "work-preview",
+          "requested_effect": "preview",
+          "execution_class": "coupled_atomic",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": false,
+          "rollback_scope": "operation"
+        },
+        {
+          "work_unit_id": "work-primary",
+          "requested_effect": "apply",
+          "execution_class": "independent",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": true,
+          "safe_to_retain": true,
+          "rollback_scope": "operation"
+        },
+        {
+          "work_unit_id": "work-verification",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        },
+        {
+          "work_unit_id": "work-evidence",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        }
+      ],
+      "created_at": "2026-10-20T14:31:22.905Z"
+    },
+    "operations": {
+      "opv2_f69efe420297afe880d3be2eff5964e14e177bb7e68366717f2ba55f7c452676": {
+        "operation_id": "opv2_f69efe420297afe880d3be2eff5964e14e177bb7e68366717f2ba55f7c452676",
+        "binding": {
+          "assignment_id": "69a00392-7d3e-400f-adb4-d3e478168df3",
+          "run_id": "sidecar:e9579513-3987-427b-a544-b05acd744956",
+          "generation": 1,
+          "session_id": "3bbb26f7-67ca-5aaf-a229-ebf3aa9b6a47",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "requested_effect": "read",
+        "purpose": "verification",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "verification_operation_ids": [],
+        "observation_ids": [
+          "obsv2_229df11cd8f49cb2ecc1c70d798ffe868652ef015e7ec0d27e4cebaaa93de527"
+        ],
+        "opened_at": "2026-10-20T14:34:00.486Z",
+        "verification_of_operation_id": "opv2_bd91318bd2da193a3a9d141fae23ddbb322d24926747f72733b4e0ebaf945249",
+        "result": {
+          "status": "succeeded"
+        }
+      },
+      "opv2_bd91318bd2da193a3a9d141fae23ddbb322d24926747f72733b4e0ebaf945249": {
+        "operation_id": "opv2_bd91318bd2da193a3a9d141fae23ddbb322d24926747f72733b4e0ebaf945249",
+        "binding": {
+          "assignment_id": "69a00392-7d3e-400f-adb4-d3e478168df3",
+          "run_id": "sidecar:e9579513-3987-427b-a544-b05acd744956",
+          "generation": 1,
+          "session_id": "3bbb26f7-67ca-5aaf-a229-ebf3aa9b6a47",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "requested_effect": "apply",
+        "purpose": "work",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "verification_operation_ids": [
+          "opv2_f69efe420297afe880d3be2eff5964e14e177bb7e68366717f2ba55f7c452676"
+        ],
+        "observation_ids": [
+          "obsv2_2a618984c8ec8bf176d7877d4b64ad3baba8e65b60ef7ca126695ffd2bdecbba"
+        ],
+        "opened_at": "2026-10-20T14:33:58.138Z",
+        "result": {
+          "status": "succeeded"
+        }
+      }
+    },
+    "observations": {
+      "obsv2_2a618984c8ec8bf176d7877d4b64ad3baba8e65b60ef7ca126695ffd2bdecbba": {
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "adc2651857b9207d9d26904ca114ecb0d3acd1fd38661298e451abe19fae0633"
+          },
+          {
+            "fact_id": "task.result_available",
+            "fact_class": "domain",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.action",
+            "fact_class": "control",
+            "value": "create"
+          },
+          {
+            "fact_id": "control.field.text_note_id",
+            "fact_class": "control",
+            "value": 1542917
+          },
+          {
+            "fact_id": "control.field.view_id",
+            "fact_class": "control",
+            "value": 1363423
+          },
+          {
+            "fact_id": "control.field.success",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.status",
+            "fact_class": "control",
+            "value": "Success"
+          },
+          {
+            "fact_id": "control.native_change_inventory_complete",
+            "fact_class": "control",
+            "value": true
+          }
+        ]
+      },
+      "obsv2_229df11cd8f49cb2ecc1c70d798ffe868652ef015e7ec0d27e4cebaaa93de527": {
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "d9273e40679bdc34ed003b17cb7d3097c3ce4fc3a04d6cc53f898af312382773"
+          },
+          {
+            "fact_id": "control.field.ok",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.scope",
+            "fact_class": "control",
+            "value": "active_project"
+          },
+          {
+            "fact_id": "control.field.doc_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_document_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_name",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.document_title",
+            "fact_class": "control",
+            "value": "Snowdon HVAC - Dryer Note272"
+          },
+          {
+            "fact_id": "control.field.exact_element_filter_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          },
+          {
+            "fact_id": "verification.deliverable_target_identities",
+            "fact_class": "verification",
+            "value": [
+              "element_id:1542917"
+            ],
+            "cardinality": "many"
+          }
+        ]
+      }
+    }
+  }
+}

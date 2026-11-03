@@ -128,3 +128,37 @@ test("MCP tool search satisfies shared cross-process ranking vectors", () => {
     }
   }
 });
+
+test("sheet capture metadata presented to MCP distinguishes images from spatial mapping", () => {
+  const url = [
+    new URL("../../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url),
+    new URL("../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url)
+  ].find(candidate => fs.existsSync(candidate));
+  assert.ok(url);
+  const fixture = JSON.parse(fs.readFileSync(url, "utf8"));
+  const image = fixture.candidates.find((tool: GoldenCandidate) => tool.path === "/revit/export-image");
+  const frame = fixture.candidates.find((tool: GoldenCandidate) => tool.path === "/revit/export-view-frame");
+  assert.match(image.description, /DrawingSheet/);
+  assert.match(image.description, /not pixel-to-model/);
+  assert.match(frame.description, /DrawingSheet.*not supported/);
+  assert.match(frame.description, /\/revit\/export-image/);
+});
+
+test("linked spatial inventory survives the actual product catalog's bounded MCP search", () => {
+  const url = [
+    new URL("../../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url),
+    new URL("../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url)
+  ].find(candidate => fs.existsSync(candidate));
+  assert.ok(url, "native-checked product metadata fixture is missing");
+  const fixture = JSON.parse(fs.readFileSync(url, "utf8"));
+  assert.equal(fixture.schema, "operator.linked_spatial_discovery.v1");
+  for (const vector of fixture.queries) {
+    const ranked = fixture.candidates
+      .map((tool: GoldenCandidate) => ({ tool, score: scoreToolSearchCandidateV3(tool, vector.query) }))
+      .filter((candidate: { score: number }) => candidate.score > 0)
+      .sort(compareToolSearchCandidatesV3)
+      .slice(0, vector.max);
+    assert.ok(ranked.some((candidate: { tool: GoldenCandidate }) => candidate.tool.path === vector.required_path),
+      `${vector.query}: ${vector.required_path} absent from ${ranked.map((c: { tool: GoldenCandidate }) => c.tool.path).join(", ")}`);
+  }
+});

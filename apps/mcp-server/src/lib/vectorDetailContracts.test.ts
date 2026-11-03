@@ -20,3 +20,14 @@ test('vector discovery and summary cannot pose as complete part or record-page i
   {manifestElementId:123,partIndex:2000},{manifestElementId:123,limit:101},{manifestElementId:123,apply:true}])assert.equal(check(body)?.request_dispatched,false,JSON.stringify(body));
  assert.equal(isSupportedNativeTool('POST','/revit/inspect-vector-detail'),true);assert.equal(isSupportedNativeTool('POST','/revit/inspect-vector-detail-other'),false);
 });
+
+test('source annotations require exact existing owner and immutable complete plan without caller source subsets',()=>{
+ const {viewName,...source}=request,body={...source,viewId:20,expectedViewUniqueId:'native-view-20'};
+ const check=(b:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/import-vector-annotations',request_schema:contracts['/revit/import-vector-annotations']},b);
+ for(const b of [body,{...body,dryRun:true},{...body,partIndex:1,manifestElementId:123,expectedImportSnapshotSha256:hash}])assert.equal(check(b),null);
+ for(const b of [{...body,viewName},{...body,selectedEntityIds:['line-0']},{...body,viewId:undefined},{...body,expectedViewUniqueId:undefined},
+  {...body,partIndex:1},{...body,manifestElementId:123},{...body,partIndex:2000,manifestElementId:123,expectedImportSnapshotSha256:hash}])
+  assert.equal(check(b)?.request_dispatched,false,JSON.stringify(b));
+ assert.equal(isSupportedNativeTool('POST','/revit/import-vector-annotations'),true);
+ assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),false,'Annotations cannot re-enable the withheld source curve importer.');
+});

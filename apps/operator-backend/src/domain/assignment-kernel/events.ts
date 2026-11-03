@@ -17,6 +17,7 @@ export type AdvisoryCheckpointContinuationV1 = Readonly<{
   document_fingerprint: string;
   direction_variable_id: string;
   direction_text: string;
+  resource_renewal?: import('./user_followup_allocation.js').UserResourceRenewalRequestV1;
 }>;
 
 export interface AssignmentEventEnvelopeV2 {

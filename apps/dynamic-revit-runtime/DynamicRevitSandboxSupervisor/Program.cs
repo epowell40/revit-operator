@@ -12,7 +12,7 @@ using RevitOperator.DynamicRevitSdk;
 
 namespace RevitOperator.DynamicRevitSandboxSupervisor;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly TimeSpan BridgeRequestTimeout = TimeSpan.FromSeconds(90);
     internal static TimeSpan BridgeRequestTimeoutForTests => BridgeRequestTimeout;
@@ -49,6 +49,8 @@ internal static class Program
     private static async Task<LiveEvidence> RunLiveTask(LiveTaskConfig config, bool replayAdmission)
     {
         var started = DateTimeOffset.UtcNow;
+        ValidateNativeLane(config);
+        if(config.NativeProgram!=null && replayAdmission)throw new InvalidOperationException("Native programs do not automatically replay an execution admission.");
         if (config.ReadOnly && (config.Apply || config.ResultReference || !string.IsNullOrWhiteSpace(config.ContextRuleFile)))
             throw new InvalidOperationException("Read-only programs use the basic snapshot/report SDK and cannot enable an execution lane.");
         var contextRuleRequested = !string.IsNullOrWhiteSpace(config.ContextRuleFile) || !string.IsNullOrWhiteSpace(config.ContextRuleVerificationKeyFile) ||
@@ -63,9 +65,6 @@ internal static class Program
         }
         var workerDirectory = Path.GetFullPath(config.WorkerDirectory);
         var evidencePath = Path.GetFullPath(config.EvidencePath);
-        using var workspace = TaskWorkspace.Create(evidencePath, "live-tasks", workerDirectory);
-        var taskRoot = workspace.Root;
-        var scratch = workspace.ScratchDirectory;
         var source = await File.ReadAllTextAsync(config.SourceFile);
         var token = (await File.ReadAllTextAsync(config.OperatorTokenFile)).Trim();
         if (token.Length < 16) throw new InvalidOperationException("Operator token file is empty or invalid.");
@@ -74,8 +73,6 @@ internal static class Program
         // bootstrap, snapshot, observation, compilation, or that feedback response. Load the
         // grant only after the worker has produced a complete executable graph.
         var writeGrant = ReadWriteGrantForMode(config.OperatorTokenFile, RequiresInitialWriteGrant(config));
-        using var profile = WindowsSandboxProfile.Create(lessPrivileged: true);
-        profile.GrantTaskLayout(taskRoot, workspace.RuntimeDirectory, scratch);
         var runtimeId = Guid.NewGuid().ToString("N");
         var signingKey = RandomNumberGenerator.GetBytes(32);
         var hostSessionKey = RandomNumberGenerator.GetBytes(32);
@@ -94,21 +91,39 @@ internal static class Program
         var bootstrapRaw = bootstrapRead.Response.Body;
         var bootstrap = await CompleteBootstrap(bootstrapRaw, runtimeId, hostSessionKey, launcherHash, selectedHost);
         hostAuthentications.Add(bootstrap.Receipt);
-        var snapshotCore = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget }, WireJson);
+        DynamicNativeProgramPreparationV1? nativePreparation = null;
+        string snapshotRaw;
+        string snapshotCore = "";
+        if(config.NativeProgram!=null)
+        {
+            (nativePreparation,snapshotRaw)=await PrepareNativeProgram(config,source,runtimeId,hostSessionKey,token,writeGrant,hostAuthentications);
+        }
+        else
+        {
+        snapshotCore = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget, readOnly = config.ReadOnly }, WireJson);
         var snapshotCorrelation = Guid.NewGuid().ToString("N");
         var snapshotAuthExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
-        var snapshotRequest = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget, runtimeInstanceId = runtimeId, correlationId = snapshotCorrelation, authExpiresUnixSeconds = snapshotAuthExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "snapshot", runtimeId, snapshotCorrelation, snapshotAuthExpires, DynamicWire.Sha256(snapshotCore)) }, WireJson);
+        var snapshotRequest = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget, readOnly = config.ReadOnly, runtimeInstanceId = runtimeId, correlationId = snapshotCorrelation, authExpiresUnixSeconds = snapshotAuthExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "snapshot", runtimeId, snapshotCorrelation, snapshotAuthExpires, DynamicWire.Sha256(snapshotCore)) }, WireJson);
         var snapshotEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/snapshot", token, writeGrant, snapshotRequest, snapshotCorrelation);
-        var snapshotRaw = UnwrapAuthenticated(snapshotEnvelope, hostSessionKey, runtimeId, "snapshot-receipt", out var snapshotAuthentication);
+        snapshotRaw = UnwrapAuthenticated(snapshotEnvelope, hostSessionKey, runtimeId, "snapshot-receipt", out var snapshotAuthentication);
         hostAuthentications.Add(snapshotAuthentication);
+        }
+        var nativeReferences=nativePreparation?.References.Select(r=>new NativeReferenceSource(r.Name,nativePreparation.ReferencePaths[r.Name],r.Sha256)).ToArray();
+        using var workspace = TaskWorkspace.Create(evidencePath, "live-tasks", workerDirectory,nativeReferences);
+        var taskRoot = workspace.Root;
+        var scratch = workspace.ScratchDirectory;
+        using var profile = WindowsSandboxProfile.Create(lessPrivileged: true);
+        profile.GrantTaskLayout(taskRoot, workspace.RuntimeDirectory, scratch);
         using var snapshotDocument = JsonDocument.Parse(snapshotRaw);
         var snapshotRoot = snapshotDocument.RootElement;
-        var document = snapshotRoot.GetProperty("document").Deserialize<DynamicDocumentDto>(Json) ?? throw new InvalidOperationException("Snapshot document DTO is missing.");
+        var document = nativePreparation?.Document ?? snapshotRoot.GetProperty("document").Deserialize<DynamicDocumentDto>(Json) ?? throw new InvalidOperationException("Snapshot document DTO is missing.");
         ValidateExpectedDocument(config.ExpectedDocumentFingerprint, document.ProjectFingerprint);
-        var elements = snapshotRoot.GetProperty("elements").Deserialize<List<DynamicElementDto>>(Json) ?? throw new InvalidOperationException("Snapshot element DTOs are missing.");
-        var snapshotToken = snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
-        var snapshotInputHash = snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
-        var taskInput = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget };
+        var elements = nativePreparation!=null ? new List<DynamicElementDto>() : snapshotRoot.GetProperty("elements").Deserialize<List<DynamicElementDto>>(Json) ?? throw new InvalidOperationException("Snapshot element DTOs are missing.");
+        var snapshotToken = nativePreparation?.PreparationId ?? snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
+        var coverage = nativePreparation!=null ? null : ReadSnapshotCoverage(snapshotRoot, elements.Count);
+        var taskInput = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget, Coverage = coverage };
+        var snapshotInputHash = nativePreparation!=null ? DynamicWire.InputHash(taskInput) : snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
+        if (!FixedEquals(snapshotInputHash, DynamicWire.InputHash(taskInput))) throw new InvalidOperationException("Snapshot input or coverage binding is invalid.");
         ValidateCheckpointBinding(config, taskInput);
         string workerInput;
         ResultReferenceObservationInput? resultReferenceInput = null;
@@ -124,6 +139,8 @@ internal static class Program
         var executable = Path.Combine(workspace.RuntimeDirectory, "DynamicRevitWorker.exe");
         var arguments = "--sandbox-execute --input-pipe " + inputPipeHandle + " --output-named-pipe " + outputPipeName;
         var workerRuntimePackageHash = workspace.RuntimeImage.VerifyBeforeLaunch();
+        if(nativePreparation!=null && workerRuntimePackageHash!=nativePreparation.WorkerRuntimePackageHash)
+            throw new InvalidOperationException("Staged native compiler package differs from the authenticated host target.");
         var workerExecutableHash = workspace.RuntimeImage.WorkerExecutableHash;
         var compilerRuntimeHash = workspace.RuntimeImage.CompilerRuntimeHash;
         var sdkArtifactHash = workspace.RuntimeImage.SdkArtifactHash;
@@ -153,7 +170,12 @@ internal static class Program
         var registrationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/register", token, writeGrant, registrationRequest, registrationCorrelation);
         registration = UnwrapAuthenticated(registrationEnvelope, hostSessionKey, runtimeId, "register-worker-receipt", out var registrationAuthentication);
         hostAuthentications.Add(registrationAuthentication);
-        if (contextRuleRequested)
+        if (nativePreparation!=null)
+        {
+            workerInput=JsonSerializer.Serialize(new {schema="dynamic-revit-worker-input/v0",source, input=taskInput,deadlineMs=config.WorkerDeadlineMs,
+                nativeCompilation=new {revitYear=int.Parse(config.TargetRevitYear,System.Globalization.CultureInfo.InvariantCulture),entryType=config.NativeProgram!.EntryType,mode=config.NativeProgram.Mode,references=nativePreparation.References}},WireJson);
+        }
+        else if (contextRuleRequested)
         {
             contextRuleInput = await CollectContextRuleInput(config, taskInput, runtimeId, hostSessionKey, token, writeGrant, workerRuntimePackageHash, hostAuthentications);
             workerInput = JsonSerializer.Serialize(new
@@ -331,6 +353,10 @@ internal static class Program
         if (!output.GetProperty("ok").GetBoolean())
             return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw,
                 output.Clone(), "Worker compilation or retained execution failed.");
+        if(nativePreparation!=null)
+            return await CompleteNativeProgram(config,started,workspace,profile,selectedHost,bootstrap,runtimeId,hostSessionKey,signingKey,
+                token,writeGrant,registration,snapshotRaw,rawOutput,nativePreparation,source,launcherHash,workerExecutableHash,
+                checked((int)worker.ProcessId),startupNonceHash,taskDirectoryIdentity,correlation,hostAuthentications);
         if (config.ResultReference && output.TryGetProperty("executionStatus", out var terminalStatus) &&
             terminalStatus.GetString() == "needs_facts")
         {
@@ -419,7 +445,7 @@ internal static class Program
         {
             var freshSnapshotCorrelation = Guid.NewGuid().ToString("N");
             var freshSnapshotExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
-            var freshSnapshotRequest = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget, runtimeInstanceId = runtimeId, correlationId = freshSnapshotCorrelation, authExpiresUnixSeconds = freshSnapshotExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "snapshot", runtimeId, freshSnapshotCorrelation, freshSnapshotExpires, DynamicWire.Sha256(snapshotCore)) }, WireJson);
+            var freshSnapshotRequest = JsonSerializer.Serialize(new { category = config.Category, limit = config.Limit, parameters = config.Parameters, operationBudget = config.OperationBudget, readOnly = config.ReadOnly, runtimeInstanceId = runtimeId, correlationId = freshSnapshotCorrelation, authExpiresUnixSeconds = freshSnapshotExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "snapshot", runtimeId, freshSnapshotCorrelation, freshSnapshotExpires, DynamicWire.Sha256(snapshotCore)) }, WireJson);
             var freshSnapshotEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/snapshot", token, writeGrant, freshSnapshotRequest, freshSnapshotCorrelation);
             var freshSnapshotRaw = UnwrapAuthenticated(freshSnapshotEnvelope, hostSessionKey, runtimeId, "snapshot-receipt", out var freshSnapshotAuthentication);
             hostAuthentications.Add(freshSnapshotAuthentication);
@@ -459,6 +485,22 @@ internal static class Program
     {
         if (!string.IsNullOrWhiteSpace(expected) && !FixedEquals(expected.StartsWith("sha256:", StringComparison.Ordinal) ? expected : "sha256:" + expected, actual))
             throw new InvalidOperationException("Dynamic runtime snapshot does not match the admitted assignment document.");
+    }
+
+    internal static DynamicSnapshotCoverage ReadSnapshotCoverage(JsonElement snapshot, int actualCount)
+    {
+        if (!snapshot.TryGetProperty("coverage", out var raw) || raw.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("Native snapshot coverage is missing; do not infer a complete cohort.");
+        var required = new[] { "SourceScope", "Category", "ParameterNames", "Limit", "ReturnedCount", "HasMore" };
+        var names = raw.EnumerateObject().Select(property => property.Name).ToArray();
+        if (names.Length != required.Length || names.Distinct(StringComparer.Ordinal).Count() != names.Length ||
+            required.Any(name => !names.Contains(name, StringComparer.Ordinal)))
+            throw new InvalidOperationException("Native snapshot coverage has missing, duplicate or unknown fields.");
+        // Native v0 receipts serialize DTO properties in PascalCase; keep strict unknown-field checks.
+        var coverage = raw.Deserialize<DynamicSnapshotCoverage>(new JsonSerializerOptions(StrictJson) { PropertyNamingPolicy = null })
+            ?? throw new InvalidOperationException("Native snapshot coverage is missing.");
+        coverage.Validate(actualCount);
+        return coverage;
     }
 
     internal static void ValidateReadOnlyGraph(bool readOnly, JsonElement graph)
@@ -981,6 +1023,7 @@ internal static class Program
     {
         var node = JsonNode.Parse(value.GetRawText())?.AsObject() ?? throw new InvalidOperationException("Worker output is not an object.");
         node.Remove("compiledAssemblyBase64");
+        if(node["nativeProgramArtifact"] is JsonObject nativeArtifact)nativeArtifact.Remove("assembly");
         using var document = JsonDocument.Parse(node.ToJsonString(WireJson));
         return document.RootElement.Clone();
     }
@@ -1241,6 +1284,7 @@ internal static class Program
 internal sealed class ProbeResult { public string Action { get; set; } = ""; public string Expected { get; set; } = ""; public bool Denied { get; set; } public string Observed { get; set; } = ""; public string? ExceptionType { get; set; } }
 internal sealed class LiveTaskConfig
 {
+    public DynamicNativeProgramRequestV1? NativeProgram { get; set; }
     public bool ReadOnly { get; set; }
     public string? ExpectedDocumentFingerprint { get; set; }
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
@@ -1293,6 +1337,7 @@ internal sealed class DynamicObservationDeltaEvidenceV1
 }
 internal sealed class LiveEvidence
 {
+    public string? NativeExecutionReceipt { get; set; }
     public int? BootstrapAttempts { get; set; }
     public bool? WorkerStarted { get; set; }
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }

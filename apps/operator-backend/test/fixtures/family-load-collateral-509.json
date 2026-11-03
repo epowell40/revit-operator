@@ -1,0 +1,512 @@
+{
+  "provenance": "Retained disposable sample509 native payloads. Only request workstation path is generalized. Historical missing preservation remains missing; future preservation observations in tests are explicitly synthetic.",
+  "historicalKernelSha256": "4929a5799ae0f739c0e9d8692445d3be2794540b53373b8923470b0b493847d2",
+  "input": {
+    "method": "POST",
+    "path": "/revit/load-family",
+    "body": {
+      "filePath": "C:\\OperatorWorkspace\\artifacts\\families\\Seed.rfa",
+      "overwriteParameterValues": false
+    }
+  },
+  "apply": {
+    "loaded": true,
+    "familyId": 1545903,
+    "familyName": "Operator Air Terminal Seed339",
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793
+      ],
+      "affected_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793,
+        1545903,
+        1546136,
+        1546164,
+        1546165
+      ],
+      "added_element_ids": [
+        1545903,
+        1546136,
+        1546164,
+        1546165
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "verified": true,
+    "ok": true,
+    "symbols": [
+      {
+        "id": 1546164,
+        "name": "Operator Air Terminal Seed339"
+      }
+    ],
+    "status": "Loaded"
+  },
+  "reads": [
+    {
+      "input": {
+        "method": "POST",
+        "path": "/revit/get-element-summary",
+        "body": {
+          "elementIds": [
+            1545903,
+            1546164,
+            1420970,
+            1422218,
+            1488968,
+            1521719,
+            1521731,
+            1543793,
+            1546136,
+            1546165
+          ],
+          "includeTagReferences": true
+        }
+      },
+      "payload": {
+        "result": [
+          {
+            "id": 1545903,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-001796af",
+            "className": "Family",
+            "fullClassName": "Autodesk.Revit.DB.Family",
+            "category": null,
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": null,
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1546164,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-001797b4",
+            "className": "FamilySymbol",
+            "fullClassName": "Autodesk.Revit.DB.FamilySymbol",
+            "category": "Air Terminal Tags",
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": {
+              "min": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "max": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1420970,
+            "found": true,
+            "uniqueId": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015aeaa",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "Sheet Index",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1422218,
+            "found": true,
+            "uniqueId": "d6197270-0ef4-4e34-8760-c60ef0c99ec8-0015b38a",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "Space Schedule",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1488968,
+            "found": true,
+            "uniqueId": "6e7c3fc3-4f12-40cc-bc89-7c636a4b76fa-0016b848",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "Heat Recovery Unit Summary",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1521719,
+            "found": true,
+            "uniqueId": "e7aba700-9e09-4b70-b1a8-4ca024b8ae0a-00173837",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "WV_Sheet Index",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1521731,
+            "found": true,
+            "uniqueId": "e7aba700-9e09-4b70-b1a8-4ca024b8ae0a-00173843",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "View List",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1543793,
+            "found": true,
+            "uniqueId": "734e6f3f-3544-4f49-9f09-ffb48a7b9cb0-00178e71",
+            "className": "ViewSchedule",
+            "fullClassName": "Autodesk.Revit.DB.ViewSchedule",
+            "category": "Schedules",
+            "name": "Wall Heater Schedule - Prescribed Basis",
+            "typeId": 75913,
+            "familyName": null,
+            "typeName": "Schedule",
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": "Schedule",
+            "viewScale": 1,
+            "boundingBox": {
+              "min": {
+                "x": -100,
+                "y": -100,
+                "z": -1000
+              },
+              "max": {
+                "x": 100,
+                "y": 100,
+                "z": -0.1
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1546136,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-00179798",
+            "className": "Element",
+            "fullClassName": "Autodesk.Revit.DB.Element",
+            "category": null,
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": null,
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          },
+          {
+            "id": 1546165,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-001797b5",
+            "className": "Element",
+            "fullClassName": "Autodesk.Revit.DB.Element",
+            "category": null,
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": null,
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": {
+              "schema": "operator.tag_references.v1",
+              "applicable": false,
+              "complete": false,
+              "reason": "element_is_not_an_independent_tag"
+            },
+            "viewIdUsed": null
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "method": "POST",
+        "path": "/revit/get-element-summary",
+        "body": {
+          "elementIds": [
+            1545903,
+            1546164
+          ]
+        }
+      },
+      "payload": {
+        "result": [
+          {
+            "id": 1545903,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-001796af",
+            "className": "Family",
+            "fullClassName": "Autodesk.Revit.DB.Family",
+            "category": null,
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": null,
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": null,
+            "viewIdUsed": null
+          },
+          {
+            "id": 1546164,
+            "found": true,
+            "uniqueId": "33c180da-d754-4359-8db7-6f5a275d9e15-001797b4",
+            "className": "FamilySymbol",
+            "fullClassName": "Autodesk.Revit.DB.FamilySymbol",
+            "category": "Air Terminal Tags",
+            "name": "Operator Air Terminal Seed339",
+            "typeId": null,
+            "familyName": null,
+            "typeName": null,
+            "levelId": null,
+            "levelIdBasis": null,
+            "levelName": null,
+            "viewType": null,
+            "viewScale": null,
+            "boundingBox": {
+              "min": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "max": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              }
+            },
+            "location": null,
+            "electricalCircuitMembership": null,
+            "tagReferences": null,
+            "viewIdUsed": null
+          }
+        ]
+      }
+    }
+  ]
+}

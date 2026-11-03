@@ -38,6 +38,7 @@ namespace RevitBridge.Server
         private OperatorNativeCompletionStore? _nativeCompletionStore;
         private bool _isRunning;
         private string _activeUrl = "";
+        internal string ActiveUrl => _activeUrl;
         private string _nativeTransportEpoch = "";
         private bool _ownsActiveDiscoveryReceipt;
         private const string DefaultUrl = "http://127.0.0.1:5000/";
@@ -56,6 +57,9 @@ namespace RevitBridge.Server
                 { "/revit/dynamic-runtime/bootstrap", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeBootstrapHandler() },
                 { "/revit/dynamic-runtime/register", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeRegistrationHandler() },
                 { "/revit/dynamic-runtime/snapshot", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeSnapshotHandler() },
+                { "/revit/dynamic-runtime/native-program-prepare-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramPreparationHandler(RevitDocumentChangeObservations.CaptureVersion) },
+                { "/revit/dynamic-runtime/native-program-read-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramExecutionHandler(RevitDocumentChangeObservations.CaptureVersion, true) },
+                { "/revit/dynamic-runtime/native-program-apply-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramExecutionHandler(RevitDocumentChangeObservations.CaptureVersion, false) },
                 { "/revit/dynamic-runtime/preview", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimePreviewHandler() },
                 { "/revit/dynamic-runtime/authorize-apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyAuthorizationHandler() },
                 { "/revit/dynamic-runtime/apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyHandler() },
@@ -107,6 +111,7 @@ namespace RevitBridge.Server
                 { "/revit/inspect-drawing-spec", new InspectDrawingSpecHandler() },
                 { "/revit/inspect-excel-source", new InspectExcelSourceHandler() },
                 { "/revit/import-vector-detail", new ImportVectorDetailHandler() },
+                { "/revit/import-vector-annotations", new ImportVectorAnnotationsHandler() },
                 { "/revit/inspect-vector-detail", new InspectVectorDetailHandler() },
                 { "/revit/import-excel-output", new ImportExcelOutputHandler() },
                 { "/revit/inspect-excel-import", new InspectExcelImportHandler() },
@@ -178,6 +183,7 @@ namespace RevitBridge.Server
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
                 { "/revit/connect-existing-mep-branch", new ConnectExistingMepBranchHandler() },
+                { "/revit/place-mep-accessory-interactively", new RevitBridge.Logic.Handlers.MEP.PlaceMepAccessoryInteractivelyHandler() },
                 { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
                 { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
                 { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
@@ -257,6 +263,8 @@ namespace RevitBridge.Server
 
                 { "/revit/edit-family-from-instance", new EditFamilyFromInstanceHandler() },
                 { "/revit/inspect-family-content", new InspectFamilyContentHandler() },
+                { "/revit/inspect-family-label-styles", new InspectFamilyLabelStylesHandler() },
+                { "/revit/set-family-label-style", new SetFamilyLabelStyleHandler() },
                 { "/revit/find-family-text-notes", new FindFamilyTextNotesHandler() },
                 { "/revit/set-text-note-text", new SetTextNoteTextHandler() },
                 { "/revit/reload-family-edit-session", new ReloadFamilyEditSessionHandler() },
@@ -948,6 +956,13 @@ namespace RevitBridge.Server
                             throw new ArgumentException(workbookError);
                     }
 
+                    if (path == "/revit/save-family-doc")
+                    {
+                        using var familySaveRequest = JsonDocument.Parse(body);
+                        if (!OperatorFamilySavePath.TryValidateRequest(WorkspacePaths.GetWorkspaceRootPath(), familySaveRequest.RootElement, out var familySaveError))
+                            throw new ArgumentException(familySaveError);
+                    }
+
                     // Support GET query-string style for documentation endpoints (human/tooling convenience).
                     // Operator tool calls from the agent typically use POST bodies (no query support in action runner).
                     var isDocEndpoint =
@@ -1020,7 +1035,9 @@ namespace RevitBridge.Server
                                     try
                                     {
                                         nativeDispatchStarted = true;
-                                        nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                        nativeResult = handler is IInteractiveRequestHandler interactive
+                                            ? interactive.HandleInteractive(app, dispatchBody, localDeadline.Token).GetAwaiter().GetResult()
+                                            : handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
                                     }
                                     catch (Exception error) when (executionStart?.Phase == "apply"
                                         || laboratoryMoveExecutionStart?.Phase == "apply")

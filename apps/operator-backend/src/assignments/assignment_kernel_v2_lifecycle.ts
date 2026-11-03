@@ -10,6 +10,7 @@ import {
 import { getGoal } from "../goals/service.js";
 import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 import { persistWorkReturn } from "../work_returns/store.js";
+import {retireCompletedDesktopImages} from '../desktop_response_store.js';
 import { normalizeAssignmentInputsV2, type AssignmentInputAliasRegistryV2 } from "./assignment_kernel_v2_input_adapter.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
 import {
@@ -54,6 +55,8 @@ function persistTerminalArtifacts(assignmentId: string, snapshot: AssignmentSnap
   if (!goal) throw new Error("assignment_kernel_v2_goal_not_found");
   persistVerifiedWorkPacket(goal, snapshot);
   persistWorkReturn(goal, snapshot);
+  const {session_id,assignment_id,run_id,generation}=snapshot.current_binding;
+  retireCompletedDesktopImages({session_id,assignment_id,run_id,generation,kernelVersion:2},snapshot);
 }
 
 export function deriveAndSettleAssignmentKernelV2(binding: AssignmentKernelBindingInputV2, reason: string): AssignmentSnapshotV2 {

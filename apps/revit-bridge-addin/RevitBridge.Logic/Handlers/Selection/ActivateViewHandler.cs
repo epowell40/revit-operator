@@ -79,6 +79,11 @@ namespace RevitBridge.Logic.Handlers
 
             var shown = new List<long>();
             var notShown = new List<long>();
+            var scheduleFocusAssociations = new List<OperatorScheduleFocusAssociation>();
+            var modelSheetFocusAssociations = new List<OperatorModelSheetFocus>();
+            var directSheetFocus = new List<long>();
+            var directSheetCorners = new List<XYZ>();
+            if ((p.showElementIds?.Count ?? 0) > 200) throw new ArgumentException("Focus is bounded to 200 requested elements.");
             if (p.showElementIds != null && p.showElementIds.Count > 0)
             {
                 var requestedIds = p.showElementIds
@@ -89,10 +94,47 @@ namespace RevitBridge.Logic.Handlers
                 foreach (var id in requestedIds)
                 {
                     var elementId = RevitBridge.Common.ElementIdCompat.Create(id);
-                    if (doc.GetElement(elementId) == null)
+                    var element = doc.GetElement(elementId);
+                    if (element == null)
                     {
                         notShown.Add(id);
                         warnings.Add($"ShowElements skipped missing element {id}.");
+                        continue;
+                    }
+                    if (view is ViewSheet && element is ViewSchedule schedule)
+                    {
+                        // The inspected schedule definition is not itself a
+                        // sheet element. Resolve only its actual unique native
+                        // placement on this exact sheet, never by name.
+                        var association = OperatorScheduleFocusAssociation.Unique(targetViewId, id,
+                            new FilteredElementCollector(doc).OfClass(typeof(ScheduleSheetInstance))
+                                .Cast<ScheduleSheetInstance>()
+                                .Where(instance => instance.OwnerViewId == view.Id && instance.ScheduleId == schedule.Id)
+                                .Take(201).Select(instance => new OperatorScheduleFocusAssociation
+                                {
+                                    scheduleId = id, scheduleUniqueId = schedule.UniqueId,
+                                    instanceId = ElementIdCompat.GetValue(instance.Id), instanceUniqueId = instance.UniqueId,
+                                    sheetId = targetViewId, sheetUniqueId = view.UniqueId
+                                }));
+                        if (association == null)
+                        {
+                            notShown.Add(id);
+                            warnings.Add($"Schedule {id} has no unique observed placement on sheet {targetViewId}; focus was not inferred.");
+                            continue;
+                        }
+                        scheduleFocusAssociations.Add(association);
+                        elementId = ElementIdCompat.Create(association.instanceId);
+                    }
+                    else if (view is ViewSheet sheet && !element.ViewSpecific && !(element is ElementType)
+                        && element.Category?.CategoryType == CategoryType.Model)
+                    {
+                        var association = ModelSheetFocusObservation.Read(doc, sheet, element, warnings);
+                        if (association == null)
+                        {
+                            notShown.Add(id);
+                            warnings.Add($"Model element {id} has no unique fully observed sheet projection; no focus or visibility was inferred.");
+                        }
+                        else modelSheetFocusAssociations.Add(association);
                         continue;
                     }
                     existingIds.Add(elementId);
@@ -107,7 +149,7 @@ namespace RevitBridge.Logic.Handlers
                                 .WhereElementIsNotElementType()
                                 .ToElementIds()
                                 .Select(RevitBridge.Common.ElementIdCompat.GetValue));
-                        var showableIds = existingIds
+                        var showableIds = existingIds.Distinct()
                             .Where(id => visibleInRequestedView.Contains(RevitBridge.Common.ElementIdCompat.GetValue(id)))
                             .ToList();
                         var hiddenIds = existingIds
@@ -122,8 +164,24 @@ namespace RevitBridge.Logic.Handlers
                         }
                         else
                         {
-                            uidoc.ShowElements(showableIds);
-                            shown.AddRange(showableIds.Select(RevitBridge.Common.ElementIdCompat.GetValue));
+                            if (modelSheetFocusAssociations.Count > 0)
+                            {
+                                // Do not combine asynchronous ShowElements with
+                                // a projected sheet zoom. Bound all direct sheet
+                                // neighbors in the same sheet-coordinate frame.
+                                foreach (var directId in showableIds)
+                                {
+                                    var box = doc.GetElement(directId)?.get_BoundingBox(view);
+                                    if (box == null || !box.Enabled) { notShown.Add(ElementIdCompat.GetValue(directId)); continue; }
+                                    directSheetCorners.AddRange(ModelSheetFocusObservation.Corners(box));
+                                    directSheetFocus.Add(ElementIdCompat.GetValue(directId));
+                                }
+                            }
+                            else
+                            {
+                                uidoc.ShowElements(showableIds);
+                                shown.AddRange(showableIds.Select(RevitBridge.Common.ElementIdCompat.GetValue));
+                            }
                             if (hiddenIds.Count > 0)
                                 warnings.Add($"ShowElements omitted {hiddenIds.Count} element(s) not visible in activated view {targetViewId} ('{view.Name}'): {string.Join(",", hiddenIds)}.");
                         }
@@ -155,6 +213,18 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var didZoom = false;
+
+            if (modelSheetFocusAssociations.Count > 0 && p.bboxMinXyz == null && p.bboxMaxXyz == null)
+            {
+                var points = modelSheetFocusAssociations.SelectMany(a => new[] {a.boundsMinXyz,a.boundsMaxXyz})
+                    .Concat(directSheetCorners.Select(v => new[] {v.X,v.Y,0d})).ToArray();
+                var minX=points.Min(v=>v[0]);var maxX=points.Max(v=>v[0]);
+                var minY=points.Min(v=>v[1]);var maxY=points.Max(v=>v[1]);
+                // Context margin in paper feet, not a visibility guarantee.
+                var marginX=Math.Max((maxX-minX)*0.25,1d/96);var marginY=Math.Max((maxY-minY)*0.25,1d/96);
+                p.bboxMinXyz=new[]{minX-marginX,minY-marginY,0d};
+                p.bboxMaxXyz=new[]{maxX+marginX,maxY+marginY,0d};
+            }
 
             bool HasBbox(double[]? a) => a != null && a.Length >= 3 && a.All(v => !double.IsNaN(v) && !double.IsInfinity(v));
             if (uiView != null && HasBbox(p.bboxMinXyz) && HasBbox(p.bboxMaxXyz))
@@ -198,6 +268,12 @@ namespace RevitBridge.Logic.Handlers
                 warnings.Add("ZoomToFit was deferred because the requested view change is pending.");
             }
 
+            if (modelSheetFocusAssociations.Count > 0)
+            {
+                if (didZoom && !activationPending) shown.AddRange(directSheetFocus);
+                else notShown.AddRange(modelSheetFocusAssociations.Select(a=>a.elementId).Concat(directSheetFocus));
+            }
+
             return Task.FromResult<object>(new
             {
                 ok = true,
@@ -209,6 +285,8 @@ namespace RevitBridge.Logic.Handlers
                 requestedViewName = view.Name,
                 shownElementIds = shown,
                 notShownElementIds = notShown.Distinct().ToList(),
+                scheduleFocusAssociations,
+                modelSheetFocusAssociations,
                 didZoom,
                 warnings
             });

@@ -53,7 +53,8 @@ async function main(): Promise<void> {
 
   const nativeRoot = path.join(repoRoot, "apps", "revit-bridge-addin");
   const mcpRoot = path.join(repoRoot, "apps", "mcp-server");
-  // Child gates must use the exact runtime selected for this certification.
+  // Certify with the explicitly selected runtime, including an isolated patched
+  // portable Node. A system-PATH fallback can use a different native-module ABI.
   const gateNode = process.execPath;
   if (process.argv.includes("--gates-already-run")) throw new Error("--gates-already-run is forbidden; source certification must execute its own gates");
   const builds = [

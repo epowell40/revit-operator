@@ -1,0 +1,1095 @@
+{
+  "origin": "Generic public route metadata from retained468 registry; no document/user/source identity or request data. Exact lexical fields preserve actual ranking.",
+  "query": "find-elements get-parameters save-as inspect-exported-files",
+  "tools": [
+    {
+      "method": "GET",
+      "path": "/revit/ping",
+      "risk": "low",
+      "group": "Core",
+      "title": "Ping",
+      "description": "Check that the Revit add-in is responding.",
+      "example": "ping"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/context",
+      "risk": "low",
+      "group": "Core",
+      "title": "Context",
+      "description": "Get active Revit/document/view context plus readiness flags for launch, model load, active view, and selection.",
+      "example": "show context"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/views",
+      "risk": "low",
+      "group": "Core",
+      "title": "List Views",
+      "description": "List views in the model.",
+      "example": "list views"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/views",
+      "risk": "low",
+      "group": "Core",
+      "title": "Query Views",
+      "description": "Return a bounded view index with exact level/type/discipline/id/name predicates plus optional name or semantic-discipline matching. Body: {action?:list|count,viewIds?,levelNames?,viewTypes?,disciplines?,viewNames?,nameContainsAny?,semanticGroups?,includeTemplates?,offset?,limit?}. offset is 0..200000 and limit is 1..500; page again when truncated=true. Unknown scope values return zero instead of widening.",
+      "example": "query Level 4 power views"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/capabilities",
+      "risk": "low",
+      "group": "Core",
+      "title": "Capabilities",
+      "description": "List allowlisted tools/endpoints available to Operator.",
+      "example": "show capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/native-capabilities",
+      "risk": "low",
+      "group": "Core",
+      "title": "Native Capability Probe",
+      "description": "Report native Operator capability status: Revit API bridge, ExternalEvent queue, document/view availability, capture/export, spatial/room tools, Dialog Guardian, WebView2, local write path, sidecar hints, and native tool aliases.",
+      "example": "show native capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/tool-registry",
+      "risk": "low",
+      "group": "Core",
+      "title": "Tool Registry",
+      "description": "Machine-readable tool registry (schemas, units, and examples references). Prefer /revit/tool-search for intent-based discovery and /revit/tool-doc for a single tool to keep payloads small.",
+      "example": "show tool registry"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/write-grant-status",
+      "risk": "low",
+      "group": "Core",
+      "title": "Write Grant Status",
+      "description": "Return current write-grant and transaction safety status for this Revit session.",
+      "example": "show write grant status"
+    },
+    {
+      "method": "GET",
+      "path": "/revit/native-api-policy",
+      "risk": "low",
+      "group": "Core",
+      "title": "Native API Policy",
+      "description": "Get the current native Revit API gateway profile/risk policy (balanced|broad|unrestricted plus enterprise locks).",
+      "example": "show native api policy"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-search",
+      "risk": "low",
+      "group": "Core",
+      "title": "Search Tools",
+      "description": "Search curated /revit/* tools by intent with ranked matches. Body: {query,group?,risk?,method?,max?}. Use this before falling back to the larger tool registry.",
+      "example": "search tools for printing sheets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-doc",
+      "risk": "low",
+      "group": "Core",
+      "title": "Describe Tool",
+      "description": "Describe a single tool (request/response schema, required fields, enums, units, and canonical examples). Body: {method,path}.",
+      "example": "describe tool /revit/rooms"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tool-examples",
+      "risk": "low",
+      "group": "Core",
+      "title": "Tool Examples",
+      "description": "Return runnable examples for a single tool. Body: {method,path}.",
+      "example": "examples for /revit/export-view-region"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-policy",
+      "risk": "high",
+      "group": "Core",
+      "title": "Set Native API Policy",
+      "description": "Set native API gateway profile/risk controls for this session. Body: {profile?:balanced|broad|unrestricted,maxRisk?:low|medium|high,allowMutating?,blockFreezeRisk?,maxResults?,maxInvocationParams?}.",
+      "example": "set native api profile broad"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-catalog",
+      "risk": "low",
+      "group": "Core",
+      "title": "Native API Catalog",
+      "description": "List/paginate reflected Revit API members with separate direct and graph support. signature_supported/allowed describe direct arguments; graph_signature_supported/graph_allowed describe operation-graph support, including typed prior-result references. A graph-only member cannot be passed to native-api-call. Read-only instance or object-reference chains use native-api-ops with prior typed result targets. Writes use native-api-mutation-ops with its required transaction. Copy the exact live member_id, including generic parameter assembly identity. Body: {query?,namespacePrefix?,typeContains?,risk?,offset?,limit?}.",
+      "example": "list native api catalog for Autodesk.Revit.DB"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-search",
+      "risk": "low",
+      "group": "Core",
+      "title": "Native API Search",
+      "description": "Search reflected Revit API members with ranking + policy filtering. Inspect graph_signature_supported and graph_allowed for operation graphs; direct signature_supported/allowed are separate, and neither overrides route risk restrictions. Read-only instance or object-reference chains use native-api-ops with prior typed result targets. Writes use native-api-mutation-ops with its required transaction. Copy the exact returned member_id. Body: {query,namespacePrefix?,risk?,max?}.",
+      "example": "search native api for room boundaries"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-call",
+      "risk": "medium",
+      "group": "Core",
+      "title": "Native API Call",
+      "description": "Read a low-risk Revit API member through gateway guardrails using direct JSON arguments. Read-only instance or object-reference chains use native-api-ops with a prior typed result as target:$id; resolve an exact element with Document.GetElement within that read-only graph. Writes and supported detached solid construction use native-api-mutation-ops with its required transaction. graph_allowed does not make a member callable here. Body: {memberId,target?:uiapp|uidoc|doc|view,args?:[],dryRun?}.",
+      "example": "read native api member using memberId"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-ops",
+      "risk": "low",
+      "group": "Core",
+      "title": "Native API Read-Only Operations",
+      "description": "Compose up to 16 low-risk reflected constructor, static, instance, or public-property reads with ephemeral per-request result references. Targets may be uiapp|uidoc|doc|view or $priorId; arguments may reference a prior result as {$ref:'priorId'}. Body: {operations:[{id,op:construct|call|get_property,memberId?,property?,target?,args?:[]}],returns?:[$id],maxTotalMs?:250..10000,maxOperationMs?:100..10000}. V2 remains read-only and rejects mutating, freeze-risk, and non-low-risk members. The exact SDK Element.GetDependentElements read is graph-only with args:[null]; no filter deserialization. Returned collections carry complete/truncated/hasMore flags; a truncated collection is not a complete dependency census.",
+      "example": "count sheets with a FilteredElementCollector operation chain"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/native-api-mutation-ops",
+      "risk": "high",
+      "group": "Core",
+      "title": "Native API Transaction Operations",
+      "description": "Execute up to 16 reflected operations inside one explicit Revit transaction. Supports generic 3D placeholder solids: construct lines/arcs, CurveLoop.Create, CreateExtrusionGeometry, then DirectShape.CreateElement and SetShape. Use graph_allowed member ids and typed prior-result arguments {$ref:'id'}, including collection arguments such as [[{$ref:'curve_a'},{$ref:'curve_b'}]]; target:$id selects an instance. References exist only within this request. Supported detached geometry is bounded to the documented factories and Curve/CurveLoop/Solid/GeometryObject references, not arbitrary objects or ShapeBuilder. Nested collections are bounded; see the generic one-foot placeholder example. This high-risk route requires a write grant, at least one persisted model mutation, active-document ownership, a 1..64 affected-element cap, and explicit commit or rollback. Choose commit for authorized application; rollback is optional preview or an explicit user request. A generic solid has no MEP connectors or inferred service. At the real transaction boundary, a document-scoped Dynamic Model Updater observes affected ids and failure processing verifies the in-scope commit or rollback. Body: {operations:[{id,op:construct|call|get_property,memberId?,property?,target?,args?:[]}],returns?:[$id],transaction:{mode:rollback|commit,name?,maxAffectedElements,allowCreate?,allowedExistingElementIds?:[]},maxTotalMs?:250..10000,maxOperationMs?:100..10000}.",
+      "example": "create a generic 3D placeholder box or cylinder using native solid geometry"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/state-snapshot",
+      "risk": "low",
+      "group": "Core",
+      "title": "State Snapshot",
+      "description": "Capture a stable, read-only Revit session snapshot for planning/verification. Body: {include_dialogs?,include_selection_details?,include_sheet_viewports?,include_all_views_index?,include_warnings_summary?,include_warnings_detail?,include_element_bboxes?,max_items?}.",
+      "example": "capture state snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/open-model",
+      "risk": "high",
+      "group": "Core",
+      "title": "Open Model",
+      "description": "Open and activate a Revit model from disk in the currently running Revit session. Body: {filePath,audit?,detach?,discardExistingOpenDocument?,continueOnUnresolvedReferences?}. Detach preserves worksets when enabled. If the exact document is already open but inactive, or is loaded as a link in an open host, activation requires discardExistingOpenDocument=true. That flag authorizes closing the inactive document without saving or unloading the exact link type before opening it as a top-level document, and must be explicitly authorized. When continueOnUnresolvedReferences=true, the bridge pre-arms a one-shot guard that selects 'Ignore and continue opening the project' only for Revit's Unresolved References dialog containing the missing-reference message; use it only with explicit authorization to continue despite missing references. If the user requested a specific Revit year, launch/verify that Revit version first and call this only from that session; do not open RVTs through Windows file association.",
+      "example": "open model C:\\\\Projects\\\\Sample.rvt"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/close-active-model",
+      "risk": "high",
+      "group": "Core",
+      "title": "Close Active Model",
+      "description": "Post Revit's native Close Active Project command after the current API event, keep Revit running, and verify the document transition separately. Body: {discardUnsavedChanges?:bool}. A modified document is not closed unless discardUnsavedChanges=true; when explicitly authorized, a narrow one-shot dialog guard selects No on Revit's save-changes prompt.",
+      "example": "close the active disposable sample model without saving"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/save-as",
+      "risk": "high",
+      "group": "Core",
+      "title": "Save As Model",
+      "description": "Save the active model to a new path. Body: {filePath,overwrite?,compact?,maximumBackups?,saveAsCentral?,dryRun?}. Relative paths resolve against active document directory (or Workspace when unsaved).",
+      "example": "save model as Coordination_Copy.rvt"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/project-parameters",
+      "risk": "high",
+      "group": "Core",
+      "title": "Project Parameters",
+      "description": "List project bindings with native IDs/GUIDs and instance/type ownership. Read exact shared binding with {action:detail,parameterId} for a complete owner/value census. Create a new schedulable shared parameter with {action:create,name,categoryNames,instanceBinding?,parameterGroup?,dataType?:text|yesno|integer|number|url|multiline_text,visible?,userModifiable?,dryRun?}; instanceBinding defaults true, enabling different per-element values while preserving the type field. Use a distinct name when an existing type field must remain. New creation returns an authoritative model transaction and separately reports Operator-owned shared-definition file effects. Inspect existing bindings before reuse; rebindIfExists:true is refused; preserve the existing field and create a distinct instance field. This creates project/category bindings, not family-file parameters. List uses {action:list,max?,query?}; validate_required uses categoryNames and requiredParameters or requiredParameterNames.",
+      "example": "add a per-device text note to an air device schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/rooms",
+      "risk": "low",
+      "group": "Query",
+      "title": "Rooms",
+      "description": "List rooms/spaces or fetch room/space details. Request: {action:\"list\"|\"detail\", levelName?, roomIds?, roomNumber?, max?, viewId?, includeBoundaryElementIds?, spatialKindPreference?:\"auto\"|\"room\"|\"space\"}. Detail responses include true boundaryLoops plus boundary.sideClassification helpers in view basis for deterministic left/right/top/bottom wall selection.",
+      "example": "find room 0981"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/linked-room-boundaries",
+      "risk": "low",
+      "group": "Query",
+      "title": "Linked Room Boundaries",
+      "description": "Read-only extraction of linked architectural Room.GetBoundarySegments loops transformed into host coordinates. POST is used for filters only; no write grant is required. Body: {levelName?, linkedModelNameContains?, roomNumber?, roomNameContains?, maxRooms?, includeBoundarySegmentMetadata?}.",
+      "example": "extract linked room boundaries on LEVEL 03"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/find-elements",
+      "risk": "low",
+      "group": "Query",
+      "title": "Find Elements by Category",
+      "description": "Discover existing host Rooms and Spaces by category, name and level before choosing a RoomTag or SpaceTag. Omit viewId and sheetNumber for document-wide discovery: spatial elements hidden in a view are absent from its visible inventory, so that absence does not prove the host lacks a corresponding room or space. Match exact identity, level and placement before using a host space for an annotation of a linked room. Count placed elements by category and group returned family and type only when itemsComplete is true. A truncated result is not a complete inventory. Selector helper: find element ids by scope (viewId OR sheetNumber) and filters. Supports sheet-region targeting, visible-text search, and bounded document discovery across instance name, family, type, category, and Mark. identityTerms uses exact phrase or at-least-half meaningful-token overlap and returns the matched evidence. physicalElementsOnly excludes view-owned/non-model artifacts; topLevelInstancesOnly excludes nested children. expandIdentityAcronymsInParameters performs a second, category-grounded scan for delimiter-bounded phrase acronyms in string parameters and returns the exact parameter evidence; it never expands without a first-pass physical identity seed. includeGeometry adds each physical result's world-space location, axis-aligned bounding box, orientation, type, level, host, and location-curve length/straightness. Agent projections expose routeCurveCandidates for bounded duct/pipe edit discovery; connector topology must still be verified before mutation. Body: {viewId?,sheetNumber?,includeSheetElements?,includeViewportElements?,sheetRegions?:[{minU,minV,maxU,maxV}],regionPaddingFt?,category?,categories?,typeNameContains?,familyNameContains?,nameContains?,markContains?,textContains?,identityTerms?:string[],physicalElementsOnly?,topLevelInstancesOnly?,expandIdentityAcronymsInParameters?,includeGeometry?,limit?}.",
+      "example": "find physical air-terminal instances with world geometry anywhere in this project"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/update-parameter-by-query",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Update Parameter By Query",
+      "description": "Find elements by category/text filters, inspect one parameter, and set a new value only when blank or matching the query criteria. Supports preview/apply reporting for repetitive parameter-fill tasks. Body: {category?,categories?,matchStartsWith?,matchContains?,matchParameterNames?,familyNameContains?,typeNameContains?,parameterName,value,onlyWhenBlank?,dryRun?,apply?,confirm?,limit?}.",
+      "example": "dry-run fill blank A.I.C. Rating for electrical panels whose panel name starts with P"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/locate-elements",
+      "risk": "low",
+      "group": "Spatial",
+      "title": "Locate Elements",
+      "description": "Spatial locator helper for filtering elements by category, level, room, and proximity. It also reports nested-parent evidence. Set spatialResolution=geometry or geometry_with_nearest to batch-resolve each result against host Rooms, host Spaces, and transformed linked architectural Rooms with explicit resolved/ambiguous/unresolved status and provenance. spatialVerticalScope=volume (default) requires strict 3D containment. spatialVerticalScope=same_level requires geometry, ignores native association-only evidence, and uses the target's factual level plus 2D room footprint for above-ceiling/plenum devices; it never searches other levels. If same_level is paired with association, the handler promotes the request to geometry. An explicit phase or active-view phase is strict. When neither exists, the read-only fallback first checks mapped phases where the target exists. If those phases contain no factual room footprint, it may use all mapped phase variants only when the same-level containing variants agree on one numbered spatial identity; phaseFallbackUsed reports that provenance. Unknown mappings, conflicting identities, and boundary-only evidence fail closed. Unavailable link/transform/element-location/level evidence also fails closed. Body: {elementIds?,categories?,levelNames?,roomNumber?,roomNameContains?,nearElementId?,maxDistanceFt?,limit?,spatialResolution?:association|geometry|geometry_with_nearest,spatialVerticalScope?:volume|same_level,spatialKindPreference?:auto|room|space|all,includeHostRooms?,includeHostSpaces?,includeLinkedRooms?,linkedModelNameContains?,phaseId?,phaseName?,nearestCandidateLimit?}.",
+      "example": "find the room number for each selected device"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-placement-context",
+      "risk": "low",
+      "group": "Spatial",
+      "title": "Get Placement Context",
+      "description": "Return host-aware placement diagnostics for one element, including insertion point, type/family, orientation/flip state, exact serializable host-face and linked-element evidence when Revit exposes it, wall-host projection, requested room-side wall context, ranked nearby hosts, circuit membership, and read-only electrical distribution-system evidence for electrical equipment. Body: {elementId,hostCategories?,hostSearchRadiusFt?,maxNearbyHosts?,pointXyz?,roomNumber?,roomSide?}.",
+      "example": "get placement context for element 12345"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-mep-route",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Create MEP Route",
+      "description": "Create a multi-segment duct, pipe, or electrical conduit route from ordered XYZ or frame-linked points with dry-run, conservative size/elevation fallbacks, explicit user-workset assignment, internal connector attempts, optional fail-closed endpoint joining, and native readback. Set requiredExistingEndpoint=start|end|both with exact expectedExistingStartOwnerId/expectedExistingEndOwnerId for required ends; an explicit endpoint takes precedence over requireExistingEndpointConnections, while true alone requires both ends. Duplicate duct/pipe/conduit type names fail closed; use ductTypeId, pipeTypeId, or conduitTypeId for stable native selection. Duct profiles and dimensions must be valid and compatible before starting a transaction. Native route size, duct shape, and requested workset readback must match when verify=true. Use dryRun:false for authorized creation and true for a requested preview. Body: {kind:duct|pipe|conduit,frameId?,points:[{x?,y?,z?,xPx?,yPx?,xyz?}],viewId?,roomNumber?,levelName?,levelId?,worksetName?,worksetId?,systemType?,ductType?,ductTypeId?,ductShape?:round|rectangular|oval,pipeType?,pipeTypeId?,conduitType?,conduitTypeId?,ductSize?,diameter?,pipeSize?,segmentSizes?:string[],sizePolicy?:explicit_required|use_default_with_warning,elevationPolicy?:explicit_required|resolve_context_default,routingMode?:orthogonal|polyline,connectSegments?,connectToExisting?,requireExistingEndpointConnections?,requiredExistingEndpoint?:start|end|both,expectedExistingStartOwnerId?,expectedExistingEndOwnerId?,externalConnectionToleranceFt?,verify?,dryRun?}.",
+      "example": "dry-run a native conduit, pipe, or duct route with three ordered points"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-existing-mep-branch",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Connect Existing MEP Branch",
+      "description": "Explicit connectionMode=replace_tee_with_takeoff atomically replaces one connected round duct tee with a straight bridge and native takeoff while retaining both old main ducts and the rigid/flex branch. It requires kind=duct, teeElementId, mainElementId, secondMainElementId, branchElementId, expectedTakeoffTypeId and verify=true; optional branchConnectorId/expectedBranchOriginXyz guard exact identity. Workset is inherited from the main. dryRun=true performs the native operation then rolls the entire group back; dryRun=false applies. Dependent annotation deletion, unexpected created/deleted elements, mismatched main data or changed far connections cause rollback. This mode requires replacement-specific independent absence/network readback before completion; the addition-only graph proof is insufficient. Connect one retained branch to the interior of an existing rigid main without replacing accepted geometry. connectionMode:takeoff_fitting creates a native takeoff between one exact open rigid/flex duct or pipe connector and its main, accepts an explicit worksetId/worksetName, and otherwise inherits the retained branch user workset with committed readback. connectionMode:air_terminal_on_duct uses Revit's direct air-terminal attachment operation, requires kind:duct plus an exact open air-terminal connector, and produces the native direct terminal-to-duct topology without an adapter curve. Both modes guard the active model and projected interior point, preserve pre-existing physical connections, verify the result after transaction commit, and perform the real operation inside a rollback-verified transaction group during dry-run. Body: {expectedModelPath?,connectionMode?:takeoff_fitting|air_terminal_on_duct,kind:duct|pipe,mainElementId,branchElementId,branchConnectorId?,expectedBranchOriginXyz?,originToleranceFt?,expectedTakeoffTypeId?,expectedTakeoffFamilyName?,expectedTakeoffTypeName?,worksetId?,worksetName?,dryRun?,verify?}.",
+      "example": "dry-run attaching an exact retained branch to a rigid main with inherited or explicit workset proof"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-mep-elements",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Connect MEP Elements",
+      "description": "Fail-closed physical connector join for an already placed MEP family/equipment instance and explicit nearby duct, pipe, or family targets. Composes with hosted/unhosted placement, requires compatible open connector shape/domain/size within tolerance, uses one source connector per target, and rolls back if native AllRefs verification does not prove the requested count. Body: {sourceElementId,targetElementIds:[...],toleranceFt?,sizeToleranceFt?,requiredConnectionCount?,dryRun?,verify?}.",
+      "example": "dry-run connecting a reconstructed air terminal to its explicit open duct target"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Existing Conditions MEP Draft Workflow",
+      "description": "Execute one source-grounded reconstruction stage. The Operator harness normally sends one dependency-ready operation per call, but may send a bounded group of explicitly marked independent high-confidence straight backbones. Each stage runs first with dryRun:true and then once with dryRun:false. Later stages pass hash-ledgered priorActionOutputs so accepted native IDs are never replayed. Each call has its own rollback boundary. Responses echo stageKey and persist created_element_ids, affected_element_ids, and route endpoint IDs; the host ledger binds planned continuation endpoints to those IDs and audits their native connectors before acceptance. In addition to route, family, connection, tag, and circuit creation, the wrapper supports repair-first move, rotate, MEP size/elevation edit, and exact connector repair operations against useful existing elements. Body: {stageKey?,priorActionOutputs?:[{action_key,created_element_ids,affected_element_ids?,route_segment_element_ids?,route_start_element_ids?,route_end_element_ids?,split_main_start_element_ids?,split_main_end_element_ids?}],operations:[{action_key,path,depends_on?,apply_body?,deferred_body?,execution_mode?,provisional_batch_key?,continuation_endpoints?}],dryRun?,verify?,maximumCreatedElements?,targetViewId?,applyTargetViewPhase?,requireAllCreatedElementsVisibleInTargetView?}.",
+      "example": "dry-run one repairable existing-conditions stage or bounded provisional backbone batch, apply it once, verify it, and persist created or affected IDs"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "risk": "high",
+      "group": "MEP",
+      "title": "MEP Route Workflow",
+      "description": "One-call duct, pipe, or native conduit route workflow that enforces resolve context -> dry-run -> optional apply -> focused post-change highlight/export. Body mirrors create-mep-route, including stable type IDs, explicit worksetName/worksetId, segmentSizes, and optional fail-closed endpoint joining. Set requiredExistingEndpoint=start|end|both with exact expectedExistingStartOwnerId/expectedExistingEndOwnerId; an explicit endpoint takes precedence over requireExistingEndpointConnections, while true alone requires both ends. Plus {apply?:boolean,visualVerify?:boolean,visualViewId?,imageSize?,focusPaddingFt?}. Visual verification is ready only when every created element is found, collected, unhidden, and has a view-specific bounding box in the requested view; otherwise it returns CreatedElementsNotVisibleInView with diagnostics.",
+      "example": "apply and visually verify a native conduit or duct route"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-branch-network-workflow",
+      "risk": "high",
+      "group": "MEP",
+      "title": "MEP Branch Network Workflow",
+      "description": "One-call network workflow for a main duct/pipe route plus multiple branch tee/tap connections. Dry-run plans the main route, branch projections, selected sizes, retained branch anchors, branch-level reducer/transition joint plans, and accessory/damper graph nodes. Apply creates the main route first, then connects each branch to its requested main segment using /revit/connect-mep-branch; duct tap/takeoff, pipe tap/takeoff with an explicit Revit takeoff/tap routing preference, retained two-connector transition/reducer anchors, and duct/pipe split tee use the lower-level verified guards. A branch with existingBranchAnchorElementId must use connectionMode:\"tee\" and never falls back to an open-main or tap path. Accessory graph apply supports explicit duct/pipe accessory insertions hosted on created main or branch segments when a compatible loaded or workspace-scoped familyPath symbol resolves, plus explicit target-id duct/pipe accessory delete and type_change with compatible loaded types. Body: {kind:duct|pipe,mainPoints:[...],mainSegmentSizes?,branches:[{mainSegmentIndex,connectionMode?:tee|tap,connectionPoint?,points:[...],branchSize?,branchSegmentSizes?:string[],existingBranchAnchorElementId?}],accessories?:[{action:insert|delete|type_change,targetElementId?,targetElementIds?,typeId?,targetTypeName?,familySymbolId?,familyPath?,familyName?,typeName?,mainSegmentIndex?,branchIndex?,branchSegmentIndex?,chainageFt?,point?}],viewId?,roomNumber?,levelName?,systemType?,ductType?,pipeType?,ductSize?,diameter?,pipeSize?,apply?,verify?,visualVerify?}.",
+      "example": "dry-run main duct with two branch taps"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/reroute-mep-route-segment",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Reroute MEP Route Segment",
+      "description": "Guarded edit workflow for one straight duct/pipe curve. Discover candidates with /revit/find-elements includeGeometry:true and screen routeCurveCandidates before trial calls. A size-transition host must be at least 1.0 ft long so the transition can remain 0.5 ft from both ends. Current endpoint preservation requires exactly two physical End connectors and no side/tap Curve connectors; skip tapped hosts instead of weakening connection checks. Set operation:\"offset\" or operation:\"size_transition\" explicitly whenever size metadata is also supplied; omitted/auto preserves legacy inference. Offset mode derives two split points from host curve chainage or normalized chainage, reports replacement segments, offset points, selected type/system/level/size, and expected elbow fittings; offsetMode:\"dogleg45\" uses diagonal setback legs instead of perpendicular legs. Size-transition mode derives one transition point, reports upstream/downstream segment points, explicit selected sizes, and expected transition fitting. Apply replaces the host only after required fittings/connectors succeed, reports created segment/fitting ids, connector/system audit, endpointReconnectionPlan when applicable, and optional trace-enabled focused capture. Connected host endpoints are blocked by default; set preserveConnectedEndpoints:true only after dry-run reports a resolvable start/end endpointReconnectionPlan to reconnect the replacement route to original external endpoint connectors. Mutation flags are canonical: preview requires apply:false,dryRun:true; write requires apply:true,dryRun:false; omitted or equal pairs are rejected. Body offset: {operation:offset,kind:duct|pipe,hostElementId,split1ChainageFt?|split1Normalized?,split2ChainageFt?|split2Normalized?,offsetVector:{x,y,z},offsetMode?:orthogonal|dogleg45,doglegAngleDegrees?,preserveConnectedEndpoints?,apply,dryRun,verify?,visualVerify?,visualViewId?,focusPaddingFt?}. Body size-transition: {operation:size_transition,kind:duct|pipe,hostElementId,transitionChainageFt?|transitionNormalized?,upstreamDuctSize?|downstreamDuctSize?|upstreamDiameter?|downstreamDiameter?|upstreamPipeSize?|downstreamPipeSize?,sizePolicy?,preserveConnectedEndpoints?,apply,dryRun,verify?,visualVerify?,visualViewId?,focusPaddingFt?}.",
+      "example": "dry-run a 45-degree dogleg offset for isolated duct id 123"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/trace-connected-network",
+      "risk": "low",
+      "group": "MEP",
+      "title": "Trace Connected Network",
+      "description": "Trace connected MEP elements via connectors starting from an element id. Body: {startElementId, systemName?, inferSystemFromStart?, stopAtBranchFittings?, stopAtTransitions?, maxHops?, excludeElementIds?, stopAtElementIds?, stopAtCategories?, includeDucts?, includePipes?, includeFittings?, includeAccessories?, includeTerminals?, includeEquipment?, includeOtherCategories?, maxElements?, includeSystemAudit?, systemAuditMaxElements?}. Returns connected ids grouped by category and ordered by traversal; includeSystemAudit optionally reports disconnectedIds = systemElementIds - connectedIds for duct and pipe systems.",
+      "example": "trace the connected duct run from this element"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-connectors",
+      "risk": "low",
+      "group": "MEP",
+      "title": "Get Connectors",
+      "description": "Get connector identities, origins, sizes, directions, and optional flex duct/pipe control points and tangents for MEP elements. connectorIdBasis is revit_native_connector_id when the active Revit API exposes a durable connector ID; the enumeration_index_with_origin_guard_required fallback must be paired with the returned origin in repair requests. connectedTo preserves all Revit Connector.AllRefs entries; physicalConnectedTo excludes MEPSystem membership objects so isPhysicallyConnected and physicalConnectionCount can be used for actual topology/open-connector checks. Set onlyOpenPhysicalConnectors=true for a compact exhaustive scan that returns summary counts plus only open physical connector rows. Set includeVerificationParameters=true to read System Classification, Reference Level, Width, Height and Diameter in the same native callback as the full connector graph. This mode requires 1-500 unique positive elementIds, includeAllRefs and includeCoordinateSystem, and forbids open-only filtering. It returns verificationParameters with schema revit-operator.duct-verification-parameters/v1; missing fields remain explicit. Body: {elementIds:[...], includeVerificationParameters?, includeAllRefs?, includeCoordinateSystem?, includeFlexGeometry?, onlyOpenPhysicalConnectors?, maxConnectorsPerElement?}.",
+      "example": "get connectors for these elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-type-and-swap-instance",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Duplicate Type + Swap Instance",
+      "description": "Duplicate the current type of an element instance, apply optional type parameter changes on the duplicated type, then swap only that instance to the new type. Useful for type-driven terminals/fittings. Body: {instanceId,newTypeName,typeParamChanges?,dryRun?,confirm?}.",
+      "example": "duplicate this terminal type to 6\\\" and swap only this instance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/plan-family-evolution",
+      "risk": "low",
+      "group": "Modeling",
+      "title": "Plan Family Evolution",
+      "description": "Read-only, fail-closed plan for cloning a selected loaded family, creating a type with exact width/depth, and optionally adding a light symbolic clearance rectangle. Requires immutable instance/family/type identity, fingerprints family content, and resolves side=power_connection only from one electrical connector close to an equipment edge. Body: {instanceId,expectedUniqueId,expectedMark?,expectedFamilyName,expectedTypeName,newFamilyName,newTypeName,widthParameterName?,depthParameterName?,width,depth,clearance?:{side,offset,lineStyleName?,linePatternName?,lineWeight?,red?,green?,blue?},familySavePath?}.",
+      "example": "plan HRU403 as 3 feet 8 inches by 4 feet 2 inches with 36 inch power-side clearance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-family-evolution",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Apply Family Evolution",
+      "description": "Apply an exact plan-family-evolution receipt. Requires the same request, planHash, and typed confirmation. Clones the family into the guarded workspace, edits the new type and symbolic clearance atomically, loads it, and swaps only the selected instance. The source family is never overwritten.",
+      "example": "apply the approved HRU403 family evolution plan"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/read-family-evolution",
+      "risk": "low",
+      "group": "Query",
+      "title": "Read Family Evolution",
+      "description": "Read back the selected instance family/type, exact width/depth type values, and symbolic clearance curves by line style. Body: {instanceId,widthParameterName?,depthParameterName?,lineStyleName?}.",
+      "example": "read back HRU403 family size and clearance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/query",
+      "risk": "low",
+      "group": "Query",
+      "title": "Query",
+      "description": "Read-only element query.",
+      "example": "query doors on Level 1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/resolve",
+      "risk": "low",
+      "group": "Query",
+      "title": "Resolve",
+      "description": "Read-only resolve helpers.",
+      "example": "resolve view \"Level 1\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-element-summary",
+      "risk": "low",
+      "group": "Query",
+      "title": "Element Summary",
+      "description": "Read-only element summaries with actual typeId/family/type. includeTagReferences:true reads IndependentTag subjects, owner-view phase and each referenced equipment element's created/demolished phases and native statusInOwnerViewPhase (New/Existing/etc). Use this batch read to distinguish new/existing tagged equipment, not tag creation time or tag parameters. Linked, orphaned, unresolved or truncated references remain explicit; linked phases are not mapped to host phases. Requires 1-200 unique positive elementIds; maxTagReferencesPerElement defaults to 16, max 64. Body: {elementIds,viewId?,includeTagReferences?,maxTagReferencesPerElement?}.",
+      "example": "inspect equipment tag references and new construction phase before scoped styling"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-exported-files",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Exported Files",
+      "description": "Read exact exported PDF/XLSX paths or the single currently open saved RVT/RFA path without exporting or saving again. Returns byte size and SHA256; saved-model inspection also returns stable_read and actual native document path/session/project identity and modified state. For a tracked saved family while its parent project is active, supply familyDocumentId and exactly one absolute RFA path from save-family-doc; the read verifies that owned child, not an arbitrary inactive model. Supply exact paths from the native artifact receipt. A file digest does not verify model content, layout or engineering.",
+      "example": "verify the saved model or PDF files from the native receipt"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-parameters",
+      "risk": "low",
+      "group": "Query",
+      "title": "Get Parameters",
+      "description": "Read-only active-host parameter reads. Accepts elementId/elementIds, a strict category/categories scope, or allModelInstances:true narrowed by mutually exclusive valueEquals/valueContains and/or exact names. Use valueEquals for exact identifiers and valueContains for intentional substring audits. Name/value/writability filters are applied before paging; responses are capped at 500 matching elements and return totalScanned, totalMatched, hasMore, and nextOffset. Matching parameter details include exact name, value, storageType, isReadOnly, and parameterId.",
+      "example": "find the exact host-model parameter value AHU-1 across all non-type categories without guessing a category or parameter name"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/sheets",
+      "risk": "low",
+      "group": "Query",
+      "title": "List Sheets",
+      "description": "List sheets (action:list), count sheets (action:count / countOnly:true), or return one-sheet detail (action:detail). Detail includes placed regular/panel schedules in addition to placed views, viewport geometry/type metadata, sheet outline, and titleblocks. Optional placementIds (1-256 distinct positive IDs, detail only) identifies the subjects of a placement check; it does not filter the complete sheet inventory. Supports filtering by sheetNumberPrefix/query and paging via offset/limit or all:true (capped).",
+      "example": "inspect sheet P6.02 and list its placed schedules"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/schedules",
+      "risk": "low",
+      "group": "Query",
+      "title": "Schedules",
+      "description": "List native schedules with kind=regular(default)|panel|all and bounded offset/max. Inventory reports exact IDs/UIDs, panel ownership, matched/returned/complete/hasMore/nextOffset; panel templates are excluded. For compact electrical discovery use action=circuits, max=1..500 (default200), offset and optional native panel scheduleId. Without scheduleId it enumerates all project power circuits, including explicit Spare/Space types, and returns both Load Name and Schedule Circuit Notes, native rating/voltage/VA/phase currents, conductor counts, member IDs and model wire profiles. Follow nextOffset for pages; completeness is enumeration, not suitability or verified work. Load classifications do not establish continuous duty; inspect equipment/use and applicable rules. Read panel detail separately for actual visible cell bindings. Only an unfiltered complete inventory establishes whole-project scope. Inspect one regular/panel schedule by native ID. Panel detail by scheduleId with includeData=true returns bounded Header/Body/Summary/Footer visible text, native circuit mapping, cell parameter bindings and circuit editability. Follow per-section row/column continuation; 1..200 rows, 1..40 columns, at most2000cells per section. Panel templates/schedulable fields are excluded. Stored text is not rendered legibility or design verification. For native appearance of a regular or panel schedule INSTANCE, use action:cell_styles, scheduleId and cells:[{section:Header|Body|Summary|Footer,row,column}], 1..64 absolute native locators. Returns exact text, grid/sheet RGB, override/merged-range state and complete table-content/unrequested-style hashes. Use merged top-left locators and action:list,kind:panel to resolve panel schedule IDs. Both Load Name and Schedule Circuit Notes can carry compact wiring notation; description-only coverage is incomplete. These cell reads are separate from regular field/detail metadata. Detail accepts includeSchedulableFields, schedulableFieldOffset, maxSchedulableFields (1..200) for exact native eligible column names, parameter IDs and field types with total/nextOffset; follow every page before claiming absence. For independent clone-definition checking, opt in to includeDefinitionSnapshot:true on action:detail with an exact scheduleId, fields enabled and no query. This bounded flat-definition reader includes combined constituents, native field formats, filters/sort/phasing and deduplicated cell styles; incomplete/unsupported calculated or embedded definitions are explicit, and ordinary reads omit this larger snapshot. For separate native default-style/order verification use {action:presentation,scheduleId}. It returns requested schedule defaults, bounded unchanged-content/style/geometry fingerprints of other regular schedules and native logical dependencies, with explicit incomplete/error state. These reads prove declared native values/preservation coverage, not rendered legibility or engineering. Detail returns authoritative field metadata, filter definitions, appearance/settings readback, and optional bounded visible header/body cell reads with includeData, rowOffset, columnOffset, maxRows, and maxColumns. Set requireUniqueQuery=true for natural-name detail lookup to return explicit NotFound/Ambiguous candidates instead of silently selecting the first substring match.",
+      "example": "read the visible rows and filter definition of this plumbing equipment schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/update-schedule-cell",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Update Schedule Cell",
+      "description": "Resolve one schedule row to its unique backing instance/type parameter and update it with display-unit parsing plus committed readback. Non-itemized schedules are resolved through backing elements and proceed only for one unique editable target; duplicate identifiers, shared type parameters, calculated/non-parameter fields, read-only fields, and expected-value mismatches fail closed. Body: {scheduleId?|scheduleQuery?,scheduleExact?,rowKey,rowField?,targetField,expectedValue?,value,apply?,dryRun?,maxSchedules?}. Omit schedule selectors to search bounded schedules; omit rowField to use standard identifier fields such as Mark, Number, Name, Designation, or DESIG. Defaults to dry-run unless apply:true.",
+      "example": "change AHU-1 Supply Air from 10,000 to 20,000 on the schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-schedule-csv",
+      "risk": "low",
+      "group": "Query",
+      "title": "Export Schedule CSV",
+      "description": "Export a schedule to CSV under Workspace artifacts. Body: {scheduleId?|query?,exact?,outputFolder?,fileName?,delimiter?,textQualifier?,columnHeaders?,dryRun?}.",
+      "example": "export door schedule to csv"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/model-health",
+      "risk": "low",
+      "group": "Query",
+      "title": "Model Health",
+      "description": "Aggregate model health stats (warnings, links, view/sheet counts, empty sheets, and unplaced views). Optional requiredSheetParameter reports sheets missing values.",
+      "example": "run model health"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/print-sets",
+      "risk": "low",
+      "group": "Query",
+      "title": "Print Sets",
+      "description": "List print sets (action:list) or inspect one print set (action:detail,name). Optional includeSheets returns sheet members.",
+      "example": "list print sets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-titleblock-info",
+      "risk": "low",
+      "group": "Query",
+      "title": "Get Titleblock Info",
+      "description": "Resolve a sheet to its titleblock instance/type/family info. Body: {sheetNumber?|sheetId?|sheetViewId?}.",
+      "example": "get titleblock info for sheet M000"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/capture-sheet-region",
+      "risk": "low",
+      "group": "Query",
+      "title": "Capture Sheet Region",
+      "description": "Capture a deterministic image of a sheet region (currently: titleblock). Body: {sheetNumber?|sheetViewId?, region:\"titleblock\"?, marginFt?, imageMaxSizePx?, includeMapping?, fileName?, includeOcr?, ocrKind?, ocrExpected?, ocrTimeoutMs?}.",
+      "example": "capture titleblock region on sheet A2.00"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/get-family-file-path",
+      "risk": "low",
+      "group": "Query",
+      "title": "Get Family File Path",
+      "description": "Best-effort: return a family file path if it can be determined. Body: {familyId}. Returns pathKnown + filePath or a reason.",
+      "example": "get family file path for family id 12345"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/open-family-doc",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Open Family Doc",
+      "description": "Open a loaded family document for editing. Prefer {titleblockInstanceId} for titleblocks. For a grounded tag elementId set allowNonTitleblock:true; IndependentTag resolves its own annotation family, not its tagged equipment. Body: {filePath? | familyId? | titleblockInstanceId? | elementId?,allowNonTitleblock?}. Returns docId (session handle).",
+      "example": "open family doc for titleblock instance 1420968"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/find-text-notes",
+      "risk": "low",
+      "group": "Query",
+      "title": "Find Text Notes",
+      "description": "Find up to 500 bounded TextNotes by exact element identity, phrase, or regex in the active project document, or in an open family doc session when docId/familyDocumentId is supplied. Body: {docId?|familyDocumentId?,elementId?|elementIds?,textContains?|contains?|regex?,viewId?,max?}. Returns numeric and stable UniqueIds, exact text/type/owner-view identities, and bounded location/geometry facts.",
+      "example": "find text notes containing \"MEP\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/view-owned-detailing",
+      "risk": "low",
+      "group": "Query",
+      "title": "View-Owned Detailing",
+      "description": "Read exact owner-view inventories without an image export. Body: {viewId?|viewIds?:[one or two distinct IDs],limit?:1..5000,includeCadGeometry?:boolean,cadGeometryLimit?:1..1000,cadElementId?:positive ID,cadGeometryOffset?:0..20000}; Explicit CAD paging requires both target/offset fields, includeCadGeometry=true and exactly one owner view. To read only that CAD import in a view containing native text/fills/sketches, add cadTargetOnly:true and omit limit. This returns revit-operator.cad-geometry-target/v1 with exact view/import identities and targetReadComplete for the bounded page; wholeViewInventoryRead is false. It does not verify unrelated annotations, which require their own source-bound reads. The default whole-view inventory and its strict completeness rules remain unchanged. Each page includes complete whole primitives and the digest of the complete bounded native import. Continue contiguous nextOffset pages with the SAME import UniqueId, owner view, scale, total count and completeGeometrySnapshotSha256. A page.complete result is not whole-import complete; missing/mixed pages or read issues cannot verify a source drawing. Opt-in CAD readback shares one geometry budget across both views and all imports, reports complete/issues explicitly, and transforms actual curves/polylines to host-model feet without exploding. Unsupported geometry or truncation is not source verification; compare with original source and inspect visuals.  choose exactly one ID field. A two-view read independently collects the source and copy. Returns requestedViewIds, viewsComplete, and each view's id/uniqueId/name/type, totalOwnedCount, annotationCount, returnedCount, truncated, unreadableCount, unclassifiedCount, incompleteTextCount, itemsComplete, and items with owner view, class/category/type, readable text, and geometry. Only complete inventories with a nonempty relevant source annotation set support WithDetailing comparison; a copied-view name or creation receipt alone is insufficient.",
+      "example": "compare view-owned annotations in a source plan and its detailed copy"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/replace-text-note",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Replace Text Note",
+      "description": "Replace a TextNote\u00e2\u20ac\u2122s text in the active project or an open family doc session. Pass expectedOldText to make the replacement conditional inside the same Revit transaction and fail without writing if the note changed. Body: {elementId,newText,expectedOldText?,docId?|familyDocumentId?,dryRun?|apply?,confirm?}. Applying one changed note requires confirm:\"APPLY 1 TEXT NOTE CHANGE\"; rejected calls also return requiredConfirm and a retry hint.",
+      "example": "replace text note to \"ACME\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/save-family-doc",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Save Family Doc",
+      "description": "Save a tracked family document. For scoped formatting, supply a distinct NEW workspace-relative filePath such as artifacts/families/Equipment_Tag_Underlined.rfa and overwrite:false. Do not use Documents/Exports paths outside the workspace. Invalid paths are rejected before native dispatch; correct the path after that rejection. With filePath, performs Save As; without it, saves only when the family document already has a known path. Body: {familyDocumentId (or docId) from open-family-doc, filePath?, overwrite?}. Saving does not load the family or change project tags; inspect the exact saved path from the native receipt, then load the child and assign only intended targets.",
+      "example": "save this tracked family as a new artifacts/families/Equipment_Tag_Underlined.rfa with overwrite:false"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/load-family-doc",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Load Family Doc",
+      "description": "Load/reload the currently-open family doc into the active project (overwrite). Body: {docId or familyDocumentId, overwriteParameterValuesOnLoad?}. Verify loadedFamilyId with get-element-summary. After successful load, close-doc with that exact familyDocumentId and saveChanges=false before inspecting its loaded project family; loading alone does not close the tracked child.",
+      "example": "load family doc into project"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/close-doc",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Close Doc",
+      "description": "Close an open family doc session. Body: {docId, saveChanges?}.",
+      "example": "close family doc"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-family-content",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Family Content",
+      "description": "Read-only inspect either a grounded loaded FamilyInstance, IndependentTag or FamilySymbol before placement, or an external workspace .rfa using exclusive filePath instead of elementId. The file is opened temporarily and closed without saving; no editable session, load, placement, type selection or save is exposed. Source path/hash and native family parameter storageType/specTypeId/unitTypeId/currentValue are returned; unsupported metadata stays explicit. External-file facts are not loaded-project verification and do not establish design suitability. A type is inspected directly without creating an instance; this read does not broaden family-edit source authority. A tag resolves its own annotation family, not the tagged equipment. Returns static TextNotes, labels with labelType IDs/font/size/bold/italic/underline, nested instances, parameters and bounded inventory; closes temporary inspection without saving. Body: {elementId? | filePath?,contains?,maxElements?,includeParameters?,includeOtherElements?}; choose exactly one source. Tag label typography is inside the family, not a project tag parameter. Native scoped-formatting workflow: open-family-doc, inspect-family-label-styles, set-family-label-style with current identity/expectedStyle, save-family-doc (Save As a distinct NEW workspace RFA with overwrite:false), load-family-doc, then change-element-type only on resolved targets using expectedOldTypes. Supported label typography does not require manual Family Editor input. Reloading the original affects every use; do not do that for a view-only request. Inspect fresh loaded family content and target types plus enlarged target-view visuals after assignment; editable-family checks alone do not prove loaded-project styling.",
+      "example": "inspect the loaded family behind this equipment instance for HRU text and parameter-driven labels"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-family-label-styles",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Family Label Styles",
+      "description": "Read label typography in a tracked family session. Body: {familyDocumentId,labelTypeId?,maxStyles?}. First open-family-doc with a grounded instance/tag and allowNonTitleblock:true. Returns labelTypeId, uniqueId, style {font,textSizeFeet,bold,italic,underline,widthFactor}, affected label IDs and completeness. These are current editable-family styles, not proof of the family loaded in the project. Does not save or reload.",
+      "example": "inspect label styles in the open family session"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-family-label-style",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Set Family Label Style",
+      "description": "Change label typography in a tracked family session, not the loaded project. Body: {familyDocumentId,labelTypeId,expectedTypeUniqueId,style,expectedStyle,dryRun?}. Inspect-family-label-styles first; expectedStyle must include the old value of every requested style field. Supports font,textSizeFeet,bold,italic,underline,widthFactor. Changes every label using that text type in this edited family; reports affected labels. One native transaction and post-commit family-style readback, with stale-state refusal. dryRun is plan-only. Does not save, clone, load, or retype project elements. For scoped project formatting, save-family-doc to a distinct NEW workspace RFA with overwrite:false, load-family-doc, then change only grounded targets with expectedOldTypes; preserve the original family and verify loaded-project styles/target membership plus visuals afterwards.",
+      "example": "set underline true for the inspected family label type using its current identity and underline=false precondition"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-text-note-text",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Set Text Note Text",
+      "description": "Edit a TextNote's static text in the active project or an open family edit session. Body: {textNoteId, newText, familyDocumentId?, dryRun?|apply?, confirm?}. Applying one changed note requires confirm:\"APPLY 1 TEXT NOTE CHANGE\"; rejected calls also return requiredConfirm and a retry hint.",
+      "example": "set text note text to \"ACME\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-image",
+      "risk": "low",
+      "group": "Capture",
+      "title": "Capture View",
+      "description": "Export a view image directly. exportMode defaults to full_view; visible_region exports the actual currently displayed region and requires the requested view to be active with an open UIView. First activate and focus the view, then capture. Returns actual viewport corners for inspection only, not pixel-to-model placement mapping. Body: {viewId?,imageSize?,exportMode?:full_view|visible_region}.",
+      "example": "capture view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/capture-screenshare",
+      "risk": "low",
+      "group": "Capture",
+      "title": "Capture Screenshare",
+      "description": "Capture the renderable Revit window and attach image + context for visual grounding. If Revit is minimized or the window cannot be rendered, export the authoritative active view instead. Body: {includeContext?:bool}.",
+      "example": "capture screenshare"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-pdf",
+      "risk": "low",
+      "group": "Capture",
+      "title": "Export PDF",
+      "description": "Export view(s)/sheet(s) to PDF. Provide viewIds OR selector OR sheetNumberPrefix/sheetQuery/sheetGroup OR printSetName; dryRun/preflight returns exact selected sheets and output paths before export. Use combine:false plus perSheetFileNameTemplate for individual PDFs with custom names. Use colorMode BlackLine for black-and-white, Grayscale for grayscale, or Color for color.",
+      "example": "preflight export all power sheets to one pdf"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/print",
+      "risk": "high",
+      "group": "Capture",
+      "title": "Print Sheets",
+      "description": "Print selected view(s)/sheet(s) through Revit PrintManager. Defaults to dryRun:true for printer/sheet preflight. Provide viewIds OR selector OR sheetNumberPrefix/sheetQuery OR printSetName; optional printerName validates against installed printers before printing.",
+      "example": "dry-run print all E1 power sheets"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-view-frame",
+      "risk": "low",
+      "group": "Selection",
+      "title": "Export View Frame",
+      "description": "Export view image + optional raster-consistent mapping metadata.",
+      "example": "export view frame and include mapping"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-visible-elements",
+      "risk": "low",
+      "group": "Selection",
+      "title": "Inspect Visible and Linked Model Elements",
+      "description": "Inspect linked document equipment, rooms and other category-filtered elements in a supported 2D view. Export a mapped view image plus visible-element inventory on the same raster-consistent coordinate basis. Returns element ids, category/type/source/host context, explicit hostingSurface + link-host metadata, orientation payloads (facing/hand/basis/rotation), bbox/location geometry, image-space coordinates, visibleText for TextNotes/tags, and taggedSpatial for room/space tags. includeLinked includes loaded linked documents with source-scoped identities and transforms. Linked annotation tags use their transformed tag-head positions when a model bounding box is unavailable. Optional modelBounds:[minX,minY,minZ,maxX,maxY,maxZ] restricts host and transformed linked elements to an intersecting host-model box before the safety limit is applied. Crop/frame and bounding-box intersections are best-effort, not exact room membership or project-wide absence proof. Check warnings and truncated; limit is 1..2000. Filter categories or use modelBounds instead of requesting a larger inventory; this route has no offset paging. Body: {viewId?,imageSize?,includeMapping?,categories?,excludeCategories?,includeGeometry?,includeLinked?,modelBounds?,limit?}.",
+      "example": "inspect linked electrical equipment near a room using transformed model bounds and mapping"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/activate-view",
+      "risk": "low",
+      "group": "Selection",
+      "title": "Activate View",
+      "description": "Switch the active view and optionally show only requested elements proven visible in that exact view. If Revit queues activation, activeViewId remains the observed current view and activationPending/focusPending are explicit; allow the view change to execute, then repeat the same request to apply focus. No focus is applied to an earlier view. For a focused image, use export-image with exportMode=visible_region afterward. Elements absent from the requested view are returned in notShownElementIds with warnings; the handler does not invoke Revit's interactive closed-view search. Body: {viewId?|targetViewId?|sheetId?|id?|viewName?|query?,exact?,viewType?,showElementIds?,bboxMinXyz?,bboxMaxXyz?,zoomToFit?}.",
+      "example": "activate a Level 1 view and show only elements visible there"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-selection",
+      "risk": "low",
+      "group": "Selection",
+      "title": "Set Selection",
+      "description": "Set the current selection to specific element IDs.",
+      "example": "select element id 123"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/list-element-types",
+      "risk": "low",
+      "group": "Types",
+      "title": "List Element Types",
+      "description": "Type list + family-type maintenance helper. action=list (default) is read-only/low-risk. action=rename_types and action=purge_unused_in_family are high-risk mutation modes and require write approval; dryRun:true makes those modes preview-only but does not downgrade their mutation risk. List supports {category|categories, exactName?, nameContains?, familyNameContains?, includeParameters?, limit?, exportCsv?, outputFolder?, fileName?}. Rename supports {action:\"rename_types\",familyName,searchPattern,replaceWith?,regexIgnoreCase?,maxEdits?,category|categories?,dryRun?}. Purge supports {action:\"purge_unused_in_family\",familyName,maxDelete?,category|categories?,dryRun?}.",
+      "example": "dry-run rename family types by regex"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/resolve-element-type",
+      "risk": "low",
+      "group": "Types",
+      "title": "Resolve Element Type",
+      "description": "Resolve an ElementType by name without listing everything. Request: {category, typeName, familyName?, exact?, includeParameters?, cacheBust?}.",
+      "example": "resolve wall type \"Generic - 4\\\"\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-plan",
+      "risk": "medium",
+      "group": "Safety",
+      "title": "Plan Transaction",
+      "description": "Dry-run a composable action graph in one rolled-back transaction and return per-action result refs plus impact. Supports delete, setParameters, placeFamilies, createDependentView, duplicateView, setViewCrop, setViewScale, createSheet, and placeView. duplicateView accepts duplicateOption:'duplicate'|'withDetailing' and defaults to withDetailing. Created resources may declare resultRef; later id fields may use '$resultRef' or '$action:N'. View crop uses cropBox:{min:{x,y,z?},max:{x,y,z?}}. Body: {actions:[...]}.",
+      "example": "preview duplicated detailed views, sheets, and viewports atomically"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-validate",
+      "risk": "medium",
+      "group": "Safety",
+      "title": "Validate Plan",
+      "description": "Validate post-conditions after a transaction using checks. Body: {transactionId?,checks?}.",
+      "example": "validate expected model state"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/transaction-apply",
+      "risk": "high",
+      "group": "Safety",
+      "title": "Apply Plan",
+      "description": "Apply the same composable action graph in one committed transaction group and emit per-action result refs plus transaction-scoped model diff (session + step scopes) with optional persisted JSON artifact. Body: {actions:[...],diff?}.",
+      "example": "apply a previewed view and sheet action graph and return transaction diff"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/visibility",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "View Visibility",
+      "description": "Read/update view settings. set_category_override accepts halftone:true/false (omitted preserves it), lineWeight and RGB. get returns native category identity, stored halftone, template control and supported link display mode. A stored host override alone does not prove effective linked appearance or typical coverage. Actions: get, set_template, hide_category, show_category, set_scale, set_detail_level, set_discipline, set_phase, set_phase_filter, set_section_box, clear_section_box, set_crop_box, clear_crop_box, set_view_range, set_underlay, clear_underlay, set_category_override, clear_category_override, apply_view_filter, create_view_filter, remove_view_filter, clear_filter_override, isolate_elements_temp, isolate_categories_temp, clear_temp_hide_isolate, reveal_hidden_on, reveal_hidden_off, hide_elements, unhide_elements. get reports exact Plan View Range planes for plan views. set_view_range changes only supplied plane level/offset fields and dryRun executes a rolled-back native preview. get with includeLinkedModels:true reports loaded Revit links, common linked categories, linked phases, and phase-map rows when available. Linked-model category override requests block with linked_model_category_override_not_supported rather than changing host categories. set_crop_box supports annotationCropActive and annotationCropMarginFeet for tight sheet viewport extents. Supports linePatternId|linePatternName in category/filter overrides, and create_view_filter rule fields {ruleParameterName,ruleOperator,ruleValue,ruleCaseSensitive}.",
+      "example": "create and apply a view filter for supply ducts"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-text",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Create or Repair Text Note",
+      "description": "Create, inspect, or repair text notes; list or create text note types. Actions: create|inspect|repair|list_types|create_type. Body: {action?,textNoteId?,viewId?,x?,y?,widthFt?,text?,typeId?|typeName?,newTypeName?,baseTypeId?|baseTypeName?,fontName?,textSize?,bold?,italic?,allowExisting?,dryRun?}. widthFt is paper-space feet, not model-space feet; create uses Revit's native line-wrapping overload and readback includes viewScale/modelSpaceWidthFt/isTextWrappingActive.",
+      "example": "create a note with controlled wrapping or repair its position, paper-space width, text, and type"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-drawing-spec",
+      "risk": "low",
+      "group": "Query",
+      "title": "Find and Inspect Imported Word/Text Specifications",
+      "description": "action=list discovers owned import manifests and view names with pageOffset/pageSize; this is an index, not current-state proof. Default action=inspect requires sourcePath and manifestElementId. It independently checks complete source/native text, rich formatting, ownership and allocated column bounds/order; managed revisions also check replaced-note absence and preserved view identities. Detailed notes are paged without clipping; use expectedSnapshotSha256 on later pages. Source edits, unavailable legacy geometry and mismatches remain explicit. Read currentNativeSnapshotSha256 and retainedSourceSha256 before managed update. No mutations or visual, sheet-fit or whole-task proof; obtain focused work-area views separately.",
+      "example": "find the existing specs, inspect their current source/native state, then reflow if needed"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-drawing-spec",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Import or Update Drawing Specifications (Word/Text)",
+      "description": "Import complete .docx/.txt specs as editable source-bound native text in printed-inch columns and continuation views. Fit the usable sheet area and preserve titleblocks; place/review sheets separately. To change source or reflow, first inspect the manifest with /revit/inspect-drawing-spec, then action=update with manifestElementId, expectedSourceSha256 (retained source) and expectedNativeSnapshotSha256 (unchanged current native import). Reuses owned views, atomically replaces only unchanged owned notes, retains unused continuation views. Omitted update dimensions/origins inherit retained layout; update margin defaults to0 and adjusts explicitly supplied dimensions/origins only. Native manual changes or deletion cascades refuse/roll back. Unchanged source/settings do not duplicate text. Unsupported source features fail explicitly; dry-run is a plan, not native preview.",
+      "example": "reflow existing drawing specs into narrower columns using its inspected manifest"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-source",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Excel Output Worksheet Source",
+      "description": "Inspect an uploaded .xlsx before importing. Omit sheetName to discover worksheets; never assumes the first calculation tab is the output. Select the exact sheetName, then section=summary|cells|rows|columns|merges|issues|formatting|printContext. Whole records are paged within64KiB; follow nextOffset with the returned expectedSourceSha256. Changed files return SourceChanged with no continuation records. Formula errors/missing cached results stay explicit; never recalculates or silently zeros them. Layout/rich-style source retained separately from raw cached cell text; not formatted Excel display or native import/visual proof. Does not expose the legacy Excel mutation as supported.",
+      "example": "find the ventilation output tab and inspect its source errors and layout"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-vector-annotations",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Import Source PDF Annotations",
+      "description": "Create only complete text/fills/dots from the original immutable native_plan, in batches of40. Source strokes are excluded and must be created/verified separately. Body uses sourcePath,expectedSourceSha256,nativePlanPath,expectedNativePlanFileSha256,expectedNativePlanSha256,viewId,expectedViewUniqueId,partIndex? and paired manifestElementId/expectedImportSnapshotSha256 for continuation. Exact existing drafting view scale and UniqueId are required; no view or scale is silently changed. Inspect every committed part with inspect-vector-detail for native source projection and integral original-PDF reparse, then continue using fresh snapshot. Already-created parts are not duplicated; uncertain writes must not be retried. Source omissions, visual comparison, complete drawing coverage and save/reopen are separate. dryRun is plan-only.",
+      "example": "add the source diagram text and filled symbols to its exact drafting view and verify every complete source annotation"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-vector-detail",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Imported Vector Detail",
+      "description": "action=list discovers managed vector details without model changes. Otherwise exact manifestElementId returns source/view context and fresh native ownership snapshot for continuation. Add partIndex for a complete native geometry/text/style source-projection check of that part. includeItems=true pages whole native records with offset/limit; default summary avoids flooding context. Missing/changed native content stays explicit and blocks blind continuation. The integral backend independently re-extracts the original registered PDF for source verification. Native/source checks are separate from visual comparison, sheet fit and saved-reopen qualification. Reattach an older source PDF if it is absent from this conversation.",
+      "example": "inspect every imported vector part against the source and obtain the fresh continuation snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-excel-output",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Import Editable Excel Output Table",
+      "description": "Inspect the original .xlsx and choose its actual output sheetName first. Import source-bound editable native text and borders into readable continuation drafting views; no200row truncation or whole-sheet shrink. Require sourcePath, sheetName, expectedSourceSha256 and viewName. layout uses printed inches, minimumTextPoints and optional exact range/repeatHeaderRows. Border weights map hair/thin/medium/thick to explicit Revit1-16 weights, defaults1/1/3/5. Each call commits one complete part in source order. Continue ALL remaining parts with returned partIndex plus exact manifestElementId and fresh expectedImportSnapshotSha256 from inspect-excel-import. Existing parts are never duplicated; changed source/layout/native content refuses continuation. Errors remain literal; no recalculation or engineering approval. Unsupported formatting fails explicitly. Inspect each part, place all views on sheets and review actual work-area visuals separately. dryRun is not an executed preview.",
+      "example": "add the ventilation output table, continue every readable part and verify it before sheet placement"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-excel-import",
+      "risk": "low",
+      "group": "Query",
+      "title": "Inspect Imported Excel Table Parts",
+      "description": "action=list discovers owned Excel imports. Otherwise sourcePath and manifestElementId inspect the whole retained source projection and fresh root snapshot for continuation. Add exact partIndex for complete native text/format/cell-bound/order/border checks of THAT part. section=notes|cells|borders|issues pages whole records; follow nextOffset with expectedInspectionSnapshotSha256. Summary has no per-part native verification unless partIndex is supplied. Missing/changed source, native content, ownership and stale cursors remain explicit. This is not visual fidelity, sheet-fit, recalculation or engineering proof. Use actual model-area visuals and saved-reopen checks separately.",
+      "example": "inspect the imported table part against its original workbook and obtain the fresh continuation snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-elements-xlsx",
+      "risk": "low",
+      "group": "Drafting",
+      "title": "Export Elements to Excel Workbook (.xlsx)",
+      "description": "Export selected elements to an Excel spreadsheet under Workspace without changing Revit. Native typed values, units, display and field status in Elements, Issues and Readme. Use observed elementIds and exact parameterNames (max 2000 elements, 100 fields); inspect a representative element first. Optional supplementalTables preserve supplied inputs, proposed device quantities and review results, visibly assistant-authored with native identity columns. Each table requires every selected elementId exactly once; missing, duplicate or foreign rows reject before writing. Up to 4 tables, 32 columns each, 64000 total cells; scalar JSON values only (null is missing, zero remains zero, strings are not formulas). Body: {elementIds:[...],parameterNames:[...],outputFolder?,fileName?,dryRun?,supplementalTables:[{name,contentKind:'user_input_transcription'|'assistant_proposal'|'review',columns:[...],rows:[{elementId,values:[...]}]}]}. Supply all requested spaces and deliverables; native selection coverage is not proof of complete task scope or engineering correctness. Existing files are never overwritten. Verify artifact_receipt with inspect-exported-files.",
+      "example": "export selected elements and proposed quantities to xlsx"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-drafting-view",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Create Drafting View",
+      "description": "Create (or reuse) a Drafting View by name. Body: {name,scale?,allowExisting?}",
+      "example": "create drafting view \"Typical Detail\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-view",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create View",
+      "description": "Create floor-plan, 3D, dependent, callout, section, elevation, camera, drafting, legend (from existing legend duplication), and view-template views; also supports batch view rename. Body: {action:\"create_floor_plan\"|\"create_3d\"|\"create_dependent\"|\"create_callout\"|\"create_section\"|\"create_elevation\"|\"create_camera\"|\"create_drafting\"|\"create_legend\"|\"create_view_template\"|\"rename_batch\",name?,levelId?|levelName?,planType?,perspective?,sourceViewId?,calloutType?,sectionHeight?,sectionDepth?,elevationIndex?,p1?,p2?,eye?,target?,up?,templateId?|templateName?,scale?,detailLevel?,discipline?,viewIds?,nameContains?,prefix?,suffix?,findText?,replaceText?,exact?,max?,dryRun?}.",
+      "example": "create a floor plan for Level 2"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/draw-detail-curves",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Draw Detail Curves",
+      "description": "Draw editable detail curves in a view. Supports point.xyz (feet), point.xPx/yPx (requires frameId), and point.xIn/yIn (inches). Optional expectedViewType and expectedLevelName fail closed if the target plan does not match; projectToViewPlane projects resolved points onto the target view plane. Cubics use ordered start/control1/control2/end, degree3 NURBS data and actual native ShortCurveTolerance, without manual faceting or short-curve omission. Revit may return a simpler line/arc; inspect actual native kind and geometry. Fresh committed receipts and view-owned-detailing expose native spline controls/knots/weights/domain; these are readback, not independent source/visual verification. Optional `lineStyleCreate` creates/updates a line style before drawing. Body: {viewId,frameId?,expectedViewType?,expectedLevelName?,projectToViewPlane?,lineStyleName?,lineStyleCreate?,curves:[{kind:\"line\",a,b}|{kind:\"polyline\",points:[...] }|{kind:\"arc\",a,b,c}|{kind:\"cubic_bezier\",points:[start,control1,control2,end]}],dryRun?}",
+      "example": "create a line style and draw detail lines or cubic Bezier curves"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-filled-region",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Create Filled Region",
+      "description": "Create filled regions, list filled region types, or create a filled region type. Actions: create|list_types|create_type. Body: {action?,viewId?,frameId?,typeId?|typeName?,newTypeName?,sourceTypeId?|sourceTypeName?,fillPatternName?,allowExisting?,loops?,dryRun?}",
+      "example": "create a filled region type with hatch and apply it"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-revision-cloud",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Create Revision Cloud",
+      "description": "Create a revision cloud in a view, with optional one-call tagging of the created cloud. Body: {viewId,frameId?,points:[...],revisionId?,closed?,tagCreatedCloud?,tagHasLeader?,dryRun?}",
+      "example": "create a revision cloud around this outline"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tag-elements",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Tag Elements",
+      "description": "Create tags for elements by explicit ids and/or category selectors in a target view, with duplicate avoidance for IndependentTag, local RoomTag and local SpaceTag associations. Native room and space tags retain their model-backed name/number; a static TextNote is not an associative tag. Local Rooms/Spaces can be discovered across the document even when their category is hidden in the target view. Linked room IDs are not host element IDs; do not substitute an unrelated local subject or claim linked-room tagging support. Check the actual local subject before creating a spatial tag, with duplicate avoidance, optional per-category tag-type mapping, and additive geometry-aware placement/readback. geometry_aware uses the same category resolution for visibility and loaded/source family selection, including OST_DuctCurves -> OST_DuctTags and the existing equipment/fixture categories; mixed or unsupported target categories remain unresolved. geometry_aware places tag heads outside target footprints, avoids annotation/target/tag collisions, prefers clear plan space over walls and modeled equipment, keeps leaders bounded, rejects leader crossings and protected-content routes, uses discipline profiles, and requires actual Revit tag and leader geometry before retaining created work. Keep creation and existing-tag repair fields separate: addLeader is for creation (default false in offset mode, true in geometry_aware); hasLeader and exact coordinates require repairExistingTagId. Mixed-mode fields are rejected before mutation. Existing tags can be read or repaired in place with repairExistingTagId plus exact tag-head/free-leader coordinates; dry runs execute the native tag repair, read it back, roll it back, and verify the original tag geometry. If no compatible tag is loaded, autoLoadTagFamily can import an exactly category-compatible tag from a workspace-scoped source project, optionally selecting an exact source family/type; dry-run reports bounded source candidates. generatedTagContentProfile=airflow_only produces a copied source family that retains bounded flow-unit labels and removes unrelated text/label content, with an explicit sanitization receipt. A dry-run may set inspectTagFamilyElements=true to return a bounded read-only inventory of the selected tag family's internal elements and parameters. Tags with no visible/measurable head geometry or no professionally clear tag/leader route are removed and reported as failures. Create body: {viewId?|viewName?,elementIds?|categoryNames?,categoryTagTypeMap?,tagTypeId?|tagTypeName?|tagFamilyName?,onlyUntagged?,addLeader?,orientation?:horizontal|vertical,offsetX?,offsetY?,placementMode?:offset|geometry_aware,placementProfile?:auto|mep|electrical|architectural,tagWidthPaperInches?,tagHeightPaperInches?,clearancePaperInches?,maxRepairAttempts?,autoLoadTagFamily?,tagFamilySourceProjectPath?,tagFamilySourceCategory?,tagFamilySourceFamilyName?,tagFamilySourceTypeName?,generatedTagFamilyName?,generatedTagContentProfile?:none|airflow_only,inspectTagFamilyElements?,max?,dryRun?}. Existing-tag body: {viewId?|viewName?,repairExistingTagId,tagHeadPositionXyz?,leaderEndXyz?,leaderElbowXyz?,hasLeader?,leaderEndCondition?:attached|free,dryRun?}.",
+      "example": "repair an existing tag head and free leader endpoint with rollback verification"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-dimension",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Create Dimension",
+      "description": "Create dimensions (annotations).",
+      "example": "dimension between these walls"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-sheet",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Sheet",
+      "description": "Create a real or placeholder sheet, or convert a placeholder to real. Auto titleblock now defaults to the most-used/adjacent non-one-off titleblock, not collector-first. Body: {name?,number?,titleBlockId?(-1=auto),titleBlockName?,referenceSheetNumber?,placeholder?,convertPlaceholderSheetId?}.",
+      "example": "create sheet E400 enlarged electrical plans"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-sheet",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Duplicate Sheet",
+      "description": "Duplicate an exact existing sheet through Revit's native sheet duplication API. Supports empty, detailing, views-only, views-and-detailing, or views-as-dependent duplication, exact source id/number/query resolution, dry-run planning, unique default numbering, and post-apply readback. Body: {sourceSheetId?|sourceSheetNumber?|sourceQuery?,option?:empty|detailing|views_only|views_and_detailing|views_as_dependent,newNumber?,newName?,dryRun?,verify?}.",
+      "example": "duplicate sheet M101 with its views and detailing"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-revision",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Revision",
+      "description": "Create a revision and optionally set date/description/issued fields. Body: {description?,revisionDate?,issued?,issuedBy?,issuedTo?,dryRun?}.",
+      "example": "create revision IFC ISSUE"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-revision-to-sheets",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Apply Revision To Sheets",
+      "description": "Add or replace additional revisions on selected sheets. Body: {revisionId,sheetIds?|sheetNumbers?|query?|all?,mode:\"append\"|\"replace\",dryRun?}.",
+      "example": "apply revision 123 to sheets A1*"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/place-view",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Place View On Sheet",
+      "description": "Place or move a view on a sheet. Supports selectors (`sheetId|sheetNumber|sheetQuery`, `viewId|viewName|viewQuery`), viewport, regular schedule, and panel schedule placement. For moving schedules between sheets, use moveIfAlreadyPlaced:true; omitted x/y defaults to avoidOverlap:true and chooses a free sheet position. Body: {sheetId?|sheetNumber?|sheetQuery?,sheetExact?,viewId?|viewName?|viewQuery?,viewExact?,x?,y?,moveIfAlreadyPlaced?,avoidOverlap?,lockViewport?,viewportTypeId?|viewportTypeName?,dryRun?}.",
+      "example": "move panel schedule EL1 to E302 without overlapping existing schedules"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/link-cad",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Link CAD (DWG/DXF) Into View/Sheet",
+      "description": "Optional expectedSourceSha256 pins the complete source bytes before native work; a mismatch is refused before import/link. Link a DWG or DXF (or explicitly import with link:false) into a target view and optionally place that view on a sheet. Sheet-only requests default to create/reuse a Drafting View at viewScale:1 and place it as a viewport; set directSheetImport:true only for legacy sheet-owned CAD imports. Body: {sourcePath,expectedSourceSha256?,sheetNumber?,sheetViewId?,viewId?,viewName?,viewQuery?,createDraftingView?,placeOnSheet?,moveIfAlreadyPlaced?,directSheetImport?,viewScale?,placement:\"origin\"|\"center\"?,x?,y?,xInches?,yInches?,importUnit?,colorMode?,customScale?,autoCorrectAlmostVHLines?,link?,preflightOnly?,dryRun?}. Use dryRun:true with preflightOnly:true for a no-source-required capability probe. Almost-horizontal/vertical correction defaults false to preserve source directions. Colors default to preserve; colorMode:preserve|black_and_white|invert. A link never falls back to import. For paper-size details use viewScale:1 with resolved source units; customScale overrides units, so its value alone does not prove printed size. Native result returns ownerViewId, viewportId, bounding boxes, and cadCategories for layer/subcategory graphics overrides.",
+      "example": "link cad P:\\\\Projects\\\\refs\\\\keyplan.dwg into a drafting view and place it on sheet A1.00"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-schedule",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Schedule",
+      "description": "Create schedule views with kind + placement helpers. Body: {name|scheduleName,category|categoryName?,kind?:regular|material_takeoff|key|keynote_legend|multi_category|sheet_list|view_list|clone,sourceScheduleId?|sourceQuery?|sourceExact?,fields?|addFields?,includeLinkedFiles?,filterBySheet?,reuseIfExists?,placeOnSheet?,placeOnActiveSheet?,placeOnActiveSheetX?,placeOnActiveSheetY?,dryRun?}.",
+      "example": "create a keynote legend filtered to the active sheet"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/configure-schedule",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Configure Schedule",
+      "description": "To combine existing parameter columns on a regular schedule, send only {scheduleId,combinedField:{name,sourceFieldIds,index?,separator?,hideSourceFields?,widthFeet?},dryRun?}. sourceFieldIds are native schedule-field IDs from detail.fields, NOT model ElementIds. Creates a genuine combined parameter field, preserves parameter values and source fields (hidden by default), refuses name collisions, and returns native definition and change inventory. Separate host presentation read verifies ordered bindings, headings, widths and preservation; inspect enlarged rendering for visual quality. For a background-only edit on a regular or panel schedule INSTANCE, use {scheduleId,cellStyles:[{section,row,column,expectedText,backgroundColorRgb:[r,g,b]}],dryRun?:false}. Copies existing style and preserves table text/notes, unrequested cells and other formatting. expectedText must match a native read exactly. 1..64 cells; no mixing other operations/shared-template edits/text or parameter writes. After commit independently read /revit/schedules action:cell_styles for ALL targets and inspect rendering; native color checks do not certify the visual result. Filters use {field|fieldId,op,value?,valueType?}; valueType is string (default), element_id, integer, double (Revit internal units), or display (field/document units). Resolve element IDs from current document evidence. Filter replacement is atomic; ambiguous field names require fieldId. Except for cellStyles above, advanced configuration requires a regular ViewSchedule; PanelScheduleView row heights and literal text use native API operations (TableSectionData.SetRowHeight/SetCellText), followed by exact native getters and a visual check. Native title/header/body styles: appearance.titleTextTypeId/headerTextTypeId/bodyTextTypeId select existing TextNoteTypes without editing shared styles. Read /revit/schedules detail presentation for current style IDs, font/size and override caveats. fieldOrder is an exact permutation of ALL native field IDs (including hidden), obtained from detail.fields; add fields first then reorder separately. Reordering preserves identities/filters and never requires ClearFields. Native title stays attached to the schedule; do not replace it with detached sheet text. For bounded fieldFormats-only edits, use an exact scheduleId and unique native field names with heading, widthFeet, hidden, horizontalAlignment and/or headingOrientation. Separate native readback requires before/after field definitions, unchanged bindings, unrequested attributes and collateral schedule fingerprints; mixed structural/color edits remain unverified by this checker. Inspect enlarged rendering and revise supported differences; do not repeat an uncertain mutation. For automatic separate host readback of these defaults/order, send an exact scheduleId with only fieldOrder and/or appearance text-type IDs plus showTitle/showHeaders; apply other configuration in separate bounded calls. The host independently reads requested native defaults/order and requires preservation fingerprints plus native dependency proof before accepting a wider native change inventory. Incomplete or unexplained scope stays unverified. This does not prove whole-sheet layout or engineering. Check fresh detail and enlarged rendering after changes. Apply advanced regular-schedule configuration (isItemized=false groups matching instances into summary rows; sort/group by type and airflow to keep different flows separate): fields, calculated fields/formulas, filters, sort/group, conditional formatting, field styling, appearance, filter-by-sheet, column widths, and row heights. Body: {scheduleId?|query?,addFields?,fieldOrder?,calculatedFields?,filters?,sortGroup?,showGrandTotals?,isItemized?,columnWidths?,rowHeights?,fieldFormats?,conditionalFormats?,appearance?,filterBySheet?,replaceFilters?,replaceSortGroup?,dryRun?}.",
+      "example": "configure a door schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/delete",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Delete Elements",
+      "description": "Delete elements by id.",
+      "example": "delete the selected elements"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-parameter",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Set Parameter",
+      "description": "Set element parameter values with post-commit readback. Each change may include expectedOldValue for an atomic in-transaction precondition; formatted Revit values such as 10,000 CFM are supported. If any expected value changed, the entire request returns Precondition Failed without writes. Body: {changes:[{elementId,parameterName,value,expectedOldValue?,preserveTextCase?}],dryRun?,apply?,confirm?,preserveTextCase?}. Applied responses report verifiedCount, verificationFailedCount, and unresolvedElementIds; inspect those fields before claiming success.",
+      "example": "set Mark on selected doors and verify the committed values"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-duct",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Duct",
+      "description": "Create one straight duct segment from XYZ points or frame-linked view pixels through the verified MEP route engine. Explicit size is required. Native profile compatibility is checked before any transaction; ambiguous types require a native ductTypeId. Returns observed commit/rollback and geometry/size readback. For authorized creation use dryRun:false; use true only for a requested preview. Body: {levelName?,levelId?,startX?,startY?,startZ?,endX?,endY?,endZ?,frameId?,startPoint?,endPoint?,systemType?,ductType?,ductTypeId?,ductShape?:round|rectangular|oval,ductSize?|width?|height?|diameter?,dryRun?}.",
+      "example": "dry-run create a 10x12 supply duct segment from the marked line"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-pipe",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Pipe",
+      "description": "Create one straight pipe segment from XYZ points or frame-linked view pixels. Use dryRun first for redline/model-coordinate tasks. Body: {levelName?,startX?,startY?,startZ?,endX?,endY?,endZ?,frameId?,startPoint?,endPoint?,systemType?,pipeType?,diameter?|pipeSize?,dryRun?}.",
+      "example": "dry-run create a 2 inch domestic cold water pipe segment from the marked line"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-family-instance",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Family Instance",
+      "description": "Place one or more family instances. Supports symbolName or typeName alias, optional levelName, target view/sheet placement (viewId|sheetNumber), spacing arrays (count + spacingX/Y/Z), rotationDegrees, and dryRun.",
+      "example": "place a north-arrow symbol on sheet A1.00"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/place-families",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Place Families",
+      "description": "Batch place family instances from a spec. Resolve the type by stable familySymbolId or familyName/symbolName. ViewBased symbols require viewId and use Revit's view-owner overload; apply fails closed unless readback proves the exact owner view, target-view collector membership, and a view-specific bounding box. Results include type, owner-view, requested and actual location, collector, and bounding-box evidence. For unhosted non-view-based instances, coordinateMode:absolute_model corrects any family-origin/level offset after creation and fails closed unless LocationPoint readback matches the requested XYZ exactly within tolerance. Non-view-based placement supports default levelName, optional per-instance levelName override, parameters, exact user-workset assignment by worksetName or worksetId, and explicit allowUnhostedWorkPlanePlacement for provisional work-plane families: without hostElementId this creates and retains a horizontal native reference plane at absolute requested XYZ, reports its supportPlaneElementId and verified effective level, and rolls both instance and plane back on failure/preview. This path defaults omitted coordinateMode to absolute_model and rejects legacy_level_offset or invalid modes. Ordinary omitted coordinateMode keeps legacy level-offset behavior. All coordinates use feet. Support is limited to 200 instances per request and is not an architectural ceiling. Orientation is returned from native rotation readback. For a linked ceiling, wall or floor, provide hostElementId for its RevitLinkInstance and linkedHostElementId for the exact linked element; linked-face placement checks both native host identities and the projected model-space point after regeneration. Unhosted work-plane placement is not a substitute for a requested ceiling host. Body: {familySymbolId?|familyName?,symbolName?,viewId?,levelName?,worksetId?,worksetName?,allowUnhostedWorkPlanePlacement?,dryRun?,bestEffort?,instances:[{x,y,z,coordinateMode?:absolute_model,levelName?,rotationDegrees?,hostElementId?,linkedHostElementId?,parameters?}]}.",
+      "example": "dry-run one view-based annotation symbol in the active detail view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-similar-from-instance",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Similar From Instance",
+      "description": "Create one or more hosted copies from an exemplar instance, preserving hosting behavior, orientation, and the exemplar workset with native verification while supporting exact host slots via wall-chainage or explicit point placements plus preview. Optionally match the source exemplar's electrical circuit. Before apply, inspect the source exemplar and include any instance parameters that drive visible tags or schedules in parameterNamesToCopy; geometry, host, and circuit agreement alone do not prove annotation fidelity. Body: {exemplarElementId,hostElementId?,roomId?|roomNumber?,roomSide?,referenceElementId?,alongHostOffsetsFt?|placements?,matchOrientationFromSource?,orientationSourceElementId?,copyRotation?,copyFacingHandState?,matchElectricalCircuitFromSource?,requireElectricalCircuitMatch?,parameterNamesToCopy?,parameterOverrides?,dryRun?,includePreviewImage?,previewViewId?,previewImageSize?,focusPaddingFt?}.",
+      "example": "dry-run create two similar receptacles from this exemplar on the same wall and keep them on the same circuit"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/assign-electrical-circuit",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Assign Electrical Circuit",
+      "description": "Create, assign, or repair native electrical circuit membership for family instances. sourceElementId requires exactly one retained source power system, reassigns the targets into that exact system, verifies the final exact member set, and exercises the real reassignment in a rollback-verified TransactionGroup during dryRun. Optional panelElementId and expectedCircuitNumber fail closed when the retained source circuit does not match. createSystemType:\"PowerCircuit\" creates one new ElectricalSystem from uncircuitized elementIds; for a single multi-connector member, electricalConnectorId selects the exact unused native PowerCircuit connector. electricalSystemId moves one existing exact-member PowerCircuit into targetPanelSlotNumber without recreating or discarding its members. Both exact-slot modes fail closed when expectedCircuitNumber differs from Revit's resulting CircuitNumber, and a dryRun exercises the real panel-schedule move inside a rollback-verified TransactionGroup. Exactly one native mode is required. Label-only panelName/circuitNumber and parameterOnlyFallback requests are refused before a transaction; use explicit parameter tools for genuine label work. Separate get-element-summary with includeElectricalCircuitMembership:true reads actual circuit membership and panel slots. Body: {elementIds,sourceElementId?,createSystemType?:\"PowerCircuit\",electricalConnectorId?,electricalSystemId?,panelElementId?,targetPanelSlotNumber?,expectedCircuitNumber?,dryRun?,confirm?}.",
+      "example": "dry-run creating, merging, or moving a PowerCircuit with exact native readback and rollback verification"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/load-family",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Load Family",
+      "description": "Load an RFA into the project.",
+      "example": "load a family"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-family-from-template",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Create Family From Template",
+      "description": "Create a workspace RFA from a template and optionally load it. templatePath accepts workspace .rft, installed:<single .rft filename>, or installed:generic-model selecting the unique Generic Model/Metric Generic Model RFT in Revit's configured template directory. Optional geometry creates parametric generic box/cylinder forms using explicit feet dimensions, category and instance/type scope. New geometry requires unique file/project names. No manufacturer ratings or MEP connectors are inferred.",
+      "example": "create a family from template"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-view",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Duplicate View",
+      "description": "Duplicate a view.",
+      "example": "duplicate the active view"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/change-element-type",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Change Element Type",
+      "description": "Change an element's type.",
+      "example": "change selected element type"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/duplicate-element-type",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Duplicate Element Type",
+      "description": "Duplicate an ElementType (e.g., for type-based terminals). Body: {sourceTypeId,newTypeName,dryRun?}.",
+      "example": "duplicate this terminal type as 6in"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-type-parameters",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Set Type Parameters",
+      "description": "Set parameter values on one or more ElementTypes. Body: {typeId?|typeIds?,changes:[{parameterName,value}],dryRun?,confirm?}.",
+      "example": "set Diameter on these types to 6\\\""
+    },
+    {
+      "method": "POST",
+      "path": "/revit/move-elements",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Move Elements",
+      "description": "Translate element(s) by vector or from/to points (supports dry-run). Set moveTogether:true with allOrNothing to translate an explicitly selected connected set in one native group call. Unselected connected HVAC equipment and air terminals are held fixed; connectedEndpointPreservation reports original pin flags, endpoint geometry and physical connection states. If native geometry cannot preserve them, the transaction rolls back and a connected reroute is required. Intact connections alone do not prove positional preservation. Body: {ids:[...],mode:\"vector\",vectorX,vectorY,vectorZ,dryRun?,behavior:\"allOrNothing\"|\"bestEffort\",moveTogether?,options?}.",
+      "example": "dry-run move wall id 111 by -3ft in view-right"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/rotate-elements",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Rotate Elements",
+      "description": "Rotate element(s) around a vertical or arbitrary 3D axis (supports dry-run). Body: {ids:[...],angleDegrees,axis:{mode:\"zThroughPoint\"|\"throughPoints\",pointX,pointY,pointZ,endPointX?,endPointY?,endPointZ?},dryRun?,behavior:\"allOrNothing\"|\"bestEffort\",options?}.",
+      "example": "dry-run rotate an MEP fitting 90deg about its main-pipe axis"
+    }
+  ]
+}

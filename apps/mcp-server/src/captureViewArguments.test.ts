@@ -30,7 +30,9 @@ test("capture-view publishes the opt-in mode and rejects invalid mode before nat
     assert.equal(properties.imageSize.default,2048);
     const response=await client.callTool({name:"revit_capture_view",arguments:{exportMode:"invented_mode"}});
     assert.equal(response.isError,true);
-    assert.match(JSON.stringify(response.content),/Invalid enum value|invalid_enum_value/);
+    const rejection=JSON.stringify(response.content);
+    assert.match(rejection,/Invalid enum value|invalid_enum_value|Invalid option: expected one of/);
+    assert.match(rejection,/exportMode/);
   } finally {
     await client.close();await transport.close();
     // The path was created by this test below the OS temp root.

@@ -1,0 +1,430 @@
+{
+  "description": "Exact original162 native visibility read and request; disposable Autodesk sample. Historical run remains blocked, not retroactively settled.",
+  "applyInput": {
+    "method": "POST",
+    "path": "/revit/visibility",
+    "body": {
+      "viewId": 1363413,
+      "action": "set_template",
+      "templateName": "Mechanical Plan - L1 Block 37 Damper Display",
+      "dryRun": false
+    }
+  },
+  "readInput": {
+    "method": "POST",
+    "path": "/revit/visibility",
+    "body": {
+      "viewId": 1363413,
+      "action": "get",
+      "categoryName": "Duct Accessories",
+      "includeCategoryState": true
+    }
+  },
+  "payload": {
+    "status": "Ok",
+    "action": "get",
+    "dryRun": false,
+    "view": {
+      "id": 1363413,
+      "name": "Plan HVAC L1 - Block 37",
+      "isTemplate": false,
+      "viewType": "FloorPlan",
+      "levelId": 1362876,
+      "levelName": "L1 - Block 37",
+      "levelElevationFeet": -3.458333333333331,
+      "scale": 96,
+      "detailLevel": "Medium",
+      "discipline": "Mechanical",
+      "sectionBox": null,
+      "cropBox": {
+        "isActive": true,
+        "isVisible": false,
+        "min": {
+          "x": -49.457003473388625,
+          "y": -47.01832591228762,
+          "z": -1000
+        },
+        "max": {
+          "x": 41.44439236903289,
+          "y": 71.48585540021605,
+          "z": -0.1
+        }
+      },
+      "scopeBox": {
+        "id": 1411301,
+        "name": "Block 37"
+      },
+      "underlay": {
+        "levelId": -1,
+        "levelName": null,
+        "topLevelId": -1,
+        "topLevelName": null,
+        "orientation": "LookDown"
+      },
+      "viewRange": {
+        "top": {
+          "levelId": 9946,
+          "levelName": "L2",
+          "offsetFeet": 0
+        },
+        "cut": {
+          "levelId": 1362876,
+          "levelName": "L1 - Block 37",
+          "offsetFeet": 4
+        },
+        "bottom": {
+          "levelId": 1362876,
+          "levelName": "L1 - Block 37",
+          "offsetFeet": 0
+        },
+        "viewDepth": {
+          "levelId": 1362876,
+          "levelName": "L1 - Block 37",
+          "offsetFeet": 0
+        }
+      },
+      "phase": {
+        "id": 21885,
+        "name": "New Construction"
+      },
+      "phaseFilter": {
+        "id": 22794,
+        "name": "Show Previous + New"
+      },
+      "linkedModels": null,
+      "temporaryModes": {
+        "hideIsolate": false,
+        "revealHidden": false
+      },
+      "viewFilters": [
+        {
+          "id": 576429,
+          "name": "Domestic",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2008122,
+              -2008055,
+              -2008049,
+              -2008044
+            ],
+            "categories": [
+              {
+                "id": -2008122,
+                "name": "Pipe Insulations",
+                "builtInCategory": "OST_PipeInsulations"
+              },
+              {
+                "id": -2008055,
+                "name": "Pipe Accessories",
+                "builtInCategory": "OST_PipeAccessory"
+              },
+              {
+                "id": -2008049,
+                "name": "Pipe Fittings",
+                "builtInCategory": "OST_PipeFitting"
+              },
+              {
+                "id": -2008044,
+                "name": "Pipes",
+                "builtInCategory": "OST_PipeCurves"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "rule",
+                      "nativeType": "FilterStringRule",
+                      "parameterId": -1140325,
+                      "parameterName": "System Classification",
+                      "builtInParameter": "RBS_SYSTEM_CLASSIFICATION_PARAM",
+                      "value": "Domestic",
+                      "valueType": "string",
+                      "evaluator": "FilterStringContains"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 576430,
+          "name": "Sanitary",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2008122,
+              -2008055,
+              -2008049,
+              -2008044
+            ],
+            "categories": [
+              {
+                "id": -2008122,
+                "name": "Pipe Insulations",
+                "builtInCategory": "OST_PipeInsulations"
+              },
+              {
+                "id": -2008055,
+                "name": "Pipe Accessories",
+                "builtInCategory": "OST_PipeAccessory"
+              },
+              {
+                "id": -2008049,
+                "name": "Pipe Fittings",
+                "builtInCategory": "OST_PipeFitting"
+              },
+              {
+                "id": -2008044,
+                "name": "Pipes",
+                "builtInCategory": "OST_PipeCurves"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "rule",
+                      "nativeType": "FilterStringRule",
+                      "parameterId": -1140325,
+                      "parameterName": "System Classification",
+                      "builtInParameter": "RBS_SYSTEM_CLASSIFICATION_PARAM",
+                      "value": "Sanitary",
+                      "valueType": "string",
+                      "evaluator": "FilterStringContains"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 727741,
+          "name": "Vent",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2008122,
+              -2008055,
+              -2008049,
+              -2008044
+            ],
+            "categories": [
+              {
+                "id": -2008122,
+                "name": "Pipe Insulations",
+                "builtInCategory": "OST_PipeInsulations"
+              },
+              {
+                "id": -2008055,
+                "name": "Pipe Accessories",
+                "builtInCategory": "OST_PipeAccessory"
+              },
+              {
+                "id": -2008049,
+                "name": "Pipe Fittings",
+                "builtInCategory": "OST_PipeFitting"
+              },
+              {
+                "id": -2008044,
+                "name": "Pipes",
+                "builtInCategory": "OST_PipeCurves"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "rule",
+                      "nativeType": "FilterStringRule",
+                      "parameterId": -1140325,
+                      "parameterName": "System Classification",
+                      "builtInParameter": "RBS_SYSTEM_CLASSIFICATION_PARAM",
+                      "value": "Vent",
+                      "valueType": "string",
+                      "evaluator": "FilterStringContains"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 1364036,
+          "name": "Not M Levels or Grids",
+          "definition": {
+            "complete": true,
+            "categoryIds": [
+              -2000240,
+              -2000220
+            ],
+            "categories": [
+              {
+                "id": -2000240,
+                "name": "Levels",
+                "builtInCategory": "OST_Levels"
+              },
+              {
+                "id": -2000220,
+                "name": "Grids",
+                "builtInCategory": "OST_Grids"
+              }
+            ],
+            "rules": {
+              "nativeType": "LogicalAndFilter",
+              "inverted": false,
+              "kind": "and",
+              "children": [
+                {
+                  "nativeType": "ElementParameterFilter",
+                  "inverted": false,
+                  "kind": "and",
+                  "children": [
+                    {
+                      "kind": "not",
+                      "child": {
+                        "kind": "rule",
+                        "nativeType": "FilterStringRule",
+                        "parameterId": -1002001,
+                        "parameterName": "Type Name",
+                        "builtInParameter": "SYMBOL_NAME_PARAM",
+                        "value": "M",
+                        "valueType": "string",
+                        "evaluator": "FilterStringBeginsWith"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      ],
+      "categoryOverride": {
+        "categoryId": -2008016,
+        "categoryName": "Duct Accessories",
+        "builtInCategory": "OST_DuctAccessory",
+        "hidden": false,
+        "detailLevel": "Fine",
+        "halftone": false,
+        "lineWeight": -1,
+        "linePatternId": -1,
+        "linePatternName": null,
+        "color": null
+      },
+      "categorySnapshot": {
+        "schema": "revit.category-visibility-snapshot.v1",
+        "complete": true,
+        "scope": "Document categories and subcategories; direct category hidden flags and graphic overrides, not effective element visibility or filter results",
+        "count": 782,
+        "targetCategoryId": -2008016,
+        "target": {
+          "id": -2008016,
+          "parentId": null,
+          "name": "Duct Accessories",
+          "canHide": false,
+          "hidden": false,
+          "overridable": false,
+          "graphics": {
+            "cutBackgroundPatternColor": null,
+            "cutBackgroundPatternId": -1,
+            "cutForegroundPatternColor": null,
+            "cutForegroundPatternId": -1,
+            "cutLineColor": null,
+            "cutLinePatternId": -1,
+            "cutLineWeight": -1,
+            "detailLevel": "Fine",
+            "halftone": false,
+            "isCutBackgroundPatternVisible": true,
+            "isCutForegroundPatternVisible": true,
+            "isSurfaceBackgroundPatternVisible": true,
+            "isSurfaceForegroundPatternVisible": true,
+            "projectionLineColor": null,
+            "projectionLinePatternId": -1,
+            "projectionLineWeight": -1,
+            "surfaceBackgroundPatternColor": null,
+            "surfaceBackgroundPatternId": -1,
+            "surfaceForegroundPatternColor": null,
+            "surfaceForegroundPatternId": -1,
+            "transparency": 0
+          }
+        },
+        "categoryIdsSha256": "sha256:b416851d2e7af4510764ad772036479f8fc3299242f3b38227823a7aec63af61",
+        "allCategoriesSha256": "sha256:53f1b3a7fe7b6a36322c785b1e577bd80f65b3f0a3c5cea3f5320a822316215b",
+        "categoryValuesSha256": "sha256:934a0c5bad50e53446d9937e90f0863f959beb27676f94136736ff3960f33a80",
+        "otherCategoriesSha256": "sha256:2973fd3b9f3a97090e892a70261350bcffc39c43592de27bdcb2c8fd31b61096"
+      },
+      "viewTemplate": "Mechanical Plan - L1 Block 37 Damper Display",
+      "viewTemplateId": 1546041,
+      "templateControlsModelGraphics": true,
+      "templateCategoryOverride": {
+        "categoryId": -2008016,
+        "categoryName": "Duct Accessories",
+        "builtInCategory": "OST_DuctAccessory",
+        "hidden": false,
+        "detailLevel": "Fine",
+        "halftone": false,
+        "lineWeight": -1,
+        "linePatternId": -1,
+        "linePatternName": null,
+        "color": null
+      }
+    }
+  },
+  "affectedTargets": [
+    "element_id:1363413"
+  ]
+}

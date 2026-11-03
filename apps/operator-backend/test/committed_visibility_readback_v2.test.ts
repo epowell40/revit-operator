@@ -13,15 +13,16 @@ import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel
 
 const retainedLabel=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/category-display-label-readback-47.json'),'utf8'));
 for(const variant of ['true','false','wrong_category','wrong_value','missing_value','read_failure','schema_rejected','paused',
- 'label_true','label_false','label_wrong_category','label_wrong_identity','label_missing_snapshot','label_wrong_value','label_paused'] as const)
+ 'label_true','label_false','label_wrong_category','label_wrong_identity','label_missing_snapshot','label_wrong_value','label_paused',
+ 'numeric_true','numeric_wrong_identity','numeric_missing_snapshot','numeric_wrong_value','numeric_paused'] as const)
 test(`ordinary category graphics ${variant}: committed edit retained and one separately admitted native check`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-view-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try {await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const label=variant.startsWith('label_'),desired=!['false','label_false'].includes(variant);
-  const viewId=label?retainedLabel.apply_input.body.viewId:42;
-  const pauses=['paused','label_paused'].includes(variant);
-  const passing=['true','false','label_true','label_false'].includes(variant);
+  const label=variant.startsWith('label_'),numeric=variant.startsWith('numeric_'),desired=!['false','label_false'].includes(variant);
+  const viewId=numeric?1545058:label?retainedLabel.apply_input.body.viewId:42;
+  const pauses=['paused','label_paused','numeric_paused'].includes(variant);
+  const passing=['true','false','label_true','label_false','numeric_true'].includes(variant);
   const goal=createGoal({title:'Halftone plumbing',objective:'Halftone plumbing in the selected view.',acceptance_criteria:['The requested stored property is checked.'],status:'active',
     related_session_id:'view-host-session',created_by:'view-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'view-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'view-host-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
@@ -40,6 +41,12 @@ test(`ordinary category graphics ${variant}: committed edit retained and one sep
       if(variant==='label_wrong_identity')payload.view.categoryOverride.categoryId=-2001320;
       if(variant==='label_missing_snapshot')delete payload.view.categorySnapshot;
     }
+    if(read&&numeric){
+      Object.assign(payload,{status:'Ok',action:'get',dryRun:false,view:{id:viewId,
+        categoryOverride:{categoryId:variant==='numeric_wrong_identity'?1545658:1545660,categoryName:'P0003',builtInCategory:null,halftone:desired,lineWeight:variant==='numeric_wrong_value'?3:4,color:{r:0,g:0,b:0}},
+        categorySnapshot:{complete:true,targetCategoryId:1545660,target:{id:1545660,name:'P0003',parentId:1545650}}}});
+      if(variant==='numeric_missing_snapshot')delete payload.view.categorySnapshot;
+    }
     if(read&&variant==='missing_value')delete payload.view.categoryOverride.halftone;
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
     if(!read&&pauses)controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
@@ -55,7 +62,7 @@ test(`ordinary category graphics ${variant}: committed edit retained and one sep
     assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
   try{
    const response:any=await handleCodexDynamicToolCall(runtime,{id:'view-edit',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'view-turn',tool:'revit_call_tool',
-    arguments:{method:'POST',path:'/revit/visibility',body:{action:'set_category_override',viewId,categoryName:label?'Plumbing Fixtures':'OST_PlumbingFixtures',halftone:desired}}}} as any);
+    arguments:{method:'POST',path:'/revit/visibility',body:{action:'set_category_override',viewId,categoryName:numeric?'1545660':label?'Plumbing Fixtures':'OST_PlumbingFixtures',halftone:desired,...(numeric?{lineWeight:4,r:0,g:0,b:0}:{})}}}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(response.success,true);assert.equal(apply.result?.persistent_effect,'applied');
    assert.equal(calls.filter(c=>c.body.action==='set_category_override').length,1,JSON.stringify({input:apply.input,result:apply.result,calls}));

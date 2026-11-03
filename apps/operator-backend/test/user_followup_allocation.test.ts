@@ -49,3 +49,31 @@ test('legacy policy without an explicit time ceiling cannot gain more time',()=>
   const result=allocateAuthenticatedFollowupV1(s,'direction',now);
   assert.equal(budget(result).max_wall_clock_ms,budget(s).max_wall_clock_ms);
 });
+
+test('explicit bounded renewal extends the same task without replacing policy, usage, operations or time',()=>{
+  const s=fixture();s.provider_calls=Object.fromEntries(Array.from({length:166},(_,i)=>['call-'+i,
+    {admitted_at:now,completed_at:now,usage:{total_tokens:i===0?29_460_846:0,cached_input_tokens:0}}])) as any;
+  const original=structuredClone(s),before=budget(s),request={provider_calls:64,total_tokens:16_000_000};
+  const renewed=allocateAuthenticatedFollowupV1(s,'explicit-renewal',now,request),b=budget(renewed);
+  assert.equal(b.max_provider_calls,230);assert.equal(b.max_total_tokens,45_460_846);
+  assert.equal(b.max_operations,before.max_operations);assert.equal(b.max_wall_clock_ms,before.max_wall_clock_ms);
+  assert.deepEqual(s,original);assert.deepEqual(renewed.spec,s.spec);assert.deepEqual(renewed.provider_calls,s.provider_calls);
+  assert.deepEqual(renewed.operations,s.operations);assert.deepEqual(budget(JSON.parse(JSON.stringify(renewed))),b);
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'idle-renewal',now,request)),b,'idle approvals do not stockpile');
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'ordinary-followup',now)),b,'ordinary followup retains the prior explicit ceiling');
+});
+
+test('renewal rejects malformed windows and retains Pause, preview, missing-usage and absolute cumulative fences',()=>{
+  for(const renewal of [null,[],{provider_calls:0,total_tokens:1},{provider_calls:65,total_tokens:1},
+    {provider_calls:1,total_tokens:16_000_001},{provider_calls:1.5,total_tokens:1},
+    {provider_calls:1,total_tokens:NaN},{provider_calls:1,total_tokens:1,authority:'native'}])
+    assert.throws(()=>allocateAuthenticatedFollowupV1(fixture(),'bad',now,renewal as any));
+  const request={provider_calls:64,total_tokens:16_000_000};
+  const paused=fixture();paused.execution_control={state:'paused',command_id:'pause',changed_at:now};
+  assert.throws(()=>allocateAuthenticatedFollowupV1(paused,'paused',now,request),/unpaused/);
+  const preview=fixture();(preview.spec as any).requested_effect='preview';assert.throws(()=>allocateAuthenticatedFollowupV1(preview,'preview',now,request));
+  const missing=fixture();delete(missing.provider_calls['call-0']as any).usage;
+  assert.throws(()=>allocateAuthenticatedFollowupV1(missing,'unknown-usage',now,request),/usage must be known/);
+  const huge=fixture();huge.provider_calls['call-0'].usage!.total_tokens=250_000_000;
+  assert.throws(()=>allocateAuthenticatedFollowupV1(huge,'ceiling',now,request),/cumulative advisory/);
+});

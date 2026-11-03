@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import { completionOutboxKeyV2, hydrateCompletionDeliveryV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { operatorBackendAuthRequestMeta, type OperatorBackendAuthV1 } from "../operator_backend_auth.js";
@@ -10,6 +10,8 @@ import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_ke
 import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
 import { McpInputValidator } from "./mcp_input_validation.js";
 import { READ_ATTACHMENT_TOOL, readRegisteredPdfAttachment } from "../attachments/read_attachment.js";
+import {addDraftingReferenceTracking} from '../attachments/drafting_reference_tracking.js';
+import {getAssignmentKernelSnapshotV2} from '../assignments/assignment_kernel_v2_store.js';
 import { READ_OUTPUT_PDF_TOOL, readOutputPdf } from "../attachments/read_output_pdf.js";
 import { describeCodeModeImageTool } from "./code_mode_images.js";
 import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/feature_flag.js";
@@ -165,6 +167,8 @@ export class CodexMcpToolRuntime {
     return this.assignmentKernelV2Leases.resolve(turnId, sessionId);
   }
 
+  hasAssignmentKernelV2Lease(): boolean { return this.assignmentKernelV2Leases.hasActiveLease(); }
+
   bindAssignmentKernelV2TurnStop(turnId: string, handler: (reason: string) => void): void {
     const id = String(turnId || "").trim();
     if (!id) throw new Error("assignment_kernel_v2_turn_stop_identity_missing");
@@ -257,7 +261,7 @@ export class CodexMcpToolRuntime {
         } : {})
       };
       binding?.onMcpAccepted?.();
-      return await client.callTool(
+      const result = await client.callTool(
         {
           name: tool,
           arguments: args && typeof args === "object" ? args as Record<string, unknown> : {},
@@ -266,6 +270,7 @@ export class CodexMcpToolRuntime {
         undefined,
         { timeout, maxTotalTimeout: timeout }
       );
+      return hydrateCompletionDeliveryV2(this.opts.workspaceRoot, completionOutboxKeyV2(this.opts.workspaceRoot), binding?.assignmentKernelV2, result);
     } catch (error) {
       throw new Error(
         `[operator_mcp_tool_error] ${tool} failed and was not automatically replayed because its outcome may be unknown: ${error instanceof Error ? error.message : String(error)}`,
@@ -285,7 +290,8 @@ export class CodexMcpToolRuntime {
     this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
     const result = await readRegisteredPdfAttachment(binding.sessionId, args);
     this.backendAuthLeases.resolve(binding.turnId, binding.sessionId);
-    return result;
+    const task=this.assignmentKernelV2Binding(binding.turnId,binding.sessionId);
+    return addDraftingReferenceTracking(result,task?getAssignmentKernelSnapshotV2(task.assignment_id):null);
   }
 
   async readOutputPdfForTurn(args: unknown, binding: { turnId: unknown; sessionId: string }): Promise<unknown> {

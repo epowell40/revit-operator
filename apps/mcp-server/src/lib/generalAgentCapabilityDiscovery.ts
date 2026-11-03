@@ -58,10 +58,10 @@ export async function discoverHostedGeneralAgentCapabilities(
 export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
   id: "dynamic_revit_program",
   kind: "dynamic_program",
-  title: "Generate and preview a bounded task-specific Revit program",
+  title: "Execute bounded task-specific C# reads or writes in Revit",
   description: "For complex multi-step Revit work using loops, branching, custom algorithms, structured assertions, and bounded observe-revise-rerun feedback within explicit capability and effect limits.",
   semantics: {
-    previewBeforeCommit: true,
+    previewBeforeCommit: false,
     machineAccess: "restricted",
     externalFileEffects: "explicit_capability_required",
     iterativeObservation: "bounded_needs_facts",

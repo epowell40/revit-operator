@@ -33,6 +33,7 @@ internal sealed class WorkerInput
     public IReadOnlyList<DynamicObservationEnvelopeV1> ContextObservationPages { get; set; } = Array.Empty<DynamicObservationEnvelopeV1>();
     public string CompilationCacheKey { get; set; } = "";
     public string? CachedAssemblyBase64 { get; set; }
+    public NativeCompileRequest? NativeCompilation { get; set; }
 }
 
 internal sealed class WorkerOutput
@@ -55,6 +56,7 @@ internal sealed class WorkerOutput
     public DynamicOperationGraph? Graph { get; set; }
     public DynamicResultReferenceProgramResultV1? ResultReferenceProgramResult { get; set; }
     public DynamicCoreProgramResultV1? CoreProgramResult { get; set; }
+    public DynamicNativeProgramArtifactV1? NativeProgramArtifact { get; set; }
     public string[] Logs { get; set; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> Report { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public WorkerDiagnostic[] Diagnostics { get; set; } = Array.Empty<WorkerDiagnostic>();
@@ -270,11 +272,12 @@ internal static class SandboxPipeExecution
         var correlation = "";
         var channelKey = Array.Empty<byte>();
         StreamWriter? outputWriter = null;
+        NamedPipeClientStream? outputPipe = null;
         try
         {
             using var inputPipe = new AnonymousPipeClientStream(PipeDirection.In, inputPipeName);
             using var reader = new StreamReader(inputPipe, Encoding.UTF8, false, 64 * 1024, leaveOpen: false);
-            using var outputPipe = new NamedPipeClientStream(".", outputPipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+            outputPipe = new NamedPipeClientStream(".", outputPipeName, PipeDirection.Out, PipeOptions.Asynchronous);
             WorkerInput? request = null;
             WorkerOutput? priorOutput = null;
             byte[]? retainedAssembly = null;
@@ -348,7 +351,10 @@ internal static class SandboxPipeExecution
         }
         finally
         {
-            outputWriter?.Dispose();
+            // The writer flushes when disposed. Keep its pipe alive until that
+            // flush completes, including the catch path's failure receipt.
+            try { outputWriter?.Dispose(); }
+            finally { outputPipe?.Dispose(); }
         }
     }
 }
@@ -360,8 +366,11 @@ internal static class SandboxProbe
         {
             var input = JsonSerializer.Deserialize<SandboxProbeInput>(File.ReadAllText(inputPath), Compiler.Json) ?? throw new InvalidOperationException("Probe input is empty.");
             File.WriteAllText(Path.Combine(input.ScratchPath, "managed-startup-marker.txt"), "managed worker started");
+            ProbeProgress("preload_sdk");
             _ = DynamicWire.Sha256("preload-sdk");
+            ProbeProgress("preload_hmac");
             using (var preloadHmac = new HMACSHA256(new byte[32])) _ = preloadHmac.ComputeHash(new byte[1]);
+            ProbeProgress("native_image_policy");
             RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
             var results = new List<SandboxProbeResult>
             {
@@ -378,6 +387,7 @@ internal static class SandboxProbe
                 ObserveEnvironment(input.SecretEnvironmentName),
                 Attempt("write_inside_task_scratch", () => { var path = Path.Combine(input.ScratchPath, "inside-write.txt"); File.WriteAllText(path, "ok"); return File.ReadAllText(path); }, expectedDenied: false)
             };
+            ProbeProgress("publish_authenticated_result");
             SandboxPipe.Send(pipeName, nonce, correlation, Convert.FromBase64String(channelKeyBase64), new { schema = "dynamic-revit-sandbox-probe/v0", results });
             return results.All(result => result.Denied == (result.Expected == "denied")) ? 0 : 1;
         }
@@ -396,9 +406,15 @@ internal static class SandboxProbe
 
     private static SandboxProbeResult Attempt(string action, Func<string> body, bool expectedDenied = true)
     {
+        ProbeProgress(action);
         try { return new SandboxProbeResult { Action = action, Expected = expectedDenied ? "denied" : "allowed", Denied = false, Observed = body() }; }
         catch (Exception ex) { return new SandboxProbeResult { Action = action, Expected = expectedDenied ? "denied" : "allowed", Denied = true, Observed = ex.Message, ExceptionType = ex.GetType().FullName }; }
     }
+
+    // Probe-only bounded phase markers distinguish a loader/mitigation stall
+    // from a channel failure without exposing source, data or channel keys.
+    private static void ProbeProgress(string phase)
+        => File.AppendAllText(Path.Combine(Environment.CurrentDirectory, "probe-progress.log"), phase + "\n");
 
     private static string Start(string fileName, string arguments)
     {
@@ -432,6 +448,8 @@ internal static class WorkerExecutor
         if (request.Schema != "dynamic-revit-worker-input/v0") return Fail(output, "WORKER_SCHEMA", "Unsupported worker input schema.");
         if (source.Length is < 1 or > 128_000) return Fail(output, "SOURCE_SIZE", "Source must be between 1 and 128000 characters.");
         if (request.DeadlineMs is < 100 or > 30_000) return Fail(output, "DEADLINE", "Deadline must be 100 through 30000 ms.");
+        if (request.NativeCompilation != null)
+            return NativeCompileTransport.Compile(request, retainedAssembly);
         if (request.Input.OperationBudget is < 1 or > 256 || request.Input.Elements.Count > 5_000) return Fail(output, "INPUT_BUDGET", "Input budget or element count is outside the experimental bounds.");
 
         var compileClock = Stopwatch.StartNew();
@@ -779,7 +797,7 @@ internal static class StaticAdmission
             diagnostics.Add(new WorkerDiagnostic { Code = "PROGRAM_INTERFACE_REQUIRED", Message = "Program must implement exactly one supported dynamic Revit program interface." });
         return diagnostics.Take(32).ToArray();
     }
-    public static WorkerDiagnostic[] CheckSemantic(CSharpCompilation compilation)
+    public static WorkerDiagnostic[] CheckSemantic(CSharpCompilation compilation, Func<SyntaxNode, bool>? allowedNativeNode = null)
     {
         var forbiddenNamespaces = new[] { "System.IO", "System.Net", "System.Diagnostics", "System.Reflection", "System.Runtime.InteropServices", "Microsoft.Win32", "Microsoft.CodeAnalysis" };
         var forbiddenTypes = new[] { "System.Environment", "System.AppDomain", "System.Activator", "System.Type", "System.Threading.Thread", "System.Threading.ThreadPool", "System.Threading.Timer", "System.Timers.Timer", "System.Threading.Tasks.Task", "System.Threading.Tasks.Parallel", "System.Runtime.Loader.AssemblyLoadContext" };
@@ -789,6 +807,7 @@ internal static class StaticAdmission
             var model = compilation.GetSemanticModel(tree);
             foreach (var node in tree.GetRoot().DescendantNodes().Where(node => node is InvocationExpressionSyntax || node is ObjectCreationExpressionSyntax || node is MemberAccessExpressionSyntax || node is TypeOfExpressionSyntax))
             {
+                if (allowedNativeNode?.Invoke(node) == true) continue;
                 var symbol = model.GetSymbolInfo(node).Symbol ?? model.GetTypeInfo(node).Type;
                 if (symbol == null) continue;
                 var type = symbol is ITypeSymbol typeSymbol ? typeSymbol : symbol.ContainingType;

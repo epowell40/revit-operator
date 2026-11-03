@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash} from 'node:crypto';
-import {reserveCommittedReadbacksV2,consumeCommittedReadbackV2,retireCommittedReadbacksV2,isCommittedReadbackReservationV2} from '../src/brains/committed_readback_reservations_v2.js';
+import {reserveCommittedReadbacksV2,consumeCommittedReadbackV2,retireCommittedReadbacksV2,isCommittedReadbackReservationV2,isReservedVectorPageContinuationV2} from '../src/brains/committed_readback_reservations_v2.js';
 import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_kernel_v2_factory.js';
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
@@ -31,6 +31,8 @@ test(`a reserved native read cannot gain authority through ${variant}`,async()=>
   assert.equal(batch.entries.length,1);const entry=batch.entries[0]!,args=entry.request.params!.arguments;
   try{
    assert(isCommittedReadbackReservationV2(entry.token));assert.equal(snapshot().operations[entry.operation_id]!.dispatch_state,'not_dispatched');
+   assert.equal(isReservedVectorPageContinuationV2(entry.token,runtime,entry.request,snapshot()),false,'A genuine unrelated native-read reservation is not a vector-page continuation');
+   assert.equal(isReservedVectorPageContinuationV2({...entry.token},runtime,entry.request,snapshot()),false,'Serialized token fields cannot grant a page continuation');
    if(variant==='forged'){assert.equal(isCommittedReadbackReservationV2({...entry.token}),false);assert.equal(consumeCommittedReadbackV2({...entry.token},runtime,entry.request,args),null);}
    else if(variant==='exact'||variant==='reused'){assert.equal(consumeCommittedReadbackV2(entry.token,runtime,entry.request,args)!.operation_id,entry.operation_id);if(variant==='reused')assert.throws(()=>consumeCommittedReadbackV2(entry.token,runtime,entry.request,args),/reservation_invalid/);}
    else{

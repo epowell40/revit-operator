@@ -6,6 +6,21 @@ import type { AssignmentWorkPlanV2 } from "../src/domain/assignment-kernel/work_
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "../src/domain/assignment-kernel/advisory_followups.js";
 import { projectAdvisoryFollowupsV2, advisoryFollowupsHandoffV2 } from "../src/assignments/advisory_followups_projection.js";
 import type { AssignmentSnapshotV2 } from "../src/domain/assignment-kernel/snapshot.js";
+import { taskDecisionContext } from '../src/brains/task_discretion_guidance.js';
+
+test('decision context exposes late questions and ready work without certifying or rewriting assumptions',()=>{
+ const plan:AssignmentWorkPlanV2={schema:'revit-operator.assignment-work-plan/v2',assumptions:['Engineering decisions remain.'],items:
+  Array.from({length:12},(_,i)=>({item_id:'item_'+i,description:'Source item '+i,source_basis:'Drawing mark '+i,
+   declared_at:'2026-10-21T01:00:00Z',operation_ids:[],...(i===11?{deferrals:[{reason:'Which design is approved?',deferred_at:'2026-10-21T01:01:00Z'}]}:{})}))};
+ const s={work_plan:plan,spec:{requested_effect:'apply'},work_plan_claims:[]} as unknown as AssignmentSnapshotV2;
+ const before=JSON.stringify(s),context=JSON.parse(taskDecisionContext(s).split('\n').slice(1).join('\n'));
+ assert.equal(context.questions.items[0].question_ref,'Q12');assert.equal(context.questions.items[0].status_start,11);
+ assert.equal(context.ready_items.total,11);assert.equal(context.ready_items.next_start,8);
+ assert.equal(JSON.stringify(s),before);assert.equal(taskDecisionContext({...s,work_plan:undefined}),'');
+ const undeferred={...s,work_plan:{...plan,items:plan.items.map(item=>({...item,deferrals:undefined}))}};
+ assert.equal(JSON.parse(taskDecisionContext(undeferred).split('\n').slice(1).join('\n')).questions.total,0,
+  'Missing-design prose is not converted to an invented question or supplied answer by presentation.');
+});
 
 test("large multilingual drawing scope remains fully pageable without overflowing the model context", () => {
   const plan: AssignmentWorkPlanV2 = { schema: "revit-operator.assignment-work-plan/v2",

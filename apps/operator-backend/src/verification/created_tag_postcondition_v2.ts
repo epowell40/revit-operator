@@ -16,12 +16,18 @@ const body=(v:unknown)=>{const o=row(v);try{return row(typeof o.body==='string'?
  * skipped/preexisting tags need their own complete inventory, not this proof. */
 export function createdTagRequestV2(input:unknown) {
  const o=row(input),b=body(input);
+ const orientation=typeof b.orientation==='string'?b.orientation.trim().toLowerCase():b.orientation;
  if(o.method!=='POST'||o.path!=='/revit/tag-elements'||b.repairExistingTagId!=null||b.dryRun!==false||b.apply===false
   ||!positive(b.viewId)||(b.tagTypeId!=null&&!positive(b.tagTypeId))||!Array.isArray(b.elementIds)||!b.elementIds.length||b.elementIds.length>2
-  ||!b.elementIds.every(positive)||!unique(b.elementIds)||typeof b.addLeader!=='boolean'
+  ||!b.elementIds.every(positive)||!unique(b.elementIds)||(b.addLeader!=null&&typeof b.addLeader!=='boolean')
+  ||['tagHeadPositionXyz','leaderEndXyz','leaderElbowXyz','hasLeader','leaderEndCondition'].some(k=>b[k]!=null)
+  ||(b.placementMode!=null&&(typeof b.placementMode!=='string'||!['','offset','geometry_aware'].includes(b.placementMode.trim().toLowerCase())))
   ||b.categoryNames?.length||b.categoryTagTypeMap!=null||b.tagTypeName!=null
-  ||b.orientation!=null&&!['horizontal','vertical'].includes(b.orientation))return null;
- return {viewId:b.viewId,typeId:positive(b.tagTypeId)?b.tagTypeId:null,subjectIds:b.elementIds as number[],hasLeader:b.addLeader,orientation:(b.orientation??'horizontal') as string};
+  ||orientation!=null&&!['horizontal','vertical'].includes(orientation))return null;
+ // Match the native creation default; an independent native read must still
+ // prove this value. Repair-only fields above must never be silently certified.
+ const hasLeader=b.addLeader??(b.placementMode?.trim().toLowerCase()==='geometry_aware');
+ return {viewId:b.viewId,typeId:positive(b.tagTypeId)?b.tagTypeId:null,subjectIds:b.elementIds as number[],hasLeader,orientation:(orientation??'horizontal') as string};
 }
 
 /** Default selection is a native resolution, not an agent-supplied type.

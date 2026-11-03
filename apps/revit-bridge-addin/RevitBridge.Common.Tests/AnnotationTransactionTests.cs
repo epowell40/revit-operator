@@ -12,6 +12,41 @@ namespace RevitBridge.Common.Tests
     public sealed class AnnotationTransactionTests
     {
         [Fact]
+        public void TextAnchorIdentityAndCoordReachBothCommitAndIndependentSummary()
+        {
+            string? move = null; string? summary = null;
+            for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null && move == null; directory = directory.Parent)
+                foreach (var prefix in new[] { "apps/revit-bridge-addin", "revit-bridge-addin" })
+                {
+                    var file = Path.Combine(directory.FullName,prefix,"RevitBridge.Logic/Handlers/MoveElementsHandler.cs");
+                    if (File.Exists(file)) { move=File.ReadAllText(file); summary=File.ReadAllText(Path.Combine(directory.FullName,prefix,"RevitBridge.Logic/Handlers/GetElementSummaryHandler.cs")); break; }
+                }
+            Assert.NotNull(move); Assert.NotNull(summary);
+            Assert.Contains("NativeTextAnchorLocation.Read(textNote)",move);
+            Assert.Contains("NativeTextAnchorLocation.Read(textNote).SummaryLocation()",summary);
+            Assert.True(summary!.IndexOf("elem is TextNote textNote",StringComparison.Ordinal)<summary.IndexOf("elem.Location is LocationPoint",StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void IndependentTagUsesNativeHeadAnchorBeforeGenericLocationAndSeparateSummaryRead()
+        {
+            string? source = null; string? summary = null;
+            for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null && source == null; directory = directory.Parent)
+                foreach (var prefix in new[] { "apps/revit-bridge-addin", "revit-bridge-addin" })
+                {
+                    var file = Path.Combine(directory.FullName, prefix, "RevitBridge.Logic/Handlers/MoveElementsHandler.cs");
+                    if (File.Exists(file)) { source = File.ReadAllText(file); summary = File.ReadAllText(Path.Combine(directory.FullName,prefix,"RevitBridge.Logic/Handlers/GetElementSummaryHandler.cs")); break; }
+                }
+            Assert.NotNull(source); Assert.NotNull(summary);
+            var snapshot=source!.Substring(source.IndexOf("private static object SnapshotLocation",StringComparison.Ordinal));
+            var tag=snapshot.IndexOf("e is IndependentTag tag",StringComparison.Ordinal);
+            Assert.True(tag>=0 && tag<snapshot.IndexOf("e.Location is LocationPoint",StringComparison.Ordinal),"Tag heads need their view-owned native anchor.");
+            Assert.Contains("NativeTagHeadLocation.Read(tag)",snapshot);
+            Assert.Contains("NativeTagHeadLocation.Read(tag).SummaryLocation()",summary);
+            Assert.True(summary!.IndexOf("elem is IndependentTag tag",StringComparison.Ordinal)<summary.IndexOf("elem.Location is LocationPoint",StringComparison.Ordinal));
+        }
+
+        [Fact]
         public void TextNoteMoveReadsFiniteNativeAnchorBeforeGenericLocationAndPersistedReadback()
         {
             string? source = Environment.GetEnvironmentVariable("MOVE_ELEMENTS_BEFORE_SOURCE");
@@ -29,10 +64,7 @@ namespace RevitBridge.Common.Tests
             var genericStart = snapshot.IndexOf("e.Location is LocationPoint", StringComparison.Ordinal);
             Assert.True(textStart < genericStart);
             var textBranch = snapshot.Substring(textStart, genericStart - textStart);
-            Assert.Contains("textNote.Coord", textBranch);
-            Assert.Contains("kind = \"TextAnchor\"", textBranch);
-            Assert.Contains("pointXyz = coordinates", textBranch);
-            Assert.Contains("coordinates.All(value => !double.IsNaN(value) && !double.IsInfinity(value))", textBranch);
+            Assert.Contains("NativeTextAnchorLocation.Read(textNote)", textBranch);
             Assert.Contains("if (requireKnown) throw", textBranch);
             Assert.Contains("return new { kind = \"Unknown\" }", textBranch);
             Assert.DoesNotContain("get_BoundingBox", textBranch);

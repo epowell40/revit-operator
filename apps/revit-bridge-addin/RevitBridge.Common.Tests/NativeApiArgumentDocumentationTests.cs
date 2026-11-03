@@ -84,6 +84,23 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("not arbitrary objects or ShapeBuilder", graph);
         }
 
+        [Theory]
+        [InlineData("/revit/native-api-call")]
+        [InlineData("/revit/native-api-search")]
+        [InlineData("/revit/native-api-catalog")]
+        public void DiscoveryRoutesReadOnlyInstanceChainsWithoutRequiringAMutation(string route)
+        {
+            var description = OperatorToolManifest.Tools.Single(tool => tool.Path == route).Description;
+            Assert.Contains("Read-only instance or object-reference chains use native-api-ops", description);
+            Assert.DoesNotContain("Graph-only native-object references and detached solid construction require native-api-mutation-ops", description);
+            var readGraph = OperatorToolManifest.Tools.Single(tool => tool.Path == "/revit/native-api-ops");
+            Assert.Equal(OperatorActionRisk.Low, readGraph.RiskLevel);
+            Assert.Contains("rejects mutating, freeze-risk, and non-low-risk members", readGraph.Description);
+            var writeGraph = OperatorToolManifest.Tools.Single(tool => tool.Path == "/revit/native-api-mutation-ops");
+            Assert.Equal(OperatorActionRisk.High, writeGraph.RiskLevel);
+            Assert.Contains("at least one persisted model mutation", writeGraph.Description);
+        }
+
         private static void AssertEarlierReferences(JsonElement value, HashSet<string> prior)
         {
             if (value.ValueKind == JsonValueKind.Array)

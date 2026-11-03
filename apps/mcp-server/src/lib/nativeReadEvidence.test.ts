@@ -6,6 +6,78 @@ import { nativeReadEvidence } from "./nativeReadEvidence.js";
 const ids=(facts:ReturnType<typeof nativeReadEvidence>)=>facts.map(fact=>fact.fact_id);
 const complete=(route:string,body:unknown,payload:unknown)=>nativeReadEvidence(route,body,payload).find(fact=>fact.fact_id==="collection.total")?.value;
 
+test("retained442 active-document collector graph establishes positive observation only",()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-collector-read442.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  assert.deepEqual(nativeReadEvidence('/revit/native-api-ops',fixture.request,fixture.response),[fixture.expected_model_fact]);
+});
+
+test("collector observation requires traced current document, preceding collector handles and native receiver identity",()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-collector-read442.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  for(const variant of ['foreign_document','wrong_constructor','wrong_constructor_receipt','broken_filter','future_reference','wrong_filter_type','wrong_filter_result','wrong_first','first_arguments','wrong_preview_id','wrong_preview_uid','foreign_receiver','missing_receivers','wrong_receiver_type','external','cleanup','mutation','short_receipts','missing_result'] as const){
+    const body=structuredClone(fixture.request),raw=structuredClone(fixture.response);
+    if(variant==='foreign_document')body.operations[0].target='other_document';
+    if(variant==='wrong_constructor'){body.operations[1].memberId='ctor:System.Object()';raw.operations[1].member_id=body.operations[1].memberId;}
+    if(variant==='wrong_constructor_receipt')raw.operations[1].result_preview.type='System.Object';
+    if(variant==='broken_filter')body.operations[3].target='$active_document';
+    if(variant==='future_reference')body.operations[1].args=[{$ref:'duct'}];
+    if(variant==='wrong_filter_type')raw.operations[2].target_type='Autodesk.Revit.DB.Document';
+    if(variant==='wrong_filter_result')raw.operations[2].result_preview.type='Autodesk.Revit.DB.Element';
+    if(variant==='wrong_first'){body.operations[4].memberId='method:System.Object.ToString()';raw.operations[4].member_id=body.operations[4].memberId;}
+    if(variant==='first_arguments')body.operations[4].args=[42];
+    if(variant==='wrong_preview_id')raw.operations[4].result_preview.id=42;
+    if(variant==='wrong_preview_uid')raw.operations[4].result_preview.unique_id='foreign';
+    if(variant==='foreign_receiver')raw.operations[5].target_identity.active_document=false;
+    if(variant==='missing_receivers')raw.operations.forEach((r:any)=>r.target_identity=null);
+    if(variant==='wrong_receiver_type')raw.operations[5].target_identity.type_name='System.String';
+    if(variant==='external')raw.source={scope:'external_file'};
+    if(variant==='cleanup')raw.geometry_cleanup_errors=['not closed'];
+    if(variant==='mutation')raw.read_only=false;
+    if(variant==='short_receipts')raw.operations.pop();
+    if(variant==='missing_result')delete raw.results.length;
+    assert.deepEqual(nativeReadEvidence('/revit/native-api-ops',body,raw),[],variant);
+  }
+  assert.deepEqual(nativeReadEvidence('/revit/native-api-mutation-ops',fixture.request,fixture.response),[]);
+});
+
+test("retained417 native graph element receivers establish observation without claiming collection completeness",()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-graph-read417.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  assert.deepEqual(nativeReadEvidence('/revit/native-api-ops',fixture.request,fixture.response),[fixture.expected_model_fact]);
+});
+
+test("native graph observation rejects metadata, foreign or mismatched receipts and incomplete results",()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-graph-read417.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  const route='/revit/native-api-ops';
+  for(const variant of ['failed','mutation','version','missing_receiver','foreign','wrong_uid','wrong_id','wrong_type','wrong_member','wrong_op','short_receipts','duplicate_ids','wrong_count','missing_result','extra_result','wrong_request','cleanup','external'] as const){
+    const body=structuredClone(fixture.request),raw=structuredClone(fixture.response);
+    if(variant==='failed')raw.ok=false;
+    if(variant==='mutation')raw.read_only=false;
+    if(variant==='version')raw.version='operator.native_api_mutation_ops.v1';
+    if(variant==='missing_receiver')raw.operations.forEach((r:any)=>r.target_identity=null);
+    if(variant==='foreign')raw.operations[1].target_identity.active_document=false;
+    if(variant==='wrong_uid')raw.operations[0].result_preview.unique_id='foreign';
+    if(variant==='wrong_id')raw.operations[0].result_preview.id=-1;
+    if(variant==='wrong_type')raw.operations[1].target_identity.type_name='System.String';
+    if(variant==='wrong_member')raw.operations[1].member_id='other';
+    if(variant==='wrong_op')raw.operations[1].op='construct';
+    if(variant==='short_receipts')raw.operations.pop();
+    if(variant==='duplicate_ids')body.operations[1].id=body.operations[0].id;
+    if(variant==='wrong_count')raw.operation_count++;
+    if(variant==='missing_result')delete raw.results.leader_count;
+    if(variant==='extra_result')raw.results.unrequested='text';
+    if(variant==='wrong_request')body.operations[0].args=[43];
+    if(variant==='cleanup')raw.geometry_cleanup_errors=['failed'];
+    if(variant==='external')raw.source={scope:'external_file'};
+    assert.deepEqual(nativeReadEvidence(route,body,raw),[],variant);
+  }
+  assert.deepEqual(nativeReadEvidence('/revit/native-api-mutation-ops',fixture.request,fixture.response),[]);
+  assert.deepEqual(nativeReadEvidence('/revit/inspect-family-content',{filePath:'family.rfa'},
+    {ok:true,source:{scope:'external_file'},labels:[{driverParameters:['Mark','Flow']}]}),[]);
+  // Native default returns only the final operation; it does not certify a list.
+  const body=structuredClone(fixture.request),raw=structuredClone(fixture.response);
+  delete body.returns;raw.results={owner_view_name:raw.results.owner_view_name};
+  assert.deepEqual(ids(nativeReadEvidence(route,body,raw)),['model.content_observed']);
+});
+
 test("retained HVAC and link inventories have separate query identities, not contradictory route totals",()=>{
   const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/ui-inventory-scope-collision.json',import.meta.url),'utf8'));
   const totals=fixture.cases.map((entry:any)=>nativeReadEvidence('/revit/find-elements',entry.request.input.body,entry.payload)

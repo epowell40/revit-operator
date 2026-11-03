@@ -1,3 +1,5 @@
+import nodePath from 'node:path';
+
 /** A registered open family document is preparation, not a saved model edit. */
 export function familySessionOpenedV1(path: string, input: unknown, payload: unknown): boolean {
   const row = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
@@ -42,8 +44,19 @@ export function familySessionSavedV1(path: string, input: unknown, payload: unkn
     || typeof r.path !== "string" || !/^(?:[a-z]:[\\/]|\\\\)/i.test(r.path) || !/\.rfa$/i.test(r.path)
     || r.path !== result.filePath) return false;
   // An explicit relative path needs resolver evidence; never infer it from a basename.
-  return body.filePath === undefined || body.filePath === "" || (typeof body.filePath === "string"
-    && canonical(body.filePath.trim()) === canonical(r.path));
+  if (body.filePath === undefined || body.filePath === "") return true;
+  if (typeof body.filePath !== "string" || body.filePath.length > 2000 || /[\u0000-\u001f]/.test(body.filePath)) return false;
+  const requested = body.filePath.trim();
+  if (nodePath.win32.isAbsolute(requested)) return canonical(requested) === canonical(r.path);
+  const resolution = row(r.path_resolution);
+  if (resolution.schema !== "revit-operator.workspace-path-resolution.v1" || resolution.requested_path !== requested
+    || typeof resolution.workspace_root !== "string" || !nodePath.win32.isAbsolute(resolution.workspace_root)
+    || resolution.workspace_root.length > 2000 || /[\u0000-\u001f]/.test(resolution.workspace_root)
+    || resolution.resolved_path !== r.path || resolution.inside_workspace !== true) return false;
+  const root = nodePath.win32.resolve(resolution.workspace_root), resolved = nodePath.win32.resolve(root, requested);
+  const relative = nodePath.win32.relative(root, resolved);
+  return relative.length > 0 && relative !== ".." && !relative.startsWith("..\\") && !nodePath.win32.isAbsolute(relative)
+    && canonical(resolved) === canonical(nodePath.win32.normalize(r.path));
 }
 
 /** Closing an exact registered temporary family is lifecycle completion, not a project edit. */

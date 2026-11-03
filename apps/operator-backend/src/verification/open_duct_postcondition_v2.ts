@@ -7,6 +7,7 @@ import { registeredStageDuctBranchReadbackMatchesV2 } from "./registered_stage_d
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { readAuthoritativeEvidence, readEvidenceRef } from "../evidence/evidence_store.js";
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from "../domain/assignment-kernel/index.js";
+import { nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 const record = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
 const positiveId = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
@@ -119,11 +120,19 @@ export function combinedReadFollowsSettledChanges(snapshot: AssignmentSnapshotV2
         && operation.settlement_state !== "settled") return false;
     if (operation.persistent_effect !== "applied") continue;
     const result = operation.result;
+    // SaveAs is a native document/file checkpoint, not a DB transaction. It
+    // still has to settle before this read and satisfy the existing artifact
+    // contract. This does not verify route content or grant work credit itself.
+    const checkpoint = operation.input.method === "POST" && operation.input.path === "/revit/save-as";
     // Use the whole document's commit frontier, not just the created IDs:
     // sibling routes can edit a shared existing equipment connector which is
     // absent from their created-element receipt. No old read can prove that.
     if (operation.settlement_state !== "settled" || result?.authority !== "native-host"
-        || result.status !== "succeeded" || result.native_transaction_state !== "committed"
+        || result.status !== "succeeded"
+        || (checkpoint
+          ? operation.request_identity?.method !== "POST" || operation.request_identity.path !== "/revit/save-as"
+            || !nativeDocumentCheckpointResultV2(result)
+          : result.native_transaction_state !== "committed")
         || !sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
         || !sameAssignmentBindingV2(result.binding, snapshot.current_binding)
         || !Number.isFinite(Date.parse(result.completed_at)) || Date.parse(result.completed_at) > openedAt) return false;

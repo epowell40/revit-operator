@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {createHash} from 'node:crypto';
 import { ensureWorkspaceLayout } from "../workspace.js";
+import {getConversationHistory,recentCommandEvents} from '../memory/sqlite_store.js';
+import {feedbackRuntimeDiagnostic,type FeedbackRuntimeDiagnostic} from './runtime_diagnostic.js';
+import {feedbackSetupDiagnostic,type SetupDiagnostic} from './setup_diagnostic.js';
 
 export type DevHandoffRating = "worked" | "partial" | "failed";
 
@@ -24,6 +28,8 @@ export type DevHandoff = {
   issue_digest: DevHandoffIssue[];
   recommendations: string[];
   signals: string[];
+  runtime_diagnostic?: FeedbackRuntimeDiagnostic;
+  setup_diagnostic?: SetupDiagnostic;
 };
 
 type Rule = {
@@ -305,9 +311,11 @@ export function buildDevHandoff(args: {
   chat_id?: string | null;
   rating: DevHandoffRating;
   note?: string | null;
+  runtime_diagnostic?: unknown;
 }): DevHandoff {
   const layout = ensureWorkspaceLayout();
   const sessionId = (args.session_id ?? "").trim();
+  const runtime=feedbackRuntimeDiagnostic(args.runtime_diagnostic,sessionId);
   const runBundleDir = path.join(layout.runsSessions, sessionId);
   const runBundleExists = fs.existsSync(runBundleDir);
 
@@ -347,9 +355,36 @@ export function buildDevHandoff(args: {
     if (latestAssistantResponse && assistantDevSummary) break;
   }
 
+  // Display history is the retained human conversation, unlike delegated/helper
+  // prompts in raw provider logs. Keep legacy logs as a fallback for old clients.
+  try{
+    if(fs.existsSync(path.join(layout.db,'operator.sqlite'))){
+      const history=getConversationHistory(sessionId);
+      const recent=[...history].reverse(),user=recent.find(row=>row.role==='user'),assistant=recent.find(row=>row.role==='assistant');
+      if(user?.text.trim())latestUserRequest=user.text.trim();
+      if(assistant?.text.trim())latestAssistantResponse=assistant.text.trim().slice(0,5000);
+    }
+  }catch{/* Missing conversation storage cannot erase an otherwise saved report. */}
+  // A startup failure may precede durable chat. This is same-session relay text,
+  // explicitly reported diagnostic context, never an authoritative task result.
+  if(runtime?.user_request)latestUserRequest=runtime.user_request;
   const issues = new Map<string, IssueAccumulator>();
   const recommendations = new Set<string>();
   const signals = new Set<string>();
+  let setup:SetupDiagnostic|null=null;
+  try { setup=recentCommandEvents(sessionId,'codex.execution.setup.error',8).map(value=>feedbackSetupDiagnostic(value,sessionId,latestUserRequest??'')).find(Boolean)??null; }
+  catch { /* Diagnostics never prevent saving feedback. */ }
+  if(setup){
+    noteIssue({key:`SetupFailure:${setup.phase}:${setup.cause_code}`,tool:'operator_backend',sample:setup.message,issues});
+    signals.add(`Backend stopped during ${setup.phase} (${setup.cause_code}) before provider/native dispatch for that request; earlier assignment effects remain separate.`);
+    recommendations.add('Reproduce the retained cold/setup request and inspect its bound stage and cause before retrying work.');
+  }
+  if(runtime){
+    noteIssue({key:'SidecarRuntimeFailure:'+createHash('sha256').update(runtime.error).digest('hex').slice(0,16),
+      tool:'operator_desktop',sample:runtime.error,issues});
+    signals.add('Sidecar reported a runtime failure; diagnostic text is not proof of a model effect.');
+    recommendations.add('Reproduce the retained runtime failure with its exact task binding; preserve prior work and unknown-effect fences.');
+  }
 
   const turnScopedToolOutputs = latestAssistantMessageId
     ? toolOutputs.filter((row) => {
@@ -452,7 +487,9 @@ export function buildDevHandoff(args: {
     ...(assistantDevSummary ? { assistant_dev_summary: assistantDevSummary } : {}),
     issue_digest: issueDigest,
     recommendations: Array.from(recommendations).slice(0, 12),
-    signals: Array.from(signals).slice(0, 20)
+    signals: Array.from(signals).slice(0, 20),
+    ...(runtime?{runtime_diagnostic:runtime}:{}),
+    ...(setup?{setup_diagnostic:setup}:{})
   };
 }
 

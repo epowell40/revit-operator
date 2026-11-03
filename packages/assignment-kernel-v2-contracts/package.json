@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./focused-evidence": {
+      "types": "./focused-evidence.d.ts",
+      "import": "./focused-evidence.js"
+    },
     "./completion-outbox": {
       "types": "./completion-outbox.d.ts",
       "import": "./completion-outbox.js"
@@ -18,6 +22,8 @@
     }
   },
   "files": [
+    "focused-evidence.js",
+    "focused-evidence.d.ts",
     "schedule-filter-state.js",
     "schedule-filter-state.d.ts",
     "native-affected-targets.js",
@@ -38,6 +44,8 @@
     "provider-turn-usage.js",
     "provider-turn-usage.d.ts",
     "provider-usage-hold.js",
-    "provider-usage-hold.d.ts"
+    "provider-usage-hold.d.ts",
+    "native-parameter-checks.js",
+    "native-parameter-checks.d.ts"
   ]
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
@@ -245,6 +246,10 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/dynamic-runtime/bootstrap", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/register", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/snapshot", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/native-program-prepare-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/native-program-read-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, OperatorNativeProgramCourierRequest.ReadPath, StringComparison.Ordinal)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/native-program-apply-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 // Preview is transactionally rolled back and authorization only seals current trusted state.
                 // Preserve a one-use grant for the sole mutating boundary below.
                 if (string.Equals(p, "/revit/dynamic-runtime/preview", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
@@ -292,8 +297,10 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/close-doc", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/edit-family-from-instance", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/inspect-family-content", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/inspect-family-label-styles", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/find-family-text-notes", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/set-text-note-text", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/set-family-label-style", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/reload-family-edit-session", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/get-element-summary", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
@@ -442,12 +449,14 @@ namespace RevitBridge.Operator
 
         public static OperatorActionEffect GetEffect(string method, string path, string? body)
         {
+            if (method == "POST" && path == OperatorNativeProgramCourierRequest.ReadPath) return OperatorActionEffect.Read;
             var m = (method ?? "").Trim().ToUpperInvariant();
             var p = CanonicalPath(path);
 
             if (m == "GET" || m == "HEAD" || m == "OPTIONS") return OperatorActionEffect.Read;
             if (m != "POST") return OperatorActionEffect.Apply;
             if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
+            if (string.Equals(p, "/revit/inspect-family-label-styles", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
             if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
 
             if (string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))

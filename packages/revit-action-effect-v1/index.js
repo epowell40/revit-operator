@@ -1,4 +1,5 @@
 const READ_ONLY_PATHS = new Set([
+  "/revit/dynamic-runtime/run-native-read-v1",
   "/revit/inspect-exported-files",
   "/revit/inspect-drawing-spec",
   "/revit/inspect-excel-source",
@@ -83,6 +84,7 @@ const READ_ONLY_PATHS = new Set([
   "/revit/get-family-file-path",
   "/revit/find-family-text-notes",
   "/revit/inspect-family-content",
+  "/revit/inspect-family-label-styles",
   "/revit/warnings",
   "/revit/qa-checks",
   "/revit/print-sets",

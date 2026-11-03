@@ -4,9 +4,18 @@ import { storeEvidence } from "../evidence/evidence_store.js";
 import { deriveProgressGapsV2, decideAssignmentProgressV2 } from "../domain/assignment-kernel/index.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
 import type { AssignmentKernelBindingInputV2 } from "./assignment_kernel_v2_lifecycle.js";
-import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2 } from "./assignment_kernel_v2_progress.js";
+import { advanceAssignmentKernelProgressV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2 } from "./assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2, absoluteAssignmentWorkCallLimitV2 } from "./assignment_work_allowance_v2.js";
 import { settleAssignmentKernelExecutionFailureV2 } from "./assignment_kernel_v2_execution_failure.js";
+import { nativeInteractiveInputOwnership } from './native_interactive_input.js';
+
+/** Content-free controller diagnostics; not a new admission or retry policy. */
+export class ExternalProviderAdmissionError extends Error {
+  constructor(readonly decision: string, readonly reason: string) {
+    super(`external_provider_admission_denied:${decision}:${reason}`);
+    this.name = 'ExternalProviderAdmissionError';
+  }
+}
 
 /** Host-owned provider boundary. Neither caller prose nor tool results settle work. */
 export async function executeExternalProviderCallV2<T>(input: {
@@ -16,26 +25,39 @@ export async function executeExternalProviderCallV2<T>(input: {
   invoke: () => Promise<T>;
   receipt: (result: T) => ModelCallReceipt;
   errorReceipt: (error: unknown) => ModelCallReceipt | null;
+  /** Set by the desktop relay only. Ownership still comes from the live host
+   * invocation, never this flag or a provider/client-supplied operation ID. */
+  nativeInteractiveInput?: true;
 }): Promise<T> {
   const resolved = assignmentKernelV2ForBinding(input.binding);
   if (!resolved) throw new Error("external_provider_binding_stale_or_mismatched");
   const { snapshot, binding } = resolved;
+  const interactive = input.nativeInteractiveInput === true
+    ? nativeInteractiveInputOwnership.operationAwaitingInput(snapshot) : null;
   const decision = decideAssignmentProgressV2({ snapshot,
+    ...(input.nativeInteractiveInput === true ? { nativeInteractiveInput: (state: typeof snapshot) =>
+      nativeInteractiveInputOwnership.operationAwaitingInput(state)?.operation_id ?? null } : {}),
     budget: defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), now: new Date().toISOString() });
   if (snapshot.terminal || snapshot.provider_budget_exhausted || snapshot.provider_usage_hold
-    || !snapshot.quiescent || snapshot.execution_control?.state === "paused"
+    || (!snapshot.quiescent && !interactive) || snapshot.execution_control?.state === "paused"
     || snapshot.unresolved_unknown_operation_ids.length || snapshot.pending_input_variable_ids.length
     || snapshot.pending_review_ids.length || snapshot.completion_proposal
     || snapshot.provider_call_ids.length >= absoluteAssignmentWorkCallLimitV2(snapshot)
-    || decision.decision !== "admit_reasoning_turn")
-    throw new Error(`external_provider_admission_denied:${decision.decision}`);
+    || decision.decision !== "admit_reasoning_turn") {
+    // Retain a host-derived stop before an outer owner records execution loss.
+    // Otherwise a denied, never-dispatched provider request can replace the
+    // actual budget/progress blocker with a generic runtime failure. Reuse the
+    // canonical controller; error prose is never settlement authority.
+    if (decision.decision === "blocked") advanceAssignmentKernelProgressV2({ binding });
+    throw new ExternalProviderAdmissionError(decision.decision, decision.reason);
+  }
   const gaps = deriveProgressGapsV2(snapshot);
   const callId = `external:${randomUUID()}`;
   const record = (state: Parameters<typeof recordAssignmentProviderCallStateV2>[0]["state"], extra = {}) =>
     recordAssignmentProviderCallStateV2({ binding, call_id: callId, state, ...extra });
   record("admitted", { provider: "openai", model: input.model, reasoning_effort: input.reasoning_effort,
     gap_ids: gaps.map(gap => gap.gap_id), criterion_ids: [...new Set(gaps.flatMap(gap => gap.criterion_ids))],
-    expected_information: ["Continue the bound external-controller task using its retained evidence."] });
+    expected_information: interactive ? decision.expected_information : ["Continue the bound external-controller task using its retained evidence."] });
   record("dispatched");
   const retain = (receipt: ModelCallReceipt | null, success: boolean) => {
     if (receipt) storeEvidence({ scope: { session_id: binding.session_id, assignment_id: binding.assignment_id,

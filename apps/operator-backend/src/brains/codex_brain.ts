@@ -1,5 +1,5 @@
 import { CodexInstructionBindingError } from "../codex/instruction_binding.js";
-import {getWorkspaceMcpRuntime} from '../codex/workspace_mcp_runtime.js';
+import {getWorkspaceMcpRuntime,workspaceMcpRuntimes,desktopNativeCallsByWorkspace} from '../codex/workspace_mcp_runtime.js';
 import {desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
 import {DESKTOP_HELPER_RETURN_REASON,takeDesktopHelperReturnV1,desktopHelperReturnAfterDrainV1,type DesktopHelperReturnV1} from './desktop_helper_return.js';
 import type { ChatRequest, ChatResponse } from "../contracts.js";
@@ -64,6 +64,7 @@ import {
   settleAssignmentKernelExecutionFailureV2
 } from "../assignments/assignment_kernel_v2_execution_failure.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
+import { withCodexConversationTurn } from "../codex/conversation_turn.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import {handleCodexServerRequest,handleCertifiedCodexServerRequest} from "./codex_server_request.js";
@@ -111,7 +112,7 @@ export { getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from
 import { registerActiveProviderTurn } from "../codex/active_turns.js";
 
 const clientsByProfile = new Map<string, CodexAppServer>();
-const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
+const mcpRuntimesByWorkspace = workspaceMcpRuntimes;
 const lastPermissionSignatureBySession = new Map<string, string>();
 type ActiveCodexTurn = {
   abortController: AbortController;
@@ -132,6 +133,8 @@ function codexTurnAbortKey(sessionId: string, messageId: string): string {
   return JSON.stringify([sessionId.trim(), messageId.trim()]);
 }
 
+const conversationTurnAborts = new Map<string, AbortController>();
+
 function requestActiveCodexTurnInterrupt(active: ActiveCodexTurn): Promise<void> {
   if (active.interruptPromise) return active.interruptPromise;
   active.interruptRequested = true;
@@ -144,10 +147,12 @@ function requestActiveCodexTurnInterrupt(active: ActiveCodexTurn): Promise<void>
 
 export function cancelCodexBrainTurn(sessionId: string, messageId: string): boolean {
   const key = codexTurnAbortKey(sessionId, messageId);
+  const pending = conversationTurnAborts.get(key);
+  pending?.abort();
   const experiment = thinReferenceAborts.get(key);
   experiment?.abort("request_interrupted");
   const active = activeCodexTurns.get(key);
-  if (!active) return Boolean(experiment);
+  if (!active) return Boolean(experiment || pending);
   void requestActiveCodexTurnInterrupt(active).catch(() => {});
   return true;
 }
@@ -346,6 +351,25 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 }
 
 async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thinReference = false, fixedWorkProfile?: ReturnType<typeof conversationWorkProfile>): Promise<ChatResponse> {
+  const key = codexTurnAbortKey(req.session_id, req.message_id);
+  if (conversationTurnAborts.has(key)) throw new Error("This task request is already running or waiting for its predecessor.");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  conversationTurnAborts.set(key, controller);
+  if (cb.abortSignal?.aborted) abort();
+  else cb.abortSignal?.addEventListener("abort", abort, { once: true });
+  try {
+    return await withCodexConversationTurn({ workspace: getWorkspaceRoot(), sessionId: req.session_id,
+      signal: controller.signal,
+      onWait: () => cb.onProgress?.("Waiting for the previous provider turn to finish settling.")
+    }, () => runCodexSingleTurn(req, { ...cb, abortSignal: controller.signal }, thinReference, fixedWorkProfile));
+  } finally {
+    cb.abortSignal?.removeEventListener("abort", abort);
+    if (conversationTurnAborts.get(key) === controller) conversationTurnAborts.delete(key);
+  }
+}
+
+async function runCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thinReference = false, fixedWorkProfile?: ReturnType<typeof conversationWorkProfile>): Promise<ChatResponse> {
   const assignmentKernelV2 = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? assignmentKernelV2ForBinding({
@@ -640,6 +664,7 @@ async function decideCodexSingleTurn(req: ChatRequest, cb: StreamCallbacks, thin
   const agentTurnStartedMs = Date.now();
   try {
     if (threadProfile.startRevitTurnRuntime) {
+      if(desktopNativeCallsByWorkspace.has(workspaceRoot))throw new Error('desktop_native_tool_already_active');
       backendAuthLease = mcpRuntime!.beginBackendAuthLease(req.session_id, backendAuth!);
       if (assignmentKernelV2) assignmentKernelV2Lease = mcpRuntime!.beginAssignmentKernelV2Lease(assignmentKernelV2.binding);
       teammateContext = beginTeammateLoopOwner(mcpRuntime!, req, { canonicalSupervisionOnly: thinReference });

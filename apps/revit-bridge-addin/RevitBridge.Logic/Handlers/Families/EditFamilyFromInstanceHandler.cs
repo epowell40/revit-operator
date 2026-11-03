@@ -27,18 +27,15 @@ namespace RevitBridge.Logic.Handlers
 
             var el = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.elementId));
             if (el == null) throw new InvalidOperationException($"Element {p.elementId} not found.");
-            if (!(el is FamilyInstance fi)) throw new InvalidOperationException("Element is not a FamilyInstance.");
-
-            var symbol = fi.Symbol;
-            if (symbol == null) throw new InvalidOperationException("FamilyInstance has no type (Symbol).");
+            var symbol = LoadedFamilySource.ResolveSymbol(doc, el);
             var fam = symbol.Family;
             if (fam == null) throw new InvalidOperationException("FamilyInstance type has no Family.");
 
-            var catId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Category?.Id);
+            var catId = RevitBridge.Common.ElementIdCompat.GetValue(el.Category?.Id);
             if (!p.allowNonTitleblock && catId != (int)BuiltInCategory.OST_TitleBlocks)
                 throw new InvalidOperationException(
                     "Only titleblock instances are supported by default. " +
-                    "Set allowNonTitleblock=true to explicitly open another loaded family.");
+                    "Set allowNonTitleblock=true to explicitly open another loaded family, including a tag family.");
 
             Document? famDoc = null;
             if (FamilyEditSessionStore.TryGetCapacityRefusal(out var refusal)) return Task.FromResult(refusal);
@@ -60,10 +57,10 @@ namespace RevitBridge.Logic.Handlers
                 familyDocumentId = session.SessionId,
                 familyName = session.FamilyName,
                 familyId = session.FamilyId,
-                sourceCategory = fi.Category?.Name ?? "",
+                sourceCategory = el.Category?.Name ?? "",
                 nonTitleblockExplicitlyAllowed = p.allowNonTitleblock,
                 titleblockTypeId = session.TitleblockTypeId,
-                instanceElementId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)
+                instanceElementId = RevitBridge.Common.ElementIdCompat.GetValue(el.Id)
             });
         }
     }

@@ -109,7 +109,7 @@ namespace RevitBridge.Common
             if (type.IsArray && type.GetArrayRank() == 1) return type.GetElementType();
             if (!type.IsGenericType) return null;
             var definition = type.GetGenericTypeDefinition();
-            return definition == typeof(List<>) || definition == typeof(IList<>) || definition == typeof(IEnumerable<>) || definition == typeof(IReadOnlyList<>)
+            return definition == typeof(List<>) || definition == typeof(IList<>) || definition == typeof(ICollection<>) || definition == typeof(IEnumerable<>) || definition == typeof(IReadOnlyList<>)
                 ? type.GetGenericArguments()[0] : null;
         }
 
@@ -139,7 +139,9 @@ namespace RevitBridge.Common
     {
         public static bool IsReferenceOnlyType(string? name)
             => name == "Autodesk.Revit.DB.Curve" || name == "Autodesk.Revit.DB.CurveLoop"
-                || name == "Autodesk.Revit.DB.Solid" || name == "Autodesk.Revit.DB.GeometryObject";
+                || name == "Autodesk.Revit.DB.HermiteSpline" || name == "Autodesk.Revit.DB.NurbSpline"
+                || name == "Autodesk.Revit.DB.Solid" || name == "Autodesk.Revit.DB.GeometryObject"
+                || name == "Autodesk.Revit.DB.SketchPlane";
 
         public static bool IsDetachedFactory(string declaringType, string name, bool isStatic, string returnType, params string[] parameters)
         {

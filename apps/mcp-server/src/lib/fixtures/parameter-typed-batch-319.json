@@ -1,0 +1,175 @@
+{
+  "provenance": "Exact native first typed batch318, lab-only field and values; assignment IDs omitted.",
+  "batches": [
+    {
+      "input": {
+        "method": "POST",
+        "path": "/revit/set-parameter",
+        "body": {
+          "changes": [
+            {
+              "elementId": 1544615,
+              "parameterName": "LAB SERVICE317",
+              "value": "A ONLY",
+              "expectedOldValue": ""
+            },
+            {
+              "elementId": 1544616,
+              "parameterName": "LAB SERVICE317",
+              "value": "B ONLY",
+              "expectedOldValue": ""
+            },
+            {
+              "elementId": 1544617,
+              "parameterName": "LAB SERVICE317",
+              "value": "CYL ONLY",
+              "expectedOldValue": ""
+            }
+          ],
+          "apply": true,
+          "dryRun": false
+        }
+      },
+      "payload": {
+        "status": "Applied and Verified",
+        "dryRun": false,
+        "requestedCount": 3,
+        "effectiveCount": 3,
+        "excludedCount": 0,
+        "changedCount": 3,
+        "previewChangedCount": 0,
+        "writeFailedCount": 0,
+        "changedElementIds": [
+          1544615,
+          1544616,
+          1544617
+        ],
+        "missingAfterElementIds": [],
+        "verificationPerformed": true,
+        "verifiedCount": 3,
+        "verificationFailedCount": 0,
+        "unresolvedElementIds": [],
+        "verification": [
+          {
+            "elementId": 1544615,
+            "parameterName": "LAB SERVICE317",
+            "expectedValue": "A ONLY",
+            "status": "verified",
+            "actual": {
+              "storageType": "String",
+              "value": "A ONLY",
+              "valueString": "A ONLY"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1544616,
+            "parameterName": "LAB SERVICE317",
+            "expectedValue": "B ONLY",
+            "status": "verified",
+            "actual": {
+              "storageType": "String",
+              "value": "B ONLY",
+              "valueString": "B ONLY"
+            },
+            "error": null
+          },
+          {
+            "elementId": 1544617,
+            "parameterName": "LAB SERVICE317",
+            "expectedValue": "CYL ONLY",
+            "status": "verified",
+            "actual": {
+              "storageType": "String",
+              "value": "CYL ONLY",
+              "valueString": "CYL ONLY"
+            },
+            "error": null
+          }
+        ],
+        "diffs": [
+          {
+            "elementId": 1544615,
+            "parameterName": "LAB SERVICE317",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "String",
+              "value": null,
+              "valueString": null
+            },
+            "after": {
+              "storageType": "String",
+              "value": "A ONLY",
+              "valueString": "A ONLY"
+            }
+          },
+          {
+            "elementId": 1544616,
+            "parameterName": "LAB SERVICE317",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "String",
+              "value": null,
+              "valueString": null
+            },
+            "after": {
+              "storageType": "String",
+              "value": "B ONLY",
+              "valueString": "B ONLY"
+            }
+          },
+          {
+            "elementId": 1544617,
+            "parameterName": "LAB SERVICE317",
+            "ok": true,
+            "changed": true,
+            "before": {
+              "storageType": "String",
+              "value": null,
+              "valueString": null
+            },
+            "after": {
+              "storageType": "String",
+              "value": "CYL ONLY",
+              "valueString": "CYL ONLY"
+            }
+          }
+        ],
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [
+            1488968,
+            1544615,
+            1544616,
+            1544617
+          ],
+          "affected_element_ids": [
+            1488968,
+            1544615,
+            1544616,
+            1544617
+          ],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "capturedFailures": [],
+        "failureRollbackRequested": false,
+        "requiredConfirm": null,
+        "confirmReceived": "",
+        "titleblockImpacts": null,
+        "dependentCircuitWiring": null
+      }
+    }
+  ]
+}

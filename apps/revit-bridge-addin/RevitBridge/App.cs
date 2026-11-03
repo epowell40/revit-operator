@@ -77,7 +77,7 @@ namespace RevitBridge
                     new OperatorActionRunner(_eventService),
                     getApprovalMode: GetCourierApprovalMode,
                     ensureWriteGrant: OperatorWriteGrant.ReadStatus,
-                    getLogger: () => _revitCourierLogger);
+                    getLogger: () => _revitCourierLogger, getNativeUrl: () => _server.ActiveUrl);
                 _revitCourierWorker.Start();
                 WriteStartupLog("Application-lifetime Revit courier worker started; context-free bootstrap dispatch is available on Revit Home.");
             }

@@ -4,6 +4,83 @@
   "tools": [
     {
       "method": "POST",
+      "path": "/revit/inspect-family-label-styles",
+      "examples": [
+        {
+          "name": "Read a label type in an already-open tracked family session; replace sample identities with fresh native observations",
+          "request": {
+            "familyDocumentId": "0123456789abcdef0123456789abcdef",
+            "labelTypeId": 42,
+            "maxStyles": 20
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-family-label-style",
+      "examples": [
+        {
+          "name": "Underline an inspected label type using its exact session, identity and old value; does not save or load the family",
+          "request": {
+            "familyDocumentId": "0123456789abcdef0123456789abcdef",
+            "labelTypeId": 42,
+            "expectedTypeUniqueId": "current-label-type-uid",
+            "style": {
+              "underline": true
+            },
+            "expectedStyle": {
+              "underline": false
+            },
+            "dryRun": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/place-mep-accessory-interactively",
+      "examples": [
+        {
+          "name": "Start one native insertion with freshly observed loaded type/view/host identities; inspect the placement-ready view and supply the click through the owned desktop",
+          "request": {
+            "expectedModelPath": "C:\\sample\\model.rvt",
+            "viewId": 12,
+            "expectedViewUniqueId": "current-view-uid",
+            "accessoryTypeId": 20,
+            "expectedAccessoryTypeUniqueId": "current-accessory-type-uid",
+            "maximumPlacements": 1,
+            "targetHosts": [
+              {
+                "elementId": 31,
+                "uniqueId": "current-host-uid"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-vector-annotations",
+      "examples": [
+        {
+          "name": "Add complete source text/fill/dots to an exact existing drafting owner; never source strokes",
+          "request": {
+            "sourcePath": "artifacts/uploads/detail.pdf",
+            "expectedSourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "nativePlanPath": "artifacts/drafting-vector/source-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json.gz",
+            "expectedNativePlanFileSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expectedNativePlanSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "viewId": 20,
+            "expectedViewUniqueId": "native-view-20",
+            "dryRun": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/import-vector-detail",
       "examples": [
         {
@@ -4581,6 +4658,86 @@
       "path": "/revit/inspect-family-content",
       "examples": [
         {
+          "name": "Inspect an external workspace RFA without loading or exposing an editable session",
+          "request": {
+            "filePath": "artifacts/reference/manufacturer.rfa",
+            "includeParameters": true,
+            "maxElements": 2000
+          },
+          "expected_response_shape": {
+            "ok": true,
+            "observational": true,
+            "mutated": false,
+            "source": {
+              "scope": "external_file",
+              "filePath": "<resolved workspace RFA>",
+              "sha256": "<actual source SHA256>",
+              "metadata": {
+                "savedFormat": "<actual BasicFileInfo format if available>",
+                "error": null
+              },
+              "openedInHost": true
+            },
+            "familyParameters": [
+              {
+                "name": "Watts",
+                "storageType": "Double",
+                "specTypeId": {
+                  "value": "<actual native spec id>",
+                  "error": null
+                },
+                "unitTypeId": {
+                  "value": "<actual native unit id>",
+                  "error": null
+                },
+                "currentValue": {
+                  "hasValue": true,
+                  "value": "<native stored value>",
+                  "valueBasis": "native_internal_units",
+                  "error": null
+                }
+              }
+            ],
+            "closedWithoutSaving": true
+          }
+        },
+        {
+          "name": "Inspect annotation family and label typography behind a grounded tag",
+          "request": {
+            "elementId": 625184,
+            "maxElements": 2000,
+            "includeParameters": true,
+            "includeOtherElements": true
+          },
+          "expected_response_shape": {
+            "ok": true,
+            "observational": true,
+            "mutated": false,
+            "source": {
+              "elementId": 625184,
+              "runtimeType": "IndependentTag",
+              "familyName": "M_Electrical Equipment Tag",
+              "typeId": 354074
+            },
+            "labels": [
+              {
+                "elementId": 23456,
+                "labelType": {
+                  "elementId": 23457,
+                  "name": "standard",
+                  "font": "Arial",
+                  "textSizeFeet": 0.008202099737532808,
+                  "bold": false,
+                  "italic": false,
+                  "underline": false,
+                  "widthFactor": 1
+                }
+              }
+            ],
+            "closedWithoutSaving": true
+          }
+        },
+        {
           "name": "Inspect a loaded equipment family without editing or reloading it",
           "request": {
             "elementId": 12345,
@@ -4601,13 +4758,26 @@
             "labels": [
               {
                 "elementId": 23456,
-                "driverParameters": ["Mark"]
+                "driverParameters": ["Mark"],
+                "driverParameterObservation": {
+                  "state": "references_observed",
+                  "requested": true,
+                  "parameterReadSucceeded": true,
+                  "bindingDetermined": false,
+                  "coverageComplete": false,
+                  "error": null
+                }
               }
             ],
             "nestedInstances": [],
             "classification": {
               "staticTextCount": 0,
               "parameterDrivenLabelCount": 1,
+              "observedDriverReferenceLabelCount": 1,
+              "unboundLabelCount": null,
+              "bindingUndeterminedLabelCount": 1,
+              "bindingInspectionComplete": false,
+              "scope": "returned_label_rows_only",
               "nestedFamilyCount": 0
             },
             "closedWithoutSaving": true
@@ -8984,6 +9154,26 @@
       "path": "/revit/create-family-from-template",
       "examples": [
         {
+          "name": "Create adjustable generic equipment box",
+          "request": {
+            "templatePath": "installed:generic-model",
+            "savePath": "artifacts/families/Generic Equipment Box.rfa",
+            "loadIntoProject": true,
+            "geometry": {
+              "category": "Mechanical Equipment",
+              "typeName": "Generic Representation",
+              "instanceDimensions": true,
+              "shapes": [{ "id": "body", "kind": "box", "widthFt": 2, "depthFt": 1, "heightFt": 3 }]
+            }
+          },
+          "expected_response_shape": {
+            "status": "Created",
+            "geometry": { "representation": "generic_basic_geometry", "dimensionScope": "instance" },
+            "load": { "loaded": true }
+          },
+          "notes": ["Example dimensions are explicit test inputs, not inferred engineering values. Choose unique file/family names. Verify real geometry after resizing a placed instance. For a cylinder replace widthFt/depthFt with kind=cylinder and diameterFt."]
+        },
+        {
           "name": "Create family from template",
           "request": {
             "templatePath": "artifacts/templates/Metric Generic Model.rft",
@@ -9108,14 +9298,17 @@
       "path": "/revit/save-family-doc",
       "examples": [
         {
-          "name": "Save family doc to disk",
+          "name": "Save a tracked family as a distinct workspace RFA (use the actual open-family-doc handle)",
           "request": {
-            "docId": "doc_001",
-            "overwrite": true
+            "familyDocumentId": "0123456789abcdef0123456789abcdef",
+            "filePath": "artifacts/families/Equipment_Tag_Underlined.rfa",
+            "overwrite": false
           },
           "expected_response_shape": {
-            "status": "Success",
-            "saved": true
+            "ok": true,
+            "saved": true,
+            "saveMode": "save_as",
+            "family_save_receipt": { "schema": "revit-operator.family-save.v1", "status": "saved" }
           }
         }
       ]

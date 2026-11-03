@@ -5,6 +5,39 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorNativeMutationScopePolicyTests
     {
+        [Theory]
+        [InlineData(0L, "added")]
+        [InlineData(0L, "modified")]
+        [InlineData(0L, "deleted")]
+        [InlineData(-1L, "added")]
+        [InlineData(-2L, "modified")]
+        [InlineData(-2L, "deleted")]
+        public void Nonpositive_effect_ids_are_rejected_instead_of_disappearing(long id, string kind)
+        {
+            var decision = OperatorNativeMutationScopePolicy.Evaluate(
+                addedElementIds: kind == "added" ? new[] { id } : new long[0],
+                modifiedElementIds: kind == "modified" ? new[] { id } : new long[0],
+                deletedElementIds: kind == "deleted" ? new[] { id } : new long[0],
+                allowedExistingElementIds: new[] { id, 42L },
+                allowCreate: true, maxAffectedElements: 4,
+                preexistingElementIds: new[] { 0L, 42L });
+            Assert.False(decision.Allowed);
+            Assert.Equal("unsupported_affected_element_id", decision.Code);
+            Assert.Equal(1, decision.AffectedElementCount);
+            Assert.Equal(new[] { id }, decision.UnsupportedAffectedElementIds);
+        }
+
+        [Fact]
+        public void A_zero_in_the_baseline_does_not_grant_unrelated_positive_edits()
+        {
+            var decision = OperatorNativeMutationScopePolicy.Evaluate(
+                new[] { 100L }, new[] { 43L }, new long[0], new[] { 42L }, true, 4,
+                preexistingElementIds: new[] { 0L, 42L, 43L });
+            Assert.False(decision.Allowed);
+            Assert.Equal("existing_element_out_of_scope", decision.Code);
+            Assert.Equal(new[] { 43L }, decision.UnexpectedExistingElementIds);
+        }
+
         [Fact]
         public void Exact_existing_scope_is_allowed()
         {

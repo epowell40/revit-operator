@@ -1,0 +1,462 @@
+{
+  "provenance": {
+    "case": "original53/roof-size-note",
+    "canonicalOutcome": "failed",
+    "sourceKernelSha256": "0e64de6d04d485f8435b8910dc9dd14f3b3054fdbaecdd8589db8e878c32a586",
+    "nativeApplySha256": "cf89f66511a788d89641b08748af53770bf73a6fa42a29deb0fda182af3a4765",
+    "reads": [
+      {
+        "sha256": "e6145113ab613b6a0e16b264a3c94f107b825573e214cc18a2e1124ff1784519",
+        "ref": "evidence:ev1_4xKpwrbLnnLSUUs1pGMxZv3emUWykp0q"
+      },
+      {
+        "sha256": "126c0b4e4ce97b864dd484ebb29a1221aa8a4a978041adc03e3f3b098ffd2c56",
+        "ref": "evidence:ev1_11fpculgJQBIf838u0D6F6CLllTZ_NcI"
+      },
+      {
+        "sha256": "374b7d6d0c409e8d21ceb244aa7d6371702d88430bc81472bad470ad4fe55022",
+        "ref": "evidence:ev1_OHg8Ugxn2kj1AchA2hgUidMzBhzI48Nh"
+      },
+      {
+        "sha256": "b19b0c944fc72fe6c6b766e03dc231b63e244ed17787eb4acf56d5f10063a914",
+        "ref": "evidence:ev1_C2XEFGOe3NNQQASaXT3vvXg0k5cMg_I0"
+      },
+      {
+        "sha256": "610f1f3e20696fbf81b9f71aeb1cfa3a132675a0339ed21d4467529de2c0f535",
+        "ref": "evidence:ev1_TsyOX66BClnNHbY1jgGbOqXO5cbJCzB4"
+      }
+    ],
+    "limits": "Actual failed history retained. Identity-enriched future payload below is a synthetic contract fixture, not historical actor evidence."
+  },
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        1542922
+      ],
+      "mode": "vector",
+      "vectorX": -1,
+      "vectorY": 2.5,
+      "vectorZ": 0,
+      "behavior": "allOrNothing",
+      "dryRun": false
+    }
+  },
+  "actual_native_apply": {
+    "movedIds": [
+      1542922
+    ],
+    "verified": true,
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1542922
+      ],
+      "affected_element_ids": [
+        1542922
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1542922,
+        "before": {
+          "kind": "TextAnchor",
+          "pointXyz": [
+            -31,
+            28.4,
+            0
+          ]
+        },
+        "after": {
+          "kind": "TextAnchor",
+          "pointXyz": [
+            -32,
+            30.9,
+            0
+          ]
+        }
+      }
+    ],
+    "connectedEndpointPreservation": {
+      "applicable": false,
+      "complete": true,
+      "preserved": true,
+      "persisted": true,
+      "positionToleranceFeet": 1E-06,
+      "scannedElementCount": 0,
+      "protectedEndpointIds": [],
+      "before": [],
+      "after": [],
+      "changedEndpointIds": [],
+      "changedConnectionPorts": []
+    },
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": false
+  },
+  "actual_formal_reads": [
+    {
+      "status": "Success",
+      "action": "inspect",
+      "textNote": {
+        "textNoteId": 1542922,
+        "viewId": 1363483,
+        "viewName": "R2",
+        "text": "4\"Ø\r",
+        "point": {
+          "x": -32,
+          "y": 30.9,
+          "z": 0
+        },
+        "orientation": {
+          "kind": "TextNote",
+          "coordinateSpace": "model_feet",
+          "pointXyz": [
+            -32,
+            30.9,
+            0
+          ],
+          "baseDirectionXyz": [
+            1,
+            0,
+            0
+          ],
+          "upDirectionXyz": [
+            0,
+            1,
+            0
+          ]
+        },
+        "widthFt": 0.04,
+        "widthSpace": "paper",
+        "modelSpaceWidthFt": 3.84,
+        "viewScale": 96,
+        "isTextWrappingActive": true,
+        "leaderCount": 1,
+        "textType": {
+          "id": 10352,
+          "name": "3/32\" Arial"
+        }
+      }
+    },
+    {
+      "ok": true,
+      "scope": "active_project",
+      "docId": null,
+      "familyDocumentId": null,
+      "familyName": null,
+      "documentTitle": "Snowdon HVAC - Roof Size Input53",
+      "requestedElementIds": [
+        1542922
+      ],
+      "exactElementFilterApplied": true,
+      "itemsComplete": true,
+      "elementIds": [
+        1542922
+      ],
+      "textSamples": [
+        "4\"Ø\r"
+      ],
+      "items": [
+        {
+          "textNoteId": 1542922,
+          "elementId": 1542922,
+          "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "text": "4\"Ø\r",
+          "textUtf8Bytes": 5,
+          "textNormalized": "4 ø",
+          "textTypeId": 10352,
+          "textTypeUniqueId": "7169facf-e488-11d3-9188-0000863f27ad-00002870",
+          "ownerViewId": 1363483,
+          "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b",
+          "ownerViewName": "R2",
+          "location": {
+            "x": -32,
+            "y": 30.9,
+            "z": 0
+          },
+          "center": {
+            "x": -29.47403973509934,
+            "y": 29.33679083885209,
+            "z": 0
+          },
+          "boundingBox": {
+            "min": {
+              "x": -32.64,
+              "y": 27.133581677704182,
+              "z": 0
+            },
+            "max": {
+              "x": -26.308079470198674,
+              "y": 31.539999999999996,
+              "z": 0
+            }
+          },
+          "widthFeet": 0.04,
+          "horizontalAlignment": "Left",
+          "verticalAlignment": "Top"
+        }
+      ],
+      "schedulePreservation": null
+    },
+    {
+      "result": [
+        {
+          "id": 1542922,
+          "found": true,
+          "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "className": "TextNote",
+          "fullClassName": "Autodesk.Revit.DB.TextNote",
+          "category": "Text Notes",
+          "name": "3/32\" Arial",
+          "typeId": 10352,
+          "familyName": null,
+          "typeName": "3/32\" Arial",
+          "levelId": null,
+          "levelIdBasis": null,
+          "levelName": null,
+          "viewType": null,
+          "viewScale": null,
+          "boundingBox": null,
+          "location": null,
+          "electricalCircuitMembership": null,
+          "tagReferences": null,
+          "viewIdUsed": null
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "scope": "active_project",
+      "docId": null,
+      "familyDocumentId": null,
+      "familyName": null,
+      "documentTitle": "Snowdon HVAC - Roof Size Result53",
+      "requestedElementIds": [
+        1542922
+      ],
+      "exactElementFilterApplied": true,
+      "itemsComplete": true,
+      "elementIds": [
+        1542922
+      ],
+      "textSamples": [
+        "4\"Ø\r"
+      ],
+      "items": [
+        {
+          "textNoteId": 1542922,
+          "elementId": 1542922,
+          "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "text": "4\"Ø\r",
+          "textUtf8Bytes": 5,
+          "textNormalized": "4 ø",
+          "textTypeId": 10352,
+          "textTypeUniqueId": "7169facf-e488-11d3-9188-0000863f27ad-00002870",
+          "ownerViewId": 1363483,
+          "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b",
+          "ownerViewName": "R2",
+          "location": {
+            "x": -32,
+            "y": 30.9,
+            "z": 0
+          },
+          "center": {
+            "x": -29.47403973509934,
+            "y": 29.33679083885209,
+            "z": 0
+          },
+          "boundingBox": {
+            "min": {
+              "x": -32.64,
+              "y": 27.133581677704182,
+              "z": 0
+            },
+            "max": {
+              "x": -26.308079470198674,
+              "y": 31.539999999999996,
+              "z": 0
+            }
+          },
+          "widthFeet": 0.04,
+          "horizontalAlignment": "Left",
+          "verticalAlignment": "Top"
+        }
+      ],
+      "schedulePreservation": null
+    },
+    {
+      "result": [
+        {
+          "id": 1542922,
+          "found": true,
+          "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "className": "TextNote",
+          "fullClassName": "Autodesk.Revit.DB.TextNote",
+          "category": "Text Notes",
+          "name": "3/32\" Arial",
+          "typeId": 10352,
+          "familyName": null,
+          "typeName": "3/32\" Arial",
+          "levelId": null,
+          "levelIdBasis": null,
+          "levelName": null,
+          "viewType": null,
+          "viewScale": null,
+          "boundingBox": {
+            "min": {
+              "x": -32.64,
+              "y": 27.133581677704182,
+              "z": 0
+            },
+            "max": {
+              "x": -26.308079470198674,
+              "y": 31.539999999999996,
+              "z": 0
+            }
+          },
+          "location": null,
+          "electricalCircuitMembership": null,
+          "tagReferences": null,
+          "viewIdUsed": 1363483
+        }
+      ]
+    }
+  ],
+  "identity_from_independent_before_note": {
+    "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+    "ownerViewId": 1363483,
+    "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b"
+  },
+  "future_native_apply": {
+    "movedIds": [
+      1542922
+    ],
+    "verified": true,
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1542922
+      ],
+      "affected_element_ids": [
+        1542922
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "ok": true,
+    "snapshots": [
+      {
+        "id": 1542922,
+        "before": {
+          "kind": "TextAnchor",
+          "pointXyz": [
+            -31,
+            28.4,
+            0
+          ],
+          "elementUniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "ownerViewId": 1363483,
+          "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b",
+          "coordinateSpace": "model_feet"
+        },
+        "after": {
+          "kind": "TextAnchor",
+          "pointXyz": [
+            -32,
+            30.9,
+            0
+          ],
+          "elementUniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+          "ownerViewId": 1363483,
+          "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b",
+          "coordinateSpace": "model_feet"
+        }
+      }
+    ],
+    "connectedEndpointPreservation": {
+      "applicable": false,
+      "complete": true,
+      "preserved": true,
+      "persisted": true,
+      "positionToleranceFeet": 1E-06,
+      "scannedElementCount": 0,
+      "protectedEndpointIds": [],
+      "before": [],
+      "after": [],
+      "changedEndpointIds": [],
+      "changedConnectionPorts": []
+    },
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "movedTogether": false
+  },
+  "future_native_read": {
+    "result": [
+      {
+        "id": 1542922,
+        "found": true,
+        "uniqueId": "b182196e-3289-4dba-8595-8a3ce3f07a4a-00178b0a",
+        "className": "TextNote",
+        "fullClassName": "Autodesk.Revit.DB.TextNote",
+        "category": "Text Notes",
+        "name": "3/32\" Arial",
+        "typeId": 10352,
+        "familyName": null,
+        "typeName": "3/32\" Arial",
+        "levelId": null,
+        "levelIdBasis": null,
+        "levelName": null,
+        "viewType": null,
+        "viewScale": null,
+        "boundingBox": null,
+        "location": {
+          "ownerViewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce1b",
+          "z": 0,
+          "y": 30.9,
+          "ownerViewId": 1363483,
+          "type": "textAnchor",
+          "coordinateSpace": "model_feet",
+          "x": -32
+        },
+        "electricalCircuitMembership": null,
+        "tagReferences": null,
+        "viewIdUsed": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "provenance": "Synthetic deletion-candidate vector for the diagnostic missing in trial333. Actual333 collateral IDs were not retained and are unknown; these are not those IDs.",
+  "teeId": 10,
+  "candidateIds": [99, 10, 11],
+  "historical333ErrorOnly": "Replacing the tee would delete additional elements; the atomic operation must roll back.",
+  "expectedError": "Replacing the tee would delete additional elements; the atomic operation must roll back. requestedTeeId=10; candidateCount=3; additionalCandidateCount=2; candidateIds(first16)=[10,11,99]; additionalCandidateIds(first16)=[11,99]. Candidate identities describe the attempted deletion only; native transaction settlement determines persistent effects."
+}

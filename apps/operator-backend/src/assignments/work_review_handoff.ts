@@ -3,7 +3,7 @@ import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.
 import { inspectionIsCurrentV2, workPlanItemDeferredV2 } from '../domain/assignment-kernel/work_plan.js';
 import { projectWorkPlanLocationV2 } from '../domain/assignment-kernel/work_plan_location.js';
 import { boundedWorkPlanPage } from './work_plan_projection.js';
-import { legacyReviewAddress, reviewStatusLabel } from './work_review_presentation.js';
+import { legacyReviewAddress, reviewStatusLabel, workFollowupKind } from './work_review_presentation.js';
 import { projectWorkPlanScopeChecksV1 } from './work_plan_scope_check.js';
 
 /** Read-only presentation of retained work. A checked operation is not drawing
@@ -41,7 +41,8 @@ export function workReviewRowsV2(snapshot: AssignmentSnapshotV2) {
       description: item.description, source_basis: item.source_basis,
       location, applied_operation_count: applied.length, checked_operation_count: checked.length,
       declared_scope_check:scopeChecks.get(item.item_id)??null,
-      ...(deferred ? { question_ref: `Q${index + 1}`, question: lastDeferral!.reason } : {}),
+      ...(deferred ? { question_ref: `Q${index + 1}`, question: lastDeferral!.reason,
+        followup_kind: workFollowupKind(lastDeferral!.reason) } : {}),
       waiting_on: [...(item.depends_on ?? [])],
       notice: verified ? 'Declared item has checked operations; source-comment coverage and engineering suitability are not certified.'
         : 'Unfinished or assistant-reported work; no independent completion inferred.' };
@@ -78,6 +79,13 @@ export function compactWorkReviewV2(snapshot: AssignmentSnapshotV2) {
   return summary;
 }
 
+/** Saved item questions/blockers are assistant interpretations, not formal
+ * input requests, supplied answers or completion evidence. Keep exact wording. */
+export function retainedWorkFollowupLinesV2(snapshot: AssignmentSnapshotV2): string[] {
+  return workReviewRowsV2(snapshot).filter(row => row.question)
+    .map(row => `${row.followup_kind === 'operator_technical' ? 'Operator follow-up ' : ''}${row.question_ref} · ${row.address} · ${row.description}: ${row.question}`);
+}
+
 const cell = (text: string) => text.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/`/g, "'");
 const short = (text: string, max = 100) => text.length > max ? text.slice(0, max - 1) + '…' : text;
 function table(rows: ReturnType<typeof workReviewRowsV2>) {
@@ -88,7 +96,8 @@ function table(rows: ReturnType<typeof workReviewRowsV2>) {
 /** Retained followups stay visible even when the worker forgot action=defer.
  * These are open reports, not proof or a newly inferred native location. */
 function reviewQuestions(snapshot: AssignmentSnapshotV2, rows: ReturnType<typeof workReviewRowsV2>) {
-  const questions=rows.filter(row=>row.question).map(row=>({ref:row.question_ref!,address:row.address,text:row.question!,related_ref:undefined as string|undefined}));
+  const questions=rows.filter(row=>row.question).map(row=>({ref:row.question_ref!,address:row.address,text:row.question!,
+    kind:row.followup_kind!,related_ref:undefined as string|undefined}));
   const seen=new Set(questions.map(q=>q.text));
   for(const [index,item] of (snapshot.advisory_followups??[]).entries()) {
     if(!['open','deferred'].includes(item.state)||seen.has(item.text))continue;
@@ -96,7 +105,8 @@ function reviewQuestions(snapshot: AssignmentSnapshotV2, rows: ReturnType<typeof
     // insufficient, and all retained wording remains visible in Details.
     const reference=/^\s*(Q[1-9]\d*)\s*[:—-]/.exec(item.text)?.[1];
     const parent=questions.find(q=>q.ref===reference&&!q.related_ref);
-    questions.push({ref:`QF${index+1}`,address:parent?.address??legacyReviewAddress(item.text,'')??'Sheet / page not recorded',text:item.text,related_ref:parent?.ref});seen.add(item.text);
+    questions.push({ref:`QF${index+1}`,address:parent?.address??legacyReviewAddress(item.text,'')??'Sheet / page not recorded',text:item.text,
+      kind:parent?.kind??workFollowupKind(item.text),related_ref:parent?.ref});seen.add(item.text);
   }
   return questions;
 }
@@ -117,7 +127,7 @@ export function renderWorkReviewHandoffV2(snapshot: AssignmentSnapshotV2): { sum
     if (chars + row.text.length > 600) break;
     shownQuestions.push(row); chars += row.text.length;
   }
-  const questionText = (row: typeof questions[number]) => `${row.ref}${row.related_ref?` (also ${row.related_ref})`:''} · ${cell(row.address)}: ${cell(row.text)}`;
+  const questionText = (row: typeof questions[number]) => `${row.kind === 'operator_technical' ? 'Operator follow-up ' : ''}${row.ref}${row.related_ref?` (also ${row.related_ref})`:''} · ${cell(row.address)}: ${cell(row.text)}`;
   return {
     summary: [
       `Review: ${report.counts.checked} checked · ${report.counts.partial} partial · ${report.counts.reported_unverified} reported, unchecked · ${report.counts.deferred} deferred · ${report.counts.not_completed} not completed${report.counts.outcome_unknown ? ` · ${report.counts.outcome_unknown} uncertain` : ''}${report.counts.settling ? ` · ${report.counts.settling} still settling` : ''}.`,
@@ -128,14 +138,16 @@ export function renderWorkReviewHandoffV2(snapshot: AssignmentSnapshotV2): { sum
       ...(rows.some(row=>row.declared_scope_check?.available)?['Declared search checks cover the selected views and matching rule; drawing interpretation still needs review.']:[]),
       table(preview),
       ...(rows.length > preview.length ? [`All ${rows.length} checklist items and full wording are in Details.`] : []),
-      ...(questions.length ? ['Questions and open items', ...shownQuestions.map(row => `- ${questionText(row)}`),
-        ...(primaryQuestions.length > shownQuestions.length ? [`${primaryQuestions.length - shownQuestions.length} more questions in Details.`] : []),
+      ...(questions.length ? ['Saved follow-ups and decisions', ...shownQuestions.map(row => `- ${questionText(row)}`),
+        ...(primaryQuestions.length > shownQuestions.length ? [`${primaryQuestions.length - shownQuestions.length} more open items in Details.`] : []),
         ...(questions.length > primaryQuestions.length ? ['Related saved reports are grouped under their question in Details.'] : []),
-        'Reply using the question reference, for example “Q3: keep the existing location.”'] : [])
+        'Internal tool follow-ups remain Operator work. Only actual engineering decisions need your answer.',
+        ...(primaryQuestions.some(row=>row.kind !== 'operator_technical')
+          ? ['Reply to an engineering decision using its saved reference, for example “Q3: keep the existing location.”'] : [])] : [])
     ].join('\n\n'),
     details: ['### Sheet checklist', table(rows),
       ...rows.map(row => `- ${row.review_ref} · ${cell(row.address)} · ${reviewStatusLabel(row.status,row.checked_operation_count)}: ${cell(row.description)}\n  Source: ${cell(row.source_basis)}${row.location?.source ? '\n  Drawing: ' + cell(row.location.source.filename) + (row.location.source.region ? ' · area of interest retained' : '') : ''}`),
-      ...(questions.length ? ['### Questions by sheet', ...questions.map(row => `- ${questionText(row)}`)] : [])
+      ...(questions.length ? ['### Follow-ups by sheet', ...questions.map(row => `- ${questionText(row)}`)] : [])
     ].join('\n\n')
   };
 }

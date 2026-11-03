@@ -280,7 +280,7 @@ namespace RevitBridge.Handlers
                     prefix = sheetQuery.EndsWith("*", StringComparison.Ordinal) ? sheetQuery.TrimEnd('*').Trim() : sheetQuery;
                 }
 
-                if (effectiveSelector == null && (!string.IsNullOrWhiteSpace(prefix) || !string.IsNullOrWhiteSpace(sheetQuery) || semanticGroups.Count > 0))
+                if (effectiveSelector == null && ((p.all ?? false) || !string.IsNullOrWhiteSpace(prefix) || !string.IsNullOrWhiteSpace(sheetQuery) || semanticGroups.Count > 0))
                 {
                     effectiveSelector = new Selector();
                 }
@@ -323,7 +323,7 @@ namespace RevitBridge.Handlers
                         effectiveSelector.semanticGroups = semanticGroups;
                     }
 
-                    var selected = SelectSheetIds(doc, effectiveSelector);
+                    var selected = SelectSheetIds(doc, effectiveSelector, out var matchedCount);
                     ids.AddRange(selected.Select(id => RevitBridge.Common.ElementIdCompat.GetValue(id)));
                     selectionMeta = new
                     {
@@ -335,7 +335,9 @@ namespace RevitBridge.Handlers
                         sheetNumberPrefixes = effectiveSelector.sheetNumberPrefixes,
                         nameIncludes = effectiveSelector.nameIncludes,
                         semanticGroups = semanticGroups.Count == 0 ? null : semanticGroups.ToArray(),
-                        count = ids.Count
+                        count = ids.Count,
+                        matchedCount,
+                        truncated = ids.Count < matchedCount
                     };
                 }
                 else
@@ -380,7 +382,7 @@ namespace RevitBridge.Handlers
                 .ToList();
         }
 
-        private static List<ElementId> SelectSheetIds(Document doc, Selector s)
+        private static List<ElementId> SelectSheetIds(Document doc, Selector s, out int matchedCount)
         {
             var max = s.max.HasValue && s.max.Value > 0 ? Math.Min(s.max.Value, 2000) : 500;
             var q = (s.query ?? "").Trim();
@@ -418,8 +420,10 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            var ordered = filtered.OrderBy(v => v.SheetNumber, StringComparer.OrdinalIgnoreCase).ThenBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            matchedCount = ordered.Count;
             var ids = new List<ElementId>();
-            foreach (var vs in filtered.OrderBy(v => v.SheetNumber, StringComparer.OrdinalIgnoreCase).ThenBy(v => v.Name, StringComparer.OrdinalIgnoreCase))
+            foreach (var vs in ordered)
             {
                 if (ids.Count >= max) break;
                 ids.Add(vs.Id);

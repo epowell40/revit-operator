@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Security.Cryptography;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -11,7 +13,7 @@ using RevitBridge.Common;
 namespace RevitBridge.Logic.Handlers
 {
     /// <summary>
-    /// Opens one loaded family from a grounded project instance, inventories the
+    /// Opens one loaded family from a grounded project instance, tag or symbol, inventories the
     /// content needed to classify visible family text/labels, and closes only a
     /// newly opened temporary document without saving. Existing editors are preserved.
     /// editing remains available through the separate family edit primitives.
@@ -21,6 +23,7 @@ namespace RevitBridge.Logic.Handlers
         public sealed class Params
         {
             public long elementId { get; set; }
+            public string? filePath { get; set; }
             public string? contains { get; set; }
             public int maxElements { get; set; } = 500;
             public bool includeParameters { get; set; } = true;
@@ -40,30 +43,53 @@ namespace RevitBridge.Logic.Handlers
             var p = string.IsNullOrEmpty(jsonData)
                 ? new Params()
                 : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            if (p.elementId <= 0) throw new InvalidOperationException("inspect-family-content.elementId is required.");
+            using var request = JsonDocument.Parse(string.IsNullOrEmpty(jsonData) ? "{}" : jsonData);
+            if (!FamilyInspectionSource.Validate(request.RootElement, out var sourceError))
+                throw new ArgumentException(sourceError);
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var projectDoc = uidoc.Document;
             if (projectDoc.IsFamilyDocument)
-                throw new InvalidOperationException("Open a project document before inspecting a loaded family.");
+                throw new InvalidOperationException("Open a project document before inspecting a family.");
 
-            var source = projectDoc.GetElement(ElementIdCompat.Create(p.elementId));
-            if (!(source is FamilyInstance instance))
-                throw new InvalidOperationException($"Element {p.elementId} is not a FamilyInstance.");
-
-            var symbol = instance.Symbol ?? throw new InvalidOperationException("FamilyInstance has no type (Symbol).");
-            var family = symbol.Family ?? throw new InvalidOperationException("FamilyInstance type has no Family.");
-            if (!family.IsEditable)
-                throw new InvalidOperationException($"Family '{family.Name}' is not editable (system or in-place families cannot be inspected this way).");
+            string? file = null, sourceHash = null;
+            object? sourceIdentity = null, fileMetadata = null;
+            Func<Document> open;
+            if (p.filePath != null)
+            {
+                file = FamilyInspectionSource.ResolveExisting(WorkspacePaths.GetWorkspaceRootPath(), p.filePath);
+                sourceHash = FileHash(file);
+                fileMetadata = FileMetadata(file);
+                open = () => app.Application.OpenDocumentFile(file);
+            }
+            else
+            {
+                var source = projectDoc.GetElement(ElementIdCompat.Create(p.elementId));
+                if (source == null) throw new InvalidOperationException($"Element {p.elementId} not found.");
+                var symbol = LoadedFamilySource.ResolveSymbolForInspection(projectDoc, source);
+                var family = symbol.Family ?? throw new InvalidOperationException("Selected type has no Family.");
+                if (!family.IsEditable)
+                    throw new InvalidOperationException($"Family '{family.Name}' is not editable (system or in-place families cannot be inspected this way).");
+                sourceIdentity = new
+                {
+                    elementId = ElementIdCompat.GetValue(source.Id), uniqueId = source.UniqueId,
+                    category = source.Category?.Name ?? "", runtimeType = source.GetType().Name,
+                    familyId = ElementIdCompat.GetValue(family.Id), familyName = family.Name,
+                    typeId = ElementIdCompat.GetValue(symbol.Id), typeName = symbol.Name
+                };
+                open = () => projectDoc.EditFamily(family);
+            }
 
             var max = Math.Max(1, Math.Min(2000, p.maxElements));
             var needle = Normalize(p.contains ?? "");
             var alreadyOpen = app.Application.Documents.Cast<Document>().ToArray();
             var result = TemporaryDocumentInspection.Run<Document, object>(alreadyOpen,
-                () => projectDoc.EditFamily(family), familyDoc =>
+                open, familyDoc =>
             {
 
+                if (!familyDoc.IsFamilyDocument) throw new InvalidOperationException("Inspection source is not a family document.");
+                var currentType = familyDoc.FamilyManager.CurrentType;
                 var familyParameters = new List<object>();
                 var familyParameterNamesById = new Dictionary<long, string>();
                 if (p.includeParameters)
@@ -82,13 +108,18 @@ namespace RevitBridge.Logic.Handlers
                             id = parameterId,
                             name,
                             isInstance = parameter.IsInstance,
-                            formula = string.IsNullOrWhiteSpace(formula) ? null : formula
+                            formula = string.IsNullOrWhiteSpace(formula) ? null : formula,
+                            storageType = parameter.StorageType.ToString(),
+                            specTypeId = ReadFact(() => parameter.Definition.GetDataType().TypeId),
+                            unitTypeId = ReadFact(() => parameter.GetUnitTypeId().TypeId),
+                            currentValue = ReadCurrentValue(currentType, parameter)
                         });
                     }
                 }
 
                 var staticText = new List<object>();
                 var labels = new List<object>();
+                var labelDriverObservations = new List<RevitBridge.Common.Annotation.FamilyLabelBindingObservation.DriverObservation>();
                 var nestedInstances = new List<object>();
                 var otherElements = new List<object>();
                 var classCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -120,10 +151,13 @@ namespace RevitBridge.Logic.Handlers
                             returned++;
                         }
                     }
-                    else if (runtimeType.EndsWith("Label", StringComparison.OrdinalIgnoreCase))
+                    else if (RevitBridge.Common.Annotation.FamilyLabelInspectionPolicy.IsLabel(runtimeType))
                     {
-                        var driverNames = ResolveDriverParameterNames(element, familyParameterNamesById);
-                        if (Matches(needle, SafeName(element), categoryName, runtimeType, string.Join(" ", driverNames)))
+                        var driverObservation = RevitBridge.Common.Annotation.FamilyLabelBindingObservation.Observe(
+                            names => ReadDriverParameterNames(element, familyParameterNamesById, names), p.includeParameters);
+                        var driverNames = driverObservation.DriverParameters;
+                        if (RevitBridge.Common.Annotation.FamilyLabelInspectionPolicy.MatchesQuery(
+                            p.contains, runtimeType, SafeName(element), categoryName, string.Join(" ", driverNames)))
                         {
                             labels.Add(new
                             {
@@ -133,8 +167,11 @@ namespace RevitBridge.Logic.Handlers
                                 name = SafeName(element),
                                 category = categoryName,
                                 driverParameters = driverNames,
+                                driverParameterObservation = driverObservation.Detail,
+                                labelType = ReadLabelType(familyDoc, element),
                                 location = Center(element)
                             });
+                            labelDriverObservations.Add(driverObservation);
                             returned++;
                         }
                     }
@@ -160,14 +197,17 @@ namespace RevitBridge.Logic.Handlers
                     }
                     else if (p.includeOtherElements && returned < max && Matches(needle, SafeName(element), categoryName, runtimeType))
                     {
-                        otherElements.Add(new
+                        var summary = new Dictionary<string, object?>
                         {
-                            elementId = ElementIdCompat.GetValue(element.Id),
-                            uniqueId = element.UniqueId,
-                            runtimeType,
-                            name = SafeName(element),
-                            category = categoryName
-                        });
+                            ["elementId"] = ElementIdCompat.GetValue(element.Id),
+                            ["uniqueId"] = element.UniqueId,
+                            ["runtimeType"] = runtimeType,
+                            ["name"] = SafeName(element),
+                            ["category"] = categoryName
+                        };
+                        FamilyConnectorInspectionFacts.AddToSummary(summary, element is ConnectorElement connector
+                            ? new ConnectorInspectionSource(connector) : null);
+                        otherElements.Add(summary);
                         returned++;
                     }
 
@@ -185,38 +225,26 @@ namespace RevitBridge.Logic.Handlers
                     ok = true,
                     observational = true,
                     mutated = false,
-                    source = new
+                    source = sourceIdentity ?? new
                     {
-                        elementId = ElementIdCompat.GetValue(instance.Id),
-                        uniqueId = instance.UniqueId,
-                        category = instance.Category?.Name ?? "",
-                        familyId = ElementIdCompat.GetValue(family.Id),
-                        familyName = family.Name,
-                        typeId = ElementIdCompat.GetValue(symbol.Id),
-                        typeName = symbol.Name
+                        scope = "external_file", filePath = file, sha256 = sourceHash,
+                        sizeBytes = new FileInfo(file!).Length, metadata = fileMetadata,
+                        familyName = familyDoc.OwnerFamily?.Name ?? familyDoc.Title,
+                        category = familyDoc.OwnerFamily?.FamilyCategory?.Name,
+                        hostVersion = app.Application.VersionNumber,
+                        openedInHost = true,
+                        note = "External file only; not loaded-project verification or design selection."
                     },
+                    currentTypeName = currentType?.Name,
                     query = string.IsNullOrWhiteSpace(p.contains) ? null : p.contains,
                     familyParameters,
                     staticText,
                     labels,
                     nestedInstances,
                     otherElements,
-                    classification = new
-                    {
-                        staticTextCount = staticText.Count,
-                        parameterDrivenLabelCount = labels.Count(item =>
-                        {
-                            var prop = item.GetType().GetProperty("driverParameters");
-                            return prop?.GetValue(item) is string[] values && values.Length > 0;
-                        }),
-                        unboundLabelCount = labels.Count(item =>
-                        {
-                            var prop = item.GetType().GetProperty("driverParameters");
-                            return !(prop?.GetValue(item) is string[] values) || values.Length == 0;
-                        }),
-                        nestedFamilyCount = nestedInstances.Count,
-                        nestedAnnotationCount = annotationNestedCount
-                    },
+                    classification = RevitBridge.Common.Annotation.FamilyLabelBindingObservation.Classify(
+                        labelDriverObservations,
+                        staticText.Count, nestedInstances.Count, annotationNestedCount),
                     inventory = new
                     {
                         scannedElementCount = scanned,
@@ -229,25 +257,122 @@ namespace RevitBridge.Logic.Handlers
                     closedWithoutSaving = true
                 };
             }, familyDoc => familyDoc.Close(false), familyDoc => familyDoc.IsValidObject);
+            if (file != null)
+            {
+                // Re-resolve after closure; a changed/replaced source cannot receive a successful identity claim.
+                var afterFile = FamilyInspectionSource.ResolveExisting(WorkspacePaths.GetWorkspaceRootPath(), p.filePath!);
+                if (!string.Equals(file, afterFile, StringComparison.OrdinalIgnoreCase) || FileHash(afterFile) != sourceHash)
+                    throw new InvalidOperationException("Family source bytes changed during inspection; findings are not accepted.");
+            }
             return Task.FromResult(result);
         }
 
-        private static string[] ResolveDriverParameterNames(Element element, Dictionary<long, string> namesById)
+        private static string FileHash(string path)
         {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var stream = File.OpenRead(path);
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static object FileMetadata(string path)
+        {
             try
             {
-                foreach (var parameter in element.GetOrderedParameters())
+                using var info = BasicFileInfo.Extract(path);
+                return new { savedFormat = info.Format, error = (string?)null };
+            }
+            catch (Exception ex)
+            {
+                return new { savedFormat = (string?)null, error = ex.Message };
+            }
+        }
+
+        private static object ReadFact(Func<string> read)
+        {
+            try { return new { value = read(), error = (string?)null }; }
+            catch (Exception ex) { return new { value = (string?)null, error = ex.Message }; }
+        }
+
+        // These getters run only inside the existing temporary inspection document.
+        // Geometry belongs to currentTypeName, not an arbitrary loaded instance or type.
+        private sealed class ConnectorInspectionSource : IFamilyConnectorInspectionSource
+        {
+            private readonly ConnectorElement connector;
+            public ConnectorInspectionSource(ConnectorElement value) { connector = value; }
+            private static double[] Vector(XYZ point) => new[] { point.X, point.Y, point.Z };
+            public string Shape => connector.Shape.ToString();
+            public string Domain => connector.Domain.ToString();
+            public string SystemClassification => connector.SystemClassification.ToString();
+            public bool IsPrimary => connector.IsPrimary;
+            public double[] Origin => Vector(connector.Origin);
+            public double[] Direction => Vector(connector.Direction);
+            public double[][] Axes
+            {
+                get
                 {
-                    if (parameter == null || parameter.StorageType != StorageType.ElementId) continue;
-                    var value = parameter.AsElementId();
-                    if (value == null || value == ElementId.InvalidElementId) continue;
-                    if (namesById.TryGetValue(ElementIdCompat.GetValue(value), out var name) && !string.IsNullOrWhiteSpace(name))
-                        names.Add(name);
+                    using var transform = connector.CoordinateSystem;
+                    return new[] { Vector(transform.BasisX), Vector(transform.BasisY), Vector(transform.BasisZ) };
                 }
             }
-            catch { }
-            return names.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray();
+            public double Radius => connector.Radius;
+            public double Width => connector.Width;
+            public double Height => connector.Height;
+        }
+
+        private static object ReadCurrentValue(FamilyType? type, FamilyParameter parameter)
+        {
+            object? value = null;
+            try
+            {
+                var hasValue = type != null && type.HasValue(parameter);
+                if (hasValue)
+                {
+                    switch (parameter.StorageType)
+                    {
+                        case StorageType.Double: value = type!.AsDouble(parameter); break;
+                        case StorageType.Integer: value = type!.AsInteger(parameter); break;
+                        case StorageType.String: value = type!.AsString(parameter); break;
+                        case StorageType.ElementId: value = ElementIdCompat.GetValue(type!.AsElementId(parameter)); break;
+                    }
+                }
+                return new { hasValue, value, valueBasis = "native_internal_units", error = (string?)null };
+            }
+            catch (Exception ex)
+            {
+                return new { hasValue = (bool?)null, value = (object?)null, valueBasis = "native_internal_units", error = ex.Message };
+            }
+        }
+
+        private static object? ReadLabelType(Document doc, Element label)
+        {
+            var type = doc.GetElement(label.GetTypeId());
+            if (type == null) return null;
+            int? Integer(BuiltInParameter parameter) => type.get_Parameter(parameter)?.AsInteger();
+            double? Number(BuiltInParameter parameter) => type.get_Parameter(parameter)?.AsDouble();
+            return new
+            {
+                elementId = ElementIdCompat.GetValue(type.Id),
+                uniqueId = type.UniqueId,
+                name = SafeName(type),
+                font = type.get_Parameter(BuiltInParameter.TEXT_FONT)?.AsString(),
+                textSizeFeet = Number(BuiltInParameter.TEXT_SIZE),
+                bold = Integer(BuiltInParameter.TEXT_STYLE_BOLD) is int bold ? (bool?)(bold != 0) : null,
+                italic = Integer(BuiltInParameter.TEXT_STYLE_ITALIC) is int italic ? (bool?)(italic != 0) : null,
+                underline = Integer(BuiltInParameter.TEXT_STYLE_UNDERLINE) is int underline ? (bool?)(underline != 0) : null,
+                widthFactor = Number(BuiltInParameter.TEXT_WIDTH_SCALE)
+            };
+        }
+
+        private static void ReadDriverParameterNames(Element element, Dictionary<long, string> namesById, ICollection<string> names)
+        {
+            foreach (var parameter in element.GetOrderedParameters())
+            {
+                if (parameter == null || parameter.StorageType != StorageType.ElementId) continue;
+                var value = parameter.AsElementId();
+                if (value == null || value == ElementId.InvalidElementId) continue;
+                if (namesById.TryGetValue(ElementIdCompat.GetValue(value), out var name) && !string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
         }
 
         private static Point3? Center(Element element)

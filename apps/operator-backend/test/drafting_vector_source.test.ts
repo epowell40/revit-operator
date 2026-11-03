@@ -87,6 +87,25 @@ test("whole-record pagination includes stable context and never slices a contour
   assert.equal(p.total,2);assert.equal(p.nextOffset,1);assert.equal(p2.nextOffset,null);
   assert.equal((p.records[0] as any).commands.length,4);assert.deepEqual(p.region,[0,0,200,100]);assert.equal(p.sourceLabel,"Reference detail.pdf");
 });
+
+test("compact contour index preserves exact IDs, coverage and source styles without classifying or omitting geometry",async()=>{
+  const a=await inspect("1.2 w 10 10 m 15 15 20 15 25 10 c 25 20 l h 80 10 m 90 10 l S"),before=JSON.stringify(a);
+  const full=pageDraftingVectorSource(a,a.planSha256,"contours",0,2);
+  const first=pageDraftingVectorSource(a,a.planSha256,"contour_index",0,1);
+  const second=pageDraftingVectorSource(a,a.planSha256,"contour_index",1,1);
+  assert.equal(first.total,2);assert.equal(first.sourceRecordCount,2);assert.equal(first.nextOffset,1);assert.equal(second.nextOffset,null);
+  const r=first.records[0] as any,original=full.records[0] as any;
+  assert.equal(r.id,original.id);assert.equal(r.pathId,original.pathId);assert.deepEqual(r.conservativeBounds,original.conservativeBounds);
+  assert.deepEqual(r.commandCounts,{move:1,line:1,close:1,cubic_bezier:1});assert.equal(r.commandCount,4);
+  assert.equal(r.lineWidth,1.2);assert.deepEqual(r.paint,original.paint);assert.deepEqual(r.strokeRgb,original.style.strokeRgb);
+  assert.equal(r.crossesRegion,original.crossesRegion);assert.equal(r.intersectsRegion,original.intersectsRegion);
+  assert(!('commands' in r));assert(!('historical_revision' in r));assert.equal(first.nativeWriteAllowed,false);
+  const filtered=pageDraftingVectorSource(a,a.planSha256,"contour_index",0,10,[75,80,95,95]);
+  assert.deepEqual(filtered.records,[second.records[0]]);assert.equal(filtered.sourceRecordCount,2);
+  const selected=selectDraftingVectorSource(a,a.planSha256,[{recordId:r.id,reason:'historical_revision',evidence:'Separate visual source review identifies only this contour.'}]);
+  assert.equal(selected.paths[0].contours.length,1);assert.equal(selected.paths[0].contours[0].id,(second.records[0] as any).id);
+  assert.equal(JSON.stringify(a),before);assert.throws(()=>pageDraftingVectorSource(a,'0'.repeat(64),'contour_index',0,1),/hash/);
+});
 test("bounded spatial lookup finds the work area without dumping unrelated contours or losing sheet context",async()=>{
   const a=await inspect("10 10 m 20 10 l 20 20 l h 140 10 m 150 10 l S");
   const p=pageDraftingVectorSource(a,a.planSha256,"contours",0,10,[130,70,160,95]);
@@ -94,6 +113,15 @@ test("bounded spatial lookup finds the work area without dumping unrelated conto
   assert.deepEqual(p.filterRegion,[130,70,160,95]);assert.equal((p.records[0] as any).commands.length,2);
   const empty=pageDraftingVectorSource(a,a.planSha256,"contours",0,10,[60,30,80,50]);assert.equal(empty.total,0);assert.equal(empty.nextOffset,null);
   for(const r of [[0,0,201,100],[5,5,5,10],[-1,0,20,20],[0,0,Infinity,20]])assert.throws(()=>pageDraftingVectorSource(a,a.planSha256,"contours",0,10,r as any),/Filter region/);
+});
+
+test("dense contours remain complete in the source while discovery output stays bounded",async()=>{
+  const a=await inspect('10 10 m '+Array.from({length:1000},()=> '12 15 18 15 20 10 c').join(' ')+' S');
+  const full=pageDraftingVectorSource(a,a.planSha256,'contours',0,1),index=pageDraftingVectorSource(a,a.planSha256,'contour_index',0,1);
+  assert(Buffer.byteLength(JSON.stringify(full))>47500);assert(Buffer.byteLength(JSON.stringify(index))<2000);
+  assert.equal((index.records[0] as any).commandCount,1001);assert.equal((index.records[0] as any).commandCounts.cubic_bezier,1000);
+  assert.equal((full.records[0] as any).commands.length,1001);assert.equal(a.paths[0].contours[0].commands.length,1001);
+  assert.equal(index.sourceRecordCount,1);assert.equal(index.nextOffset,null);
 });
 test("source bytes are not detached by the PDF worker",async()=>{
   const b=pdf("10 10 m 20 20 l S"),before=sha(b);await inspectDraftingVectorSource(b,{expectedSourceSha256:before,page:1,region:[0,0,200,100],sourceLabel:"source.pdf"});

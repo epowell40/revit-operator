@@ -35,17 +35,25 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
   const allowance=assignmentWorkAllowanceV2(snapshot);
   return { resources, cached_input_tokens: cached,
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,
+      ...(allowance.source_required_plan?{source_required_plan:{
+        basis:'Immutable exact intake requires a durable work plan, with a retained edit batch and dependent inspection; one bounded planning window, not checked work or completion.'}}:{}),
       ...(allowance.source_planning_units===undefined?{}:{native_source_planning:{
         mode:'native_inventory_planning_v1',units:allowance.source_planning_units,items:allowance.source_planning_items,
         basis:'Largest complete exact-bound retained native source census; bounded planning only, not checked work or completion'}}),
       verified_distinct_changes: allowance.verified_changes,
       ...(allowance.verified_targets === undefined ? {} : {
         verified_distinct_targets: allowance.verified_targets,
-        earned_credit_unit: 'distinct_verified_targets_v1' }),
+        earned_credit_unit: allowance.observed_targets===undefined?'distinct_verified_targets_v1':'distinct_observed_physical_targets_v1' }),
+      ...(allowance.observed_targets===undefined?{}:{observed_distinct_physical_targets:allowance.observed_targets,
+        continuation_distinct_targets:allowance.resource_targets}),
       progress_extension_enabled: Boolean(snapshot.spec.execution_policy?.progress_allowance),
       ...(snapshot.user_followup_allocation ? {authenticated_user_followup:snapshot.user_followup_allocation,
-        followup_basis:'Explicit saved user direction at a settled checkpoint; bounded by frozen resource ceilings. Not verified progress; cumulative usage is preserved.'} : {}),
-      basis: allowance.verified_targets === undefined
+        followup_basis:snapshot.user_followup_allocation.resource_renewal
+          ? 'Explicit authenticated bounded resource renewal at a settled checkpoint; original policy, cumulative usage, task and native permissions remain retained. This is authorization for more work, not verified progress.'
+          : 'Explicit saved user direction at a settled checkpoint; bounded by frozen resource ceilings. Not verified progress; cumulative usage is preserved.'} : {}),
+      basis: allowance.observed_targets!==undefined
+        ? 'Fresh native physical observations after committed changes earn bounded continuation fuel, not intent verification, preservation or task completion. Distinct targets only; cumulative usage and hard ceilings remain.'
+        : allowance.verified_targets === undefined
         ? "Creation-time source workload plus distinct committed native edits with recognized readback; no agent completion claims."
         : "Creation-time source workload plus distinct principal targets checked after native commit; repeated targets and collateral earn no credit. No agent completion claims." },
     token_breakdown: { input_tokens: input, cached_input_tokens: cachedInput, cache_write_input_tokens: cacheWriteInput,
@@ -60,7 +68,11 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
       limitations: "Not an invoice or service-tier confirmation. Excludes tax and tool fees. Missing usage or model rates remain unknown. This projection does not change the frozen budget." },
     missing_usage_calls: calls.filter(call => !call.usage).length,
     checkpoint_recommended: near.length > 0, approaching_limits: near,
-    guidance: near.length ? "Retain completed operation IDs, remaining items and questions now. This checkpoint warning is not an instruction to stop: check the current remaining resources and continue ready independent work when the next bounded batch, its verification, final save and handoff fit. Recheck after each useful batch; complete native source inventory may unlock a frozen bounded planning allocation, while only host-recognized verified edits earn progress credit. If the remaining resources cannot support another useful batch, finish verification and save an honest handoff. Cached tokens count toward the limit. Never reset usage, exceed a hard limit or retry uncertain edits."
+    guidance: near.length ? "Retain completed operation IDs, remaining items and questions now. This checkpoint warning is not an instruction to stop: check the current remaining resources and continue ready independent work when the next bounded batch, its verification, final save and handoff fit. Recheck after each useful batch; "
+      +(allowance.observed_targets===undefined
+        ? "complete native source inventory may unlock a frozen bounded planning allocation, while only host-recognized verified edits earn progress credit. "
+        : "this task explicitly allows fresh native physical readback after committed changes to earn continuation fuel. Use current native reads after a useful batch; code success, text claims, old evidence and repeated targets alone earn none. This does not verify intent, preservation or completion. ")
+      +"If the remaining resources cannot support another useful batch, finish verification and save an honest handoff. Cached tokens count toward the limit. Never reset usage, exceed a hard limit or retry uncertain edits."
       : "Complete and verify useful batches; retain their operation IDs and remaining work as you go." };
 }
 

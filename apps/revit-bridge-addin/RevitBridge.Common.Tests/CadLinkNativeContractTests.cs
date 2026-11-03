@@ -7,6 +7,59 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class CadLinkNativeContractTests
     {
+        [Fact]
+        public void NativeCadUsesValidatedFormatAndKeepsSourceDirectionCorrectionExplicit()
+        {
+            var source = Read("Handlers", "LinkCadHandler.cs");
+            Assert.Contains("CadLinkOptionPolicy.SourceFormat(full)", source);
+            Assert.Contains("options.AutoCorrectAlmostVHLines = p.autoCorrectAlmostVHLines ?? false", source);
+            var sourceHash = source.IndexOf("CadLinkOptionPolicy.RequireExpectedSourceHash(p.expectedSourceSha256, sourceSha256)", StringComparison.Ordinal);
+            Assert.True(sourceHash >= 0 && sourceHash < source.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal));
+            Assert.Contains("NativeMutationPreflightBoundary.Execute", source);
+            var nativeEntry = source.IndexOf("enterNativeScope();", StringComparison.Ordinal);
+            Assert.True(sourceHash < nativeEntry && nativeEntry < source.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal));
+            Assert.Contains("FileSha256(full), sourceSha256", source);
+            Assert.Contains("[\"autoCorrectAlmostVHLines\"] = options.AutoCorrectAlmostVHLines", source);
+            Assert.Contains("[\"sourceFormat\"] = sourceFormat", source);
+        }
+
+        [Fact]
+        public void CadReadbackIsOptInBoundedAndNeverExplodesOrEditsImports()
+        {
+            var logic = Read("..", "RevitBridge.Logic", "NativeCadGeometry.cs");
+            Assert.Contains("transform.Multiply(instance.Transform)", logic);
+            Assert.Contains("curve.CreateTransformed(transform)", logic);
+            Assert.Contains("NativeDraftingCurveGeometry.Read(transformed)", logic);
+            Assert.Contains("layerName = LayerName(view.Document, item)", logic);
+            Assert.Contains("GraphicsStyleCategory?.Name", logic);
+            Assert.Contains("budget.TryConsume(points.Count)", logic);
+            Assert.Contains("budget.TryConsume(cost)", logic);
+            Assert.Contains("complete = issues.Count == 0 && items.Count > 0", logic);
+            Assert.DoesNotContain("Transaction(", logic);
+            Assert.DoesNotContain("Explode", logic);
+            var handler = Read("..", "RevitBridge.Logic", "Handlers", "ViewOwnedDetailingHandler.cs");
+            Assert.Contains("request.includeCadGeometry == true ? new CadGeometryReadBudget", handler);
+            Assert.Contains("ReadView(doc, view, limit, cadBudget, request.cadElementId, request.cadGeometryOffset)", handler);
+            Assert.Contains("cadGeometryComplete && unreadableIds.Count == 0", handler);
+        }
+
+        [Fact]
+        public void CadPagesKeepWholeCoverageSeparateAndHashEveryNativePrimitiveAgainstExactOwner()
+        {
+            var logic = Read("..", "RevitBridge.Logic", "NativeCadGeometry.cs");
+            Assert.Contains("imported.OwnerViewId != view.Id", logic);
+            Assert.Contains("bool include = page.Observe(cost)", logic);
+            Assert.Contains("Hash(record);", logic);
+            Assert.Contains("if (include) items.Add(record)", logic);
+            Assert.Contains("complete = completePage && offset == 0 && !page.NextOffset.HasValue", logic);
+            Assert.Contains("completeGeometrySnapshotSha256 = completePage", logic);
+            Assert.Contains("stream.FlushFinalBlock()", logic);
+            var handler = Read("..", "RevitBridge.Logic", "Handlers", "ViewOwnedDetailingHandler.cs");
+            Assert.Contains("request.cadGeometryOffset > CadGeometryPageWindow.MaximumPrimitives", handler);
+            Assert.Contains("target.OwnerViewId) != ids[0]", handler);
+            Assert.Contains("NativeCadGeometry.ReadPage(imported, view, cadBudget, cadOffset.Value)", handler);
+        }
+
         private static string Read(params string[] parts)
         {
             for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)

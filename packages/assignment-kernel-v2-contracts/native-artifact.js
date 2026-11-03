@@ -91,3 +91,44 @@ export function nativeDocumentCheckpointResultV2(value) {
     && record(receipt.save_document).same_document === true
     && nativeArtifactResultEffectV2(value) === "applied";
 }
+
+/** Pure request discriminator; it grants no execution or postcondition authority. */
+export function isNativeDocumentCheckpointRequestV2(value) {
+  const op=record(value), input=record(op.input), identity=record(op.request_identity);
+  return input.method==='POST' && input.path==='/revit/save-as'
+    && identity.method===input.method && identity.path===input.path;
+}
+
+// Lexical Windows paths only: no filesystem, process cwd or environment lookup.
+// Drive-relative paths have no portable identity and are deliberately rejected.
+const windowsAbsolute=p=>typeof p==='string' && /^(?:[A-Za-z]:[\\/]|[\\/])/.test(p);
+function windowsPathIdentity(p) {
+  if(!windowsAbsolute(p) || p.length>2000 || /[\u0000-\u001f]/.test(p))return null;
+  const text=p.replace(/\\/g,'/');
+  const prefix=text.match(/^(?:[A-Za-z]:\/|\/\/[^/]+\/[^/]+(?:\/|$)|\/)/)?.[0];
+  if(!prefix)return null;
+  const parts=[];
+  for(const part of text.slice(prefix.length).split('/')) {
+    if(!part || part==='.')continue;
+    if(part==='..')parts.pop();else parts.push(part);
+  }
+  return (prefix.replace(/\/$/,'')+'/'+parts.join('/')).toLowerCase();
+}
+
+/** Match the requested native checkpoint to its retained file/document receipt.
+ * Provenance, currentness, inspection and assignment history remain kernel checks. */
+export function nativeDocumentCheckpointRequestMatchesV2(value, fingerprint) {
+  const op=record(value), input=record(op.input), body=record(input.body), r=record(op.result);
+  if(!hash(fingerprint) || !isNativeDocumentCheckpointRequestV2(op) || !nativeDocumentCheckpointResultV2(r)
+    || body.dryRun===true || typeof body.filePath!=='string' || !body.filePath.length
+    || body.filePath.length>2000 || /[\u0000-\u001f]/.test(body.filePath))return false;
+  const receipt=record(r.native_artifact_receipt), saved=record(receipt.save_document);
+  const before=record(saved.before), after=record(saved.after), output=record(receipt.outputs?.[0]);
+  if(output.stable_read!==true || saved.project_binding_changed || before.project_fingerprint!==fingerprint
+    || after.project_fingerprint!==fingerprint)return false;
+  const actual=windowsPathIdentity(after.path);
+  if(!actual || typeof before.path!=='string')return false;
+  const requested=windowsAbsolute(body.filePath)?body.filePath:
+    /^[A-Za-z]:/.test(body.filePath)?'':before.path.replace(/[\\/][^\\/]*$/,'')+'/'+body.filePath;
+  return windowsPathIdentity(requested)===actual && windowsPathIdentity(output.path)===actual;
+}

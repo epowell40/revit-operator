@@ -20,7 +20,7 @@ public sealed class BuildingSystemsObservationTests
         Assert.Equal(DynamicBuildingSystemsObservationContractV1.ContractSurfaceHash, root.GetProperty("contractSurfaceHash").GetString());
         Assert.False(root.GetProperty("productionExposed").GetBoolean());
         var expectedSdk = DynamicWire.Sha256(DynamicRevitSdkVersion.Value + "\n" + DynamicRevitSdkVersion.GraphSchema +
-            "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" +
+            "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nOptionalAuthenticatedSnapshotCoverageV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" +
             DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash + "\n" + DynamicResultReferenceManifestV1.ManifestHash + "\n" + DynamicAnnotationOperationManifestV1.ManifestHash + "\n" + DynamicMepMutationManifestV1.ManifestHash + "\n" + DynamicExecutionProtocolV1.ContractIdentity);
         Assert.Equal(expectedSdk, DynamicRevitSdkVersion.ManifestHash);
     }
@@ -214,3 +214,4 @@ public sealed class BuildingSystemsObservationTests
     private static DynamicPointV1 Point(double x, double y, double z) => new() { X = x, Y = y, Z = z };
     private static string H(string value) => DynamicWire.Sha256(value);
 }
+

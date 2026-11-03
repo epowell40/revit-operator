@@ -12,6 +12,8 @@ import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 import {openAssignmentKernelChildOperationV2,markAssignmentKernelOperationDispatchStartedV2,settleAssignmentKernelOperationV2} from '../src/assignments/assignment_kernel_v2_execution.js';
+import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
+import {retainWorkPlanInspectionV2} from '../src/assignments/work_plan_inspection.js';
 const fixture=()=>JSON.parse(fs.readFileSync('test/fixtures/parameter-batch-readback-29.json','utf8').replace(/^\uFEFF/,'')).seven;
 
 test('exact retained typed batches require one same-parent native commit and complete provenance',()=>{
@@ -79,12 +81,20 @@ test('complete parameter read plan is bounded and rejects stale, unknown or unau
 });
 
 for(const typed of [false,true])
-for(const variant of ['exact','missing_target','wrong_value','read_failure','read_schema_rejected','paused_after_commit','stale_read'] as const)
+for(const variant of ['exact','missing_target','wrong_value','read_failure','read_schema_rejected','paused_after_commit','stale_read','preserved_schedules','preserved_changed'] as const)
 test(`${typed?'typed native-child':'ordinary'} parameter batch ${variant} receives one complete guarded host read`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-parameter-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try {await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const f=fixture(),ids=f.input.body.changes.map((c:any)=>c.elementId);
+  const preserved=variant.startsWith('preserved_');
+  const f=preserved?JSON.parse(fs.readFileSync('test/fixtures/parameter-schedule-preservation-18.json','utf8')):fixture(),ids=f.input.body.changes.map((c:any)=>c.elementId);
+  const extra=preserved?f.applied.transaction.modified_element_ids.filter((id:number)=>!ids.includes(id)):[];
+  if(preserved){const rows=extra.map((id:number)=>({elementId:id,uniqueId:'native-schedule-'+id,complete:true,scope:'flat_definition_table_parameters',
+   definition:{schema:'operator.schedule_definition_snapshot.v1',complete:true,identity:{id,uniqueId:'native-schedule-'+id,kind:'regular'},definition:{fields:[],table:[],tableStyles:[]}},parameters:[]}));
+   f.applied.schedulePreservation={schema:'operator.annotation_schedule_preservation.v1',complete:true,scheduleIds:extra,before:rows,after:structuredClone(rows)};
+   f.read.schedulePreservation={schema:'operator.annotation_schedule_read.v1',complete:true,requestedElementIds:extra,items:structuredClone(rows)};
+   if(variant==='preserved_changed')f.read.schedulePreservation.items[0].parameters.push({id:1,value:'changed'});
+  }
   const goal=createGoal({title:'Remove the selected leaders',objective:'Remove the selected leaders.',acceptance_criteria:['Requested edits established.'],status:'active',
    related_session_id:'parameter-host-session',created_by:'parameter-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'parameter-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'parameter-host-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
@@ -102,14 +112,14 @@ test(`${typed?'typed native-child':'ordinary'} parameter batch ${variant} receiv
      markAssignmentKernelOperationDispatchStartedV2(lease);
     }
     if(read&&variant==='read_failure')throw Error('native_read_failed');
-    const payload:any=read?structuredClone(f.read):{status:'Applied and Verified',changedElementIds:ids};
+    const payload:any=read?structuredClone(f.read):preserved?structuredClone(f.applied):{status:'Applied and Verified',changedElementIds:ids};
     if(read&&variant==='missing_target')payload.items=payload.items.filter((i:any)=>i.id!==ids.at(-1));
     if(read&&variant==='wrong_value'){payload.items.forEach((i:any)=>delete i.parameterDetails);payload.items.find((i:any)=>i.id===ids[0]).parameters['Leader Line']='1';}
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
     const envelope:any={content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
      operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:read?'none':'applied',native_transaction_state:read?'not_applicable':'committed',authority:'native-host',
-      affected_target_identities:ids.map((id:number)=>'element_id:'+id),result_schema_id:`operator-native/POST:${nativeArgs.path}/v2`,observation_required:true,
+      affected_target_identities:(preserved?f.applied.transaction.affected_element_ids:ids).map((id:number)=>'element_id:'+id),result_schema_id:`operator-native/POST:${nativeArgs.path}/v2`,observation_required:true,
       raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:read&&variant==='stale_read'?'2026-01-01T00:00:00Z':new Date().toISOString()},observation:{raw_payload:payload,
        semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
@@ -137,8 +147,16 @@ test(`${typed?'typed native-child':'ordinary'} parameter batch ${variant} receiv
    assert.equal(validations.filter(a=>a.path==='/revit/get-parameters').length,variant==='paused_after_commit'?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/get-parameters').length,['read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,variant==='exact');
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),variant!=='exact');
+   assert.equal(verified,variant==='exact'||preserved,'Target-value proof is distinct from schedule preservation.');
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),variant!=='exact'&&!preserved);
+   if(preserved){
+    assert.deepEqual(calls.find(c=>c.path==='/revit/get-parameters').body.preservationScheduleIds,extra);
+    const feedback=JSON.parse(codexAssignmentEvidenceContextV2(s));
+    assert.deepEqual(feedback.verified_postconditions[0].checked_preservation_ids,variant==='preserved_schedules'?extra:[]);
+    const readId=apply.verification_operation_ids[0]!;
+    if(variant==='preserved_changed')assert.throws(()=>retainWorkPlanInspectionV2(s,[readId]),/incomplete_native_read/);
+    else assert.deepEqual(retainWorkPlanInspectionV2(s,[readId]).target_ids,[...ids,...extra].map(n=>'element_id:'+n).sort());
+   }
    assert.equal(Object.values(s.operations).filter(o=>o.persistent_effect==='applied').length,1);
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}

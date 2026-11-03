@@ -16,7 +16,17 @@ function displayMatches(wanted:string,raw:unknown,formatted:unknown):boolean {
 }
 /** Must be called only on a fresh authoritative native read admitted by the kernel. */
 export function updatedScheduleCellReadbackMatches(input:unknown,payload:unknown,affected:readonly string[]):boolean {
- const wrapper=object(input),request=object(wrapper.body??input),row=object(payload);
+ const wrapper=object(input),request=object(wrapper.body??input),native=object(payload);
+ // get-parameters returns a flat row for elementId and {items:[row]} for
+ // elementIds. Accept only one unambiguous native row, never search arbitrary
+ // wrappers or select a convenient match from a larger/partial collection.
+ if(native.error||native.ok===false||native.success===false||native.truncated===true||native.itemsComplete===false)return false;
+ let row=native;
+ if(Object.hasOwn(native,'items')){
+  if(native.id!==undefined||!Array.isArray(native.items)||native.items.length!==1)return false;
+  row=object(native.items[0]);
+ }
+ if(row.found===false||row.error||row.ok===false||row.success===false)return false;
  if(typeof request.targetField!=='string'||typeof request.rowField!=='string'||typeof request.rowKey!=='string'
   ||typeof request.value!=='string'||!request.value.trim())return false;
  const targets=affected.filter(x=>/^element_id:[1-9][0-9]*$/.test(x));

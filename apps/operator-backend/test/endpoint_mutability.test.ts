@@ -6,9 +6,24 @@ import {
   conditionalActionPathEffect,
   pathLooksWrite,
   revitRouteEffect,
+  revitRouteCertificationEffect,
   revitRouteEffectWhenBodyUnavailable
 } from "../src/action_path_mutability.js";
 import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
+
+test("native label inspection is a known read across admission, certification and recovery", () => {
+  const route = "/revit/inspect-family-label-styles";
+  const body = { familyDocumentId: "a".repeat(32), labelTypeId: 100, maxStyles: 1 };
+  for (const request of [body, JSON.stringify(body)]) {
+    assert.equal(revitRouteEffect(route, "POST", request), "read");
+    assert.equal(revitRouteCertificationEffect(route, "POST", request), "read");
+    assert.equal(pathLooksWrite(route, request, "POST"), false);
+  }
+  assert.equal(revitRouteEffectWhenBodyUnavailable(route, "POST"), "read");
+  assert.equal(revitRouteEffect("/revit/inspect-family-label-styles-apply", "POST", body), "apply");
+  assert.equal(revitRouteEffect("/revit/set-family-label-style", "POST", { ...body, style: { underline: true } }), "apply");
+  assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/set-family-label-style", "POST"), "apply");
+});
 
 test("scoped duct resize is classified as a write", () => {
   assert.equal(pathLooksWrite("/revit/resize-ductwork-by-scope"), true);

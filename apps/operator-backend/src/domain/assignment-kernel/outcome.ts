@@ -5,6 +5,7 @@ import type { AssignmentInputVariableV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 import { executionFailureOutcomeV2 } from "./progress/execution_failure.js";
+import { verifiedSavedPartialV2 } from "./verified_saved_partial.js";
 
 function requiredInputsKnown(snapshot: AssignmentSnapshotV2): boolean {
   return assignmentInputVariablesV2(snapshot).every((input: AssignmentInputVariableV2) => !input.required
@@ -94,7 +95,7 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   }
   if (evaluations.some((evaluation) => evaluation.status === "partial")) {
     const workFinished = Object.values(snapshot.work_unit_states).every((state) => ["complete", "blocked", "failed", "retained"].includes(state));
-    return workFinished ? "complete_with_issues" : "active";
+    return workFinished || verifiedSavedPartialV2(snapshot) ? "complete_with_issues" : "active";
   }
   if (!evaluations.every((evaluation) => evaluation.status === "pass" || evaluation.status === "not_applicable")) return "active";
 

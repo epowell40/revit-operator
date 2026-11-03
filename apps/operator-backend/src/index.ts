@@ -1,6 +1,8 @@
 import {stopBackgroundWorker} from "./background_worker_lifecycle.js";
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
-import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from "./desktop_response_store.js";
+import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry, retainDesktopContext, readDesktopContext, desktopResponseOwnsContext } from "./desktop_response_store.js";
+import { projectExecutionContinuation } from './assignments/execution_continuation.js';
+import {desktopNativeInteractiveResponseAllowed} from './assignments/desktop_native_tools.js';
 import { normalizeUserAttachments, appendAttachmentsToUserText } from "./attachments/chat_attachments.js";
 import { respondWithInstructionBindings } from "./codex/instruction_binding_http.js";
 import http from "node:http";
@@ -189,7 +191,7 @@ import { requireProviderAssignmentBinding } from "./assignments/provider_binding
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { prepareExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
+import { prepareExternalAssignmentRequest, startExternalAssignmentRun,retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1248,8 +1250,10 @@ const server = http.createServer(async (req, res) => {
       if (!sessionId) return writeJson(res, 400, { error: "session_id is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
       try {
-        const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const current = getCurrentGoalForSession(sessionId);
+        const retained=retainedExternalAssignmentStart(body as Record<string,unknown>,current);
+        if(retained)return writeJson(res,200,{ok:true,goal:current,assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion}});
+        const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
           && current.work_budget?.mode === "sidecar_computer"
@@ -1285,7 +1289,8 @@ const server = http.createServer(async (req, res) => {
           } : {})
         });
       } catch (error) {
-        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        const continuation=(error as {code?:string})?.code==='external_assignment_requires_continuation';
+        return writeJson(res, continuation?409:400, { error: error instanceof Error ? error.message : String(error),...(continuation?{code:'external_assignment_requires_continuation'}:{}) });
       }
     }
 
@@ -1885,9 +1890,23 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/desktop/computer/result") {
       try {
-        const body = await readJson(req, 16_384);
+        const body = await readJson(req, 17_000_000);
         const bound = requireProviderAssignmentBinding(body, "desktop_computer_result");
         if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
+        const contextBinding = { session_id: bound.sessionId, assignment_id: bound.assignmentId,
+          run_id: bound.runId, generation: bound.generation, kernelVersion: bound.kernelVersion };
+        res.setHeader("cache-control", "no-store");
+        if ((body as any).continuation === true || Array.isArray((body as any).continuation_outputs)) {
+          if (bound.kernelVersion !== 2) throw Error('desktop_context_kernel_required');
+          const state = assignmentKernelV2ForBinding(contextBinding)?.snapshot;
+          if (!state) throw Error('desktop_context_binding_required');
+          if ((body as any).continuation === true) return writeJson(res, 200, readDesktopContext(contextBinding, state));
+          // Storage is permitted at a review/Pause boundary. Reading/resuming
+          // remains separately guarded by current canonical controls above.
+          const retained = retainDesktopContext(contextBinding, (body as any).message_id, (body as any).continuation_outputs);
+          return writeJson(res, 200, { status: 'retained', ...retained,
+            execution_continuation: projectExecutionContinuation(state) });
+        }
         const record = readDesktopResponse({ session_id: bound.sessionId, assignment_id: bound.assignmentId,
           run_id: bound.runId, generation: bound.generation, kernelVersion: bound.kernelVersion }, (body as any).message_id);
         res.setHeader("cache-control", "no-store");
@@ -1896,7 +1915,7 @@ const server = http.createServer(async (req, res) => {
         if ((body as any).telemetry_only === true) return writeJson(res, 200, desktopResponseTelemetry(record));
         if (record?.status === "complete" && bound.kernelVersion === 2) {
           const state = assignmentKernelV2ForBinding(record.binding)?.snapshot;
-          if (!desktopResponseContinuationAllowed(state))
+          if (!desktopResponseContinuationAllowed(state)&&!desktopNativeInteractiveResponseAllowed(record.binding,record))
             throw new Error("desktop_response_continuation_not_admitted");
         }
         res.setHeader("cache-control", "no-store");
@@ -1905,6 +1924,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/desktop/computer/respond") {
+      const waiting = new AbortController();
+      const disconnected = () => { if (!res.writableEnded) waiting.abort(); };
+      res.once("close", disconnected);
       try {
         const body = await readJson(req, 30_000_000);
         const bound = requireProviderAssignmentBinding(body, "desktop_computer");
@@ -1914,12 +1936,14 @@ const server = http.createServer(async (req, res) => {
           generation: bound.generation, kernelVersion: bound.kernelVersion
         };
         const response = (body as any).message_id === undefined
-          ? await relayBoundDesktopComputerResponse(body, binding)
+          ? await relayBoundDesktopComputerResponse(body, binding, {signal:waiting.signal})
           : await retainDesktopResponse(binding, (body as any).message_id, body,
-              () => relayBoundDesktopComputerResponse(body, binding), desktopComputerErrorResponse);
+              () => relayBoundDesktopComputerResponse(body, binding, {signal:waiting.signal}), desktopComputerErrorResponse, desktopResponseOwnsContext(body));
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
         return writeJson(res, 500, desktopComputerErrorResponse(err));
+      } finally {
+        res.removeListener("close", disconnected);
       }
     }
 
@@ -3248,7 +3272,8 @@ const server = http.createServer(async (req, res) => {
           note: note || null,
           remember_preference,
           queue_upload,
-          created_at
+          created_at,
+          runtime_diagnostic:parsed.runtime_diagnostic
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -3402,7 +3427,7 @@ const server = http.createServer(async (req, res) => {
                     repo: x.repo
                   });
                 } else if (x.skipped === "duplicate") {
-                  appendNotification(session_id, "feedback.github_issue.duplicate", "Feedback already linked to a GitHub issue.", x);
+                  appendNotification(session_id, "feedback.github_issue.duplicate", `Feedback already linked to GitHub issue #${x.issue_number}.`, x);
                 } else if (!x.skipped) {
                   const text = `GitHub issue creation failed: ${x.error || "unknown error"}`;
                   appendNotification(session_id, "feedback.github_issue.failed", text, x);

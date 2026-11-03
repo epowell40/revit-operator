@@ -1,0 +1,52 @@
+{
+  "at": "2026-10-29T04:19:23.104Z",
+  "route": "/revit/quantify",
+  "body": {
+    "scope": "both",
+    "intent": "count_and_list",
+    "categories": [
+      "OST_ElectricalEquipment",
+      "OST_ElectricalFixtures",
+      "OST_MechanicalEquipment",
+      "OST_GenericModel"
+    ],
+    "group_by": [
+      "Type"
+    ],
+    "room_resolution": false
+  },
+  "status": 403,
+  "wallMs": 655,
+  "payload": {
+    "ok": false,
+    "error": "The requested route or alias is outside the fixed supported product inventory.",
+    "code": "CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED",
+    "retryable": false,
+    "phase": "certification_native_direct_admission",
+    "host_health": "healthy",
+    "opens_circuit": false,
+    "request_dispatched": false,
+    "outcome_unknown": false,
+    "correlation_id": "b864e24fbd5115a6c2bda29fcfdb91a2",
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": null,
+      "attempt_id": null,
+      "run_id": null,
+      "generation": null,
+      "requested_effect": "read",
+      "method": "",
+      "path": "",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": false,
+      "effect_state": "none",
+      "effect_reason": "CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED",
+      "effect_authority": "admission_policy",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2026-10-29T04:19:23.095569+00:00"
+    }
+  }
+}

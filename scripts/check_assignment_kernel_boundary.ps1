@@ -43,7 +43,7 @@ foreach ($file in $domainFiles) {
     # Inventory workload consumes the same pure native wire decoder. Its kernel
     # module still verifies retained bytes, binding, receipts and journal order;
     # this exact consumer registration permits no runtime or transport import.
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts") -contains $relative
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts", "committed_read_refresh.ts", "progress/native_work_progress.ts", "verified_saved_partial.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }

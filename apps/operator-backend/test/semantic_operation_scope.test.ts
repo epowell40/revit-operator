@@ -17,6 +17,7 @@ import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { runWithRequestContext } from "../src/request_context.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { formatCodexRequestEnvelope } from "../src/brains/codex_turn_profile.js";
 
 // Exact causal conditional/protection clauses from the retained disposable-model
 // GUI failure; names, room numbers, provider IDs and workstation paths omitted.
@@ -70,6 +71,42 @@ function apply(snapshot:any) { return openAssignmentKernelOperationV2({snapshot,
   capability_id:"element.update",classified_effect:"apply",arguments:{elementId:42}}); }
 function teammate(snapshot:any) {return buildTeammateTurnContract({user_text:prompt,session_id:snapshot.current_binding.session_id,
   assignment_id:snapshot.current_binding.assignment_id,assignment_run_id:snapshot.current_binding.run_id,assignment_generation:snapshot.current_binding.generation,context:{}});}
+
+test("working-agent prompt retains the bound model-edit scope when saving the project is prohibited",()=>workspace(async()=>{
+  const text="Underline the new equipment tags on the active sheet. Do not save the model.";
+  const snapshot=await prepare(text,decision({...scope("apply",[]),protected_clauses:["Do not save the model."]}));
+  const req={version:"operator.backend.v1" as const,message_id:"request",user_text:text,session_id:snapshot.current_binding.session_id,
+    assignment_id:snapshot.current_binding.assignment_id,assignment_run_id:snapshot.current_binding.run_id,
+    assignment_generation:snapshot.current_binding.generation,context:{revit:{source:{live:true},process_id:42,
+      document:{title:"Disposable",path:"C:/fixture/Disposable.rvt",projectIdentity:{fingerprint:"disposable-model"}}}}};
+  const before=JSON.stringify(getAssignmentKernelSnapshotV2(snapshot.current_binding.assignment_id));
+  const actual=buildTeammateTurnContract(req);
+  assert.equal(actual.no_write,false);assert.equal(actual.write_authorized,true);
+  const displayed=JSON.parse(formatCodexRequestEnvelope(req).split("\n")[1]!);
+  assert.equal(displayed.no_write,actual.no_write);
+  assert.equal(displayed.write_authorized,actual.write_authorized);
+  assert.equal(displayed.user_text_sha256,actual.user_text_sha256);
+  for(const stale of [{session_id:"foreign-session"},{assignment_run_id:"foreign-run"},{assignment_generation:99}]) {
+    const refused=JSON.parse(formatCodexRequestEnvelope({...req,...stale}).split("\n")[1]!);
+    assert.equal(refused.no_write,true,"unmatched binding must not borrow the saved edit scope");
+    assert.equal(refused.write_authorized,false);
+  }
+  assert.equal(JSON.stringify(getAssignmentKernelSnapshotV2(snapshot.current_binding.assignment_id)),before,
+    "prompt projection cannot grant authority, settle effects or change saved task state");
+}));
+
+test("bound prompt projection preserves read-only and unanswered approval restrictions",()=>workspace(async()=>{
+  const clause="Ask for my approval before changing anything.";
+  const text=`Inspect the equipment tags. ${clause}`;
+  const snapshot=await prepare(text,decision({...scope("apply",[{variable_id:"consent",kind:"approval",question:"May I make changes?",source_quote:clause}]),protected_clauses:[clause]}));
+  const req={version:"operator.backend.v1" as const,message_id:"request",user_text:text,session_id:snapshot.current_binding.session_id,
+    assignment_id:snapshot.current_binding.assignment_id,assignment_run_id:snapshot.current_binding.run_id,
+    assignment_generation:snapshot.current_binding.generation,context:{}};
+  const displayed=JSON.parse(formatCodexRequestEnvelope(req).split("\n")[1]!);
+  assert.equal(displayed.write_authorized,false);assert.equal(displayed.ambiguity,"material");
+  assert.deepEqual(displayed.required_user_inputs,["consent"]);
+  assert.deepEqual(getAssignmentKernelSnapshotV2(snapshot.current_binding.assignment_id)!.pending_input_variable_ids,["consent"]);
+}));
 
 test("resource handoff can reach ordinary discovery without inventing a human input gate",()=>workspace(async()=>{
   const text="Update the schedule notes using the project basis. Inspect the available sources and verify supported changes.";
@@ -243,9 +280,11 @@ test("export authority preserves a separate global ban on changing the Revit mod
 }));
 
 test("requested saved-copy checkpoint reaches parent and native child while other changes stay forbidden",async()=>{
-  for(const effect of ["preview","apply"] as const) await workspace(async()=>{
-  const source="Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.";
-  const snapshot=await prepare(source,decision({...scope("apply",[]),model_effect:"read",protected_clauses:["No other model edits or linked-model changes."]}));
+  for(const source of [
+    "Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.",
+    "Create a separate reviewed copy of the currently open Revit model at:\nC:\\fixture\\Delivery Verified.rvt\n\nSave that copy first, without overwriting the original or changing any model/drawing content. Then inspect the existing diagram. Do not perform source extraction, redraw, import or style edits."
+  ]) for(const effect of ["preview","apply"] as const) await workspace(async()=>{
+  const snapshot=await prepare(source,decision({...scope("apply",[]),model_effect:"read",protected_clauses:[source.includes('No other model edits')?"No other model edits or linked-model changes.":"without overwriting the original or changing any model/drawing content."]}));
     const args={method:"POST",path:"/revit/save-as",body:{filePath:"C:\\fixture\\Delivery Verified.rvt",overwrite:false,dryRun:effect==="preview"}};
     const lease=openAssignmentKernelOperationV2({snapshot,controller_request_id:effect,provider_turn_id:"save-turn",capability_id:"revit_call_tool",classified_effect:effect,arguments:args});
     assert.equal(lease.requested_effect,effect);
@@ -274,3 +313,18 @@ test("scope request hashes preserve exact legacy UTF-8 identity and bound-effect
   assert.notEqual(operationScopeRequestHash("line\nend"),operationScopeRequestHash("line\r\nend"));
   assert.notEqual(operationScopeRequestHash("é"),operationScopeRequestHash("e\u0301"));
 });
+
+
+test("ordinary interpreted repeated attribute edits retain scope and the no-save constraint",()=>workspace(async()=>{
+ const request="Adjust the equipment tags on E101 so all the new equipment tags are underlined. Check the result. Do not save the model.";
+ const interpreted={schema:"revit-operator.interpreted-operation-scope/v1",requested_effect:"apply",model_effect:"apply",
+  protected_clauses:["Do not save the model."],prerequisites:[]};
+ // Match ordinary Sidecar intake; the legacy fallback is not the producer of
+ // the retained live failure's authenticated apply scope.
+ await routeConversation(body(request),{interpret:async()=>({value:decision(interpreted)})});
+ const prepared=prepareAssignmentTurn({sessionId:"semantic-scope",messageId:"request",userText:request,toolResults:[],source:"chat",createdBy:null});
+ assert(prepared);const snapshot=getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+ assert.equal(snapshot.spec.requested_effect,"apply");assert.equal(snapshot.spec.work_plan_required,true);
+ assert.equal(snapshot.spec.source_user_request,request);assert.deepEqual(snapshot.spec.interpreted_scope!.scope.protected_clauses,["Do not save the model."]);
+ assert.throws(()=>openAssignmentKernelOperationV2({snapshot,controller_request_id:"first-edit",provider_turn_id:"turn",capability_id:"revit_call_tool",classified_effect:"apply",arguments:{method:"POST",path:"/revit/set-family-label-style",body:{familyDocumentId:"a".repeat(32),labelTypeId:788388,style:{underline:true}}}}),/declare_work_plan_before_apply/);
+}));

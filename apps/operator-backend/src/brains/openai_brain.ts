@@ -18850,7 +18850,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   });
   const certifiedDirectSidecar = isCertifiedSidecarRequest(req);
   lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
-  const turnContract = formatAgentTurnContract(req.user_text, req.context);
+  const turnContract = formatAgentTurnContract(req.user_text, req.context, req);
   if (turnContract) lines.push(turnContract, "");
   lines.push(dynamicProgramProviderPrompt(process.env, !certifiedDirectSidecar), "");
   if (speedSettings.speed_mode) {

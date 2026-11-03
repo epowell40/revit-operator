@@ -27,6 +27,11 @@ test("registered vector summary preserves source context and immutable complete 
  const response=await readRegisteredPdfAttachment("owner",args);assert.equal(response.content.length,1);assert.equal(response.content[0].type,"text");
  const info=JSON.parse((response.content[0] as {text:string}).text);assert.equal(info.mode,"vector");assert.equal(info.source,"detail.pdf");assert.equal(info.page,1);assert.equal(info.sha256,attachment.sha256);
  assert.equal(info.native_write_allowed,false);assert.equal(info.visual_review_established,false);assert.equal(info.native_sheet_identity_established,false);assert.equal(info.source_read_truncated,false);
+ assert.equal(info.native_curve_import_route,'/revit/import-vector-detail');assert.equal(info.native_curve_gate_scope,'individual_Revit_detail_curves_only_not_all_vector_representations');assert.equal(info.supported_linework_alternative.vector_section,'stroke_cad');assert.equal(info.supported_linework_alternative.import_route,'/revit/link-cad');assert.equal(info.supported_linework_alternative.requires_separate_native_authorization,true);assert.equal(info.supported_linework_alternative.whole_drawing_verified,false);
+ assert.equal(info.supported_linework_alternative.style_source_table,'stroke_cad_style_page.items');
+ assert.match(info.supported_linework_alternative.style_closeout_guidance,/graphicsStyleId/);
+ assert.match(info.supported_linework_alternative.style_closeout_guidance,/GraphicsStyleCategory/);
+ assert.match(info.supported_linework_alternative.style_closeout_guidance,/16 operations/);
  assert.equal(info.counts.line_commands,1);assert.equal(info.counts.text_records,1);assert(!("paths" in info));assert(JSON.stringify(info).length<8000);
  const packed=fs.readFileSync(path.join(root,info.plan_artifact.relative_path));
  assert.equal(crypto.createHash("sha256").update(packed).digest("hex"),info.plan_artifact.sha256);
@@ -43,6 +48,25 @@ test("whole records require matching source plan and retain spatial context",asy
  await assert.rejects(result({...request,expected_plan_sha256:undefined}),/summary first/);
  await assert.rejects(result({...request,region:{min_u:0,min_v:0,max_u:.5,max_v:.5}}),/plan changed/);
 });
+test("ordinary registered reader exposes a source-bound compact contour index with strict context and no inferred omissions",async t=>{
+ const root=workspace(t),attachment=upload(),base={attachment_id:attachment.id,mode:'vector',pages:[1]},info=await result(base);
+ const request={...base,vector_section:'contour_index',expected_plan_sha256:info.plan_sha256,vector_limit:100};
+ new McpInputValidator().validate(READ_ATTACHMENT_TOOL.name,request,[READ_ATTACHMENT_TOOL]);
+ const indexed=await result(request),whole=await result({...request,vector_section:'contours'}),record=indexed.record_page.records[0];
+ assert.equal(indexed.sha256,attachment.sha256);assert.equal(indexed.record_page.planSha256,info.plan_sha256);
+ assert.equal(indexed.record_page.total,whole.record_page.total);assert.equal(record.id,whole.record_page.records[0].id);
+ assert.deepEqual(record.commandCounts,{move:1,line:1,close:0,cubic_bezier:0});assert(!('commands' in record));assert(!('omissions' in indexed));
+ assert.deepEqual(indexed.plan_artifact,info.plan_artifact);assert.equal(indexed.native_write_allowed,false);assert.equal(indexed.visual_review_established,false);
+ assert.equal(fs.existsSync(path.join(root,indexed.plan_artifact.relative_path)),true);
+ await assert.rejects(result({...request,expected_plan_sha256:undefined}),/summary first/);
+ await assert.rejects(result({...request,expected_plan_sha256:'0'.repeat(64)}),/plan changed/);
+ await assert.rejects(result({...request,vector_limit:101}),/whole records/);
+ await assert.rejects(result({...request,vector_offset:2}),/offset/);
+ await assert.rejects(result({...request,native_layout:{paperWidthInches:4,viewScale:100}}),/only to native_plan/);
+ await assert.rejects(readRegisteredPdfAttachment('foreign-owner',request),/Attachment|attachment/);
+ assert.match(READ_ATTACHMENT_TOOL.description,/contour_index/);
+});
+
 test("registered native plan is immutable, source-bound and compact while retaining full entities outside context",async t=>{
  const root=workspace(t),attachment=upload(),base={attachment_id:attachment.id,mode:"vector",pages:[1]},summary=await result(base);
  const request={...base,vector_section:"native_plan",expected_plan_sha256:summary.plan_sha256,native_layout:{paperWidthInches:4,viewScale:100,partSize:50}};
@@ -53,6 +77,13 @@ test("registered native plan is immutable, source-bound and compact while retain
  assert.equal(plan.nativePlanSha256,info.native_plan_sha256);assert.equal(plan.sourceSha256,attachment.sha256);assert.equal(plan.sourcePlanSha256,summary.plan_sha256);
  assert.equal(plan.entities.length,2);assert.equal(plan.entities[0].kind,"line");assert.equal(plan.entities[1].text,"Fixture page 1");
  assert.equal(info.native_import_available,false);assert.equal(info.native_import_status,"withheld_pending_live_native_commit_qualification");
+ assert.equal(info.native_annotation_available,true);
+ assert.deepEqual(info.native_annotation_inputs,info.native_import_inputs);
+ const annotations=plan.entities.filter((e:any)=>['text','fill','dot'].includes(e.kind));
+ assert.equal(info.native_annotation_summary.entities,annotations.length);
+ assert.equal(info.native_annotation_summary.parts,Math.ceil(annotations.length/40));
+ assert.equal(info.native_annotation_summary.strokes_included,false);
+ assert.equal(info.native_write_allowed,false,'Prepared source/annotation references are not model authorization.');
  assert.equal(plan.nativeWriteAllowed,false);assert.equal(info.native_write_allowed,false);assert(!("entities" in info));assert(Buffer.byteLength(JSON.stringify(info))<8000);
  assert.deepEqual((await result(request)).native_plan_artifact,ref);
  await assert.rejects(result({...request,vector_limit:1}),/without record paging/);
@@ -100,5 +131,27 @@ test("the actual native-worker attachment boundary binds vector reads to the liv
  await assert.rejects(runtime.readAttachmentForTurn(args,{turnId:"vector-turn",sessionId:"other"}),/binding does not match/);
  const response=await runtime.readAttachmentForTurn(args,{turnId:"vector-turn",sessionId:"owner"}) as {content:Array<{text:string}>};
  assert.equal(JSON.parse(response.content[0].text).mode,"vector");
+ const summary=JSON.parse(response.content[0].text),cadArgs={...args,vector_section:'stroke_cad',expected_plan_sha256:summary.plan_sha256,
+  native_layout:{paperWidthInches:4,viewScale:100,partSize:50}};
+ const indexArgs={...args,vector_section:'contour_index',expected_plan_sha256:summary.plan_sha256};
+ const indexResponse=await runtime.readAttachmentForTurn(indexArgs,{turnId:'vector-turn',sessionId:'owner'}) as {content:Array<{text:string}>};
+ assert.equal(JSON.parse(indexResponse.content[0].text).record_page.section,'contour_index');
+ await assert.rejects(runtime.readAttachmentForTurn(indexArgs,{turnId:'vector-turn',sessionId:'other'}),/binding does not match/);
+ const cadResponse=await runtime.readAttachmentForTurn(cadArgs,{turnId:'vector-turn',sessionId:'owner'}) as {content:Array<{text:string}>};
+ const cad=JSON.parse(cadResponse.content[0].text);assert.equal(cad.stroke_cad_summary.source_strokes,1);
+ assert.equal(cad.stroke_cad_summary.remaining_annotations,1);assert.equal(cad.native_write_allowed,false);
+ assert.equal(cad.cad_style_correction_page.native_authorization_supplied,false);
+ assert.equal(cad.cad_style_correction_page.style_equivalence_established,false);
+ assert.equal(cad.cad_style_correction_page.items.length,cad.stroke_cad_style_page.items.length);
+ for(const [i,style]of cad.stroke_cad_style_page.items.entries()){
+  const correction=cad.cad_style_correction_page.items[i];assert.equal(correction.source_layer,style.layer);
+  assert.deepEqual(correction.body,{action:'set_category_override',lineWeight:style.weight,r:style.color[0],g:style.color[1],b:style.color[2]});
+  assert.equal(correction.requires_unambiguous_native_layer_identity,true);
+  assert(!('categoryName'in correction.body)&&!('viewId'in correction.body),'source cannot invent a native target');
+ }
+ assert.match(cad.cad_import_inputs.expectedSourceSha256,/^[a-f0-9]{64}$/);
+ await assert.rejects(runtime.readAttachmentForTurn(cadArgs,{turnId:'vector-turn',sessionId:'other'}),/binding does not match/);
  runtime.endBackendAuthLease(lease);await assert.rejects(runtime.readAttachmentForTurn(args,{turnId:"vector-turn",sessionId:"owner"}),/not bound/);
+ await assert.rejects(runtime.readAttachmentForTurn(cadArgs,{turnId:'vector-turn',sessionId:'owner'}),/not bound/);
+ await assert.rejects(runtime.readAttachmentForTurn(indexArgs,{turnId:'vector-turn',sessionId:'owner'}),/not bound/);
 });

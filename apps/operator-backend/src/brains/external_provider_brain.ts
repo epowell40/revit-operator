@@ -437,7 +437,7 @@ function loadPersistedToolResultCapsule(sessionId: string): ToolResult[] {
 
 function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
   const currentUserRequest = (req.user_text ?? "").trim();
-  const turnContract = formatAgentTurnContract(currentUserRequest, req.context);
+  const turnContract = formatAgentTurnContract(currentUserRequest, req.context, req);
   const lines: string[] = [
     ...(currentUserRequest
       ? [

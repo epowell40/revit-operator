@@ -51,7 +51,7 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.equal(incapable.reason, "text_note_value_unavailable");
   assert.deepEqual(incapable.required_semantic_outputs, ["text_note.value"]);
   assert.deepEqual(incapable.provided_semantic_outputs,
-    ["element.identity", "element.classification", "element.location", "family.placement"]);
+    ["element.identity", "element.classification", "element.location", "family.placement", "family.loaded_identity"]);
 
   const capable = verificationCapabilityAdmissionV2({
     apply,

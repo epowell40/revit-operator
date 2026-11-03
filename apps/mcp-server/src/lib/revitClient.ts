@@ -145,8 +145,32 @@ export function revitBridgeFailurePayload(error: RevitBridgeCallError): RevitBri
     path: error.path,
     ...(error.status === undefined ? {} : { status: error.status }),
     ...(error.correlation_id ? { correlation_id: error.correlation_id } : {}),
-    error: error.message
+    error: error.message + rejectedReadCorrectionHint(error)
   };
+}
+
+/** Model-facing explanation only: never dispatch, retry, settle or grant authority.
+ * A failed read graph must not be mistaken for an uncertain model mutation.
+ * Require both wrapper flags and the matching native no-effect rejection;
+ * missing or contradictory settlement keeps the original error unchanged. */
+function rejectedReadCorrectionHint(error: RevitBridgeCallError): string {
+  const d = error.bridgeDetails;
+  const s = d?.canonical_attempt_settlement as Record<string, unknown> | undefined;
+  if (!(error instanceof RevitBridgeCallError) || error.code !== "revit_bridge_http_error"
+    || error.status !== 400 || error.method !== "POST" || error.path !== "/revit/native-api-ops"
+    || error.retryable !== false || error.request_dispatched !== false || error.outcome_unknown !== false
+    || d?.code !== "invalid_revit_tool_request" || d.phase !== "request_validation"
+    || d.request_dispatched !== false || d.outcome_unknown !== false || d.retryable !== false
+    || d.reconciliation_required === true || d.opens_circuit === true
+    || !s || s.schema !== "revit-operator.native-attempt-settlement.v1"
+    || s.method !== error.method || s.path !== error.path || s.requested_effect !== "read"
+    || s.request_dispatched !== false || s.effect_state !== "none" || s.effect_authority !== "schema_validator") return "";
+  const collector = typeof d.error === "string" && d.error.includes("The collector does not have a filter applied.")
+    ? " For FilteredElementCollector, apply a supported filter before extraction; inspect the live member contract and keep the cohort bounded."
+    : "";
+  return "\nRead-only request correction (diagnostic, not authorization or verification): the native host rejected this request with no persistent effect. "
+    + "Correct the documented read precondition before resubmitting; do not retry the unchanged invalid request."
+    + collector + " A corrected read stays subject to current scope, control and admission. Unknown effects, uncertain mutations, required-input stops and explicit user stops must not be bypassed.";
 }
 
 function stringField(details: RevitBridgeErrorDetails | undefined, name: string): string | undefined {

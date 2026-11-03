@@ -13,7 +13,9 @@ namespace RevitBridge.Common.Tests
         private class Geometry { public object? Owner { get; set; } }
         private class Curve : Geometry { }
         private sealed class Line : Curve { }
+        private sealed class Spline : Curve { }
         private sealed class Solid : Geometry { }
+        private sealed class SketchPlane { public object? Owner { get; set; } }
         private readonly Dictionary<string, NativeGraphArgument> _values = new Dictionary<string, NativeGraphArgument>();
         private NativeGraphArgument Resolve(string json, Type type, OperatorNativeGraphArguments? resolver = null)
         {
@@ -22,7 +24,8 @@ namespace RevitBridge.Common.Tests
                 id => _values.TryGetValue(id, out var value) ? value : null,
                 (literal, target) => target == typeof(double) ? (object)literal.GetDouble()
                     : target == typeof(string) ? literal.GetString() : throw new InvalidOperationException("Unsupported literal."),
-                target => typeof(Geometry).IsAssignableFrom(target), intrinsicOwner: value => (value as Geometry)?.Owner);
+                target => typeof(Geometry).IsAssignableFrom(target) || target == typeof(SketchPlane),
+                intrinsicOwner: value => value is SketchPlane plane ? plane.Owner : (value as Geometry)?.Owner);
         }
 
         [Fact]
@@ -36,6 +39,23 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(new Curve[] { first, second }, Assert.IsAssignableFrom<IList<Curve>>(result.Value));
             Assert.Equal(new[] { active, foreign }, result.Owners);
             Assert.Throws<InvalidOperationException>(() => OperatorNativeGraphArguments.RequireActiveOwners(result.Owners, active, ReferenceEquals));
+        }
+
+        [Fact]
+        public void CollectionInterfaceKeepsTypedReferencesOwnershipAndItemBounds()
+        {
+            var active = new object(); var foreign = new object();
+            var first = new Line(); var second = new Line();
+            _values["first"] = new NativeGraphArgument(first, new[] { active });
+            _values["second"] = new NativeGraphArgument(second, new[] { foreign });
+            var result = Resolve("[{\"$ref\":\"first\"},{\"$ref\":\"second\"}]", typeof(ICollection<Curve>));
+            Assert.Equal(new Curve[] { first, second }, Assert.IsAssignableFrom<ICollection<Curve>>(result.Value));
+            Assert.Throws<InvalidOperationException>(() => OperatorNativeGraphArguments.RequireActiveOwners(result.Owners, active, ReferenceEquals));
+            _values["overflow"] = new NativeGraphArgument(Enumerable.Range(0, 65).Select(_ => new Line()).ToList());
+            Assert.Throws<InvalidOperationException>(() => Resolve("{\"$ref\":\"overflow\"}", typeof(ICollection<Curve>)));
+            Assert.Throws<InvalidOperationException>(() => Resolve("[{\"fake\":true}]", typeof(ICollection<Curve>)));
+            var literal = Resolve("[1,2]", typeof(ICollection<double>));
+            Assert.Equal(new[] { 1d, 2d }, Assert.IsAssignableFrom<ICollection<double>>(literal.Value));
         }
 
         [Fact]
@@ -89,6 +109,73 @@ namespace RevitBridge.Common.Tests
         {
             var solid = new Solid(); _values["solid"] = new NativeGraphArgument(solid);
             Assert.Same(solid, Assert.IsType<List<Geometry>>(Resolve("[{\"$ref\":\"solid\"}]", typeof(IList<Geometry>)).Value)[0]);
+        }
+
+        [Fact]
+        public void TypedSplineArgumentPreservesActualTypeAndForeignOwnership()
+        {
+            var active = new object(); var foreign = new object();
+            var spline = new Spline();
+            _values["spline"] = new NativeGraphArgument(spline, new[] { foreign });
+            var argument = Resolve("{\"$ref\":\"spline\"}", typeof(Spline));
+            Assert.Same(spline, argument.Value);
+            Assert.Throws<InvalidOperationException>(() => OperatorNativeGraphArguments.RequireActiveOwners(argument.Owners, active, ReferenceEquals));
+            _values["line"] = new NativeGraphArgument(new Line(), new[] { active });
+            Assert.Throws<InvalidOperationException>(() => Resolve("{\"$ref\":\"line\"}", typeof(Spline)));
+            Assert.Throws<InvalidOperationException>(() => Resolve("{\"points\":[[0,0,0],[1,0,0]]}", typeof(Spline)));
+        }
+
+        [Fact]
+        public void SplineSignaturesRequireExactReviewedNativeTypeNames()
+        {
+            const string ns = "Autodesk.Revit.DB.";
+            Assert.True(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "HermiteSpline"));
+            Assert.True(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "NurbSpline"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "NurbSplineOptions"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType("Untrusted.Autodesk.Revit.DB.NurbSpline"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsDetachedFactory(ns + "NurbSpline", "Create", true, ns + "NurbSpline", ns + "HermiteSpline"));
+        }
+
+        [Fact]
+        public void SketchPlaneUsesExactReferenceOnlyAdmissionAndNeverBecomesADetachedFactory()
+        {
+            const string ns = "Autodesk.Revit.DB.";
+            Assert.True(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "SketchPlane"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "SketchPlaneOptions"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType("Untrusted." + ns + "SketchPlane"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsReferenceOnlyType(ns + "Plane"));
+            Assert.False(OperatorNativeGeometryGraphPolicy.IsDetachedFactory(ns + "SketchPlane", "Create", true,
+                ns + "SketchPlane", ns + "Document", ns + "Plane"));
+        }
+
+        [Fact]
+        public void SketchPlaneReferenceRetainsActualDocumentOwnerAndRejectsForeignBorrowing()
+        {
+            var active = new object(); var foreign = new object();
+            var plane = new SketchPlane { Owner = active };
+            _values["plane"] = new NativeGraphArgument(plane, new[] { active });
+            var argument = Resolve("{\"$ref\":\"plane\"}", typeof(SketchPlane));
+            Assert.Same(plane, argument.Value);
+            OperatorNativeGraphArguments.RequireActiveOwners(argument.Owners, active, ReferenceEquals);
+            _values["borrowed"] = new NativeGraphArgument(new SketchPlane { Owner = foreign }, new[] { active });
+            var borrowed = Resolve("{\"$ref\":\"borrowed\"}", typeof(SketchPlane));
+            Assert.Equal(new[] { active, foreign }, borrowed.Owners);
+            Assert.Throws<InvalidOperationException>(() => OperatorNativeGraphArguments.RequireActiveOwners(borrowed.Owners, active, ReferenceEquals));
+        }
+
+        [Theory]
+        [InlineData("910")]
+        [InlineData("null")]
+        [InlineData("{\"elementId\":910}")]
+        [InlineData("{\"$ref\":\"empty\"}")]
+        [InlineData("{\"$ref\":\"line\"}")]
+        [InlineData("{\"$ref\":\"plane\",\"elementId\":910}")]
+        public void SketchPlaneCannotBeForgedFromAnIdNullOrWrongRuntimeReference(string json)
+        {
+            _values["plane"] = new NativeGraphArgument(new SketchPlane());
+            _values["empty"] = new NativeGraphArgument(null);
+            _values["line"] = new NativeGraphArgument(new Line());
+            Assert.Throws<InvalidOperationException>(() => Resolve(json, typeof(SketchPlane)));
         }
 
         [Theory]
@@ -196,6 +283,9 @@ namespace RevitBridge.Common.Tests
             var source = ReadGatewaySource();
             Assert.Contains("=> resolver.Resolve(value, targetType", source);
             Assert.Contains("OperatorNativeGraphArguments.RequireActiveOwners", source);
+            Assert.Contains("OperatorNativeDocumentIdBaseline.Capture(ids.Select(ElementIdCompat.GetValue)", source);
+            Assert.Contains("SameDocument(element.Document, document)", source);
+            Assert.DoesNotContain("new HashSet<long>(ids.Select(ElementIdCompat.GetValue).Where(id => id > 0))", source);
             Assert.Contains("OperatorNativeGeometryGraphPolicy.IsDetachedFactory", source);
             Assert.Contains("graph_signature_supported = d.GraphCallable", source);
             Assert.Contains("IsAllowed(descriptor, out var reason, graphArguments: true)) throw new InvalidOperationException($\"Native API operation blocked:", source);

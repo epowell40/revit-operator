@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:ac06f351b6e1932000821c6abb2580ec9712a511f08e7da7155f97e678663cec";
+        public const string InventoryHash = "sha256:1c95a1885e8e4bb975b8f2703c8b0e765aca4f12fea582eb6690951ea8c1e51a";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -31,6 +31,7 @@ namespace RevitBridge.Common
             "POST /revit/create-dimension",
             "POST /revit/create-drafting-view",
             "POST /revit/create-duct",
+            "POST /revit/create-family-from-template",
             "POST /revit/create-family-instance",
             "POST /revit/create-filled-region",
             "POST /revit/create-mep-route",
@@ -65,11 +66,13 @@ namespace RevitBridge.Common
             "POST /revit/get-titleblock-info",
             "POST /revit/import-drawing-spec",
             "POST /revit/import-excel-output",
+            "POST /revit/import-vector-annotations",
             "POST /revit/inspect-drawing-spec",
             "POST /revit/inspect-excel-import",
             "POST /revit/inspect-excel-source",
             "POST /revit/inspect-exported-files",
             "POST /revit/inspect-family-content",
+            "POST /revit/inspect-family-label-styles",
             "POST /revit/inspect-vector-detail",
             "POST /revit/link-cad",
             "POST /revit/linked-room-boundaries",
@@ -90,11 +93,13 @@ namespace RevitBridge.Common
             "POST /revit/open-family-doc",
             "POST /revit/open-model",
             "POST /revit/place-families",
+            "POST /revit/place-mep-accessory-interactively",
             "POST /revit/place-view",
             "POST /revit/plan-family-evolution",
             "POST /revit/print",
             "POST /revit/print-sets",
             "POST /revit/project-parameters",
+            "POST /revit/quantify",
             "POST /revit/query",
             "POST /revit/read-family-evolution",
             "POST /revit/replace-text-note",
@@ -106,6 +111,7 @@ namespace RevitBridge.Common
             "POST /revit/save-as",
             "POST /revit/save-family-doc",
             "POST /revit/schedules",
+            "POST /revit/set-family-label-style",
             "POST /revit/set-parameter",
             "POST /revit/set-selection",
             "POST /revit/set-text-note-text",
@@ -141,6 +147,9 @@ namespace RevitBridge.Common
             "POST /revit/dynamic-runtime/mep-result-apply-v1",
             "POST /revit/dynamic-runtime/mep-result-authorize-v1",
             "POST /revit/dynamic-runtime/mep-result-preview-v1",
+            "POST /revit/dynamic-runtime/native-program-apply-v1",
+            "POST /revit/dynamic-runtime/native-program-prepare-v1",
+            "POST /revit/dynamic-runtime/native-program-read-v1",
             "POST /revit/dynamic-runtime/observe-building-systems-v1",
             "POST /revit/dynamic-runtime/observe-v1",
             "POST /revit/dynamic-runtime/preview",

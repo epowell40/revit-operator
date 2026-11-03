@@ -11,6 +11,9 @@ namespace RevitBridge.Common
         {
             error = "";
             if (body.ValueKind != JsonValueKind.Object) { error = "get-connectors body must be an object."; return false; }
+            if (!NativeInteractiveAccessoryInspectionPolicy.TryValidate(body, out error)) return false;
+            if (body.TryGetProperty("includeNativePlacementState", out var placement) && placement.ValueKind == JsonValueKind.True) return true;
+            if (!TeeTakeoffInspectionPolicy.TryValidate(body, out error)) return false;
             if (!body.TryGetProperty("includeVerificationParameters", out var enabled)) return true;
             if (enabled.ValueKind != JsonValueKind.True && enabled.ValueKind != JsonValueKind.False)
             { error = "includeVerificationParameters must be a boolean."; return false; }

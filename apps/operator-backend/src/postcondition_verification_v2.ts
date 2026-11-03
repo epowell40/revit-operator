@@ -11,6 +11,7 @@ import { elementTypeSatisfiedV2 } from './verification/element_type_postconditio
 import { nativeElementBooleanReadbackV1 } from './verification/native_element_property_readback_v1.js';
 import { scheduleFilterExpectedValuesV2, scheduleFilterObservedValuesV2 } from './verification/schedule_filter_postcondition_v2.js';
 import {isNativePhaseFilterEditV2}from './verification/native_phase_filter_v2.js';
+import {familyLabelStyleSatisfiedV2} from './verification/family_label_style_v2.js';
 /**
  * Deterministic semantic comparison shared by the live teammate controller and
  * Assignment Kernel V2 settlement/recovery. The comparison intentionally uses
@@ -21,7 +22,7 @@ import {isNativePhaseFilterEditV2}from './verification/native_phase_filter_v2.js
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { savedDocumentPostconditionV2 } from './verification/saved_document_postcondition_v2.js';
-import { visibilityExpectedValuesV2, visibilityObservedValuesV2, isVisibilityPhasingEditV2, visibilityPhasingReadbackMatchesV2 } from "./verification/visibility_view_contract_v2.js";
+import { visibilityExpectedValuesV2, visibilityObservedValuesV2, isVisibilityPhasingEditV2, visibilityPhasingReadbackMatchesV2, isVisibilityTemplateEditV2, visibilityTemplateReadbackMatchesV2 } from "./verification/visibility_view_contract_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
 import {
   isExcludedEvidenceContainerV2,
@@ -612,6 +613,8 @@ export function postconditionSatisfiedByPayloadV2(
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
   const operationPath = operationContractPath(applyInput, contract);
+  if (operationPath === '/revit/set-family-label-style')
+    return familyLabelStyleSatisfiedV2(applyInput, contract.verification_input, structuredValue(verificationPayload), contract.affected_target_identities ?? []);
   // Binding creation needs retained native identity, full scope and a separate
   // read. Matching a name/value in an echoed request is never sufficient.
   if (operationPath === '/revit/import-drawing-spec') return false;
@@ -626,6 +629,8 @@ export function postconditionSatisfiedByPayloadV2(
   if (operationPath === '/revit/native-api-mutation-ops' && isNativePhaseFilterEditV2(applyInput)) return false;
   if(operationPath==='/revit/visibility'&&isVisibilityPhasingEditV2(applyInput))
     return visibilityPhasingReadbackMatchesV2(applyInput,verificationPayload,contract.verification_input);
+  if(operationPath==='/revit/visibility'&&isVisibilityTemplateEditV2(applyInput))
+    return visibilityTemplateReadbackMatchesV2(applyInput,verificationPayload,contract.verification_input,contract.affected_target_identities??[]);
   if (operationPath === '/revit/save-as')
     return savedDocumentPostconditionV2(applyInput, contract.native_artifact_receipt, structuredValue(verificationPayload), contract.verification_input);
   if (operationPath === "/revit/change-element-type")

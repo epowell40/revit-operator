@@ -1,0 +1,116 @@
+{
+  "basis": "Retained397three failed declaration topologies, source prose removed; independent strict investigation is not a dependent edit inspection.",
+  "schema": "revit-operator.work-plan-dependency-rejection-fixture.v1",
+  "domain_guidance": "Inspections must name edit items unless they are independent advisory reads; other dependencies must name existing distinct prerequisites.",
+  "cases": [
+    {
+      "action": "declare",
+      "items": [
+        {
+          "itemId": "m102-controls-evidence",
+          "kind": "inspection",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-correction",
+          "kind": "edit",
+          "dependsOn": [
+            "m102-controls-evidence"
+          ],
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-save",
+          "kind": "edit",
+          "dependsOn": [
+            "m102-controls-correction"
+          ],
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-owner-visual",
+          "kind": "inspection",
+          "dependsOn": [
+            "m102-controls-correction"
+          ],
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        }
+      ],
+      "assumptions": [
+        "Pre-change discovery is not a verified completed edit."
+      ]
+    },
+    {
+      "action": "declare",
+      "items": [
+        {
+          "itemId": "m102-controls-evidence",
+          "kind": "inspection",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-correction",
+          "kind": "edit",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-save",
+          "kind": "edit",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-owner-visual",
+          "kind": "inspection",
+          "dependsOn": [
+            "m102-controls-correction",
+            "m102-controls-save"
+          ],
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        }
+      ],
+      "assumptions": [
+        "Pre-change discovery is not a verified completed edit."
+      ]
+    },
+    {
+      "action": "declare",
+      "items": [
+        {
+          "itemId": "m102-controls-evidence",
+          "kind": "inspection",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-correction",
+          "kind": "edit",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-save",
+          "kind": "edit",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        },
+        {
+          "itemId": "m102-controls-owner-visual",
+          "kind": "inspection",
+          "description": "Investigate or correct the requested drawing scope, as permitted by current evidence.",
+          "sourceBasis": "Original marked drawing and current project evidence."
+        }
+      ],
+      "assumptions": [
+        "Pre-change discovery is not a verified completed edit."
+      ]
+    }
+  ]
+}

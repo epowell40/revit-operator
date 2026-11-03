@@ -11,14 +11,16 @@ internal sealed class TaskWorkspace : IDisposable
     private static readonly TimeSpan MaximumRetention = TimeSpan.FromHours(24);
 
     private readonly FileStream _activeLease;
+    private readonly RuntimeImageLease _runtimeLease;
 
-    private TaskWorkspace(string root, string runtimeDirectory, string scratchDirectory, RuntimeImage runtimeImage, FileStream activeLease)
+    private TaskWorkspace(string root, string runtimeDirectory, string scratchDirectory, RuntimeImage runtimeImage, FileStream activeLease, RuntimeImageLease runtimeLease)
     {
         Root = root;
         RuntimeDirectory = runtimeDirectory;
         ScratchDirectory = scratchDirectory;
         RuntimeImage = runtimeImage;
         _activeLease = activeLease;
+        _runtimeLease = runtimeLease;
     }
 
     public string Root { get; }
@@ -26,18 +28,22 @@ internal sealed class TaskWorkspace : IDisposable
     public string ScratchDirectory { get; }
     public RuntimeImage RuntimeImage { get; }
 
-    public static TaskWorkspace Create(string evidencePath, string lane, string runtimeSourceDirectory)
+    public static TaskWorkspace Create(string evidencePath, string lane, string runtimeSourceDirectory,
+        IReadOnlyList<NativeReferenceSource>? nativeReferences = null)
     {
-        if (string.IsNullOrWhiteSpace(lane) || lane.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || lane.Contains(Path.DirectorySeparatorChar) || lane.Contains(Path.AltDirectorySeparatorChar))
+        if (string.IsNullOrWhiteSpace(lane) || lane.Length > 64 || lane == "." || lane == ".." || lane.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || lane.Contains(Path.DirectorySeparatorChar) || lane.Contains(Path.AltDirectorySeparatorChar))
             throw new ArgumentException("Task workspace lane must be a single safe path component.", nameof(lane));
 
         var evidenceDirectory = Path.GetDirectoryName(Path.GetFullPath(evidencePath))
             ?? throw new InvalidOperationException("Evidence path has no parent directory.");
         ReparsePointGuard.EnsureDirectoryExistsDirect(evidenceDirectory);
-        var laneRoot = Path.Combine(evidenceDirectory, lane);
-        Directory.CreateDirectory(laneRoot);
-        ReparsePointGuard.EnsureExistingPathIsDirect(laneRoot);
-        TaskRetention.Prune(laneRoot, MaximumRetention, MaximumRetainedTasks - 1, DateTimeOffset.UtcNow);
+        var laneRoot = LaunchableLaneRoot(evidenceDirectory, lane);
+        ReparsePointGuard.EnsureDirectoryExistsDirect(laneRoot);
+        var retained = TaskRetention.Prune(laneRoot, MaximumRetention, MaximumRetainedTasks - 1, DateTimeOffset.UtcNow);
+        if (retained.Bytes > 256L * 1024 * 1024 || retained.Entries >= MaximumRetainedTasks)
+            throw new IOException("Protected dynamic tasks exceed the execution workspace retention budget.");
+        if (new DriveInfo(Path.GetPathRoot(laneRoot)!).AvailableFreeSpace < RuntimeImagePool.MinimumFreeBytes)
+            throw new IOException("Dynamic runtime disk headroom is below the task reserve.");
 
         var root = Path.Combine(laneRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -46,21 +52,58 @@ internal sealed class TaskWorkspace : IDisposable
         {
             var scratch = Path.Combine(root, "scratch");
             Directory.CreateDirectory(scratch);
-            var runtime = RuntimeImage.Stage(runtimeSourceDirectory, root);
-            return new TaskWorkspace(root, runtime.Directory, scratch, runtime, activeLease);
+            var runtimeLease = RuntimeImagePool.Acquire(Path.Combine(Path.GetDirectoryName(laneRoot)!, "runtime-images"), runtimeSourceDirectory, nativeReferences);
+            var runtime = runtimeLease.Image;
+            return new TaskWorkspace(root, runtime.Directory, scratch, runtime, activeLease, runtimeLease);
         }
         catch
         {
             activeLease.Dispose();
+            try { TaskRetention.SafeDeleteTree(root); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { Console.Error.WriteLine("dynamic_task_cleanup_pending: " + error.GetType().Name); }
             throw;
         }
+    }
+
+    // CreateProcess/apphost startup cannot reliably launch the staged worker at
+    // extended-length paths, even though .NET can copy and hash those files.
+    // Keep evidence at its requested path; shorten only disposable execution
+    // storage. No junction, environment permission change, or sandbox fallback.
+    internal static string LaunchableLaneRoot(string evidenceDirectory, string lane)
+    {
+        static bool Fits(string path) => Path.Combine(path, new string('0', 32), "runtime-image", "DynamicRevitWorker.exe").Length < 260;
+        var local = ResolveLocalApplicationData(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetEnvironmentVariable("LOCALAPPDATA"));
+        var shortened = Path.Combine(local, "RevitOperator", "DynamicTasks", "v2", lane);
+        if (!Fits(shortened)) throw new PathTooLongException("The per-user worker workspace cannot fit the Windows process launch path bound.");
+        return shortened;
+    }
+
+    internal static string ResolveLocalApplicationData(string knownFolder, string? inheritedLocalAppData)
+    {
+        // Authentication launchers can redirect USERPROFILE without creating its
+        // AppData folders. Windows then returns an empty known-folder value.
+        // Use the trusted launcher's inherited LOCALAPPDATA, never generated code,
+        // a task argument, a guessed profile suffix, or an alternate sandbox mode.
+        var local = string.IsNullOrWhiteSpace(knownFolder) ? inheritedLocalAppData : knownFolder;
+        if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local) ||
+            local.StartsWith(@"\\", StringComparison.Ordinal) || !Directory.Exists(local))
+            throw new InvalidOperationException("A direct existing local application-data path is required for the bounded worker workspace.");
+        ReparsePointGuard.EnsureExistingPathIsDirect(local);
+        return Path.GetFullPath(local);
     }
 
     public void Dispose()
     {
         _activeLease.Dispose();
-        var marker = Path.Combine(Root, ".active");
-        if (File.Exists(marker)) File.Delete(marker);
+        _runtimeLease.Dispose();
+        // Result/evidence files already live outside execution storage. This
+        // finally path runs after success, failure, cancellation and timeout.
+        try { if (Directory.Exists(Root)) TaskRetention.SafeDeleteTree(Root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { Console.Error.WriteLine("dynamic_task_cleanup_pending: " + error.GetType().Name); }
     }
 }
 
@@ -87,12 +130,21 @@ internal sealed class RuntimeImage
         !string.Equals(file.RelativePath, "DynamicRevitWorker.exe", StringComparison.OrdinalIgnoreCase)
         && !string.Equals(file.RelativePath, "DynamicRevitSdk.dll", StringComparison.OrdinalIgnoreCase)));
 
-    public static RuntimeImage Stage(string sourceDirectory, string taskRoot)
+    public static RuntimeImage Stage(string sourceDirectory, string taskRoot,
+        IReadOnlyList<NativeReferenceSource>? nativeReferences = null)
     {
         var source = Path.GetFullPath(sourceDirectory);
         var root = Path.GetFullPath(taskRoot);
         ReparsePointGuard.EnsureExistingPathIsDirect(source);
         ReparsePointGuard.EnsureExistingPathIsDirect(root);
+
+        // The reference overlay changes the package identity. Compare the staged
+        // image with the complete base plus the exact trusted target bytes; never
+        // omit the overlay from the existing launch/admission package hash.
+        var expectedNativeIdentity = nativeReferences == null ? null :
+            DynamicRuntimePackageDirectoryIdentity.ComputeWithNativeTarget2024(source,
+                DynamicRuntimePackageDirectoryIdentity.Compute(source),
+                nativeReferences.ToDictionary(reference => reference.Name, reference => reference.SourcePath, StringComparer.Ordinal));
 
         var sourceFiles = EnumerateRuntimeFiles(source).ToArray();
         if (!sourceFiles.Any(file => string.Equals(file.RelativePath, "DynamicRevitWorker.exe", StringComparison.OrdinalIgnoreCase)))
@@ -114,6 +166,7 @@ internal sealed class RuntimeImage
             ReparsePointGuard.EnsureNotReparsePoint(target);
         }
 
+        if (nativeReferences != null) NativeReferenceStaging.Stage(destination, nativeReferences);
         var files = ReadManifest(destination);
         ValidateBounds(files.Select(file => file.Length));
         foreach (var file in files)
@@ -123,9 +176,20 @@ internal sealed class RuntimeImage
         }
 
         var identity = DynamicRuntimePackageDirectoryIdentity.Compute(destination);
+        if (expectedNativeIdentity != null && identity != expectedNativeIdentity)
+            throw new InvalidOperationException("Staged native compiler image differs from the observed base package and target references.");
         var manifestPath = Path.Combine(root, "runtime-image.manifest.json");
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(new { schema = "dynamic-revit-runtime-image/v1", identity, files }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }), new UTF8Encoding(false));
         return new RuntimeImage(destination, files, identity);
+    }
+
+    internal static RuntimeImage OpenExisting(string entry, string expectedIdentity)
+    {
+        var directory = Path.Combine(entry, "runtime-image");
+        ReparsePointGuard.EnsureExistingPathIsDirect(directory);
+        var image = new RuntimeImage(directory, ReadManifest(directory), expectedIdentity);
+        image.VerifyBeforeLaunch();
+        return image;
     }
 
     public string VerifyBeforeLaunch()
@@ -277,7 +341,15 @@ internal static class ReparsePointGuard
 
 internal static class TaskRetention
 {
-    public static void Prune(string laneRoot, TimeSpan maximumAge, int maximumEntries, DateTimeOffset now)
+    internal static long DirectoryBytes(string root)
+    {
+        ReparsePointGuard.EnsureExistingPathIsDirect(root);
+        long bytes = 0;
+        foreach (var file in Directory.EnumerateFiles(root)) { ReparsePointGuard.EnsureNotReparsePoint(file); bytes = checked(bytes + new FileInfo(file).Length); }
+        foreach (var directory in Directory.EnumerateDirectories(root)) bytes = checked(bytes + DirectoryBytes(directory));
+        return bytes;
+    }
+    public static (long Bytes, int Entries) Prune(string laneRoot, TimeSpan maximumAge, int maximumEntries, DateTimeOffset now)
     {
         if (maximumAge <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(maximumAge));
         if (maximumEntries < 0) throw new ArgumentOutOfRangeException(nameof(maximumEntries));
@@ -288,12 +360,16 @@ internal static class TaskRetention
             .Where(directory => directory.Name.Length == 32 && directory.Name.All(Uri.IsHexDigit))
             .OrderByDescending(directory => directory.CreationTimeUtc)
             .ToArray();
+        long retainedBytes = 0; int retainedEntries = 0;
         for (var index = 0; index < candidates.Length; index++)
         {
             var candidate = candidates[index];
             var expired = now.UtcDateTime - candidate.CreationTimeUtc > maximumAge;
-            if ((expired || index >= maximumEntries) && CanAcquireForCleanup(candidate.FullName)) SafeDeleteTree(candidate.FullName);
+            var bytes = DirectoryBytes(candidate.FullName);
+            if (!File.Exists(Path.Combine(candidate.FullName, ".retain")) && (expired || index >= maximumEntries || retainedBytes + bytes > 256L * 1024 * 1024) && CanAcquireForCleanup(candidate.FullName)) SafeDeleteTree(candidate.FullName);
+            else { retainedBytes = checked(retainedBytes + bytes); retainedEntries++; }
         }
+        return (retainedBytes, retainedEntries);
     }
 
     private static bool CanAcquireForCleanup(string path)

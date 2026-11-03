@@ -15,6 +15,7 @@ import { committedRegularSchedulePresentationReadbackPlanV2, regularSchedulePres
 import { postconditionSatisfiedByPayloadV2 } from '../src/postcondition_verification_v2.js';
 import {rowFixture}from './fixtures/schedule-row-height-synthetic.js';
 import {codexAssignmentEvidenceContextV2}from '../src/brains/codex_assignment_evidence.js';
+import {desktopAssignmentFeedbackInputV2} from '../src/desktop_assignment_feedback.js';
 import { operationTargetSelectorV2, verificationCapabilityAdmissionV2 } from '../src/verification/verification_capability_admission_v2.js';
 
 // Synthetic contract neighbors. The exact retained83 read failure remains in
@@ -58,12 +59,23 @@ test('mixed edits, partial orders and unsafe IDs cannot fall into generic verifi
  assert.deepEqual(operationTargetSelectorV2({operation:apply,value:f.applied}).principal_target_tokens,['id:41','scheduleid:41']);
 });
 // Ordinary dynamic-tool pipeline with durable evidence, not an external grader.
-for(const variant of ['exact','row_heights','row_height_mismatch','field_formats','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
+for(const variant of ['exact','row_heights','row_height_mismatch','field_formats','width_content_exact','width_content_mismatch','width_content_missing','width_content_legacy','wrong_style','partial','wrong_order','wrong_target','unretained_apply','wrong_digest','read_failure','read_schema_rejected','paused_after_commit','wide_exact','wide_self','wide_changed','wide_unowned'] as const)
 test(`ordinary native presentation edit ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-presentation-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try { await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const fixture85:any=variant.startsWith('row_height')?rowFixture():fixture();
+  const fixture85:any=variant.startsWith('row_height')||variant.startsWith('width_content')?rowFixture():fixture();
+  if(variant.startsWith('width_content')){
+   fixture85.input.body={scheduleId:41,fieldFormats:[{field:'Description',widthFeet:.09375}],dryRun:false};
+   fixture85.applied.definitionAfter.fields[0].attributes.gridWidthFeet=.09375;fixture85.applied.definitionAfter.fields[0].attributes.sheetWidthFeet=.09375;
+   fixture85.read.definition=structuredClone(fixture85.applied.definitionAfter);
+   if(variant!=='width_content_legacy'){
+    const content={schema:'operator.schedule_width_preservation.v1',complete:true,coverage:'host_members_table_text_cell_styles_placement_anchors_v1',scheduleId:41,uniqueId:'view:41',memberCount:1,members:[{id:50,uniqueId:'space:50'}],placements:[],table:{complete:true,totalCells:8,textHash:'d'.repeat(64),unrequestedStyleHash:'e'.repeat(64)}};
+    fixture85.applied.targetContentBefore=structuredClone(content);fixture85.applied.targetContentAfter=structuredClone(content);fixture85.read.targetContent=structuredClone(content);
+    if(variant==='width_content_mismatch'){fixture85.applied.targetContentAfter.table.textHash='f'.repeat(64);fixture85.read.targetContent=structuredClone(fixture85.applied.targetContentAfter);}
+    if(variant==='width_content_missing')delete fixture85.read.targetContent;
+   }
+  }
   if(variant==='field_formats'){
    (fixture85.input as any).body={scheduleId:41,fieldFormats:[{field:'Description',heading:'DESCRIPTION',widthFeet:.3},{field:'Count',hidden:true}],dryRun:false};
    const field=(id:number,name:string)=>({fieldId:id,isHidden:false,semanticHash:'b'.repeat(64),attributes:{fieldId:id,name,parameterId:-1,fieldType:'Instance',isCalculated:false,isCombined:false,heading:name,headingOrientation:'Horizontal',horizontalAlignment:'Center',gridWidthFeet:.2,sheetWidthFeet:.2,style:{preservedStyleHash:'c'.repeat(64)},parts:[]}});
@@ -123,9 +135,27 @@ test(`ordinary native presentation edit ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/schedules').length,['unretained_apply','paused_after_commit'].includes(variant)?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/schedules').length,['unretained_apply','read_schema_rejected','paused_after_commit'].includes(variant)?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   assert.equal(verified,['exact','row_heights','field_formats','wide_exact','wide_self'].includes(variant));
-   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','row_heights','field_formats','wide_exact','wide_self','unretained_apply'].includes(variant));
+   assert.equal(verified,['exact','row_heights','field_formats','width_content_exact','width_content_legacy','wide_exact','wide_self'].includes(variant));
+   assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!['exact','row_heights','field_formats','width_content_exact','width_content_legacy','wide_exact','wide_self','unretained_apply'].includes(variant));
    assert.equal(Object.values(s.operations).filter(o=>o.requested_effect==='apply').length,1);
+   if(variant.startsWith('width_content')){
+    const feedback=JSON.parse(codexAssignmentEvidenceContextV2(s)),scope=feedback.verified_postconditions.find((p:any)=>p.operation_id===apply.operation_id)?.checked_schedule_preservation;
+    assert.equal(!!scope,variant==='width_content_exact');
+    if(scope){
+     assert.equal(scope.member_count,1);assert.equal(scope.table_cell_count,8);assert.match(JSON.stringify(desktopAssignmentFeedbackInputV2([],s)),/target_host_member_ids_and_uids/);
+     for(const kind of ['unknown','paused','foreign_read','invalidated_apply','invalidated_read','wrong_hash','wrong_reference']){
+      const changed=structuredClone(s),o=changed.operations[apply.operation_id]!,r=changed.operations[o.verification_operation_ids[0]!]!,obs=changed.observations[r.observation_ids[0]!]!;
+      if(kind==='unknown')changed.unresolved_unknown_operation_ids=[o.operation_id];
+      if(kind==='paused')(changed as any).execution_control={state:'paused'};
+      if(kind==='foreign_read')r.binding.generation++;
+      if(kind==='invalidated_apply')changed.input_invalidated_operation_ids=[o.operation_id];
+      if(kind==='invalidated_read')changed.input_invalidated_operation_ids=[r.operation_id];
+      if(kind==='wrong_hash')r.result!.raw_payload_hash='f'.repeat(64);
+      if(kind==='wrong_reference')obs.raw_payload_ref=changed.observations[o.observation_ids[0]!]!.raw_payload_ref;
+      assert.equal(JSON.parse(codexAssignmentEvidenceContextV2(changed)).verified_postconditions.some((p:any)=>p.checked_schedule_preservation),false,kind);
+     }
+    }
+   }
    if(variant==='row_height_mismatch'){
     const pending=JSON.parse(codexAssignmentEvidenceContextV2(s)).pending_verification;
     assert.equal(pending[0].latest_check.state,'mismatch');

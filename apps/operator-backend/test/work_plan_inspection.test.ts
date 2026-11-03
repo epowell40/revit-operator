@@ -30,7 +30,7 @@ test("inspection rejects stale, partial, foreign, unverified and edit-substituti
   (s:any)=>s.operations.inspection.persistent_effect="applied",
   (s:any)=>s.work_plan.items[0].completed_at=undefined,
   (s:any)=>s.work_plan.items[0].kind="inspection"
- ]){const s=fixture();change(s);assert.throws(()=>completeWorkPlanItemV2(s,"qc",["inspection"],"2026-09-16T14:27:00Z",s.proof),/Inspect all dependent/);}
+ ]){const s=fixture();change(s);assert.throws(()=>completeWorkPlanItemV2(s,"qc",["inspection"],"2026-09-16T14:27:00Z",s.proof),{code:"work_plan_inspection_unverified"});}
  const s=fixture();s.work_plan.items[0].completed_at=undefined;
  assert.throws(()=>completeWorkPlanItemV2(s,"edit0",["inspection"],"2026-09-16T14:27:00Z",s.proof),/Read-only inspection/);
 });
@@ -47,4 +47,16 @@ test("C111 explains why a verified edit cannot complete an item declared afterwa
  item.declared_at="2099-01-01T00:00:00Z";
  assert.throws(()=>completeWorkPlanItemV2(s,item.item_id,[applied.operation_id],"2099-01-01T00:01:00Z"),
   /This edit occurred before the item was declared/);
+});
+
+test("CAD closeout explains mixed read/edit IDs and permits the original verified edit without a repeated write",()=>{
+ const s=fixture(),item=s.work_plan.items[0];delete item.completed_at;item.operation_ids=[];
+ const applyId=(Object.values(s.operations).find((op:any)=>op.requested_effect==='apply') as any).operation_id;
+ const before=JSON.stringify(s);
+ assert.throws(()=>completeWorkPlanItemV2(s,item.item_id,[applyId,'inspection'],'2026-09-16T14:27:00Z'),
+  (error:any)=>error.code==='work_plan_operation_unverified'&&/read-only/.test(error.message)&&/inspection/.test(error.message)&&/Do not repeat/.test(error.message));
+ assert.equal(JSON.stringify(s),before,'bad proof submission cannot mutate scope or evidence');
+ const completed=completeWorkPlanItemV2(s,item.item_id,[applyId],'2026-09-16T14:27:00Z');
+ assert.deepEqual(completed.items[0]!.operation_ids,[applyId]);
+ assert.equal(JSON.stringify(s),before,'corrected submission does not edit historical snapshot');
 });

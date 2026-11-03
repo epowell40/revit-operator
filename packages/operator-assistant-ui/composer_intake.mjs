@@ -43,3 +43,15 @@ export function selectChatSubmissionMode(state, prompt = "") {
 export function startsFreshComputerConversation(state) {
   return !state.sessionId && !state.taskNavigationAssignmentId && !state.streaming;
 }
+
+/** Presentation/transport only, after the host has confirmed the saved owner.
+ * Resume never creates a fresh conversation or reuses an optimistic message
+ * already sent through a different transport. Admission remains server-owned. */
+export function routeSavedChatSubmission(submission, executor) {
+  if (!submission || submission.transportStarted || submission.optimisticMessage
+      || !["computer", "backend"].includes(executor)) {
+    throw new Error("The saved submission cannot change transport after it has started.");
+  }
+  return { ...submission, mode: executor === "computer" ? "computer-run" : "backend",
+    newComputerConversation: false };
+}

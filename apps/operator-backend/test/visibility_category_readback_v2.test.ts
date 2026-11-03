@@ -4,9 +4,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { postconditionSatisfiedByPayloadV2 } from '../src/postcondition_verification_v2.js';
 import { committedVisibilityReadbackPlanV2 } from '../src/verification/committed_visibility_readback_plan_v2.js';
+import { nativePropertyComparisonV2 } from '../src/verification/native_property_comparison_v2.js';
 
 const input = {method:'POST',path:'/revit/visibility',body:{action:'set_category_override',viewId:42,categoryName:'OST_PlumbingFixtures',halftone:true}};
 const read = {status:'Ok',action:'get',dryRun:false,view:{id:42,categoryOverride:{categoryId:-2001160,builtInCategory:'OST_PlumbingFixtures',halftone:true,lineWeight:2,color:{r:10,g:20,b:30}}}};
+
+test('positive numeric imported-category identity uses resolved native snapshot, not a numeric display label',()=>{
+  // Representative projection of retained377; full immutable native reads stay
+  // in the private replay. Source desired styles alone supply no native proof.
+  const apply={method:'POST',path:'/revit/visibility',body:{action:'set_category_override',viewId:1545058,categoryName:'1545660',lineWeight:4,r:0,g:0,b:0}};
+  const check={method:'POST',path:'/revit/visibility',body:{action:'get',viewId:1545058,categoryName:'1545660',includeCategoryState:true}};
+  const payload={status:'Ok',action:'get',dryRun:false,view:{id:1545058,
+    categoryOverride:{categoryId:1545660,categoryName:'P0003',builtInCategory:null,lineWeight:4,color:{r:0,g:0,b:0}},
+    categorySnapshot:{complete:true,targetCategoryId:1545660,target:{id:1545660,name:'P0003',parentId:1545650}}}};
+  assert(postconditionSatisfiedByPayloadV2(apply,payload));
+  assert.equal(nativePropertyComparisonV2(apply,check,payload).state,'matched');
+  assert.equal(nativePropertyComparisonV2(apply,check,{...payload,view:{...payload.view,categoryOverride:{...payload.view.categoryOverride,lineWeight:3}}}).state,'mismatch');
+  for(const mutate of [
+    (p:any)=>p.view.id++, (p:any)=>p.view.categoryOverride.categoryId++,
+    (p:any)=>p.view.categorySnapshot.targetCategoryId++, (p:any)=>p.view.categorySnapshot.target.id++,
+    (p:any)=>p.view.categorySnapshot.target.name='OTHER', (p:any)=>p.view.categorySnapshot.complete=false,
+    (p:any)=>delete p.view.categorySnapshot, (p:any)=>p.view.categoryOverride.categoryId='1545660',
+    (p:any)=>p.view.categoryOverride.lineWeight=3, (p:any)=>p.view.categoryOverride.color.b=1,
+    (p:any)=>p.action='set_category_override', (p:any)=>p.truncated=true,
+    (p:any)=>p.dryRun=true, (p:any)=>p.error='native read failed',
+  ]){const p=structuredClone(payload);mutate(p);assert.equal(postconditionSatisfiedByPayloadV2(apply,p),false);}
+  for(const categoryName of ['1545658','P0003','+1545660','001545660','1.54566e6',1545660,'9007199254740993'])
+    assert.equal(postconditionSatisfiedByPayloadV2({...apply,body:{...apply.body,categoryName}},payload),false);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply,{view:{id:1545058},request:payload}),false);
+});
 test('direct category halftone requires independent exact native category/view read; false is a value',()=>{
   assert(postconditionSatisfiedByPayloadV2(input,read));
   assert(postconditionSatisfiedByPayloadV2({...input,body:{...input.body,halftone:false}}, {...read,view:{...read.view,categoryOverride:{...read.view.categoryOverride,halftone:false}}}));

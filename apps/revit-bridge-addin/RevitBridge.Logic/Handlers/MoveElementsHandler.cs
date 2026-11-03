@@ -7,6 +7,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Logic.Handlers.MEP;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -92,9 +93,16 @@ namespace RevitBridge.Logic.Handlers
             var beforeById = new Dictionary<long, object>();
             var failureGuard = new OperatorNativeFailureGuard();
             bool pinRestorationFailed = false;
+            ConnectedHvacMoveScope? connectedScope = null;
+            // Only text-anchor edits use this bounded observation. Preserve the
+            // complete native change inventory; unsupported collateral stays unknown.
+            var scheduleBaseline = !p.dryRun && p.ids.All(id => doc.GetElement(ElementIdCompat.Create(id)) is TextNote)
+                ? AnnotationSchedulePreservation.CaptureBefore(doc) : null;
             var response = NativeSingleTransaction.Execute(app, doc,
                 p.dryRun ? "Move Elements (Dry Run)" : "Move Elements", _ =>
                 {
+                    connectedScope = new ConnectedHvacMoveScope(doc, p.ids.Distinct());
+                    connectedScope.PinFixedEndpoints();
                     if (p.moveTogether)
                     {
                         var elements = new List<Element>();
@@ -246,9 +254,11 @@ namespace RevitBridge.Logic.Handlers
                         }
                     }
 
+                    connectedScope.RestorePinsAndVerify();
                     return new Dictionary<string, object?>
                     {
                         ["movedIds"] = movedIds.ToArray(), ["snapshots"] = snapshots.ToArray(),
+                        ["connectedEndpointPreservation"] = connectedScope.LastTransactionalReport,
                         ["success"] = skipped.Count == 0 && !pinRestorationFailed
                     };
                 }, disposition: p.dryRun ? NativeTransactionDisposition.Rollback : NativeTransactionDisposition.Commit,
@@ -266,6 +276,7 @@ namespace RevitBridge.Logic.Handlers
                 // A failed read cannot erase the commit or leave old snapshots
                 // masquerading as verified output.
                 response.Remove("snapshots");
+                response.Remove("connectedEndpointPreservation");
                 OperatorNativeTransactionExecution.ReadCommitted(response, () =>
                 {
                     var persisted = movedIds.Select(id =>
@@ -275,8 +286,15 @@ namespace RevitBridge.Logic.Handlers
                             throw new InvalidOperationException($"Move readback element {id} is unavailable after commit.");
                         return new { id, before = beforeById[id], after = SnapshotLocation(element, requireKnown: true) };
                     }).ToArray();
-                    return new Dictionary<string, object?> { ["snapshots"] = persisted };
+                    return new Dictionary<string, object?> { ["snapshots"] = persisted,
+                        ["connectedEndpointPreservation"] = connectedScope!.ReadAndVerify(true) };
                 });
+                NativeMoveReadback.VerifyCommitted(response, p.ids, new[] { vector.X, vector.Y, vector.Z });
+            }
+            else if (connectedScope?.LastTransactionalReport != null)
+            {
+                // These are explicitly transient observations; native settlement still owns effect truth.
+                response["connectedEndpointPreservation"] = connectedScope.LastTransactionalReport;
             }
             var succeeded = response["success"] is bool passed && passed;
             response["status"] = receipt.CommittedValue == true
@@ -289,6 +307,8 @@ namespace RevitBridge.Logic.Handlers
             if (!response.ContainsKey("movedIds")) response["movedIds"] = Array.Empty<long>();
             if (!response.ContainsKey("snapshots")) response["snapshots"] = Array.Empty<object>();
             response["movedTogether"] = p.moveTogether;
+            if (scheduleBaseline != null)
+                return Task.FromResult(AnnotationSchedulePreservation.AttachResult(doc, response, scheduleBaseline, p.ids));
             return Task.FromResult<object>(response);
         }
 
@@ -325,20 +345,21 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            if (e is IndependentTag tag)
+            {
+                try { return NativeTagHeadLocation.Read(tag); }
+                catch
+                {
+                    if (requireKnown) throw new InvalidOperationException("Native tag-head anchor readback is unavailable.");
+                    return new { kind = "Unknown" };
+                }
+            }
+
             if (e is TextNote textNote)
             {
                 // View-owned text can have neither a generic location nor a model box.
                 // Coord is its native text anchor, not a LocationPoint insertion point.
-                try
-                {
-                    var point = textNote.Coord;
-                    if (point != null)
-                    {
-                        var coordinates = new[] { point.X, point.Y, point.Z };
-                        if (coordinates.All(value => !double.IsNaN(value) && !double.IsInfinity(value)))
-                            return new { kind = "TextAnchor", pointXyz = coordinates };
-                    }
-                }
+                try { return NativeTextAnchorLocation.Read(textNote); }
                 catch { }
                 if (requireKnown) throw new InvalidOperationException("Native text-note coordinate readback is unavailable.");
                 return new { kind = "Unknown" };

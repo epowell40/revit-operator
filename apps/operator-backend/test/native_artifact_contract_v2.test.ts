@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, isNativeDocumentCheckpointRequestV2, nativeDocumentCheckpointRequestMatchesV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { nativeArtifactPostconditionV2, artifactTargetTokensV2 } from "../src/verification/native_artifact_contract_v2.js";
 import { operationTargetIdentityAliasesV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
 import { verificationCapabilityAdmissionForPathsV2, verificationCapabilityGuidanceV2 } from "../src/verification/verification_capability_admission_v2.js";
@@ -172,4 +172,24 @@ test("driver print file verification requires restored settings and binds the ex
   assert(verificationCapabilityAdmissionForPathsV2("/revit/print", "/revit/inspect-exported-files").admissible);
   assert(!verificationCapabilityAdmissionForPathsV2("/revit/print", "/revit/get-element-summary").admissible);
   assert.match(verificationCapabilityGuidanceV2({ capability_id: "revit_call_tool", path: "/revit/print" })!, /Do not export again/);
+});
+
+
+test("checkpoint request decoder preserves lexical path and native identity checks outside the domain", () => {
+  const result=checkpointResult();
+  const make=(filePath:string)=>({input:{method:"POST",path:"/revit/save-as",body:{filePath}},
+    request_identity:{method:"POST",path:"/revit/save-as"},result:structuredClone(result)});
+  for(const file of ["C:/fixture/checkpoint.rvt","c:\\fixture\\checkpoint.rvt","checkpoint.rvt","./checkpoint.rvt","a/../checkpoint.rvt"])
+    assert.equal(nativeDocumentCheckpointRequestMatchesV2(make(file),"a".repeat(64)),true,file);
+  for(const file of ["C:/foreign/checkpoint.rvt","../checkpoint.rvt","C:checkpoint.rvt","", "checkpoint.rvt\u0000"])
+    assert.equal(nativeDocumentCheckpointRequestMatchesV2(make(file),"a".repeat(64)),false,file);
+  for(const mutate of [
+    (op:ReturnType<typeof make>)=>{op.input.path="/revit/export-pdf";},
+    (op:ReturnType<typeof make>)=>{op.request_identity.method="GET";},
+    (op:ReturnType<typeof make>)=>{op.result.authority="operator-mcp-transport";},
+    (op:ReturnType<typeof make>)=>{op.result.native_artifact_receipt.outputs[0]!.stable_read=false;},
+    (op:ReturnType<typeof make>)=>{op.result.native_artifact_receipt.save_document.after.project_fingerprint="f".repeat(64);}
+  ]) {const op=make("checkpoint.rvt");mutate(op);assert.equal(nativeDocumentCheckpointRequestMatchesV2(op,"a".repeat(64)),false);}
+  assert.equal(isNativeDocumentCheckpointRequestV2(null),false);
+  assert.equal(nativeDocumentCheckpointRequestMatchesV2(make("checkpoint.rvt"),"f".repeat(64)),false);
 });

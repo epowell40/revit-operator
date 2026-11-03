@@ -57,6 +57,8 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
   const source=requestedEffect==="apply" && env.OPERATOR_LOCAL_PDF_WORK_ALLOWANCE==="marked_pdf_sheets_v1" ? sourceAllowance : undefined;
   const units=source?.units??1;
   const expanded=Boolean(source);
+  const observedProgress=requestedEffect==='apply'&&env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE==='observed_native_work_v1'
+    &&env.OPERATOR_LOCAL_READY_WORK_HANDOFF==='continue_ready_work_v1';
   return { mode: "local_advisory_v1", selected_by: "trusted_local_host", session_id: binding.session_id,
     document_fingerprint: binding.document_fingerprint,
     max_turns: limit("OPERATOR_ADVISORY_MAX_TURNS", 8, 16),
@@ -71,8 +73,8 @@ export function selectLocalAdvisoryPolicy(binding: AssignmentBindingV2,
     max_operations: Math.min(expanded?8192:1024,limit("OPERATOR_ADVISORY_MAX_OPERATIONS", 256, 1024)*units),
     max_total_tokens: Math.min(expanded?256_000_000:32_000_000,limit("OPERATOR_ADVISORY_MAX_TOTAL_TOKENS", 8_000_000, 32_000_000)*units),
     max_wall_clock_ms: Math.min(120*60_000,limit("OPERATOR_ADVISORY_MAX_WALL_MS", 20 * 60_000, 120 * 60_000)*units),
-    ...(requestedEffect === "apply" && env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE === "verified_native_changes_v1"
-      ? { progress_allowance: { mode: "verified_native_changes_v1" as const,
+    ...(requestedEffect === "apply" && (env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE === "verified_native_changes_v1" || observedProgress)
+      ? { progress_allowance: { mode: observedProgress ? "observed_native_work_v1" as const : "verified_native_changes_v1" as const,
         max_provider_calls: expanded?2048:256, max_operations: expanded?8192:1024, max_total_tokens: expanded?256_000_000:32_000_000,
-        max_wall_clock_ms:120*60_000, credit_unit:'distinct_verified_targets_v1' as const } } : {}) };
+        max_wall_clock_ms:120*60_000, credit_unit:observedProgress?'distinct_observed_physical_targets_v1' as const:'distinct_verified_targets_v1' as const } } : {}) };
 }

@@ -30,6 +30,25 @@ namespace RevitBridge.Common.Tests
             Assert.True(check < handler.IndexOf("OperatorNativeTransactionExecution.ReadCommitted", StringComparison.Ordinal));
         }
         [Fact]
+        public void AnnotationPartsCannotCreateStrokesAndMustPassNativeSourceCheckBeforeOwnershipIsStored()
+        {
+            var handler = Read("RevitBridge/Handlers/ImportVectorAnnotationsHandler.cs");
+            Assert.Contains("NativeMutationPreflightBoundary.Execute", handler);
+            Assert.Contains("NativeSingleTransaction.Execute", handler);
+            Assert.Contains("view.UniqueId != request.expectedViewUniqueId", handler);
+            Assert.Contains("view.Scale != plan.layout.viewScale", handler);
+            Assert.DoesNotContain(".Render(plan,", handler);
+            int render = handler.IndexOf(".RenderAnnotations(plan, request.partIndex)", StringComparison.Ordinal);
+            int unchanged = handler.IndexOf("VectorDraftingImportState.CurrentSnapshot(doc, state)", render, StringComparison.Ordinal);
+            int check = handler.IndexOf("VectorDraftingNativeProjection.RequireMatchBeforeCommit", StringComparison.Ordinal);
+            Assert.True(render >= 0 && render < unchanged && unchanged < check);
+            Assert.True(check < handler.IndexOf("VectorDraftingImportState.Store", StringComparison.Ordinal));
+            Assert.True(check < handler.IndexOf("OperatorNativeTransactionExecution.ReadCommitted", StringComparison.Ordinal));
+            var renderer = Read("RevitBridge.Logic/VectorDraftingNativeRenderer.cs");
+            Assert.Contains("VectorDraftingAnnotationPolicy.Part(plan, index)", renderer);
+            Assert.Contains("VectorDraftingImportState.ExpectedPart(plan, state, part.Index)", Read("RevitBridge.Logic/VectorDraftingNativeProjection.cs"));
+        }
+        [Fact]
         public void CompleteSourceComparisonAndCommittedSnapshotCannotBeReplacedByEndpointToleranceOrResealing()
         {
             var source = Read("RevitBridge.Logic/VectorDraftingNativeProjection.cs");

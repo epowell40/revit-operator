@@ -12,6 +12,7 @@ import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_
 import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+import { familyLoadVerificationExclusionGuidanceV2 } from "../verification/family_session_verification_v2.js";
 import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 import { providerUsageHoldMessageV2 } from "../assignments/assignment_kernel_v2_usage_hold.js";
 import { assignmentWorkBudgetStatusV2 } from "../assignments/assignment_work_allowance_v2.js";
@@ -22,12 +23,15 @@ import { renderWorkReviewHandoffV2 } from '../assignments/work_review_handoff.js
 import { ADVISORY_HANDOFF_GUIDANCE } from './work_continuation_guidance.js';
 import {desktopHelperScopeForSnapshotV1,DESKTOP_SCOPED_HELPER_GUIDANCE} from '../assignments/desktop_executor_owner.js';
 import {createDesktopHelperCallLeaseV1} from './desktop_helper_budget.js';
+import { TASK_DISCRETION_GUIDANCE, taskDecisionContext } from './task_discretion_guidance.js';
+import {savedCopyHandoffV2} from '../assignments/saved_copy_handoff_v2.js';
+import {verifiedChangePresentationV2} from '../assignments/verified_change_presentation_v2.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
   const operation = snapshot.operations[gapId.slice("verification:".length)];
   if (!operation) return "";
-  return verificationCapabilityGuidanceV2({
+  return familyLoadVerificationExclusionGuidanceV2(snapshot,operation) ?? verificationCapabilityGuidanceV2({
     capability_id: operation.capability_id,
     method: operation.request_identity?.method,
     path: operation.request_identity?.path,
@@ -104,13 +108,15 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
 }> {
   const progression = advanceAssignmentKernelProgressV2({ binding });
   const helperLease=createDesktopHelperCallLeaseV1(progression.snapshot,desktopHelperScope);
-  const prompt = advisoryVerificationV2(progression.snapshot) && progression.decision.decision === "admit_reasoning_turn"
+  const advisoryTurn = advisoryVerificationV2(progression.snapshot) && progression.decision.decision === "admit_reasoning_turn";
+  const scopedHelper = desktopHelperScopeForSnapshotV1(progression.snapshot,desktopHelperScope);
+  const prompt = advisoryTurn
       ? ["CURRENT TASK:", progression.snapshot.spec.source_user_request,
         `Requested effect: ${progression.snapshot.spec.requested_effect}`,
         `Saved answers: ${JSON.stringify(progression.snapshot.input_values)}`,
         `Immutable host limits: ${JSON.stringify(progression.snapshot.spec.execution_policy)}`,
         "Execute the task, inspect results, and repair mistakes. Missing specialized proofs and checklist certification are advisory observations, not instructions to repeat work.",
-        desktopHelperScopeForSnapshotV1(progression.snapshot,desktopHelperScope)?DESKTOP_SCOPED_HELPER_GUIDANCE:ADVISORY_HANDOFF_GUIDANCE,
+        scopedHelper?DESKTOP_SCOPED_HELPER_GUIDANCE:ADVISORY_HANDOFF_GUIDANCE,
         advisoryFollowupsContextV2(progression.snapshot),
         codexAssignmentEvidenceContextV2(progression.snapshot)].filter(Boolean).join("\n")
       : concise && progression.decision.decision === "admit_reasoning_turn"
@@ -124,8 +130,13 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2, c
   return {
     snapshot: progression.snapshot,
     prompt: prompt ? [prompt,
+      TASK_DISCRETION_GUIDANCE,
+      taskDecisionContext(progression.snapshot),
       `Host budget status: ${JSON.stringify(assignmentBudgetForPrompt(assignmentWorkBudgetStatusV2(progression.snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString())))}`,
-      ...(helperLease?[`Scoped helper share: ${helperLease.granted_calls} provider calls from the current parent allowance, including your report. Return useful findings and references promptly so the desktop owner can inspect, correct, save and deliver. This is not an additional allowance. A helper-only tool limitation is a handback to that owner, not a reason to exhaust the task or ask the human to operate its tools.`]:[]),
+      ...(helperLease?[`Scoped helper share: ${helperLease.granted_calls} provider calls from the current parent allowance, including your report. Return useful findings and references promptly so the desktop owner can inspect, correct, save and deliver. This is not an additional allowance. A helper-only tool limitation is a handback to that owner, not a reason to exhaust the task or ask the human to operate its tools.`,
+        // The advisory branch already includes this exact host guidance.
+        // Deduplicate host-owned text only; user content cannot suppress it.
+        ...advisoryTurn&&scopedHelper?[]:[DESKTOP_SCOPED_HELPER_GUIDANCE]]:[]),
       "For multi-part work, retain a source-linked checklist, group related marks, and check operator_manage_work_plan status after each useful batch. Record completed operations and unresolved questions promptly. A near-limit warning means retain an honest checkpoint, not automatically propose completion. Continue ready independent work when the current remaining budget can cover the next useful batch, verification and final save/handoff; recheck host status after the batch. Stop for a user pause, an actual blocking condition or insufficient remaining resources, not merely because one example or panel succeeded. Do not spend allowance rediscovering completed work. Task counts and assistant claims do not authorize extra budget or prove completion.",
       executionControlContext(progression.snapshot), loadPriorAssignmentContext(progression.snapshot)].filter(Boolean).join("\n\n") : "",
     message: progression.snapshot.terminal
@@ -184,13 +195,21 @@ function advisoryHandoffMessage(proposal: NonNullable<AssignmentSnapshotV2["comp
     "Ready for review (not independently verified).",
     ...(unfinishedCount ? [unfinishedCount + " saved unfinished " + (unfinishedCount === 1 ? "report remains" : "reports remain") + ". This includes any retained earlier reports; omission from the newly reported lists does not resolve them. See the saved list in Details."] : []),
     ...(proposal.claimed_completed.length ? [] : ["No completed work was reported."]),
-    ...summary,
+    ...(proposal.user_facing_text ? [proposal.user_facing_text] : summary),
     "Full handoff in Details below.",
     "## Details",
     ...groups.map(group => `### ${group.details}\n\n${group.items.length
       ? group.items.map(item => `- ${item.replace(/\r?\n/g, "\n  ")}`).join("\n")
       : "No new items reported."}`)
   ].join("\n\n");
+}
+
+function unansweredInputHandoffV2(snapshot:AssignmentSnapshotV2,questions:readonly string[]):string {
+  const questionText=questions.length?[...new Set(questions)].join('\n\n'):'I need an answer before I can continue this task.';
+  // The existing producers own native evidence eligibility. A question is not
+  // completion, and unsettled work must not become a saved-result handoff.
+  if(!snapshot.quiescent||snapshot.in_flight_operation_ids.length||snapshot.in_flight_provider_call_ids.length)return questionText;
+  return [verifiedChangePresentationV2(snapshot),savedCopyHandoffV2(snapshot)?.text,questionText].filter(Boolean).join('\n\n');
 }
 
 export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string, desktopHelperScope?:unknown): string {
@@ -208,7 +227,7 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
     if (snapshot.pending_input_variable_ids.length || snapshot.outcome === "awaiting_user_input") {
       const questions = Object.values(snapshot.clarifications).filter(question => !question.resolved_at)
         .map(question => question.question.trim()).filter(Boolean);
-      return questions.length ? [...new Set(questions)].join("\n\n") : "I need an answer before I can continue this task.";
+      return unansweredInputHandoffV2(snapshot,questions);
     }
     if (!snapshot.quiescent || snapshot.in_flight_operation_ids.length || snapshot.in_flight_provider_call_ids.length)
       return "Work is still settling. Its progress is saved.";
@@ -219,6 +238,7 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
       const unresolved = projectAdvisoryFollowupsV2(snapshot).unresolved_total;
       return ['Ready for review (not independently verified).', review.summary,
         ...(unresolved ? [`${unresolved} saved unfinished reports remain in Details; omitting a report does not resolve it.`] : []),
+        ...(snapshot.completion_proposal.user_facing_text ? [snapshot.completion_proposal.user_facing_text] : []),
         details, review.details, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join('\n\n');
     }
     return [handoff, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join("\n\n");
@@ -227,7 +247,7 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
     const questions = Object.values(snapshot.clarifications)
       .filter(question => !question.resolved_at)
       .map(question => question.question.trim()).filter(Boolean);
-    if (questions.length) return [...new Set(questions)].join("\n\n");
+    if (questions.length) return unansweredInputHandoffV2(snapshot,questions);
   }
   if(snapshot?.outcome==='active'&&snapshot.quiescent&&!snapshot.provider_budget_exhausted
     &&!snapshot.progress_blocker&&!snapshot.execution_failure_ids.length

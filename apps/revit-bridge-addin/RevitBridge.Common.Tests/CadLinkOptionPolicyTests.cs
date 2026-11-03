@@ -9,6 +9,48 @@ namespace RevitBridge.Common.Tests
     public sealed class CadLinkOptionPolicyTests
     {
         [Fact]
+        public void ChangedCadSourceIsKnownNotStartedButAnEnteredNativeFailureIsNeverRelabeled()
+        {
+            bool dispatched = false;
+            var result = RevitBridge.Logic.Handlers.NativeMutationPreflightBoundary.Execute(enter =>
+            {
+                CadLinkOptionPolicy.RequireExpectedSourceHash(new string('a', 64), new string('b', 64));
+                enter(); dispatched = true; return new object();
+            });
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
+            Assert.False(dispatched); Assert.False(json.RootElement.GetProperty("applied").GetBoolean());
+            Assert.Equal("not_started", json.RootElement.GetProperty("transaction").GetProperty("status").GetString());
+            Assert.Throws<InvalidOperationException>(() => RevitBridge.Logic.Handlers.NativeMutationPreflightBoundary.Execute(enter =>
+            {
+                CadLinkOptionPolicy.RequireExpectedSourceHash(new string('a', 64), new string('a', 64));
+                enter(); throw new InvalidOperationException("native state must be settled separately");
+            }));
+        }
+        [Fact]
+        public void ExpectedSourceBytesMustMatchBeforeNativeWorkAndRemainOptionalForLegacyRequests()
+        {
+            var actual = new string('a', 64);
+            CadLinkOptionPolicy.RequireExpectedSourceHash(null, actual);
+            CadLinkOptionPolicy.RequireExpectedSourceHash(actual, actual);
+            foreach (var expected in new[] { "", "short", new string('b', 64), new string('A', 64), actual + " " })
+                Assert.Throws<ArgumentException>(() => CadLinkOptionPolicy.RequireExpectedSourceHash(expected, actual));
+        }
+        [Theory]
+        [InlineData("artifacts/source.dxf", "dxf")]
+        [InlineData("artifacts/SOURCE.DXF", "dxf")]
+        [InlineData("artifacts/source.dwg", "dwg")]
+        public void NativeCadFormatsAreExplicit(string path, string expected)
+            => Assert.Equal(expected, CadLinkOptionPolicy.SourceFormat(path));
+
+        [Theory]
+        [InlineData("source.pdf")]
+        [InlineData("source.dxf.exe")]
+        [InlineData("source.dwg.txt")]
+        [InlineData("")]
+        public void UnsupportedFormatsAreNotDisguisedAsCad(string path)
+            => Assert.Throws<ArgumentException>(() => CadLinkOptionPolicy.SourceFormat(path));
+
+        [Fact]
         public void ExactViewFirstRequestHasAPlannedOwnerBeforeAnySheetExists()
         {
             using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,

@@ -13,6 +13,7 @@ namespace RevitBridge.Common
         public long[] ModifiedElementIds { get; set; } = Array.Empty<long>();
         public long[] DeletedElementIds { get; set; } = Array.Empty<long>();
         public long[] UnexpectedExistingElementIds { get; set; } = Array.Empty<long>();
+        public long[] UnsupportedAffectedElementIds { get; set; } = Array.Empty<long>();
         public int AffectedElementCount { get; set; }
         public bool ExistingScopeMatched { get; set; }
     }
@@ -32,9 +33,26 @@ namespace RevitBridge.Common
             if (maxAffectedElements < 1 || maxAffectedElements > 64)
                 throw new ArgumentOutOfRangeException(nameof(maxAffectedElements), "maxAffectedElements must be between 1 and 64.");
 
-            var added = Normalize(addedElementIds);
-            var modified = Normalize(modifiedElementIds);
-            var deleted = Normalize(deletedElementIds);
+            var rawAdded = (addedElementIds ?? Array.Empty<long>()).ToArray();
+            var rawModified = (modifiedElementIds ?? Array.Empty<long>()).ToArray();
+            var rawDeleted = (deletedElementIds ?? Array.Empty<long>()).ToArray();
+            var rawAffected = rawAdded.Concat(rawModified).Concat(rawDeleted).Distinct().ToArray();
+            var unsupported = rawAffected.Where(id => id <= 0).OrderBy(id => id).ToArray();
+            if (unsupported.Length > 0)
+                return new OperatorNativeMutationScopeDecision
+                {
+                    Allowed = false,
+                    Code = "unsupported_affected_element_id",
+                    Error = "native-api-mutation-ops observed affected native element ids outside supported positive write scope: "
+                        + string.Join(",", unsupported.Take(16)) + "; this rejection requires verified failure-processing rollback.",
+                    UnsupportedAffectedElementIds = unsupported,
+                    AffectedElementCount = rawAffected.Length,
+                    ExistingScopeMatched = false
+                };
+
+            var added = Normalize(rawAdded);
+            var modified = Normalize(rawModified);
+            var deleted = Normalize(rawDeleted);
             var allowed = new HashSet<long>(Normalize(allowedExistingElementIds));
             var affected = new HashSet<long>(added);
             affected.UnionWith(modified);
@@ -45,7 +63,7 @@ namespace RevitBridge.Common
             // Without a baseline retain the conservative historical classification.
             if (preexistingElementIds != null)
             {
-                var preexisting = new HashSet<long>(Normalize(preexistingElementIds));
+                var preexisting = new HashSet<long>(preexistingElementIds);
                 added = affected.Where(id => !preexisting.Contains(id)).OrderBy(id => id).ToArray();
                 modified = modified.Concat(affected.Where(preexisting.Contains))
                     .Except(deleted).Distinct().OrderBy(id => id).ToArray();

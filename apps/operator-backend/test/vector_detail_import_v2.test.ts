@@ -9,18 +9,20 @@ import {runWithRequestContext} from '../src/request_context.js';import {createOp
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 import {verifiedNativeWorkTargetIdentitiesV2} from '../src/domain/assignment-kernel/verified_work_targets.js';
-import {vectorSourceProofRecordV2} from '../src/verification/vector_detail_source_proof_v2.js';
+import {vectorSourceProofRecordV2,vectorVerificationHandoffV2} from '../src/verification/vector_detail_source_proof_v2.js';
 import {prepareVectorSourceProofV2} from '../src/verification/vector_detail_source_proof_v2.js';
 import {vectorDetailImportPostconditionSatisfiedV2} from '../src/verification/vector_detail_import_v2.js';
 import {readEvidenceRef,readAuthoritativeEvidence} from '../src/evidence/evidence_store.js';
 import {vectorImportFixture} from './vector_detail_import.fixtures.js';
 
-for(const variant of ['exact_first','exact_continuation','exact_last','tampered_plan','missing_source','foreign_source','bad_native_projection','wrong_part','read_failure','paused_after_commit','incomplete_inventory','native_preflight_blocked']as const)
-test(`ordinary vector import ${variant} keeps source/native verification integral without replay`,async()=>{
+for(const annotations of [false,true])
+for(const variant of ['exact_first','exact_continuation','exact_last','tampered_plan','missing_source','foreign_source','bad_native_projection','wrong_part','read_failure','paused_after_commit','incomplete_inventory','native_preflight_blocked',
+ ...(annotations?['wrong_view','wrong_source_ids','wrong_full_count','wrong_renderer','strokes_in_annotation_part','wrong_apply_source_ids']:[])]as const)
+test(`ordinary vector ${annotations?'annotation':'detail'} import ${variant} keeps source/native verification integral without replay`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-vector-proof-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const positive=variant.startsWith('exact_'),partIndex=variant==='exact_continuation'?1:variant==='exact_last'?2:0;
-  const f=await vectorImportFixture(root,variant==='foreign_source'?'another-session':'vector-session',partIndex);
+  const f=await vectorImportFixture(root,variant==='foreign_source'?'another-session':'vector-session',partIndex,annotations);
   if(variant==='tampered_plan'){
    const altered=structuredClone(f.plan);altered.entities[0].points[1][0]+=1; // Keep its embedded nativePlanSha256 unchanged.
    const packed=gzipSync(Buffer.from(JSON.stringify(altered))),sha=createHash('sha256').update(packed).digest('hex');
@@ -31,6 +33,16 @@ test(`ordinary vector import ${variant} keeps source/native verification integra
   if(variant==='bad_native_projection')f.nativeRead.sourceProjection.sourceNativeProjectionMatches=false;
   if(variant==='wrong_part')f.nativeRead.partIndex+=1;
   if(variant==='incomplete_inventory')f.applied.changeTracking.exhaustiveChangeInventory=false;
+  if(variant==='wrong_view')f.nativeRead.viewUniqueId='another-view';
+  if(variant==='wrong_source_ids')f.nativeRead.observedSourceEntityIds=[...f.nativeRead.observedSourceEntityIds!].reverse();
+  if(variant==='wrong_apply_source_ids')f.applied.createdSourceEntityIds=[...f.applied.createdSourceEntityIds!].reverse();
+  if(variant==='wrong_full_count')f.nativeRead.sourcePlanEntityCount!+=1;
+  if(variant==='wrong_renderer')f.nativeRead.renderer='operator.vector-drafting-native.v1';
+  if(variant==='strokes_in_annotation_part'){
+   // Producer/read agree with each other, but substitute a real source stroke for text.
+   const ids=[...f.nativeRead.observedSourceEntityIds!];ids[0]=f.plan.entities.find((e:any)=>e.kind==='line').id;
+   f.nativeRead.observedSourceEntityIds=ids;f.applied.createdSourceEntityIds=ids;
+  }
   const goal=createGoal({title:'Copy this diagram',objective:'Copy the attached diagram into an editable drafting view.',acceptance_criteria:['The editable diagram is present.'],status:'active',
    related_session_id:'vector-session',created_by:'vector-principal',work_budget:{requested_effect:'apply',document_fingerprint:'vector-model'}});
   createAssignmentKernelForGoalV2({goal,run_id:'vector-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding,calls:any[]=[];
@@ -67,6 +79,13 @@ test(`ordinary vector import ${variant} keeps source/native verification integra
    const read=apply.verification_operation_ids.map(id=>s.operations[id]!).find(Boolean);
    const facts=read?.observation_ids.flatMap(id=>s.observations[id]!.facts)??[],verified=facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true);
    assert.equal(verified,positive,JSON.stringify({response,facts}));
+   if(['tampered_plan','missing_source','bad_native_projection'].includes(variant)){
+    const handoff=(response as any).contentItems.find((c:any)=>c.type==='inputText'&&c.text.startsWith('{"backend_vector_verification":'));
+    assert(handoff,'A failed source/native check must reach the ordinary response');
+    const summary=JSON.parse(handoff.text).backend_vector_verification;
+    assert.equal(summary.original_pdf_reparse,variant==='bad_native_projection'?'matched':'mismatch');
+    assert.equal(summary.native_part_or_cohort_current,false);assert.equal(summary.whole_drawing_verified,false);
+   }
    assert(!facts.some(f=>f.fact_id==='verification.vector_original_source_comparison'&&f.value==='forged producer assertion'));
    if(positive){
     assert.deepEqual(verifiedNativeWorkTargetIdentitiesV2(s,apply.operation_id),['element_id:20']);
@@ -74,9 +93,21 @@ test(`ordinary vector import ${variant} keeps source/native verification integra
     const evidence=readEvidenceRef(proof.evidence_id);assert.equal(evidence.trust_level,'host_observed');assert.equal(evidence.content_hash,proof.content_hash);
     const record=JSON.parse(readAuthoritativeEvidence(evidence,{...binding,attempt_id:read!.operation_id}).toString('utf8'));
     assert.equal(record.matches,true);assert.equal(record.sourceSha256,f.attachment.sha256);assert.equal(record.sourcePartEntityCount,f.applied.createdContentCount);
+    if(annotations){
+     assert.equal(record.sourceEntityCount,81);assert.equal(record.sourcePlanEntityCount,201);
+     assert.deepEqual(record.sourcePartEntityIds,f.applied.createdSourceEntityIds);
+     assert.equal(record.renderer,'operator.vector-drafting-annotations-native.v1');
+    }
     assert.equal(vectorSourceProofRecordV2({record,evidence}as any,read!.result!),null,'Retained or producer JSON cannot impersonate the backend-issued source proof.');
+    assert.equal(vectorVerificationHandoffV2({record,evidence}as any,s,read!.operation_id),null);
+    assert.equal(vectorVerificationHandoffV2(null,s,read!.operation_id),null,'Missing proof cannot become a passing handoff');
     const raw={structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:read!.result!,observation:{raw_payload:f.nativeRead,semantic_facts:[]}}};
     const issued=await prepareVectorSourceProofV2({operation_id:read!.operation_id,assignment_id:goal.id,binding},raw,s);assert(issued);
+    assert.equal(vectorVerificationHandoffV2(issued,s,read!.operation_id)!.backend_vector_verification.native_part_or_cohort_current,true);
+    const stale=structuredClone(s);stale.input_invalidated_operation_ids=[...(stale.input_invalidated_operation_ids??[]),read!.operation_id];
+    assert.equal(vectorVerificationHandoffV2(issued,stale,read!.operation_id)!.backend_vector_verification.native_part_or_cohort_current,false);
+    const foreign=structuredClone(s);foreign.operations[read!.operation_id]!.result!.raw_payload_hash='f'.repeat(64);
+    assert.equal(vectorVerificationHandoffV2(issued,foreign,read!.operation_id),null);
     assert.equal(vectorDetailImportPostconditionSatisfiedV2(s,apply,read!.result!,f.nativeRead,issued),true);
     for(const edit of [(v:any)=>v.unresolved_unknown_operation_ids.push('old-unknown'),(v:any)=>(v.input_invalidated_operation_ids??=[]).push(apply.operation_id),
      (v:any)=>(v.input_invalidated_operation_ids??=[]).push(read!.operation_id),(v:any)=>v.operations[read!.operation_id].input.body.partIndex+=1,

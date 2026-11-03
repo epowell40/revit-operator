@@ -30,7 +30,7 @@ function inventory(count = 509) {
 }
 function retain(raw: unknown): any {
   const stored = storeEvidence({ scope: { ...binding, attempt_id: "operation" }, source: "native:inventory", trust_level: "authoritative_native", raw });
-  return { spec: { result_delivery_required: true, requested_effect: "read" }, current_binding: binding,
+  return { unresolved_unknown_operation_ids: [], spec: { result_delivery_required: true, requested_effect: "read" }, current_binding: binding,
     observations: { observation: { observation_id: "observation", binding, operation_id: "operation", observed_at: "2026-01-01T00:00:00Z",
       authority: "native-host", evidence_class: "task_result", eligible_criterion_ids: ["read-result"],
       raw_payload_ref: `evidence:${stored.ref.evidence_id}`, raw_payload_hash: payloadDigestV2(raw).digest } },

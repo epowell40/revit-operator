@@ -10,6 +10,7 @@ import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { __closeForTests, appendEvent, latestMessageEvent } from "../src/memory/sqlite_store.js";
 import { __testOnlyResetGoalListCache, getCurrentGoalForSession } from "../src/goals/service.js";
+import { conversationIntakeSourceQuotes } from "../src/brains/conversation_intake_model.js";
 
 const question="Inspect the sheet list and count the mechanical sheets. Reply in one sentence.";
 const request={version:"operator.backend.v1" as const,session_id:"count-session",message_id:"count-message",user_text:question};
@@ -53,6 +54,33 @@ async function isolated(run:()=>Promise<void>){
     assert.ok(path.basename(root).startsWith("operator-intake-recovery-"));fs.rmSync(root,{recursive:true,force:true});
   }
 }
+
+test("source-constrained quote choices retain explicit human approval and exact protected scope through correction and persistence",()=>isolated(async()=>{
+  const source="Preserve the existing views. Before moving the unit, ask me to approve the location.",req={...request,user_text:source};
+  const choices=conversationIntakeSourceQuotes(source);
+  const good={...decision,route:"task",requested_effect:"change",question_kind:"action",read_evidence:"not_applicable",operation_scope:{schema:"revit-operator.interpreted-operation-scope/v1",requested_effect:"apply",model_effect:"apply",
+    protected_clauses:[choices[0]],prerequisites:[{variable_id:"location_approval",kind:"approval",question:"Do you approve the location?",source_quote:choices[1]}]}};
+  const bad=structuredClone(good);bad.operation_scope.protected_clauses[0]+=" automatically";let calls=0;
+  const result=await routeConversation(req,{interpret:async(input,_signal,correction)=>{
+    calls++;assert.equal(input.user_text,source);assert(Object.isFrozen(input));
+    if(calls===1)return{value:bad};assert.equal(correction?.attempt,2);assert.equal(correction.rejection.issues[0]!.code,"protected_clause_not_exact");return{value:good};
+  }});
+  assert.equal(result.routing_status,"accepted");assert.equal(calls,2);
+  assert.deepEqual(retainedIntakeDecision(req)?.operation_scope,good.operation_scope);
+  assert.equal(retainedIntakeDecision(req)?.operation_scope?.prerequisites[0]?.kind,"approval");
+  assert.equal(getCurrentGoalForSession(req.session_id),null,"Intake never performs or creates model work");
+}));
+test("malformed provider quotations are not repaired or dropped; both attempts remain rejected and cannot admit work",()=>isolated(async()=>{
+  const source="Preserve the existing views. Change only the requested note.",req={...request,user_text:source};let calls=0;
+  const bad={...decision,route:"task",requested_effect:"change",question_kind:"action",read_evidence:"not_applicable",operation_scope:{schema:"revit-operator.interpreted-operation-scope/v1",requested_effect:"apply",model_effect:"apply",
+    protected_clauses:["Preserve the existing views safely."],prerequisites:[]}};
+  const result=await routeConversation(req,{interpret:async()=>{calls++;return{value:bad};}});
+  assert.equal(result.routing_status,"unavailable");assert.equal(calls,2);assert.equal(retainedIntakeDecision(req),null);
+  const receipt=latestMessageEvent(req.session_id,"conversation.intake",req.message_id) as any;
+  assert.equal(receipt.attempt,2);assert.equal(receipt.accepted,false);assert.equal(receipt.decision,null);
+  assert.equal(JSON.parse(receipt.rejection.candidate.json).operation_scope.protected_clauses[0],bad.operation_scope.protected_clauses[0]);
+  assert.throws(()=>prepareAssignmentTurn({sessionId:req.session_id,messageId:req.message_id,userText:source,toolResults:[],source:"chat",createdBy:"test-owner",requestContext:{}}),/classification|intake/i);
+}));
 
 test("C56 timeout cannot admit the sheet question as legacy element inventory, including after restart and unrelated receipts",()=>isolated(async()=>{
   const response=await routeConversation(request,{interpret:async()=>new Promise(()=>{})},{timeoutMs:10});

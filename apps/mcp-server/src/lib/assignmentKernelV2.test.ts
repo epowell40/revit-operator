@@ -4,6 +4,92 @@ import path from "node:path";
 import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
+import { deliverAssignmentCompletionV2 } from "./assignmentCompletionOutbox.js";
+
+test('committed move with failed requested displacement retains effect and never emits task success',async()=>{
+ const f=JSON.parse(readFileSync(path.resolve('../revit-bridge-addin/RevitBridge.Common.Tests/Fixtures/move-no-displacement114.json'),'utf8').replace(/^\uFEFF/,''));
+ const route='/revit/move-elements',body=f.request,affected=f.modifiedIds.map((id:number)=>`element_id:${id}`);
+ const payload={status:'Committed With Errors',success:false,ok:false,verified:false,applied:true,movedIds:body.ids,snapshots:f.snapshots,
+  movePostcondition:{complete:true,satisfied:false,mismatchedIds:body.ids,satisfiedIds:[],unavailableIds:[]},
+  error:'Committed move did not establish the requested translation.',transaction:{status:'committed',committed:true,modified_element_ids:f.modifiedIds,affected_element_ids:f.modifiedIds,added_element_ids:[],deleted_element_ids:[]},
+  canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',method:'POST',path:route,effect_state:'applied',effect_authority:'native_transaction',effect_reason:'verified_native_commit',request_dispatched:true,affected_target_identities:affected}};
+ const decorated:any=await runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+  const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+  await markAssignmentKernelNativeRequestDispatchingV2(request);await recordAssignmentKernelNativeResultV2('POST',route,payload,request);
+  return decorateAssignmentKernelMcpResultV2({content:[{type:'text',text:JSON.stringify(payload)}]},'revit_call_tool');
+ });
+ assert.equal(decorated.structuredContent.operation_result_v2.status,'failed_after_dispatch');
+ assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,'applied');
+ assert.deepEqual(decorated.structuredContent.operation_result_v2.affected_target_identities,[...affected].sort());
+ assert.deepEqual(decorated.structuredContent.observation.raw_payload.movePostcondition,payload.movePostcondition);
+ assert.equal(decorated.structuredContent.observation.semantic_facts.some((x:any)=>x.fact_id==='task.result_available'&&x.value===true),false);
+});
+
+test('quantify linked source coverage survives native receipt decoration without certifying skipped sources',async()=>{
+  const route='/revit/quantify',body={scope:'links',intent:'count',categories:['OST_ElectricalEquipment']};
+  for(const variant of ['complete','unloaded','nested','legacy','missing_identity','control']) {
+    const coverage:any={schema:'operator.quantify_source_coverage.v1',scope:'links',instanceScope:'direct_document_instances',
+      familyDefinitionContentsInspected:false,complete:true,directLinkInstances:1,unavailableLinkInstances:0,
+      nestedLinkInstances:0,matchedCount:0,documents:[{source:'link',projectUniqueId:'electrical-project',linkInstanceId:10,
+        linkUniqueId:'link-10',matchedCount:0,nestedLinkInstances:0}]};
+    if(variant==='unloaded'){coverage.complete=false;coverage.unavailableLinkInstances=1;coverage.documents=[];}
+    if(variant==='nested'){coverage.complete=false;coverage.nestedLinkInstances=1;coverage.documents[0].nestedLinkInstances=1;}
+    if(variant==='missing_identity')coverage.documents[0].projectUniqueId='';
+    const decorated:any=await runWithAssignmentKernelV2(meta('read',variant==='control'?'discovery':'work',{method:'POST',path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'read'});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST',route,{summary:{total:0},rows:[],
+        ...(variant==='legacy'?{warnings:["Link 'Electrical' is unloaded or not accessible."]}:{sourceCoverage:coverage}),
+        canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',attempt_id:`source91-${variant}`,
+          requested_effect:'read',effect_state:'none',effect_authority:'native_host',request_dispatched:true}},request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool');
+    });
+    const facts=decorated.structuredContent.observation.semantic_facts;
+    assert.equal(facts.some((x:any)=>x.fact_id==='collection.complete'&&x.value===true),variant==='complete',variant);
+    if(variant==='complete')assert.equal(facts.find((x:any)=>x.fact_id==='collection.total').dimensions.instance_scope,'direct_document_instances');
+  }
+});
+
+test("open-model explicit refusal is a failed operation with separately authoritative effect truth", async () => {
+  const route="/revit/open-model",body={filePath:"C:/Models/Plumbing.rvt",discardExistingOpenDocument:false};
+  for(const known of [false,true]) for(const snake of [false,true]) {
+    const raw:any={status:"Already Loaded As Link",path:body.filePath,completionEligible:false,
+      [snake?"requested_effect_satisfied":"requestedEffectSatisfied"]:false,requiresExplicitUnloadAndOpen:true,
+      ...(known?{transaction:{status:"not_started",committed:false,modified_element_ids:[],affected_element_ids:[]}}:{}),
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",request_dispatched:true,
+        effect_state:known?"none":"unknown",effect_authority:known?"native_transaction":"native_host",
+        effect_reason:known?"native_transaction_not_started":"native_handler_returned_without_authoritative_settlement"}};
+    const decorated:any=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"apply"});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST",route,raw,request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool");
+    });
+    const result=decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status,"failed_after_dispatch");
+    assert.equal(result.persistent_effect,known?"none":"unknown");
+    assert.equal(result.native_transaction_state,known?"not_started":"unknown");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f:any)=>f.fact_id==="task.result_available"&&f.value===true),false);
+    assert.equal(decorated.structuredContent.observation.raw_payload[snake?"requested_effect_satisfied":"requestedEffectSatisfied"],false);
+  }
+});
+
+test("parent completion ineligibility alone preserves a successful native child operation", async () => {
+  const route="/revit/set-family-label-style",body={familyDocumentId:"a".repeat(32),labelTypeId:10,style:{underline:true},dryRun:false};
+  const decorated:any=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{
+    const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"apply"});
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST",route,{status:"Success",completionEligible:false,
+      scope:"family_session",familyStyleVerified:true,loadedProjectStyleVerified:false,
+      transaction:{status:"committed",committed:true,affected_element_ids:[10]},
+      canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",request_dispatched:true,
+        effect_state:"applied",effect_authority:"native_transaction",effect_reason:"native_transaction_committed",affected_target_identities:["element_id:10"]}
+    },request);
+    return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool");
+  });
+  assert.equal(decorated.structuredContent.operation_result_v2.status,"succeeded");
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,"applied");
+});
 
 test("native commits retain complete large affected sets rather than losing CAD and family change receipts", async () => {
   for (const count of [257, 400, 4096]) {
@@ -27,6 +113,23 @@ test("native commits retain complete large affected sets rather than losing CAD 
   }
 });
 
+test("a committed detached family label edit is progress, not a project task result", async () => {
+ const route="/revit/set-family-label-style", body={familyDocumentId:"a".repeat(32),labelTypeId:788388,style:{underline:true},dryRun:false};
+ const payload={ok:true,scope:"family_session",familyDocumentId:body.familyDocumentId,labelTypeId:788388,
+  familyStyleVerified:true,loadedProjectStyleVerified:false,
+  transaction:{status:"committed",committed:true},
+  canonical_attempt_settlement:{schema:"revit-operator.native-attempt-settlement.v1",requested_effect:"apply",request_dispatched:true,
+   effect_state:"applied",effect_authority:"native_transaction",affected_target_identities:["element_id:788388"]}};
+ const decorated:any=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{
+  const request=await beginAssignmentKernelNativeRequestV2("POST",route,body,{classified_effect:"apply"});
+  await markAssignmentKernelNativeRequestDispatchingV2(request);
+  await recordAssignmentKernelNativeResultV2("POST",route,payload,request);
+  return decorateAssignmentKernelMcpResultV2({content:[]},"revit_call_tool");
+ });
+ assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,"applied");
+ assert(!decorated.structuredContent.observation.semantic_facts.some((f:any)=>["task.result_available","task.preview_valid"].includes(f.fact_id)));
+ assert.equal(decorated.structuredContent.observation.raw_payload.loadedProjectStyleVerified,false);
+});
 test("large native affected sets still reject malformed identities and overbound receipts", async () => {
   const ids = Array.from({ length: 400 }, (_, i) => `element_id:${1000000 + i}`);
   for (const bad of [[...ids, " invalid"], [...ids, "bad\u0000id"], Array.from({ length: 4097 }, (_, i) => `element_id:${i + 1}`)]) {
@@ -112,7 +215,7 @@ test("Save As transport preserves exact nontransactional file proof and document
   const before = { session_id: "native-before-save", project_fingerprint: "a".repeat(64), path: "C:/fixture/source.rvt" };
   const after = { ...before, session_id: "native-after-save", path: filePath };
   const complete = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: route, phase: "apply", status: "complete",
-    expected_output_paths: [filePath], expected_export_calls: 1, export_calls: [true],
+    saved_revit_version: "2024", expected_output_paths: [filePath], expected_export_calls: 1, export_calls: [true],
     outputs: [{ path: filePath, size_bytes: 18739200, sha256: "b".repeat(64), fresh_output: true, stable_read: true }],
     save_document: { native_save_returned: true, same_document: true, before, after,
       document_session_changed: true, document_path_changed: true, project_binding_changed: false } };
@@ -139,6 +242,8 @@ test("Save As transport preserves exact nontransactional file proof and document
     assert.equal(result.native_transaction_state, applied || blocked ? "not_applicable" : "unknown");
     assert.equal(nativeArtifactResultEffectV2(result), applied ? "applied" : blocked ? "none" : null);
     if (applied) {
+      assert.equal(result.native_artifact_receipt.saved_revit_version, "2024");
+      assert.deepEqual(result.native_artifact_receipt, complete);
       assert.deepEqual(result.native_artifact_receipt.save_document, complete.save_document);
       assert.deepEqual(result.binding, binding);
       assert.notEqual(result.binding.session_id, after.session_id);
@@ -347,7 +452,7 @@ test("blocked MEP trial is a failed operation with its authoritative rollback, w
     assert.deepEqual(result.affected_target_identities, []);
   }
 });
-import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import { completionOutboxKeyV2, readCompletionOutboxV2, hydrateCompletionDeliveryV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2, operationInputSchemaGapErrorV2 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -786,6 +891,47 @@ function meta(
     }
   };
 }
+
+test("retained442 collector observation survives MCP decoration without completeness or control promotion",async()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-collector-read442.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  for(const variant of ['task','control','foreign','broken_source'] as const){
+    const body=structuredClone(fixture.request),payload=structuredClone(fixture.response),route='/revit/native-api-ops';
+    if(variant==='foreign')payload.operations[5].target_identity.active_document=false;
+    if(variant==='broken_source')body.operations[0].target='other_document';
+    const decorated=await runWithAssignmentKernelV2(meta('read',variant==='control'?'discovery':'work',{method:'POST',path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'read'});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST',route,{...payload,
+        canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',attempt_id:`collector442-${variant}`,
+          requested_effect:'read',effect_state:'none',effect_authority:'native_host',request_dispatched:true}},request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool') as any;
+    });
+    const facts=decorated.structuredContent.observation.semantic_facts;
+    assert.equal(facts.some((f:any)=>f.fact_id==='model.content_observed'),variant==='task',variant);
+    assert.equal(facts.some((f:any)=>f.fact_id.startsWith('collection.')),false);
+  }
+});
+
+test("retained417 native graph observation survives actual MCP decoration without promoting control or foreign reads",async()=>{
+  const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/native-graph-read417.json',import.meta.url),'utf8').replace(/^\uFEFF/,''));
+  for(const variant of ['task','control','foreign','metadata'] as const){
+    const body=structuredClone(fixture.request),payload=structuredClone(fixture.response),route='/revit/native-api-ops';
+    if(variant==='foreign')payload.operations[1].target_identity.active_document=false;
+    if(variant==='metadata')payload.operations.forEach((r:any)=>r.target_identity=null);
+    const decorated=await runWithAssignmentKernelV2(meta('read',variant==='control'?'discovery':'work',{method:'POST',path:route,body}),async()=>{
+      const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'read'});
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST',route,{...payload,
+        canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',attempt_id:`graph417-${variant}`,
+          requested_effect:'read',effect_state:'none',effect_authority:'native_host',request_dispatched:true}},request);
+      return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool') as any;
+    });
+    const facts=decorated.structuredContent.observation.semantic_facts;
+    assert.equal(facts.some((f:any)=>f.fact_id==='model.content_observed'),variant==='task',variant);
+    if(variant==='task')assert.deepEqual(facts.find((f:any)=>f.fact_id==='model.content_observed'),fixture.expected_model_fact);
+    assert.equal(facts.some((f:any)=>f.fact_id.startsWith('collection.')),false);
+  }
+});
 
 test("C54 native sheet query supplies complete collection evidence without promoting control or partial pages", async () => {
   const fixture=JSON.parse(readFileSync(new URL('../../../operator-backend/test/fixtures/c54-sheet-read-failure.json',import.meta.url),'utf8'));
@@ -1939,7 +2085,8 @@ test("typed MCP parent retains controller identity while its exact native action
 
 test('retained typed parameter batches preserve native child commit without promoting wrapper into proof',async()=>{
  const fixture=JSON.parse(readFileSync(new URL('../../src/lib/fixtures/parameter-typed-batch-30.json',import.meta.url),'utf8'));
- for(const f of fixture.batches){
+ const retained319=JSON.parse(readFileSync(new URL('../../src/lib/fixtures/parameter-typed-batch-319.json',import.meta.url),'utf8'));
+ for(const f of [...fixture.batches,...retained319.batches]){
   const metadata:any=meta('apply');
   const parent=metadata[ASSIGNMENT_KERNEL_V2_META_KEY];
   parent.capability_id='revit_set_parameters';parent.request_identity.capability_id=parent.capability_id;
@@ -1962,7 +2109,11 @@ test('retained typed parameter batches preserve native child commit without prom
   assert.equal(settled.length,1);
   const child=settled[0].result.structuredContent.operation_result_v2;
   assert.equal(child.status,'succeeded');assert.equal(child.native_transaction_state,'committed');assert.equal(child.persistent_effect,'applied');
-  assert.deepEqual(child.affected_target_identities.slice().sort(),f.input.body.changes.map((c:any)=>'element_id:'+c.elementId).sort());
+  // Revit can also report a dependent schedule. Preserve the entire native
+  // transaction inventory; the wrapper must neither drop it nor call it proof.
+  const affected=f.payload.transaction.affected_element_ids.map((id:number)=>'element_id:'+id);
+  assert.deepEqual(child.affected_target_identities.slice().sort(),affected.slice().sort());
+  assert(f.input.body.changes.every((c:any)=>affected.includes('element_id:'+c.elementId)));
   assert.equal(decorated.structuredContent.operation_result_v2.status,'completed_without_native_dispatch');
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect,'none');assert.equal(decorated.structuredContent.observation,undefined);
   assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id,'typed-child');
@@ -2953,5 +3104,42 @@ test("retained native delete rollback requires both settlement and exact impact 
     assert.equal(result.persistent_effect, proven ? "none" : "unknown");
     assert.equal(result.native_transaction_state, proven ? "rolled_back" : "unknown");
     assert.deepEqual(result.affected_target_identities, []);
+  }
+});
+
+test('root native inspection decoration bounds transport after retaining the complete observation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operator-inspection-delivery-'));
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT, previousKey = process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const key = completionOutboxKeyV2(root); process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = key;
+  const route = '/revit/export-visible-elements', body = { viewId: 42 };
+  const metadata = meta('read', 'work', { method: 'POST', path: route, body });
+  const lease = metadata[ASSIGNMENT_KERNEL_V2_META_KEY];
+  const payload = { complete: true, count: 1, elements: [{ id: 42, nativeData: 'x'.repeat(10 * 1024 * 1024) }] };
+  try {
+    const delivered: any = await runWithAssignmentKernelV2(metadata, async () => {
+      const request = await beginAssignmentKernelNativeRequestV2('POST', route, body, { classified_effect: 'read' });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2('POST', route, { ...payload, canonical_attempt_settlement: {
+        schema: 'revit-operator.native-attempt-settlement.v1', requested_effect: 'read', request_dispatched: true,
+        effect_state: 'none', effect_authority: 'native_host', effect_reason: 'read_has_no_persistent_effect'
+      } }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: 'image', mimeType: 'image/png', data: 'a'.repeat(600000) }] }, 'revit_call_tool');
+    });
+    assert.equal(delivered.structuredContent.schema, 'revit-operator.assignment-completion-delivery/v2');
+    assert(Buffer.byteLength(JSON.stringify(delivered)) < 8 * 1024 * 1024);
+    const retained: any = readCompletionOutboxV2(root, key, lease);
+    assert.deepEqual(retained.structuredContent.observation.raw_payload, payload);
+    const hydrated = hydrateCompletionDeliveryV2(root, key, lease, delivered);
+    assert.deepEqual(hydrated.structuredContent, retained.structuredContent);
+    assert.equal(hydrated.structuredContent.operation_result_v2.persistent_effect, 'none');
+    assert.deepEqual(hydrated.content, delivered.content);
+    delete process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;
+    assert.throws(() => deliverAssignmentCompletionV2(lease, retained), /delivery_storage_unavailable/);
+    assert.deepEqual(readCompletionOutboxV2(root, key, lease), retained);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousKey === undefined) delete process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY; else process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = previousKey;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

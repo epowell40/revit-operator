@@ -9,9 +9,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 test("durable multi-room plan uses authenticated host binding and rejects invalid calls before HTTP", async t => {
   const requests: any[] = [];
+  let inspectionError: string | null = null;
   const backend = http.createServer(async (req, res) => {
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
     requests.push({ path: req.url, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+    if (inspectionError) { res.writeHead(409, { 'content-type': 'application/json' }); res.end(JSON.stringify({error:inspectionError})); return; }
     res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ ok: true }));
   });
   await new Promise<void>(resolve => backend.listen(0, "127.0.0.1", resolve));
@@ -29,6 +31,11 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   assert(workPlanTool);
   assert.match(workPlanTool.description??'',/at most 24 entries.*at most 1000 characters/);
   assert.match(workPlanTool.description??'',/Correct rejected report arguments without redoing model edits/);
+  assert.match(workPlanTool.description ?? "", /\/revit\/get-element-summary.*includeTagReferences:true/);
+  assert.match(workPlanTool.description ?? "", /\/revit\/inspect-family-content.*unfiltered loaded-family read/);
+  assert.match(workPlanTool.description ?? "", /\/revit\/inspect-exported-files.*paired with the saved\/exported artifact/);
+  assert.match(workPlanTool.description ?? "", /File proof covers only exact artifact paths, never model elements or drawing completeness/);
+  assert.match(workPlanTool.description ?? "", /ordinary broad view-owned-detailing inventory cannot close another inspection/);
   for(const action of ["defer","resume_item"]) {
     const meta={"revit-operator/assignment-kernel-binding-v2":{assignment_id:"area-assignment",run_id:"area-run",session_id:"area-session",generation:1,principal_id:"test"}};
     assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action,itemId:"coordination",reason:"Need architect response"},_meta:meta})).isError,true);
@@ -116,10 +123,32 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   const qc={itemId:"room_qc",kind:"inspection",dependsOn:["room_a_supply","room_b_supply"],description:"Inspect completed branches",sourceBasis:"Drawing connectivity"};
   assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"declare",items:[qc]},_meta})).isError,true);
   assert.deepEqual(requests.at(-1).body.declaration.items[0],{item_id:qc.itemId,kind:qc.kind,depends_on:qc.dependsOn,description:qc.description,source_basis:qc.sourceBasis});
+  for (const extra of [{ inspection: { target_ids: ["element_id:42"] } }, { verified: true }, { native_payload: { ok: true } }]) {
+    await client.callTool({ name: "operator_manage_work_plan", arguments: {
+      action: "complete", itemId: "tag_review", operationIds: ["retained-summary", "retained-loaded-family"], ...extra }, _meta });
+    const body = requests.at(-1).body;
+    for (const key of ["inspection", "verified", "native_payload"]) assert.equal(body[key], undefined,
+      "SDK-stripped actor claims cannot be forwarded as authoritative inspection proof");
+    assert.deepEqual(body.operation_ids, ["retained-summary", "retained-loaded-family"]);
+  }
+  assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: {
+    action: "complete", itemId: "tag_review", operationIds: ["retained-summary", "retained-loaded-family"] }, _meta })).isError, true);
+  assert.deepEqual(requests.at(-1).body.operation_ids, ["retained-summary", "retained-loaded-family"]);
   const checkpoint = { claimed_completed: ["Drafted visible routes"], remaining_work: ["Independent grade pending"], uncertainties: ["Unknown drawing elevation"] };
   assert.notEqual((await client.callTool({ name: "operator_manage_work_plan", arguments: { action: "propose_completion", completionProposal: checkpoint }, _meta })).isError, true);
   assert.deepEqual(requests.at(-1).body, { assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id, generation: 1,
     action: "propose_completion", completion_proposal: checkpoint });
+  const presentation={...checkpoint,user_facing_text:'Review the saved routes; the drawing elevation still needs an engineering decision.'};
+  const proposalSchema=(workPlanTool.inputSchema.properties as any).completionProposal;
+  assert.equal(proposalSchema.properties.user_facing_text.maxLength,8000);
+  assert(!proposalSchema.required.includes('user_facing_text'),'legacy reports remain valid');
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'propose_completion',completionProposal:presentation},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.completion_proposal,presentation);
+  assert.equal(requests.at(-1).body.verified,undefined,'presentation never manufactures native proof');
+  const presentationRequests=requests.length;
+  for(const invalid of ['', 'x'.repeat(8001),42,{text:'No authority'}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'propose_completion',completionProposal:{...checkpoint,user_facing_text:invalid}},_meta})).isError,true);
+  assert.equal(requests.length,presentationRequests,'malformed presentation never reaches the host');
   const followup = { command_id: "split-scope", item_id: "followup:2:remaining_work:0", expected_version: 2,
     disposition: "superseded", reason: "The unresolved clause is retained separately.",
     replacements: [{ kind: "remaining_work", text: "Confirm the exterior devices." }] };
@@ -153,6 +182,14 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
   assert.notEqual((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"locate",itemId:"room_a_supply",locationHint},_meta})).isError,true);
   assert.deepEqual(requests.at(-1).body,{assignment_id:binding.assignment_id,run_id:binding.run_id,session_id:binding.session_id,generation:1,
     action:"locate",item_id:"room_a_supply",location_hint:locationHint});
+  const drafting={pass:'geometry',stage:'drafted',element_ids:[42,43],read_operation_ids:[],
+    next_action:'Read the outlet and compare its reference crop.',remaining:'Outlet connection and size label.'};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'locate',itemId:'room_a_supply',locationHint:{...locationHint,drafting}},_meta})).isError,true);
+  assert.deepEqual(requests.at(-1).body.location_hint.drafting,drafting,'Existing authenticated locate path carries the drafting record.');
+  const draftCount=requests.length;
+  for(const invalid of [{...drafting,pass:'all'},{...drafting,stage:'complete'},{...drafting,host_certified:true},{...drafting,element_ids:[-1]}])
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'locate',itemId:'room_a_supply',locationHint:{...locationHint,drafting:invalid}},_meta})).isError,true);
+  assert.equal(requests.length,draftCount);
   const locationCount=requests.length;
   for(const args of [{action:"locate",itemId:"room_a_supply"},{action:"locate",locationHint},
     {action:"status",locationHint},{action:"locate",itemId:"room_a_supply",locationHint,operationIds:["native-op-a"]},
@@ -164,4 +201,11 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
     assert.equal((await client.callTool({name:"operator_manage_work_plan",arguments:args,_meta})).isError,true);
   assert.equal((await client.callTool({name:"operator_manage_work_plan",arguments:{action:"locate",itemId:"room_a_supply",locationHint}})).isError,true);
   assert.equal(requests.length,locationCount,"invalid or unbound locations must not reach HTTP");
+  const invalidRead='opv2_'+'b'.repeat(64),goodRead='opv2_'+'a'.repeat(64);
+  inspectionError=`work_plan_inspection_incomplete_native_read: Rejected operationIds[1] (${invalidRead}). The retained find-text-notes request lacks an exact elementIds array. Every cited read must qualify. Adding a valid read does not repair a rejected citation.`;
+  const rejected=await client.callTool({name:'operator_manage_work_plan',arguments:{action:'complete',itemId:'native-preservation',operationIds:[goodRead,invalidRead]},_meta});
+  assert.equal(rejected.isError,true);
+  assert(JSON.stringify(rejected.content).includes(inspectionError),'model-visible error preserves the offending operation and corrective explanation');
+  assert.deepEqual(requests.at(-1).body.operation_ids,[goodRead,invalidRead],'transport does not silently drop a rejected citation');
+  assert.equal(requests.length,locationCount+1,'a rejected inspection does not auto-retry, reread or complete');
 });

@@ -8,6 +8,41 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorApprovalPolicyTests
     {
+        [Theory]
+        [InlineData("native-program-prepare-v1","Low","Read")]
+        [InlineData("native-program-read-v1","Low","Read")]
+        [InlineData("native-program-apply-v1","High","Apply")]
+        public void NativeProgramTransportKeepsReadAndWriteAdmissionSeparate(string suffix,string risk,string effect)
+        {
+            var path="/revit/dynamic-runtime/"+suffix;
+            Assert.Equal(risk,OperatorApprovalPolicy.GetRisk("POST",path,"{}").ToString());
+            Assert.Equal(effect,OperatorApprovalPolicy.GetEffect("POST",path,"{}").ToString());
+            Assert.True(RevitBridge.Common.OperatorSupportedToolInventory.IsSupportedTransport("POST",path));
+            Assert.False(RevitBridge.Common.OperatorSupportedToolInventory.IsSupportedTool("POST",path));
+        }
+        [Theory]
+        [InlineData("{\"familyDocumentId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}")]
+        [InlineData("{\"familyDocumentId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"labelTypeId\":100,\"maxStyles\":1}")]
+        public void TrackedFamilyLabelInspectionIsReadOnlyWithoutAWriteGrant(string body)
+        {
+            const string path = "/revit/inspect-family-label-styles";
+            AssertLow("POST", path, body);
+            Assert.Equal("read", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
+            Assert.Equal("read", OperatorApprovalPolicy.ResolveRequestedEffectWireValue("read", "POST", path, body));
+        }
+
+        [Fact]
+        public void FamilyLabelMutationAndLookalikesCannotBorrowInspectionAuthority()
+        {
+            const string body = "{\"familyDocumentId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"style\":{\"underline\":true}}";
+            foreach (var path in new[] { "/revit/set-family-label-style", "/revit/inspect-family-label-styles-apply" })
+            {
+                AssertHigh("POST", path, body);
+                Assert.Equal("apply", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
+                Assert.Throws<InvalidOperationException>(() => OperatorApprovalPolicy.ResolveRequestedEffectWireValue("read", "POST", path, body));
+            }
+        }
+
         [Fact]
         public void ExportedFileInspectionIsReadOnlyAndLowRisk()
         {

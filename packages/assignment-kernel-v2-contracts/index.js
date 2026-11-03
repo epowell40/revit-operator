@@ -1,3 +1,4 @@
+export * from "./native-parameter-checks.js";
 import { parseProviderUsageHoldV1 } from "./provider-usage-hold.js";
 export * from "./provider-usage-hold.js";
 export * from "./native-artifact.js";
@@ -499,8 +500,8 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
     const paths = Object.keys(selection ?? {}).filter(path => !missingFields.has(path)).sort().slice(0, 64);
     const page = record(evidenceResult.pagination);
     const rows = evidenceResult.selection;
-    // A page contributes only its actual retained array positions. Repeated or
-    // overlapping pages cannot manufacture progress by changing page sizes,
+    // A page contributes only its actual retained rows or selected cells. Repeated or
+    // overlapping selections cannot manufacture progress by changing page sizes,
     // purpose, timestamps or payload contents. These remain control-only facts.
     if (Array.isArray(rows) && rows.length > 0 && rows.length <= 256 && page
         && typeof page.path === "string" && page.path.length > 0 && page.path.length <= 480
@@ -509,7 +510,26 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
         && Number.isSafeInteger(page.requested_count) && page.requested_count >= rows.length && page.requested_count <= 256
         && page.returned_count === rows.length
         && Number.isSafeInteger(page.total_items) && page.total_items >= page.start + rows.length) {
-      for (let index = 0; index < rows.length; index += 1) paths.push(`${page.path}[${page.start + index}]`);
+      const projected = page.row_projection === "selected_fields" || hasOwn(page, "fields");
+      const columns = Array.isArray(page.fields) && page.fields.length > 0 && page.fields.length <= 64
+        && page.fields.every(field => typeof field === "string" && field.trim() === field && field.length > 0
+          && field.length <= 512 && !/[\u0000-\u001f]/.test(field))
+        && new Set(page.fields).size === page.fields.length ? page.fields : null;
+      for (let index = 0; index < rows.length; index += 1) {
+        const rowPath = `${page.path}[${page.start + index}]`;
+        if (!projected) { paths.push(rowPath); continue; }
+        const row = record(rows[index]);
+        const values = record(row?.values);
+        if (!columns || !row || row.row_index !== page.start + index || !values
+            || !Array.isArray(row.missing_fields) || !row.missing_fields.every(field => typeof field === "string")) continue;
+        // Reviewing one column did not deliver the other cells in this row.
+        // Missing fields, projection metadata and invented row indices earn no
+        // knowledge credit. These remain supporting facts, never fulfillment.
+        for (const field of columns) {
+          const cellPath = `${rowPath}.${field}`;
+          if (hasOwn(values, field) && !row.missing_fields.includes(field) && cellPath.length <= 512) paths.push(cellPath);
+        }
+      }
     }
     for (const selectionPath of paths) {
       const boundedPath = boundedControlText(selectionPath, 512);
@@ -585,6 +605,11 @@ function boundedSelectorString(value, maximum, field) {
   return text;
 }
 
+function scalarSelectorField(value, label) {
+  if (typeof value !== "string" || value.trim() !== value || /[\u0000-\u001f]/.test(value)) evidenceSelectorInvalid("invalid scalar field path");
+  return boundedSelectorString(value, 512, label);
+}
+
 /**
  * Parses the one-selector evidence-retrieval contract shared by MCP and the
  * backend. Optional properties which are present are validated rather than
@@ -622,13 +647,37 @@ export function parseEvidenceRetrievalSelectorV1(value) {
       if (new Set(fields).size !== fields.length) evidenceSelectorInvalid("item_range.fields must be unique");
       fields = Object.freeze(fields);
     }
+    let filters, orderBy;
+    if (hasOwn(itemRange, "filters") || hasOwn(itemRange, "orderBy")) {
+      if (!fields) evidenceSelectorInvalid("scalar selection requires item_range.fields");
+      if (hasOwn(itemRange, "filters")) {
+        if (!Array.isArray(itemRange.filters) || itemRange.filters.length < 1 || itemRange.filters.length > 8) evidenceSelectorInvalid("item_range.filters must contain 1..8 predicates");
+        filters = Object.freeze(itemRange.filters.map((input, index) => {
+          const f = record(input);
+          if (!f || Object.keys(f).some(k => !["field", "op", "value"].includes(k)) || !hasOwn(f, "value")
+              || !["eq", "ne", "lt", "lte", "gt", "gte"].includes(f.op)) evidenceSelectorInvalid("invalid scalar filter");
+          const v = f.value;
+          if (!(v === null || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v)
+              || typeof v === "string" && v.length <= 512 && !/[\u0000-\u001f]/.test(v))) evidenceSelectorInvalid("filter value must be a bounded finite scalar");
+          if (!["eq", "ne"].includes(f.op) && typeof v !== "number") evidenceSelectorInvalid("ordered filter value must be numeric");
+          return Object.freeze({ field: scalarSelectorField(f.field, `item_range.filters[${index}].field`), op: f.op, value: v });
+        }));
+      }
+      if (hasOwn(itemRange, "orderBy")) {
+        const o = record(itemRange.orderBy);
+        if (!o || Object.keys(o).some(k => !["field", "direction"].includes(k)) || !["asc", "desc"].includes(o.direction)) evidenceSelectorInvalid("orderBy requires field and asc|desc direction");
+        orderBy = Object.freeze({ field: scalarSelectorField(o.field, "item_range.orderBy.field"), direction: o.direction });
+      }
+    }
     active.push({
       kind: "item_range",
       item_range: {
         path: boundedSelectorString(itemRange.path, 512, "item_range.path"),
         start: itemRange.start,
         count: itemRange.count,
-        ...(fields ? { fields } : {})
+        ...(fields ? { fields } : {}),
+        ...(filters ? { filters } : {}),
+        ...(orderBy ? { orderBy } : {})
       }
     });
   }
@@ -657,6 +706,42 @@ export function parseEvidenceRetrievalSelectorV1(value) {
     evidenceSelectorInvalid("exactly one active selector is required: fields, item_range, text_range, target_subset, or image=true");
   }
   return Object.freeze(active[0]);
+}
+
+/** Fail closed when a peer did not execute the requested retained scalar selection.
+ * This authenticates no native fact and changes no legacy unfiltered response. */
+export function assertScalarEvidencePageV1(request, envelope) {
+  const selector = parseEvidenceRetrievalSelectorV1(request);
+  if (selector.kind !== "item_range" || !selector.item_range.filters && !selector.item_range.orderBy) return;
+  const range = selector.item_range, result = record(envelope)?.result ?? envelope;
+  const r = record(result), p = record(r?.pagination), q = record(p?.selection_query), rows = r?.selection;
+  const fail = () => { throw new TypeError("scalar_evidence_response_invalid: peer must return the exact partial scalar-selection coverage"); };
+  const count = v => Number.isSafeInteger(v) && v >= 0;
+  if (!r || r.schema !== "revit-operator.evidence-retrieval.v1" || r.complete !== false || !p || !q || !Array.isArray(rows)
+      || p.path !== range.path || p.start !== range.start || p.requested_count !== range.count || p.returned_count !== rows.length
+      || rows.length > range.count || q.cursor_basis !== "selected_rank" || !count(q.source_total_items) || q.source_total_items > 5000
+      || p.total_items !== q.source_total_items || !count(q.matched_total_items) || q.matched_total_items > q.source_total_items
+      || q.scanned_retained_rows !== q.source_total_items || q.retained_scan_complete !== true || p.source_rows_exhausted !== false
+      || p.row_projection !== "selected_fields" || JSON.stringify(p.fields) !== JSON.stringify(range.fields)
+      || JSON.stringify(q.filters ?? []) !== JSON.stringify(range.filters ?? [])
+      || JSON.stringify(q.orderBy ?? null) !== JSON.stringify(range.orderBy ?? null)
+      || !count(q.non_comparable_filter_rows) || q.non_comparable_filter_rows > q.source_total_items
+      || !count(q.unavailable_numeric_order_rows) || q.unavailable_numeric_order_rows > q.matched_total_items
+      || !range.filters && (q.non_comparable_filter_rows !== 0 || q.matched_total_items !== q.source_total_items)
+      || !range.orderBy && q.unavailable_numeric_order_rows !== 0) fail();
+  const available = Math.max(0, q.matched_total_items - range.start), more = range.start + rows.length < q.matched_total_items;
+  if (rows.length > available || p.has_more !== more || p.next_start !== (more ? range.start + rows.length : null)
+      || q.selected_rows_exhausted !== !more || p.byte_limited !== (rows.length < Math.min(range.count, available))
+      || p.requested_rows_complete !== !p.byte_limited || more && rows.length === 0) fail();
+  const indices = new Set();
+  for (const item of rows) {
+    const row = record(item), values = record(row?.values);
+    if (!row || !count(row.row_index) || row.row_index >= q.source_total_items || indices.has(row.row_index) || !values
+        || !Array.isArray(row.missing_fields) || row.missing_fields.some(f => !range.fields.includes(f))
+        || new Set(row.missing_fields).size !== row.missing_fields.length
+        || Object.keys(values).length !== range.fields.length || !range.fields.every(f => hasOwn(values, f))) fail();
+    indices.add(row.row_index);
+  }
 }
 
 /** Returns true only for reviewed scalar/collection identity field names. */
@@ -816,3 +901,11 @@ export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) 
 
 export * from "./native-continuation.js";
 export * from "./schedule-filter-state.js";
+
+/** This route edits an owned, detached family document. Its verified child
+ * typography is useful progress but is never proof of a loaded project result.
+ * Keep this distinction independent of producer-supplied success flags. */
+export function isDetachedFamilyLabelEditV2(method, path) {
+  return typeof method === "string" && method.trim().toUpperCase() === "POST"
+    && typeof path === "string" && path.trim().toLowerCase() === "/revit/set-family-label-style";
+}

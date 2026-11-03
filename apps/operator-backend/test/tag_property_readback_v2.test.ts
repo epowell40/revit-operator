@@ -6,6 +6,19 @@ import { decodeNativeTagPropertyReadV2, existingTagRepairReadbackMatchesV2 } fro
 import { postconditionSatisfiedByPayloadV2 } from '../src/postcondition_verification_v2.js';
 import { operationTargetSelectorV2, verificationCapabilityAdmissionV2 } from '../src/verification/verification_capability_admission_v2.js';
 
+test('retained326 category rollback and committed discarded leader never prove tag delivery',()=>{
+ const live=JSON.parse(fs.readFileSync('test/fixtures/duct-tag-category-and-placement-326.json','utf8'));
+ assert.equal(live.subject.category_token,'OST_DuctCurves');
+ for(const row of live.cases) assert.equal(postconditionSatisfiedByPayloadV2(row.input,row.payload),false);
+ assert.equal(live.cases[0].payload.transaction.committed,false);
+ const discarded=live.cases[1].payload;
+ assert.equal(discarded.transaction.committed,true);
+ assert.equal(discarded.applied,true,'retain the native committed/applied classification');
+ assert.equal(discarded.taggedCount,0);
+ assert.deepEqual(discarded.tagIds,[]);
+ assert.equal(discarded.errors[0].failureKind,'tag_unresolved_leader_collision');
+});
+
 test('retained real tag false leader verifies with owner-bound native values through shared comparator',()=>{
  const f=retainedTagReadFixtureV2();
  assert(existingTagRepairReadbackMatchesV2(f.apply_input,f.read_input,f.native_read));

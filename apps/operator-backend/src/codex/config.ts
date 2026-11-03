@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { acquireCodexIsolation } from './isolation_lifecycle.js';
 
 function ensureDir(p: string): void {
   try {
@@ -125,15 +126,17 @@ export function ensureCodexHomeAuth(opts: { codexHome: string }): void {
   }
 }
 
-export type CertifiedCodexIsolation = { codexHome: string; cwd: string };
+export type CertifiedCodexIsolation = { codexHome: string; cwd: string; release?:()=>void|Promise<void> };
 
-export function prepareCertifiedCodexIsolation(opts: { workspaceRoot: string; isolationRoot?: string }): CertifiedCodexIsolation {
+export function prepareCertifiedCodexIsolation(opts: { workspaceRoot: string; isolationRoot?: string; ephemeral?:boolean }): CertifiedCodexIsolation {
   const workspaceRoot = path.resolve(opts.workspaceRoot);
   const workspaceHash = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 24);
   const baseRoot = path.resolve(opts.isolationRoot ?? path.join(os.tmpdir(), "revit-operator-certified-codex-v1"));
-  const runtimeRoot = path.join(baseRoot, workspaceHash);
+  const lease=opts.ephemeral?acquireCodexIsolation(baseRoot,workspaceHash):null;
+  const runtimeRoot = lease?.root??path.join(baseRoot, workspaceHash);
   const codexHome = path.join(runtimeRoot, "home");
   const cwd = path.join(runtimeRoot, "cwd");
+  try {
   ensureDir(codexHome);
   ensureDir(cwd);
   ensureCodexHomeAuth({ codexHome });
@@ -141,5 +144,9 @@ export function prepareCertifiedCodexIsolation(opts: { workspaceRoot: string; is
   // survive in this home. The external cwd keeps project-level config outside
   // the app-server's configuration ancestry.
   fs.writeFileSync(path.join(codexHome, "config.toml"), "# Revit Operator certified-v1: MCP servers are intentionally absent.\n", "utf8");
-  return { codexHome, cwd };
+  return { codexHome, cwd, ...(lease?{release:lease.release}:{}) };
+  } catch (error) {
+    void lease?.release().catch(()=>{}); // Preserve initialization error; stale leases are reclaimed later.
+    throw error;
+  }
 }

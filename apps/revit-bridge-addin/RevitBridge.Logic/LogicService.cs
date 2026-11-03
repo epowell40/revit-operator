@@ -83,6 +83,8 @@ namespace RevitBridge.Logic
                 { "/revit/load-family", new LoadFamilyHandler() },
                 { "/revit/create-family-from-template", new CreateFamilyFromTemplateHandler() },
                 { "/revit/inspect-family-content", new InspectFamilyContentHandler() },
+                { "/revit/inspect-family-label-styles", new InspectFamilyLabelStylesHandler() },
+                { "/revit/set-family-label-style", new SetFamilyLabelStyleHandler() },
                 { "/revit/plan-family-evolution", new PlanFamilyEvolutionHandler() },
                 { "/revit/apply-family-evolution", new ApplyFamilyEvolutionHandler() },
                 { "/revit/read-family-evolution", new ReadFamilyEvolutionHandler() },

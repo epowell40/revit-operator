@@ -10,6 +10,35 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorSupportedToolInventoryTests
     {
         [Fact]
+        public void NativeAccessoryPlacementUsesOneExplicitInteractiveMutationContract()
+        {
+            const string path = "/revit/place-mep-accessory-interactively";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path);
+            Assert.Equal(OperatorActionRisk.High, tool.RiskLevel);
+            Assert.Contains("same desktop execution agent", tool.Description);
+            Assert.Contains("native__await_interactive_placement", tool.Description);
+            Assert.Contains("not proof of correct fit", tool.Description);
+            Assert.Contains("already-committed placements", tool.Description);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+            Assert.False(OperatorActionAllowlist.IsAllowed("POST", path + "-untracked"));
+        }
+        [Fact]
+        public void QuantifyReadUsesExistingDiscoveryAndAdmissionWithoutVisualization()
+        {
+            const string route = "/revit/quantify";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", route));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", route));
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == route);
+            Assert.Equal(OperatorActionRisk.Low, tool.RiskLevel);
+            Assert.Contains("sourceCoverage", tool.Description);
+            Assert.Contains("incomplete coverage cannot prove absence", tool.Description);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("GET", route));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", route + "-visualize"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", route + "-other"));
+        }
+        [Fact]
         public void GuardedExcelOutputImportAndIndependentPartReadAreExposedWithoutLegacyMutation()
         {
             foreach (var path in new[] { "/revit/import-excel-output", "/revit/inspect-excel-import" })
@@ -86,15 +115,24 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("PRODUCT_TOOL_NOT_SUPPORTED", Assert.Throws<OperatorToolUserErrorException>(() =>
                 OperatorSupportedToolInventory.RequireSupportedTransport("POST", "/revit/import-vector-detail")).Code);
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/inspect-vector-detail"));
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/import-vector-annotations"));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", "/revit/import-vector-annotations"));
+            Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/import-vector-annotations");
         }
         [Fact]
         public void EveryImplementedRouteIsConstrainedAtNativeAdmissionAndDiscovery()
         {
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
-            Assert.Equal(223, implemented.Count);
-            Assert.Equal(117, OperatorToolManifest.Tools.Count);
-            Assert.Equal(117, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(227, implemented.Count);
+            Assert.Equal(123, OperatorToolManifest.Tools.Count);
+            Assert.Equal(123, OperatorActionAllowlist.EnumerateAllowed().Count());
+            foreach (var path in new[] { "/revit/inspect-family-label-styles", "/revit/set-family-label-style" })
+            {
+                Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+                Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", path));
+                Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", path + "-unreviewed"));
+            }
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/locate-elements"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTool("GET", "/revit/locate-elements"));
             Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/connect-existing-mep-branch"));
@@ -126,6 +164,20 @@ namespace RevitBridge.Common.Tests
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("GET", "/revit/dynamic-runtime/bootstrap"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/dynamic-runtime/new-unreviewed-route"));
             Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/CREATE-VIEW"));
+        }
+
+        [Fact]
+        public void GenericFamilyCreationHasAnExactHighRiskRouteNotArbitraryFamilyAuthority()
+        {
+            const string path = "/revit/create-family-from-template";
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));
+            Assert.True(OperatorActionAllowlist.IsAllowed("POST", path));
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Method == "POST" && t.Path == path);
+            Assert.Equal(OperatorActionRisk.High, tool.RiskLevel);
+            Assert.Contains("parametric", tool.Description);
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("GET", path));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", path + "-unreviewed"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTransport("POST", "/revit/create-arbitrary-family"));
         }
     }
 }

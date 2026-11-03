@@ -182,6 +182,8 @@ namespace RevitBridge.Common
 
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(result));
             var root = document.RootElement;
+            if (OperatorFamilyCreationReceipt.TrySettlement(root, effect, method, path, out var creationSettlement))
+                return creationSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_creation_unverified", "native_host");
             if (OperatorFamilyCloseReceipt.TrySettlement(root, effect, method, path, out var familyCloseSettlement))
                 return familyCloseSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "family_close_receipt_unverified", "native_receipt");
             if (OperatorFamilySaveReceipt.TrySettlement(root, effect, method, path, out var familySaveSettlement))

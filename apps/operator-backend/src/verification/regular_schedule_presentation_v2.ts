@@ -1,6 +1,6 @@
 import { regularScheduleCheckNeedsRefreshV2 } from './regular_schedule_recheck_v2.js';
 import { regularScheduleFieldDefinitionV2 as definition } from './regular_schedule_field_definition_v2.js';
-import { regularSchedulePresentationScopeMatchesV2, regularSchedulePresentationInventoryMatchesV2 } from './regular_schedule_presentation_scope_v2.js';
+import { regularSchedulePresentationScopeMatchesV2, regularSchedulePresentationInventoryMatchesV2, regularScheduleUnrequestedPreservedIdsV2 } from './regular_schedule_presentation_scope_v2.js';
 import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
 import { canonicalJsonV2, sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
@@ -8,6 +8,8 @@ import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment
 import { scheduleCombinedFieldRequestV2, scheduleCombinedFieldReadbackMatchesV2 } from './schedule_combined_field_v2.js';
 import { boundedScheduleFieldFormatsV2, scheduleFieldFormatsMatchV2 } from './schedule_field_formats_v2.js';
 import { boundedScheduleRowHeightsV2, scheduleRowHeightsMatchV2 } from './schedule_row_heights_v2.js';
+import { isScheduleWidthOnlyRequestV2, scheduleWidthPreservationMatchesV2, scheduleWidthPreservationSummaryV2 } from './schedule_width_preservation_v2.js';
+import {checkedEditIsCurrentV2,checkedReadIsCurrentV2} from './current_postcondition_v2.js';
 
 const object = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 const positive = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
@@ -80,7 +82,11 @@ export function regularSchedulePresentationReadbackMatchesV2(input:unknown,appli
     || !regularSchedulePresentationScopeMatchesV2(w.scheduleId,s.uniqueId,a,r)
     ||!matches(w,a.presentationReadback)||!matches(w,r.presentation)||!widthsMatch(w,a,r,s.uniqueId)
     ||(w.fieldFormats&&!scheduleFieldFormatsMatchV2(w.fieldFormats,w.scheduleId,s.uniqueId,a,r))
-    ||(w.rowHeights&&!scheduleRowHeightsMatchV2(w.rowHeights,w.scheduleId,s.uniqueId,a,r)))return false;
+    ||(w.rowHeights&&!scheduleRowHeightsMatchV2(w.rowHeights,w.scheduleId,s.uniqueId,a,r))
+    ||(isScheduleWidthOnlyRequestV2(input)&&(Object.hasOwn(a,'targetContentBefore')||Object.hasOwn(a,'targetContentAfter'))
+      &&(!scheduleWidthPreservationMatchesV2(input,a,r)
+        ||((Object.hasOwn(a,'presentationScopeBefore')||Object.hasOwn(a,'presentationScopeAfter')||Object.hasOwn(r,'scope'))
+          &&regularScheduleUnrequestedPreservedIdsV2(w.scheduleId,s.uniqueId,a,r)===null))))return false;
   return styleKeys.every(k=>w.appearance[k]===undefined || (()=>{const part=k.replace('TextTypeId','');
     return object(object(a.presentationReadback)[part]).uniqueId===object(object(r.presentation)[part]).uniqueId;})());
 }
@@ -116,6 +122,22 @@ function retainedApply(snapshot: AssignmentSnapshotV2, op: OperationV2) {
     } catch { /* Unavailable/unbound native evidence stays unverified; never retry its mutation. */ }
   }
   return null;
+}
+
+/** Scope of an already accepted current native check. Missing historical data never acquires new obligations. */
+export function regularSchedulePresentationCheckedScopeV2(snapshot:AssignmentSnapshotV2,op:OperationV2,read:OperationV2){
+ if(op.request_identity?.path!=='/revit/configure-schedule'||!isScheduleWidthOnlyRequestV2(op.input)
+  ||snapshot.execution_control?.state==='paused'||snapshot.unresolved_unknown_operation_ids.length
+  ||!checkedEditIsCurrentV2(snapshot,op.operation_id)||!checkedReadIsCurrentV2(snapshot,read.operation_id)
+  ||read.verification_of_operation_id!==op.operation_id||read.purpose!=='verification'||!op.verification_operation_ids.includes(read.operation_id)
+  ||!sameAssignmentBindingV2(op.binding,snapshot.current_binding)||!sameAssignmentBindingV2(read.binding,snapshot.current_binding)
+  ||op.result?.authority!=='native-host'||read.result?.authority!=='native-host'||op.result.status!=='succeeded'||read.result.status!=='succeeded')return undefined;
+ const a=retainedApply(snapshot,op),r=retainedApply(snapshot,read);
+ if(!a||!r||!regularSchedulePresentationReadbackMatchesV2(op.input,a,r))return undefined;
+ const target=scheduleWidthPreservationSummaryV2(op.input,a,r);
+ if(!target)return undefined;
+ const others=regularScheduleUnrequestedPreservedIdsV2(object(a.schedule).id,object(a.schedule).uniqueId,a,r);
+ return {...target,unrequested_schedule_ids:others??[],unrequested_schedule_census_checked:others!==null};
 }
 
 export function committedRegularSchedulePresentationReadbackPlanV2(snapshot: AssignmentSnapshotV2, op: OperationV2) {

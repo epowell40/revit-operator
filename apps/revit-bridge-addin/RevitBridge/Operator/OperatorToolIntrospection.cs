@@ -296,6 +296,7 @@ namespace RevitBridge.Operator
                 { "/revit/inspect-drawing-spec", typeof(RevitBridge.Common.DrawingSpecInspectionRequest) },
                 { "/revit/inspect-excel-source", typeof(RevitBridge.Common.XlsxSourceInspectionRequest) },
                 { "/revit/import-vector-detail", typeof(RevitBridge.Common.VectorDraftingImportRequest) },
+                { "/revit/import-vector-annotations", typeof(RevitBridge.Common.VectorDraftingAnnotationRequest) },
                 { "/revit/inspect-vector-detail", typeof(RevitBridge.Common.VectorDraftingInspectionRequest) },
                 { "/revit/import-excel-output", typeof(RevitBridge.Common.XlsxTableImportRequest) },
                 { "/revit/inspect-excel-import", typeof(RevitBridge.Common.XlsxTableInspectionRequest) },
@@ -438,6 +439,8 @@ namespace RevitBridge.Operator
                 { "/revit/close-doc", typeof(RevitBridge.Logic.Handlers.CloseDocHandler.Params) },
                 { "/revit/edit-family-from-instance", typeof(RevitBridge.Logic.Handlers.EditFamilyFromInstanceHandler.Params) },
                 { "/revit/inspect-family-content", typeof(RevitBridge.Logic.Handlers.InspectFamilyContentHandler.Params) },
+                { "/revit/inspect-family-label-styles", typeof(RevitBridge.Logic.Handlers.InspectFamilyLabelStylesHandler.Params) },
+                { "/revit/set-family-label-style", typeof(RevitBridge.Common.Annotation.FamilyLabelStyleChangeRequest) },
                 { "/revit/find-family-text-notes", typeof(RevitBridge.Logic.Handlers.FindFamilyTextNotesHandler.Params) },
                 { "/revit/set-text-note-text", typeof(RevitBridge.Logic.Handlers.SetTextNoteTextHandler.Params) },
                 { "/revit/reload-family-edit-session", typeof(RevitBridge.Logic.Handlers.ReloadFamilyEditSessionHandler.Params) },
@@ -448,6 +451,23 @@ namespace RevitBridge.Operator
                 var m = (method ?? "").Trim().ToUpperInvariant();
                 var p = (path ?? "").Trim();
                 if (m == "GET") return null;
+
+                if (p == "/revit/place-mep-accessory-interactively")
+                    return RevitBridge.Common.NativeInteractiveAccessoryRequest.RequestSchema();
+
+                if (p == "/revit/connect-existing-mep-branch")
+                {
+                    var legacy = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    ((Dictionary<string, object>)legacy["properties"])["connectionMode"] = Str(new[] { "takeoff_fitting", "air_terminal_on_duct", "replace_tee_with_takeoff" });
+                    return new Dictionary<string, object> { ["type"] = "object", ["oneOf"] = new object[] { legacy, RevitBridge.Common.InlineAccessoryRequest.RequestSchema() } };
+                }
+
+                if (p == "/revit/tag-elements")
+                {
+                    var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
+                    TagElementModeContract.ApplySchema(schema);
+                    return schema;
+                }
 
                 if (OperatorConditionalRequestContracts.TryGet(p, out var conditionalSchema))
                     return conditionalSchema;
@@ -705,20 +725,13 @@ namespace RevitBridge.Operator
                         required: Array.Empty<string>());
                 }
 
+                if (string.Equals(p, "/revit/inspect-family-label-styles", StringComparison.OrdinalIgnoreCase))
+                    return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0), "familyDocumentId");
+                if (string.Equals(p, "/revit/set-family-label-style", StringComparison.OrdinalIgnoreCase))
+                    return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0),
+                        "familyDocumentId", "labelTypeId", "expectedTypeUniqueId", "style", "expectedStyle");
                 if (string.Equals(p, "/revit/inspect-family-content", StringComparison.OrdinalIgnoreCase))
-                {
-                    return Obj(
-                        props: new Dictionary<string, object>
-                        {
-                            { "elementId", Int() },
-                            { "contains", Str() },
-                            { "maxElements", Int() },
-                            { "includeParameters", Bool() },
-                            { "includeOtherElements", Bool() }
-                        },
-                        required: new[] { "elementId" },
-                        additionalProps: false);
-                }
+                    return FamilyInspectionSource.Schema();
 
                 if (string.Equals(p, "/revit/resolve-room-plan-view", StringComparison.OrdinalIgnoreCase))
                 {
@@ -983,6 +996,7 @@ namespace RevitBridge.Operator
                         {
                             { "elementId", Int() },
                             { "elementIds", Arr(Int()) },
+                            { "preservationScheduleIds", Arr(Int(), maxItems: 32) },
                             { "category", Str() },
                             { "categories", Arr(Str()) },
                             { "allModelInstances", Bool() },
@@ -1001,8 +1015,6 @@ namespace RevitBridge.Operator
                 }
 
                 // Export PDF (views/sheets). Supports viewIds OR selector OR sheetNumberPrefix/sheetQuery convenience.
-                if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase))
-                    return Obj(new Dictionary<string, object> { { "paths", Arr(Str()) } }, new[] { "paths" }, additionalProps: false);
                 if (string.Equals(p, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase))
                 {
                     var selectorSchema = Obj(
@@ -1222,6 +1234,7 @@ namespace RevitBridge.Operator
                             { "viewId", Int() },
                             { "elementId", Int() },
                             { "elementIds", Arr(Int(), maxItems: 500) },
+                            { "preservationScheduleIds", Arr(Int(), maxItems: 32) },
                             { "max", Int(minimum: 1, maximum: 500) }
                         },
                         required: Array.Empty<string>(),

@@ -10,6 +10,27 @@ namespace DynamicRevitSandboxSupervisor.Tests;
 public sealed class RuntimeWorkspaceTests
 {
     [Fact]
+    public void NativeCodeLaneRequiresExplicitBoundModeAndNeverSharesLegacyCacheOrGraphLane()
+    {
+        var oldMode=Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE");var oldExposure=Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE");
+        try
+        {
+            var config=new LiveTaskConfig{TargetRevitYear="2024",ReadOnly=true,ExpectedDocumentFingerprint=DynamicWire.Sha256("doc"),
+                NativeProgram=new DynamicNativeProgramRequestV1{EntryType="NativeTask",Mode="read"}};
+            Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE","production");Environment.SetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE","laboratory");
+            Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));
+            Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE","development");Program.ValidateNativeLane(config);
+            config.Apply=true;Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));config.Apply=false;
+            config.ResultReference=true;Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));config.ResultReference=false;
+            config.CompilationCacheDirectory="legacy-cache";Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));config.CompilationCacheDirectory="";
+            config.ExpectedDocumentFingerprint=null;Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));config.ExpectedDocumentFingerprint=DynamicWire.Sha256("doc");
+            config.NativeProgram.Mode="write";config.NativeProgram.AllowCreate=true;config.NativeProgram.MaxAffectedElements=4;
+            Assert.Throws<InvalidOperationException>(()=>Program.ValidateNativeLane(config));config.ReadOnly=false;config.Apply=true;
+            Program.ValidateNativeLane(config);
+        }
+        finally{Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE",oldMode);Environment.SetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE",oldExposure);}
+    }
+    [Fact]
     public void BridgeTimeoutOutlivesBoundedWorkerAndApplyWindows()
     {
         Assert.Equal(TimeSpan.FromSeconds(90), Program.BridgeRequestTimeoutForTests);

@@ -30,12 +30,14 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 function notify(method, params) {
+  if (method === "turn/completed" && activeTurns.get(params.threadId) === params.turn?.id) activeTurns.delete(params.threadId);
   trace("out", method);
   send({ method, params });
 }
 
 const state = loadState();
 const pendingToolTimers = new Map();
+const activeTurns = new Map();
 let initialized = false;
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", line => {
@@ -77,7 +79,12 @@ input.on("line", line => {
     return;
   }
   if (message.method === "turn/start") {
+    if (process.env.CODEX_FIXTURE_REUSE_ACTIVE_TURN === "1" && activeTurns.has(message.params.threadId)) {
+      respond({ turn: { id: activeTurns.get(message.params.threadId) } });
+      return;
+    }
     const turnId = `turn-fixture-${state.nextTurn++}`;
+    activeTurns.set(message.params.threadId, turnId);
     saveState(state);
     if (process.env.CODEX_FIXTURE_COMPLETED_ADMISSION === "1") {
       const request = (id, selectedTurn) => ({ id, method: "item/tool/call", params: {
@@ -140,6 +147,7 @@ input.on("line", line => {
   }
   if (message.method === "turn/interrupt") {
     const turnId = String(message.params?.turnId ?? "");
+    if (activeTurns.get(message.params.threadId) === turnId) activeTurns.delete(message.params.threadId);
     const timer = pendingToolTimers.get(turnId);
     if (timer) clearTimeout(timer);
     pendingToolTimers.delete(turnId);

@@ -46,12 +46,124 @@ function consistentCount(root:Record<string,any>,names:string[]):number|null {
   return values.length>0 && values.every(value=>count(value)&&value===values[0]) ? values[0] : null;
 }
 
+function quantifyCoverageComplete(body:Record<string,any>,root:Record<string,any>,total:number):boolean {
+  const scope=text(body.scope).toLowerCase() || 'host';
+  if(!['host','links','both'].includes(scope))return false;
+  if(!Object.hasOwn(root,'sourceCoverage')) {
+    // Legacy host-only counts remain usable. Old linked responses cannot prove
+    // which sources were skipped, even when no warning happened to be returned.
+    return scope==='host' && (root.warnings===undefined || Array.isArray(root.warnings)&&root.warnings.length===0);
+  }
+  const c=object(root.sourceCoverage);
+  if(c.schema!=='operator.quantify_source_coverage.v1' || c.scope!==scope
+    || c.instanceScope!=='direct_document_instances' || c.familyDefinitionContentsInspected!==false
+    || c.complete!==true || !count(c.directLinkInstances) || c.unavailableLinkInstances!==0
+    || c.nestedLinkInstances!==0 || c.matchedCount!==total || !Array.isArray(c.documents))return false;
+  const documents=c.documents.map(object),host=documents.filter((x:Record<string,any>)=>x.source==='host'),links=documents.filter((x:Record<string,any>)=>x.source==='link');
+  if(host.length+links.length!==documents.length || host.length!==(scope==='links'?0:1)
+    || links.length!==c.directLinkInstances || scope==='host'&&links.length!==0
+    || documents.some((x:Record<string,any>)=>!text(x.projectUniqueId)||!count(x.matchedCount)||x.nestedLinkInstances!==0)
+    || host.some((x:Record<string,any>)=>x.linkInstanceId!=null||x.linkUniqueId!=null)
+    || links.some((x:Record<string,any>)=>!Number.isSafeInteger(x.linkInstanceId)||x.linkInstanceId<=0||!text(x.linkUniqueId))
+    || new Set(links.map((x:Record<string,any>)=>x.linkInstanceId)).size!==links.length
+    || new Set(links.map((x:Record<string,any>)=>x.linkUniqueId)).size!==links.length)return false;
+  return documents.reduce((n:number,x:Record<string,any>)=>n+x.matchedCount,0)===total;
+}
+
+function quantifyQueryScope(body:Record<string,any>,root:Record<string,any>):string {
+  // Include source and filter identity; never compare a host count with a link
+  // count or a filtered subset merely because they share the same fact name.
+  const filters=object(body.filters),terms=(x:unknown)=>Array.isArray(x)?x.map(text).filter(Boolean).sort():[];
+  return payloadDigestV2({schema:'operator.quantify_query_scope.v1',scope:text(body.scope).toLowerCase()||'host',
+    categories:terms(body.categories),filters:{level:text(filters.level),keywords_include:terms(filters.keywords_include),
+      keywords_exclude:terms(filters.keywords_exclude),parameters:Array.isArray(filters.parameters)?filters.parameters.map((v:unknown)=>{
+        const p=object(v);return {param:text(p.param),value:text(p.value),op:text(p.op).toLowerCase()||'contains'};
+      }).sort((a:any,b:any)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):[]},
+    sources:Array.isArray(object(root.sourceCoverage).documents)?object(root.sourceCoverage).documents.map((v:unknown)=>{
+      const s=object(v);return {source:s.source,projectUniqueId:s.projectUniqueId,linkInstanceId:s.linkInstanceId??null,linkUniqueId:s.linkUniqueId??null};
+    }).sort((a:any,b:any)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):null}).digest;
+}
+
+// The native read graph already attests Element receivers. Reuse that contract
+// rather than treating arbitrary API return values or document labels as proof.
+// This establishes observation only, never inventory completeness or correctness.
+function graphObservedElement(body:Record<string,any>,root:Record<string,any>):boolean {
+  const steps=body.operations,receipts=root.operations;
+  if(root.version!=="operator.native_api_ops.v2" || root.ok!==true || root.read_only!==true
+    || root.ephemeral_handles!==true || !Array.isArray(steps) || !steps.length
+    || !Array.isArray(receipts) || root.operation_count!==steps.length || receipts.length!==steps.length
+    || !Array.isArray(root.geometry_cleanup_errors) || root.geometry_cleanup_errors.length
+    || root.source?.scope==="external_file" || !root.results || typeof root.results!=="object" || Array.isArray(root.results))return false;
+  const names=steps.map(value=>text(object(value).id));
+  if(names.some(name=>!name) || new Set(names.map(name=>name.toLowerCase())).size!==names.length)return false;
+  const returned=Array.isArray(body.returns)&&body.returns.length
+    ? [...new Set(body.returns.map((value:unknown)=>text(value).replace(/^\$+/,"").toLowerCase()).filter(Boolean))]
+    : [names[names.length-1]!.toLowerCase()];
+  const resultNames=Object.keys(root.results).map(name=>name.toLowerCase());
+  if(!returned.length || returned.some(name=>!names.some(id=>id.toLowerCase()===name))
+    || resultNames.length!==returned.length || new Set(resultNames).size!==resultNames.length
+    || resultNames.some(name=>!returned.includes(name)))return false;
+  const preceding=(reference:string,before:number):number=>{
+    const index=names.findIndex(name=>name.toLowerCase()===reference.toLowerCase());
+    return index>=0&&index<before?index:-1;
+  };
+  const collectorType="Autodesk.Revit.DB.FilteredElementCollector";
+  const currentCollector=(index:number):boolean=>{
+    if(index<0)return false;
+    const step=object(steps[index]),receipt=object(receipts[index]);
+    if(object(receipt.result_preview).type!==collectorType)return false;
+    if(text(step.op).toLowerCase()==="construct"
+      && text(step.memberId)===`ctor:${collectorType}(Autodesk.Revit.DB.Document)`
+      && Array.isArray(step.args)&&step.args.length===1){
+      const documentIndex=preceding(text(object(step.args[0]).$ref),index);
+      if(documentIndex<0)return false;
+      const document=object(steps[documentIndex]),native=object(receipts[documentIndex]);
+      return text(document.op).toLowerCase()==="get_property"&&text(document.target)==="uidoc"
+        && text(document.property)==="Document"&&native.target_type==="Autodesk.Revit.UI.UIDocument";
+    }
+    const target=text(step.target);
+    // Native collector-returning filters retain their source document. An
+    // arbitrary constructed object or foreign document is not a model read.
+    return text(step.op).toLowerCase()==="call"&&target.startsWith("$")
+      && text(step.memberId).startsWith(`method:${collectorType}.`)
+      && receipt.target_type===collectorType&&currentCollector(preceding(target.slice(1),index));
+  };
+  let observed=false;
+  for(let index=0;index<steps.length;index++){
+    const step=object(steps[index]),receipt=object(receipts[index]),op=text(step.op).toLowerCase();
+    if(receipt.id!==names[index] || receipt.op!==op || !["call","construct","get_property"].includes(op)
+      || (op==="get_property" ? receipt.property!==text(step.property) || receipt.member_id!==null
+        : receipt.member_id!==text(step.memberId) || receipt.property!==null))return false;
+    if(receipt.target_identity==null)continue;
+    const receiver=object(receipt.target_identity);
+    if(receiver.schema!=="operator.native_element_receiver.v1" || receiver.active_document!==true
+      || !Number.isSafeInteger(receiver.element_id) || receiver.element_id<=0 || !text(receiver.unique_id)
+      || !text(receiver.type_name).startsWith("Autodesk.Revit.DB.") || receiver.type_name!==receipt.target_type)return false;
+    const target=text(step.target),parentIndex=target.startsWith("$")
+      ? names.findIndex(name=>name.toLowerCase()===target.slice(1).toLowerCase()) : -1;
+    if(parentIndex<0 || parentIndex>=index)continue;
+    const parent=object(steps[parentIndex]),preview=object(object(receipts[parentIndex]).result_preview);
+    const literalElement=text(parent.op).toLowerCase()==="call" && text(parent.target)==="doc"
+      && text(parent.memberId)==="method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)"
+      && Array.isArray(parent.args) && parent.args.length===1 && parent.args[0]===receiver.element_id;
+    const collectorTarget=text(parent.target);
+    const collectedElement=text(parent.op).toLowerCase()==="call"
+      && text(parent.memberId)===`method:${collectorType}.FirstElement()`
+      && Array.isArray(parent.args)&&parent.args.length===0&&collectorTarget.startsWith("$")
+      && object(receipts[parentIndex]).target_type===collectorType
+      && currentCollector(preceding(collectorTarget.slice(1),parentIndex));
+    if((literalElement||collectedElement)&&preview.id===receiver.element_id&&preview.unique_id===receiver.unique_id)observed=true;
+  }
+  return observed;
+}
+
 /** Evidence from known native read contracts, never from metadata labels or
  * model-authored prose. The caller must already establish dispatched, successful,
  * task-eligible read authority and retain/hash the exact native payload. */
 export function nativeReadEvidence(path:string,requestBody:unknown,payload:unknown):Fact[] {
   const root=object(payload),body=object(requestBody);
   const content=()=>[fact("model.content_observed",true,path)];
+  if(path==="/revit/native-api-ops")return graphObservedElement(body,root)?content():[];
   const complete=(total:number,mode:"count"|"list"):Fact[]=>[
     fact("collection.complete",true,path),fact("collection.total",total,path),fact("collection.mode",mode,path)
   ].map(value=>path==='/revit/find-elements'
@@ -85,9 +197,11 @@ export function nativeReadEvidence(path:string,requestBody:unknown,payload:unkno
     if((keys.some(key=>Object.hasOwn(root,key))&&direct===null) || (keys.some(key=>Object.hasOwn(summaryRoot,key))&&summary===null))return [];
     const total=direct??summary;
     if(total===null || (direct!==null&&summary!==null&&direct!==summary))return [];
-    // Quantify scans the entire requested scope for its summary even when its
-    // returned element snapshot is bounded. The total is a count, not a full list.
-    return [...content(),...complete(total,"count")];
+    // Native instance counts are not family-definition or room-absence proof.
+    // Missing or uninspected linked sources cannot become collection.complete.
+    if(!quantifyCoverageComplete(body,root,total))return total>0?content():[];
+    return [...content(),...complete(total,"count").map(value=>({...value,dimensions:{...value.dimensions,
+      query_scope:quantifyQueryScope(body,root),instance_scope:'direct_document_instances'}}))];
   }
   if(path==="/revit/find-elements") {
     if(root.status!=="Ok" || !Array.isArray(root.elementIds) || !Array.isArray(root.items) || !count(root.count)

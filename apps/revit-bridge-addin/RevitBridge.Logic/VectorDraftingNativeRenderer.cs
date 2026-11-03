@@ -18,11 +18,16 @@ namespace RevitBridge.Logic
             Dictionary<string, DrawingSpecNativeFontProfile> installedFonts)
         { doc = document; view = target; state = owner; created = nativeCreated; fonts = installedFonts; if (!doc.IsModifiable) throw new InvalidOperationException("Missing owned vector transaction."); }
         public static Dictionary<string, DrawingSpecNativeFontProfile> Preflight(Document doc, VectorDraftingNativePlan plan)
+            => PreflightEntities(doc, plan, plan.entities);
+        public static Dictionary<string, DrawingSpecNativeFontProfile> PreflightAnnotations(Document doc, VectorDraftingNativePlan plan)
+            => PreflightEntities(doc, plan, VectorDraftingAnnotationPolicy.Entities(plan));
+        private static Dictionary<string, DrawingSpecNativeFontProfile> PreflightEntities(Document doc, VectorDraftingNativePlan plan, IEnumerable<VectorDraftingNativeEntity> entities)
         {
             VectorDraftingPlanCodec.Validate(plan);
-            var result = plan.entities.Where(e => e.kind == "text").Select(e => e.font!).Distinct(StringComparer.OrdinalIgnoreCase)
+            var selected = entities.ToArray();
+            var result = selected.Where(e => e.kind == "text").Select(e => e.font!).Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(f => f, DrawingSpecNativeFontProfile.Capture, StringComparer.OrdinalIgnoreCase);
-            foreach (var e in plan.entities)
+            foreach (var e in selected)
             {
                 void Check(string kind, double[][] points, string boundary)
                 {
@@ -57,10 +62,14 @@ namespace RevitBridge.Logic
             return result;
         }
         public VectorDraftingOwnedPart Render(VectorDraftingNativePlan plan, int index)
+            => RenderEntities(plan, index, plan.entities.Skip(index * plan.layout.partSize).Take(plan.layout.partSize));
+        public VectorDraftingOwnedPart RenderAnnotations(VectorDraftingNativePlan plan, int index)
+            => RenderEntities(plan, index, VectorDraftingAnnotationPolicy.Part(plan, index));
+        private VectorDraftingOwnedPart RenderEntities(VectorDraftingNativePlan plan, int index, IEnumerable<VectorDraftingNativeEntity> entities)
         {
             var part = new VectorDraftingOwnedPart { Index = index };
             var sourceCurves = new List<(DetailCurve native, VectorDraftingNativeEntity source)>();
-            foreach (var e in plan.entities.Skip(index * plan.layout.partSize).Take(plan.layout.partSize))
+            foreach (var e in entities)
             {
                 Element native;
                 if (e.kind == "line" || e.kind == "cubic_bezier")

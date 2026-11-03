@@ -3,9 +3,11 @@ import { isSupportedMcpAlias, requireSupportedToolRoute, SUPPORTED_TOOL_INVENTOR
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
+import { primitiveFamilyDefinitionSchema } from "./lib/primitiveFamilySchema.js";
 import { categoryVisibilityScopeSchemaV1 } from './lib/category_visibility_scope_schema.js';
 import { familyStaticTextScopeSchemaV1 } from './lib/family_static_text_scope_schema.js';
-import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { parseEvidenceRetrievalSelectorV1, assertScalarEvidencePageV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { evidenceItemRangeSchema } from "./lib/evidenceItemRangeSchema.js";
 import {retainedImageDelivery,MAX_RETAINED_IMAGE_BYTES} from './lib/retainedImageDelivery.js';
 import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
@@ -67,6 +69,7 @@ import {
   compareToolSearchCandidatesV3,
   isToolSearchRankingVersionV3,
   scoreToolSearchCandidateV3,
+  toolSearchResultCoverageV3,
   TOOL_SEARCH_RANKING_VERSION_V3
 } from "./lib/toolSearchRanking.js";
 import {
@@ -76,6 +79,7 @@ import {
 } from "./lib/toolSearchRiskSemantics.js";
 import {
   filterRegistryEntriesForSearch,
+  assertLocalNativeToolNotExcluded,
   getToolExposureRuntimeDecision,
   isMcpToolAliasExposed,
   isCertifiedToolExposureMode,
@@ -184,6 +188,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
 
 function isRegisteredMcpToolExposed(name: string): boolean {
   if (!isSupportedMcpAlias(name)) return false;
+  if (!isMcpToolAliasExposed(name)) return false;
   if (!isCertifiedToolExposureMode()) return true;
   if (CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES.has(name)) return true;
   if (name.startsWith("revit_")) return isMcpToolAliasExposed(name);
@@ -645,14 +650,23 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
 
 server.tool("operator_run_dynamic_revit_program", DYNAMIC_REVIT_TOOL_GUIDE, {
   source: z.string().min(1).max(128_000).describe(DYNAMIC_REVIT_SOURCE_GUIDE),
-  mode: z.enum(["read", "preview", "apply"]).describe("read: snapshot report only, no operation graph is allowed; preview: execute a rollback preview; apply: authorized commit and verification."),
+  mode: z.enum(["read", "preview", "apply"]).describe("read: nonmutating snapshot report or explicit native_program read; preview: snapshot/graph rollback only; apply: authorized edit with independent verification. Native compilation alone and native commit alone are not task verification."),
   target_revit_year: z.enum(["2023", "2024", "2025", "2026", "2027"]).optional(),
   category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
   parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
-  snapshot_limit: z.number().int().min(1).max(1000).optional(),
+  snapshot_limit: z.number().int().min(1).max(4096).optional().describe('Maximum native snapshot rows: read up to4096; preview/apply up to1000. Inspect c.Input.Coverage.HasMore before claiming complete enumeration.'),
   operation_budget: z.number().int().min(1).max(256).optional(),
   worker_deadline_ms: z.number().int().min(1000).max(30_000).optional(),
   apply_deadline_ms: z.number().int().min(100).max(5000).optional(),
+  native_program: z.object({
+    entry_type: z.string().min(1).max(256),
+    effect_scope: z.enum(["listed_elements", "active_document"]).optional().describe("For general native-code writes use active_document: the admitted current document, actual change audit and requested-result verification; no predicted collateral IDs. Omit legacy target/create/count restrictions in this mode. Existing listed_elements callers retain strict declared targets."),
+    allowed_existing_unique_ids: z.array(z.string().min(1).max(512)).max(64).optional(),
+    allow_create: z.boolean().optional(),
+    max_affected_elements: z.number().int().min(0).max(64).optional(),
+    deadline_ms: z.number().int().min(250).max(10000).optional(),
+    parameter_checks: z.array(z.object({element_id:z.number().int().positive(),parameter_name:z.string().min(1).max(128),expected_value:z.string().max(32768)}).strict()).min(1).max(64).optional().describe("For an apply that updates known text parameters, declare requested target IDs, exact native parameter names and desired text. The host separately reads and compares them after the commit. These checks grant no write rights and do not verify unrelated fields or collateral targets.")
+  }).strict().optional().describe("First-class native C# on supported Revit2023–2027 workstations: public static string Execute(Autodesk.Revit.DB.Document). mode read or apply only. Reads need no effect targets. General writes may explicitly use effect_scope active_document without predicting dependent changes; listed_elements retains legacy restrictions. For known text parameter edits supply parameter_checks for separate native verification. No transaction, SaveAs, filesystem or network in source. Host manages the transaction; returned text is not verification. Review source against the task and verify the requested persisted result. Do not combine with snapshot, graph, resume or checkpoint options."),
   resume: z.object({
     prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
     prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -999,7 +1013,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
     fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
-    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256), fields: z.array(z.string()).min(1).max(64).optional() }).describe("One bounded array page. Optional fields selects columns relative to each row and returns row_index, values keyed by the exact path, and missing_fields; projected pages are always partial. Mutually exclusive with every other selector.").optional(),
+    itemRange: evidenceItemRangeSchema.describe("One bounded retained array page. fields selects relative columns as row_index/values/missing_fields. Optional filters (1..8 AND predicates eq/ne/lt/lte/gt/gte over typed finite scalars) and orderBy (finite numeric asc/desc, missing/non-numeric last, stable source ties) require fields and at most5000 retained source rows. Non-null comparisons require matching scalar types; missing/nonfinite values never match. eq:null/ne:null test actual null/non-null scalars, not missing fields. These are discovery projections, always complete:false/source_rows_exhausted:false; original row_index remains the source index. With filters/orderBy, start/next_start count selected ranks; pagination.selection_query distinguishes original source, matches, unavailable values and selected_rows_exhausted. Bounds/source completeness do not certify native absence or work. Confirm selected targets with current native reads. Mutually exclusive with every other selector.").optional(),
     textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
     image: z.literal(true).describe("Return one exact retained image as pixels with its original scope/hash, not base64 text or current-state proof. Mutually exclusive with every other selector.").optional(),
@@ -1029,6 +1043,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
         ...selectorRequest,
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
+      assertScalarEvidencePageV1(selectorRequest,result);
       if(args.image===true)return retainedImageDelivery(result,args);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {
@@ -1109,7 +1124,7 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_manage_work_plan", "Manage the saved task checklist. Retain intermediate progress with checklist updates; propose_completion is a final user handoff that stops for review, not a context checkpoint. Continue ready independent work within current host limits; defer actual blockers with specific reasons. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; each list has at most 24 entries and each entry at most 1000 characters. Put lengthy tables in a saved report artifact and reference it. Correct rejected report arguments without redoing model edits; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Use dependsOn for ordered edits (delete a sheet before reusing its number). Cycles are rejected. Use defer with itemId/reason for an unresolved question; continue ready independent items and consolidate questions. resume_item with itemId/reason revisits a deferred item without marking it done. Status shows ready_items, waiting_on and deferrals; these are planning advice, not execution authority. Edit items require distinct independently verified native edits. Use kind=inspection and dependsOn=[edit item IDs] for connectivity or copied-view-detailing reviews. Complete inspections using fresh complete /revit/get-connectors or /revit/view-owned-detailing operation IDs covering all dependent targets after the latest edit; this records inspection coverage, not an engineering pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
+server.tool("operator_manage_work_plan", "Manage the saved task checklist. The native checklist tracks requested model edits and their dependent inspections. A requested written follow-up belongs in the task result, not an unrequested model-edit item; actual unfinished requested design still needs defer with its specific question. Written findings do not certify native work or supply missing design decisions; existing checklist items cannot be removed to evade completion. Retain intermediate progress with checklist updates; propose_completion is a final user handoff that stops for review, not a context checkpoint. Continue ready independent work within current host limits; defer actual blockers with specific reasons. Default assignments require scope before multi-part edits and independently verified completion. In host-selected local advisory experiments planning is optional, complete records an unverified claim, and propose_completion submits bounded claimed_completed/remaining_work/uncertainties for independent review; each list has at most 24 entries and each entry at most 1000 characters. Put lengthy tables in a saved report artifact and reference it. Correct rejected report arguments without redoing model edits; this action cannot enable the experiment. Declare distinct room/system/branch items with their drawing/source basis and assumptions. Existing items cannot be removed or overwritten. Use dependsOn for ordered edits (delete a sheet before reusing its number). Cycles are rejected. Use defer with itemId/reason for an unresolved question; continue ready independent items and consolidate questions. resume_item with itemId/reason revisits a deferred item without marking it done. Status shows ready_items, waiting_on and deferrals; these are planning advice, not execution authority. Edit items require distinct independently verified native edits. Pre-change discovery stays outside dependent edit-inspection checklist items in strict mode; inspect project evidence before deciding which changes are justified. Do not invent model edits for the checklist. Use kind=inspection and dependsOn=[edit item IDs] for element/tag identity, loaded-family content, connectivity or copied-view reviews. Complete using fresh complete native operation IDs covering every dependent target after the latest edit: /revit/get-element-summary (exact IDs; tags require complete includeTagReferences:true), /revit/inspect-family-content (unfiltered loaded-family read), /revit/get-connectors, or the paired /revit/view-owned-detailing verification of duplicate-view withDetailing, or the accepted /revit/inspect-exported-files verification operation paired with the saved/exported artifact. File proof covers only exact artifact paths, never model elements or drawing completeness. An ordinary broad view-owned-detailing inventory cannot close another inspection; use scoped element and family reads instead. Child-family inspection does not prove loaded-project styling. Correct evidence arguments without repeating edits or asking the user to resolve a tool-contract problem. This records read coverage, not an engineering or visual pass. Later edits require fresh inspection. This records interpreted scope, not proof that the source drawing has been completely understood. Status restores the checklist after a restart. In advisory mode, checkpoint remaining_work and uncertainties are retained by exact text. update_followup records an UNVERIFIED resolved/deferred/superseded disposition with a reason for an existing item; deferred items stay visible. Superseded requires one to eight replacements with kind/text, retained atomically before proposing completion. Use the item identity/version returned by status and retain command_id on exact retries. This never certifies completion or changes write authority.",
   {
     action: z.enum(["declare", "complete", "status", "propose_completion", "update_followup", "defer", "resume_item", "locate", "check_scope"]),
     scopeCheck: z.union([z.object({category:z.string().regex(/^OST_[A-Za-z0-9]+Tags$/),view_ids:z.array(z.number().int().positive()).min(1).max(128),
@@ -1123,14 +1138,20 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist. Retai
       source: z.object({ attachment_id:z.string().min(1).max(160),filename:z.string().min(1).max(160),sha256:z.string().regex(/^[a-f0-9]{64}$/),
         page:z.number().int().positive().max(100000),page_count:z.number().int().positive().max(100000),sheet_label:z.string().min(1).max(120).optional(),view_label:z.string().min(1).max(120).optional(),
         region:z.object({min_u:z.number().min(0).max(1),min_v:z.number().min(0).max(1),max_u:z.number().min(0).max(1),max_v:z.number().min(0).max(1)}).strict().optional() }).strict().optional(),
-      native:z.object({document_fingerprint:z.string().min(1).max(240),view_id:z.number().int().positive(),view_name:z.string().min(1).max(120),sheet_number:z.string().min(1).max(40).optional()}).strict().optional()
+      native:z.object({document_fingerprint:z.string().min(1).max(240),view_id:z.number().int().positive(),view_name:z.string().min(1).max(120),sheet_number:z.string().min(1).max(40).optional()}).strict().optional(),
+      drafting:z.object({pass:z.enum(['geometry','sizes_properties','connections','elevation','annotations','coverage']),
+        stage:z.enum(['attempted','drafted','checked','blocked']),element_ids:z.array(z.number().int().positive()).max(64),
+        read_operation_ids:z.array(z.string().min(1).max(240)).max(8),
+        source_image_sha256:z.string().regex(/^[a-f0-9]{64}$/).optional(),model_image_sha256:z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        next_action:z.string().min(1).max(240),remaining:z.string().min(1).max(400),boundary_context:z.string().min(1).max(400).optional()
+      }).strict().optional().describe('Optional source-linked drafting checkpoint. Use one meaningful branch/area per item, refining the plan as work proceeds; separate geometry/properties/connections/elevation/annotations/coverage passes. Requires source crop and native view. checked means an actor backcheck, not host certification: cite current native read operation IDs and distinct source/model image SHA256 values actually delivered in visual_inputs. Record drafted if not checked. Clean PDF reads automatically add the derived highlighted-reference overlay. Keep boundary connections and next useful action; no exhaustive inventory or per-element bookkeeping required.')
     }).strict().optional().describe('locate with itemId: persist source page/crop and candidate native view for restart. Keep unresolved/ambiguous locations explicit. Navigation hints never authorize edits or verify completion; native identity must be rechecked.'),
     reason: z.string().min(1).max(800).optional().describe("For defer/resume_item only: specific unresolved question, blocker, or reason to revisit the item. Deferral is not completion."),
     followup: z.object({ command_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/), item_id: z.string().min(1).max(100),
       expected_version: z.number().int().positive(), disposition: z.enum(["resolved", "deferred", "superseded"]), reason: z.string().min(1).max(1000),
       replacements: z.array(z.object({ kind: z.enum(["remaining_work", "uncertainties"]), text: z.string().min(1).max(1000) }).strict()).min(1).max(8).optional() }).strict().optional(),
     followupStart: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
-    completionProposal: z.object({ claimed_completed: z.array(z.string().min(1).max(1000)).max(24), remaining_work: z.array(z.string().min(1).max(1000)).max(24), uncertainties: z.array(z.string().min(1).max(1000)).max(24) }).strict().optional(),
+    completionProposal: z.object({ claimed_completed: z.array(z.string().min(1).max(1000)).max(24), remaining_work: z.array(z.string().min(1).max(1000)).max(24), uncertainties: z.array(z.string().min(1).max(1000)).max(24), user_facing_text: z.string().trim().min(1).max(8000).optional().describe('Concise final human-facing answer and requested written findings; include actual remaining requested work and meaningful limits. Keep checklist/evidence IDs and owner instructions in the technical lists. Unverified prose only, never native proof or completion authority.') }).strict().optional(),
     start: z.number().int().min(0).max(128).optional(),
     operationStart: z.number().int().min(0).max(100000).optional(),
     assumptionStart: z.number().int().min(0).max(32).optional(),
@@ -1353,15 +1374,15 @@ server.tool("operator_submit_read_completion", "Submit a task-level read-complet
   }
 );
 
-server.tool("revit_search_tools", "Search Revit bridge primitives and return best matches for a natural-language task. Registry risk describes a route's possible committed effect; omit the risk filter when discovering mutation previews because a typed high-risk route may still provide a safe dry-run or rollback mode.",
+server.tool("revit_search_tools", "Search Revit bridge primitives and return ranked, limited best matches. Small searches (default 3) include available request/response contracts so you can use the result directly without a second documentation call. Reuse returned contracts in this task. An omitted route is not proof of unavailability: use a separate focused query for each remaining action or exact path before choosing an alternative. Null counts/completeness mean unknown upstream coverage. Discovery does not authorize execution or certify effects. Registry risk describes a route's possible committed effect; omit the risk filter when discovering mutation previews because a typed high-risk route may still provide a safe dry-run or rollback mode.",
   {
     query: z.string().describe("What you need to do (or endpoint/path keywords)."),
-    max: z.number().int().optional().default(20),
+    max: z.number().int().optional().default(3),
     method: z.enum(["GET", "POST"]).optional(),
     group: z.string().optional(),
     risk: z.enum(["low", "medium", "high"]).optional().describe("Exact endpoint/action-risk filter. This is not preview risk: omit it when searching for a mutation preview or dry-run capability."),
     pathPrefix: z.string().optional(),
-    includeSchemas: z.boolean().optional().default(false),
+    includeSchemas: z.boolean().optional().describe("Defaults to true for at most 3 matches, false for broader searches. Set false explicitly for compact summaries."),
     forceRefresh: z.boolean().optional().default(false)
   },
   async (args) => {
@@ -1374,8 +1395,8 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       const group = String(args.group ?? "").trim().toLowerCase();
       const risk = String(args.risk ?? "").trim().toLowerCase();
       const pathPrefix = String(args.pathPrefix ?? "").trim().toLowerCase();
-      const max = Math.max(1, Math.min(100, Number(args.max ?? 20) || 20));
-      const includeSchemas = !!args.includeSchemas;
+      const max = Math.max(1, Math.min(100, Number(args.max ?? 3) || 3));
+      const includeSchemas = args.includeSchemas ?? (max <= 3);
       const exposeBroaderRiskCandidates = shouldExposeBroaderRiskCandidates(query, risk);
 
       // If capability discovery already loaded the session registry, rank it
@@ -1425,7 +1446,8 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                         ? { ranking_version: String((direct as any).ranking_version) }
                         : {}),
                       query,
-                      total_matches: matches.length,
+                      ...toolSearchResultCoverageV3(matches.length, null,
+                        unpartitionedMatches.filter(x => !exposeBroaderRiskCandidates || String(x.risk ?? "").trim().toLowerCase() === risk).length > matches.length),
                       matches,
                       ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
                     },
@@ -1459,6 +1481,9 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
         ? partitionRiskFilteredCandidates(unpartitionedRanked, risk, max)
         : { matches: unpartitionedRanked.slice(0, max), broaderRiskCandidates: [] as typeof unpartitionedRanked };
       const ranked = partitionedRanked.matches;
+      const matchingCount = exposeBroaderRiskCandidates
+        ? unpartitionedRanked.filter(x => String(x.tool.risk ?? "").trim().toLowerCase() === risk).length
+        : unpartitionedRanked.length;
       const broaderRiskCandidates = includeSchemas
         ? partitionedRanked.broaderRiskCandidates.map(x => ({ score: x.score, ...x.tool }))
         : partitionedRanked.broaderRiskCandidates.map(x => compactToolForList(x.tool, x.score));
@@ -1476,7 +1501,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                 source: "/revit/tool-registry",
                 ranking_version: TOOL_SEARCH_RANKING_VERSION_V3,
                 query,
-                total_matches: ranked.length,
+                ...toolSearchResultCoverageV3(ranked.length, matchingCount),
                 matches,
                 ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
               },
@@ -1507,6 +1532,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       if (!method) throw new Error("method must be GET or POST.");
       assertRevitBridgePath(pathInput);
       requireSupportedToolRoute(method, pathInput);
+      // Reject local capability reductions before any registry retrieval or
+      // registered-stage resolution. This never expands ordinary exposure.
+      assertLocalNativeToolNotExcluded(method,pathInput);
 
       let registry: ToolRegistryPayload | null = null;
       let registryEntry: RegistryToolEntry | undefined;
@@ -2046,12 +2074,13 @@ server.tool("revit_get_family_file_path", "Best-effort: determine a family file 
   }
 );
 
-server.tool("revit_open_family_doc", "Open a family document for editing (returns docId session handle).",
+server.tool("revit_open_family_doc", "Open a loaded family for editing (returns docId session handle). For a grounded tag elementId, set allowNonTitleblock:true. Use inspect-family-content first to resolve its label and style; tags are not FamilyInstances.",
   {
     filePath: z.string().optional(),
     familyId: z.number().optional(),
     titleblockInstanceId: z.number().optional(),
     elementId: z.number().optional(),
+    allowNonTitleblock: z.boolean().optional(),
   },
   async (args) => {
     try {
@@ -2524,7 +2553,7 @@ server.tool("revit_get_element_summary", "Get a lightweight summary (id/category
   }
 );
 
-server.tool("revit_move_elements", "Move element(s) by a translation vector (supports dry-run).",
+server.tool("revit_move_elements", "Move element(s) by a translation vector (supports dry-run). Connected HVAC moves hold unselected equipment and air terminals fixed, restore their pin flags, and return connectedEndpointPreservation with endpoint geometry and physical connection state. Include endpoints explicitly in ids when the requested scope moves the whole network. If Revit cannot reshape the connected ducts, the transaction rolls back; use a connected reroute rather than repeating the move or treating intact connections alone as preservation.",
   {
     ids: z.array(z.number()).min(1),
     dryRun: z.boolean().default(true),
@@ -3443,7 +3472,7 @@ const transactionActionSchema = z.discriminatedUnion("kind", [
       x: z.number(),
       y: z.number(),
       z: z.number(),
-      parameters: z.record(z.string()).optional(),
+      parameters: z.record(z.string(), z.string()).optional(),
     })),
   }),
   z.object({
@@ -3678,13 +3707,14 @@ server.tool("revit_load_family", "Load a .rfa family file into the active projec
   }
 );
 
-server.tool("revit_create_family_from_template", "Create a new .rfa from a family template file and optionally load it into the active project (minimal v1).",
+server.tool("revit_create_family_from_template", "Create a workspace RFA and optionally load it. Optional geometry makes adjustable generic box/cylinder forms, with explicit category and instance/type dimension scope. Generic representation has no inferred manufacturer identity, engineering ratings or MEP connectors. New geometry requires unique file/project names.",
   {
-    templatePath: z.string().describe("Full path to the Revit family template (.rft)."),
-    savePath: z.string().describe("Full path where the new .rfa should be saved."),
+    templatePath: z.string().describe("Workspace .rft path, installed:<single .rft filename>, or installed:generic-model selecting the unique Generic Model/Metric Generic Model RFT beneath Revit's configured family-template directory. Geometry needs an empty model template."),
+    savePath: z.string().describe("Workspace .rfa destination; filename becomes the family name."),
     overwriteExistingFile: z.boolean().default(false),
     loadIntoProject: z.boolean().default(false),
     overwriteParameterValuesOnLoad: z.boolean().default(false),
+    geometry: primitiveFamilyDefinitionSchema.optional().describe("True native dimension-driven family geometry. Values are internal feet. Custom schedule data requires shared/project parameters."),
   },
   async (args) => {
     try {
@@ -3703,6 +3733,7 @@ server.tool("revit_set_view_visibility", "Control view visibility, templates and
     templateName: z.string().optional().describe("If setting template, the name."),
     categoryName: z.string().optional().describe("Exact BuiltInCategory name (e.g. OST_PlumbingFixtures)."),
     halftone: z.boolean().optional().describe("Category override: true turns on halftone, false turns it off; omission preserves it."),
+    detailLevel: z.enum(["Coarse", "Medium", "Fine", "Undefined"]).optional().describe("set_category_override only: detail for this host category, leaving whole-view detail and other graphics unchanged. Undefined inherits view detail. Stored override readback does not prove effective or linked appearance."),
     lineWeight: z.number().int().min(1).max(16).optional(),
     r: z.number().int().min(0).max(255).optional(),
     g: z.number().int().min(0).max(255).optional(),
@@ -3819,9 +3850,9 @@ server.tool("revit_import_excel_table", "Import an .xlsx range into a drafting v
   }
 );
 
-server.tool("revit_link_cad", "Link (or import) a DWG onto a sheet view. External paths require OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
+server.tool("revit_link_cad", "Link (or import) a DWG or DXF onto a sheet view. External paths require OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
   {
-    sourcePath: z.string().describe("Workspace-relative path OR approved external absolute path to .dwg."),
+    sourcePath: z.string().describe("Workspace-relative path OR approved external absolute path to .dwg or .dxf."),
     sheetNumber: z.string().optional().describe("Target sheet number (e.g. A1.00)."),
     sheetViewId: z.number().optional().describe("Target sheet view id."),
     placement: z.enum(["origin", "center"]).optional().default("origin"),

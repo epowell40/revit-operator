@@ -62,7 +62,8 @@ namespace RevitBridge.Handlers
                     {
                         id = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                         name = view.Name,
-                        type = view.ViewType.ToString()
+                        type = view.ViewType.ToString(),
+                        sheetRenderState = RevitBridge.Services.SheetRenderStateObservation.Read(uidoc!, view)
                     },
                     selection = uidoc?.Selection.GetElementIds().Select(id => RevitBridge.Common.ElementIdCompat.GetValue(id)).ToList()
                 }

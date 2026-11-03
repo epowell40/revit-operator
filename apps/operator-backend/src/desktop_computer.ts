@@ -1,4 +1,5 @@
 import { REUSED_DETAIL_GUIDANCE } from "./brains/redline_package_guidance.js";
+import { imageInputManifest, retainImageInputDelivery } from './desktop_image_delivery.js';
 import { parseProviderResponseUsageV1, type ProviderResponseUsageV1 } from "@revitoperator/assignment-kernel-v2-contracts/provider-turn-usage";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import type { ModelCallReceipt } from "./contracts.js";
@@ -15,13 +16,18 @@ import {
   getSidecarAgentProfileState,
   type SidecarAgentProfileState
 } from "./capabilities/sidecar_agent_profile.js";
-import { assertBoundedModelEvidencePayload, type ModelEvidencePayloadUsage } from "./evidence/model_context_budget.js";
+import { assertBoundedModelEvidencePayload, prepareBoundedModelEvidenceInput, type ModelEvidencePayloadUsage } from "./evidence/model_context_budget.js";
 import { appendEvidenceTelemetry } from "./evidence/evidence_store.js";
 import { localExecutorCapability, type LocalExecutorCapabilityV1 } from "./assignments/local_advisory_policy.js";
-import { executeExternalProviderCallV2 } from "./assignments/external_provider_lifecycle.js";
+import {localDesktopNativeTransportAvailable} from './assignments/desktop_native_transport_policy.js';
+import { executeExternalProviderCallV2, ExternalProviderAdmissionError } from "./assignments/external_provider_lifecycle.js";
 import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
 import {assignmentKernelV2ForBinding} from './assignments/assignment_kernel_v2_factory.js';
 import {desktopAssignmentFeedbackInputV2} from './desktop_assignment_feedback.js';
+import {withSerializedProviderTurn} from './provider_turn_queue.js';
+import {prepareDesktopProviderInput,desktopModelInputPackage,desktopResponseOwnsContext} from './desktop_response_store.js';
+import {getWorkspaceRoot} from './workspace.js';
+import {desktopNativeInteractionTools,retainNativeInteractiveProviderResponse,withDesktopNativeProviderReadiness} from './assignments/desktop_native_tools.js';
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -34,6 +40,8 @@ export type DesktopComputerRelayRequest = {
 };
 
 type DesktopComputerRelayResponse = {
+  input_images?: ReturnType<typeof imageInputManifest>;
+  input_image_delivery_error?: string;
   id: string;
   status?: string;
   output_text: string;
@@ -41,16 +49,19 @@ type DesktopComputerRelayResponse = {
   model?: string;
   model_call_receipt: ModelCallReceipt;
   provider_response_usage?: ProviderResponseUsageV1;
+  model_context_package?: ReturnType<typeof desktopModelInputPackage>;
 };
 
 class DesktopComputerProviderError extends Error {
   readonly modelCallReceipt: ModelCallReceipt;
+  readonly modelContextPackage?: ReturnType<typeof desktopModelInputPackage>;
   providerResponseUsage?: ProviderResponseUsageV1;
 
-  constructor(modelCallReceipt: ModelCallReceipt, cause: unknown) {
+  constructor(modelCallReceipt: ModelCallReceipt, cause: unknown, contextPackage?: ReturnType<typeof desktopModelInputPackage>) {
     super("Desktop computer provider request failed.", { cause });
     this.name = "DesktopComputerProviderError";
     this.modelCallReceipt = modelCallReceipt;
+    this.modelContextPackage = contextPackage;
   }
 }
 
@@ -58,10 +69,46 @@ export function getDesktopComputerProviderErrorReceipt(error: unknown): ModelCal
   return error instanceof DesktopComputerProviderError ? error.modelCallReceipt : null;
 }
 
-export function desktopComputerErrorResponse(error: unknown): { error: string; model_call_receipts?: ModelCallReceipt[]; provider_response_usage?: ProviderResponseUsageV1 } {
+type ProviderFailureDiagnostic = {
+  status: number | null; type: string | null; reason: string;
+  parameter: string | null; request_id: string | null;
+};
+
+/** Content-free troubleshooting only. Neither a retry grant nor task/effect proof. */
+function providerFailureDiagnostic(cause: unknown): ProviderFailureDiagnostic {
+  const value = cause && typeof cause === 'object' ? cause as Record<string, unknown> : {};
+  const message = typeof value.message === 'string' && value.message.length <= 8192 ? value.message : '';
+  const requestId = value.requestID ?? value.request_id;
+  const reasons: [RegExp, string][] = [
+    [/computer tool cannot use multiple image inputs/i, 'computer_multiple_image_inputs'],
+    [/provided without its required ['"]reasoning['"] item/i, 'missing_reasoning_item'],
+    [/no tool output found for function call/i, 'missing_tool_output'],
+    [/no tool call found for function call output/i, 'unexpected_tool_output'],
+    [/previous response.{0,256}(?:not found|does not exist)/i, 'previous_response_unavailable'],
+    [/(?:maximum context length|context window.{0,80}exceed|context_length_exceeded)/i, 'context_limit'],
+    [/(?:invalid image|invalid_image)/i, 'invalid_image'],
+    [/unsupported parameter/i, 'unsupported_parameter']
+  ];
+  return {
+    status: Number.isInteger(value.status) && Number(value.status) >= 400 && Number(value.status) <= 599 ? Number(value.status) : null,
+    type: ['invalid_request_error', 'authentication_error', 'permission_error', 'rate_limit_error', 'server_error'].includes(String(value.type)) ? String(value.type) : null,
+    reason: reasons.find(([pattern]) => pattern.test(message))?.[1] ?? 'unclassified',
+    parameter: typeof value.param === 'string' && /^(?:input|tools|previous_response_id|context_management|model|reasoning)(?:\[\d{1,5}\]|\.(?:content|type|image_url|output|call_id|name|parameters|compact_threshold|effort)){0,6}$/.test(value.param) ? value.param : null,
+    request_id: typeof requestId === 'string' && /^req_[A-Za-z0-9]{1,96}$/.test(requestId) ? requestId : null
+  };
+}
+
+export function desktopComputerErrorResponse(error: unknown): { error: string; admission?: {decision:string;reason:string}; model_call_receipts?: ModelCallReceipt[]; provider_response_usage?: ProviderResponseUsageV1; provider_diagnostic?: ProviderFailureDiagnostic; model_context_package?: ReturnType<typeof desktopModelInputPackage> } {
+  if(error instanceof ExternalProviderAdmissionError)return {error:error.message,admission:{decision:error.decision,reason:error.reason}};
   const receipt = getDesktopComputerProviderErrorReceipt(error);
+  const diagnostic = error instanceof DesktopComputerProviderError ? providerFailureDiagnostic(error.cause) : undefined;
   return receipt
-    ? { error: "Desktop computer provider request failed.", model_call_receipts: [receipt], ...(error instanceof DesktopComputerProviderError && error.providerResponseUsage
+    ? { error: diagnostic?.reason !== 'unclassified' && diagnostic?.status
+      ? `Desktop computer provider request failed (HTTP ${diagnostic.status}; ${diagnostic.reason}). Saved work is retained; do not repeat the unchanged request.`
+      : "Desktop computer provider request failed.",
+      provider_diagnostic: diagnostic, model_call_receipts: [receipt],
+      ...(error instanceof DesktopComputerProviderError && error.modelContextPackage ? {model_context_package:error.modelContextPackage} : {}),
+      ...(error instanceof DesktopComputerProviderError && error.providerResponseUsage
       ? { provider_response_usage: error.providerResponseUsage } : {}) }
     : { error: error instanceof Error ? error.message : "Unknown OpenAI error" };
 }
@@ -81,6 +128,7 @@ export function getDesktopComputerConfig(): {
   reasoning_effort: string;
   sidecar_agent_profile: SidecarAgentProfileState;
   local_executor: LocalExecutorCapabilityV1 | null;
+  desktop_native_tools: boolean;
 } {
   return {
     available: !!resolveOpenAiApiKey(),
@@ -88,7 +136,8 @@ export function getDesktopComputerConfig(): {
     model: resolveDesktopComputerModel(),
     reasoning_effort: resolveDesktopComputerReasoningEffort(),
     sidecar_agent_profile: getSidecarAgentProfileState(),
-    local_executor: localExecutorCapability()
+    local_executor: localExecutorCapability(),
+    desktop_native_tools: localDesktopNativeTransportAvailable()
   };
 }
 
@@ -180,27 +229,44 @@ function simplifyRelayResponse(response: any, modelCallReceipt: ModelCallReceipt
   };
 }
 
-export async function relayDesktopComputerResponse(rawBody: unknown): Promise<DesktopComputerRelayResponse> {
+export async function relayDesktopComputerResponse(rawBody: unknown,
+  retainedTurnUsage?: ModelEvidencePayloadUsage): Promise<DesktopComputerRelayResponse> {
   const apiKey = resolveOpenAiApiKey();
   if (!apiKey) {
     throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
   }
 
   const body = normalizeRelayRequest(rawBody);
-  const evidenceUsage = assertBoundedModelEvidencePayload(body.input);
+  // Only the bound relay supplies this internal argument, after validating the
+  // fresh turn and appending its exact host-retained conversation prefix. The
+  // public HTTP body cannot select it. Do not re-project prior tool results or
+  // count historical context again against one turn's evidence-envelope cap.
+  if (!retainedTurnUsage) body.input = prepareBoundedModelEvidenceInput(body.input);
+  const evidenceUsage = retainedTurnUsage ?? assertBoundedModelEvidencePayload(body.input);
   const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
   assertModelReasoningEffort(model, reasoningEffort);
   const startedAtUtc = new Date().toISOString();
   const startedMs = Date.now();
+  const instructions = body.instructions?.includes(REUSED_DETAIL_GUIDANCE)
+    ? body.instructions : [body.instructions, REUSED_DETAIL_GUIDANCE].filter(Boolean).join("\n");
+  const contextPackage = desktopModelInputPackage({...body,instructions});
   let response: unknown;
   try {
     response = await client.responses.create({
       model,
       reasoning: { effort: reasoningEffort },
-      instructions: body.instructions?.includes(REUSED_DETAIL_GUIDANCE)
-        ? body.instructions : [body.instructions, REUSED_DETAIL_GUIDANCE].filter(Boolean).join("\n"),
+      // Host-owned context management for the same execution owner. Preserve
+      // opaque compaction output and actual provider usage through the normal
+      // relay; it never replaces native evidence or canonical task state.
+      // Terra's visual working set can already exceed100k before productive
+      // work. Compacting each new image pair discards its precise pixels and
+      // encourages a read/capture/compact loop. Leave room below its272k
+      // long-context price boundary; this does not grant task calls or tokens.
+      context_management: [{ type: "compaction", compact_threshold: model === "gpt-6.1-terra" ? 250_000 : 100_000 }],
+      include: ['reasoning.encrypted_content'],
+      instructions,
       tools: body.tools,
       input: body.input,
       previous_response_id: body.previous_response_id
@@ -215,7 +281,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
       error
     });
     recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
-    throw new DesktopComputerProviderError(receipt, error);
+    throw new DesktopComputerProviderError(receipt, error, contextPackage);
   }
   const receipt = createOpenAiModelCallReceipt({
     route: "desktop_computer",
@@ -226,15 +292,17 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
     response
   });
   recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
-  return simplifyRelayResponse(response, receipt);
+  return {...simplifyRelayResponse(response, receipt), input_images:imageInputManifest(body.input),model_context_package:contextPackage};
 }
 
 /** The authenticated HTTP edge supplies this binding, never the model input. */
 export async function relayBoundDesktopComputerResponse(rawBody: unknown,
-  binding: AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 }): Promise<DesktopComputerRelayResponse> {
+  binding: AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 },
+  options: {signal?: AbortSignal} = {}): Promise<DesktopComputerRelayResponse> {
   const request = rawBody && typeof rawBody === "object" ? rawBody as Record<string, unknown> : {};
   const messageId = request.message_id;
   let providerBody:unknown=rawBody;
+  let retainedTurnUsage: ModelEvidencePayloadUsage | undefined;
   if (messageId !== undefined && (typeof messageId !== "string" || !messageId.length || messageId.length > 256 || /[\u0000-\u001f]/.test(messageId)))
     throw new Error("desktop_provider_message_identity_invalid");
   const usage = (receipt: ModelCallReceipt) => messageId === undefined ? undefined : parseProviderResponseUsageV1({
@@ -243,7 +311,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   });
   const invoke = async () => {
     try {
-      const result = await relayDesktopComputerResponse(providerBody);
+      const result = await relayDesktopComputerResponse(providerBody,retainedTurnUsage);
       const observed = usage(result.model_call_receipt);
       return { ...result, ...(observed ? { provider_response_usage: observed } : {}) };
     } catch (error) {
@@ -256,13 +324,41 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   const model = body.model || resolveDesktopComputerModel();
   const reasoning = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
   assertModelReasoningEffort(model, reasoning);
+  body.input = prepareBoundedModelEvidenceInput(body.input);
   assertBoundedModelEvidencePayload(body.input);
   if (!resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
-  const resolved=assignmentKernelV2ForBinding(binding);
-  if(!resolved)throw new Error('desktop_assignment_feedback_binding_stale');
-  providerBody={...request,input:desktopAssignmentFeedbackInputV2(body.input,resolved.snapshot)};
-  assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
-  return executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
-    invoke, receipt: result => result.model_call_receipt,
-    errorReceipt: getDesktopComputerProviderErrorReceipt });
+  // The HTTP caller may leave while its upstream request is still settling.
+  // Serialize only this outer relay; the canonical admission guard remains
+  // authoritative for other in-flight work, pause, unknown effects and budget.
+  return withSerializedProviderTurn({namespace:'desktop-outer',workspace:getWorkspaceRoot(),
+    sessionId:JSON.stringify([binding.session_id,binding.assignment_id]),signal:options.signal},()=>withDesktopNativeProviderReadiness(binding,async()=>{
+    // Re-resolve scoped ownership/generation and feedback after predecessor usage.
+    const resolved=assignmentKernelV2ForBinding(binding);
+    if(!resolved)throw new Error('desktop_assignment_feedback_binding_stale');
+    // Scoped review gets its bounded packet, not the owner's entire checklist.
+    // Current admission, Pause, unknown-effect and usage checks still apply.
+    const ownerContext=desktopResponseOwnsContext(request);
+    const ownerInput=ownerContext?desktopAssignmentFeedbackInputV2(body.input,resolved.snapshot,body.previous_response_id):undefined;
+    const feedbackInput=ownerInput??body.input;
+    providerBody={...request,input:feedbackInput};
+    const interactiveTools=desktopNativeInteractionTools(binding,body.tools);
+    if(interactiveTools) providerBody={...providerBody as Record<string,unknown>,tools:interactiveTools,
+      instructions:(body.instructions??'')+'\nAn existing native placement call is outstanding. Only operate that Revit placement UI, then Escape and use native__await_interactive_placement for its actual result. Do not save, report or finish the task, call another native tool, or treat input readiness as a committed edit.'};
+    retainedTurnUsage=assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
+    providerBody=prepareDesktopProviderInput(binding,messageId,{
+      ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{hostFeedback:ownerInput!.at(-1)}:{});
+    const response=await executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
+      ...(interactiveTools?{nativeInteractiveInput:true as const}:{}),
+      invoke, receipt: result => result.model_call_receipt,
+      errorReceipt: getDesktopComputerProviderErrorReceipt });
+    if(interactiveTools)retainNativeInteractiveProviderResponse(binding,response);
+    try { retainImageInputDelivery(binding,response); }
+    catch {
+      // Provider usage and the response have already settled. A local image
+      // index failure must not hide that response or trigger another paid call.
+      // Missing/stale delivery receipts still fail the backcheck admission.
+      response.input_image_delivery_error='image_delivery_index_unavailable';
+    }
+    return response;
+  },options.signal));
 }

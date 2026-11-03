@@ -1,6 +1,8 @@
 import { selectEvidenceItemPage } from "./item_page.js";
+import {admitEvidenceImage,noteStoredEvidenceImage} from './image_retention.js';
 import fs from "node:fs";
 import path from "node:path";
+import zlib from 'node:zlib';
 import { createHash, randomUUID } from "node:crypto";
 import {
   parseEvidenceRetrievalSelectorV1,
@@ -145,9 +147,10 @@ function atomicWriteNewJson(filePath: string, value: unknown): boolean {
   }
 }
 
-function evidencePaths(hash: string, evidenceId?: string): { object: string; ref?: string; relativeObject: string } {
+function evidencePaths(hash: string, evidenceId?: string, compressed=false): { object: string; ref?: string; relativeObject: string } {
   const layout = ensureWorkspaceLayout();
-  const relativeObject = path.posix.join("evidence", "objects", "sha256", hash.slice(0, 2), `${hash}.bin`);
+  const legacy=path.posix.join("evidence", "objects", "sha256", hash.slice(0, 2), `${hash}.bin`);
+  const relativeObject=compressed&&!fs.existsSync(resolveFileUnderWorkspace(legacy))?legacy+'.gz':legacy;
   const object = resolveFileUnderWorkspace(relativeObject);
   const ref = evidenceId ? resolveFileUnderWorkspace(path.posix.join("evidence", "refs", `${evidenceId}.json`)) : undefined;
   assertEvidencePathSafe(layout.evidence, object);
@@ -270,8 +273,7 @@ export function storeEvidence(input: EvidenceStoreInput, projectionMaxBytes = 8_
   assertSecretFree(bytes, mediaType);
   const hash = sha256(bytes);
   const evidenceId = refIdentity(input, hash, mediaType);
-  const paths = evidencePaths(hash, evidenceId);
-  const objectCreated = writeImmutable(paths.object, bytes);
+  const paths = evidencePaths(hash, evidenceId,bytes.length>=65_536&&/(?:^|\+|\/)json(?:$|;)/i.test(mediaType));
   const parsed = parseRaw(bytes, mediaType);
   const extracted = extractDeterministicEvidenceFacts(parsed);
   const summary = safeBounded(input.bounded_summary || `${source} evidence (${bytes.length} bytes, sha256:${hash.slice(0, 12)}).`, 600, "bounded_summary", true);
@@ -298,8 +300,20 @@ export function storeEvidence(input: EvidenceStoreInput, projectionMaxBytes = 8_
     verification_relevance: input.verification_relevance ?? "supporting",
     relationships: (input.relationships ?? []).slice(0, 64)
   };
+  // Validate all pure input/metadata before publishing an immutable object.
+  // Malformed JSON or rejected metadata must not leave an orphaned payload.
+  if(mediaType.startsWith('image/')){const layout=ensureWorkspaceLayout();admitEvidenceImage(layout.root,layout.evidence,hash,bytes.length);}
+  let objectCreated:boolean;
+  if(paths.object.endsWith('.bin.gz')){
+    if(fs.existsSync(paths.object)){
+      assertEvidencePathSafe(ensureWorkspaceLayout().evidence,paths.object);
+      if(!zlib.gunzipSync(fs.readFileSync(paths.object),{maxOutputLength:bytes.length+1}).equals(bytes))throw Error('Immutable evidence object collision.');
+      objectCreated=false;
+    }else objectCreated=writeImmutable(paths.object,zlib.gzipSync(bytes,{level:3}));
+  }else objectCreated=writeImmutable(paths.object, bytes);
   atomicWriteNewJson(paths.ref!, ref);
   const settledRef = readRef(evidenceId);
+  if(mediaType.startsWith('image/'))noteStoredEvidenceImage(ensureWorkspaceLayout().evidence,settledRef);
   const projection = projectEvidence(settledRef, parsed, projectionMaxBytes);
   appendEvidenceTelemetry({
     session_id: sessionId,
@@ -341,7 +355,9 @@ function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {
   const layout = ensureWorkspaceLayout();
   const objectPath = resolveFileUnderWorkspace(ref.artifact_location);
   assertEvidencePathSafe(layout.evidence, objectPath);
-  const bytes = fs.readFileSync(objectPath);
+  if(ref.media_type.startsWith('image/')&&!fs.existsSync(objectPath))throw new Error('Evidence image is unavailable or expired under storage retention. Capture fresh visual evidence; retained metadata is not image proof.');
+  const stored = fs.readFileSync(objectPath);
+  const bytes=objectPath.endsWith('.bin.gz')?zlib.gunzipSync(stored,{maxOutputLength:ref.byte_count+1}):stored;
   if (`sha256:${sha256(bytes)}` !== ref.content_hash || bytes.length !== ref.byte_count) throw new Error("Evidence content hash verification failed.");
   return bytes;
 }
@@ -419,6 +435,36 @@ function retrievalRoot(value: unknown): unknown {
   return structured ? { ...envelope, payload: structured.payload } : envelope;
 }
 
+// Diagnostic navigation only, after the ordinary source/scope/hash checks.
+// Do not echo scalar values, infer absent model content, or silently retry a
+// rejected selection. Visit a bounded sample, including only the first array
+// row, so large inventories cannot produce an unbounded error response.
+function retainedShapeHints(root: unknown): string {
+  const queue = [{value: root, path: '', depth: 0}];
+  const hints: string[] = [];
+  let visited = 0, length = 0;
+  while (queue.length && visited++ < 64 && hints.length < 24) {
+    const item = queue.shift()!;
+    const type = Array.isArray(item.value) ? 'array' : item.value === null ? 'null' : typeof item.value;
+    if (item.path && selectPath(root, item.path) === item.value) {
+      const hint = `${item.path}:${type}`;
+      if (length + hint.length > 1600) break;
+      hints.push(hint); length += hint.length + 2;
+    }
+    if (item.depth >= 4 || !item.value || typeof item.value !== 'object') continue;
+    if (Array.isArray(item.value)) {
+      if (item.path && item.value.length) queue.push({value:item.value[0],path:`${item.path}[0]`,depth:item.depth+1});
+    } else {
+      for (const key of Object.keys(item.value).slice(0, 16)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,59}$/.test(key) || ['__proto__','constructor','prototype'].includes(key)) continue;
+        const field = item.path ? `${item.path}.${key}` : key;
+        if (field.length <= 180 && queue.length < 64) queue.push({value:(item.value as Record<string,unknown>)[key],path:field,depth:item.depth+1});
+      }
+    }
+  }
+  return hints.length ? ` Retained shape hints (partial paths/types only, not model completeness): ${hints.join(', ')}. Use an array path with narrow fields and page continuation, or a leaf field. Nested array paths may use [0]; inspect other rows separately.` : '';
+}
+
 export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRetrievalResult {
   const purpose = safeBounded(request.purpose, 300, "purpose", true);
   if (/^(?:all|all evidence|everything|dump all evidence)$/i.test(purpose)) throw new Error("Focused evidence retrieval purpose is required.");
@@ -448,8 +494,15 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     complete = start === 0 && length >= bytes.length;
   } else if (selector.kind === "item_range") {
     const array = selectPath(selectable, selector.item_range.path);
-    if (!Array.isArray(array)) throw new Error("item_range.path must select an array.");
-    const page = selectEvidenceItemPage(array, selector.item_range, maxBytes, selectPath);
+    if (!Array.isArray(array)) throw new Error("item_range.path must select an array." + retainedShapeHints(selectable));
+    let page;
+    try {
+      page = selectEvidenceItemPage(array, selector.item_range, maxBytes, selectPath);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('One evidence row exceeds '))
+        throw new Error(error.message + retainedShapeHints(selectable));
+      throw error;
+    }
     selection = page.selection;
     pagination = page.pagination;
     complete = page.complete;
@@ -480,7 +533,21 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   const selectedBytes = Buffer.byteLength(JSON.stringify(selection), "utf8");
   // Base64 is an HTTP transport encoding. Image budgets count decoded pixels'
   // file bytes; serialized byte telemetry still records its actual overhead.
-  if (!image && selectedBytes > maxBytes) throw new Error(`Focused evidence selection exceeds ${maxBytes}-byte limit.`);
+  if (!image && selectedBytes > maxBytes) {
+    const prefix = `Focused evidence selection exceeds ${maxBytes}-byte limit (${selectedBytes} JSON-encoded UTF-8 bytes).`;
+    if (selector.kind === "text_range") {
+      // Diagnose only after immutable-byte and scope checks. Keep the requested
+      // read rejected: a smaller range is a separate explicit request, never
+      // silently clipped content or a larger output allowance.
+      const start = selector.text_range.start;
+      let length = Math.min(selector.text_range.length, maxBytes, bytes.length - start);
+      do {
+        length = Math.floor(length / 2);
+      } while (length > 1 && Buffer.byteLength(JSON.stringify(bytes.subarray(start, start + length).toString("utf8")), "utf8") > maxBytes);
+      throw new Error(`${prefix} Text range length counts raw bytes; escaping also consumes the output budget. Retry the same evidence at the same start with recommended length: ${length}. Keep the byte budget unchanged.`);
+    }
+    throw new Error(`${prefix} Select narrower leaf fields; for an array, use itemRange with selected fields and page continuation. Do not repeat the unchanged selection.` + retainedShapeHints(selectable));
+  }
   appendEvidenceTelemetry({
     session_id: ref.session_id,
     assignment_id: ref.assignment_id,

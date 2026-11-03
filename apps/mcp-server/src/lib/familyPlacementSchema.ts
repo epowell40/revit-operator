@@ -8,7 +8,7 @@ const instance = z.object({
   rotationDegrees: z.number().finite().optional(),
   hostElementId: nativeId.optional(),
   linkedHostElementId: nativeId.optional(),
-  parameters: z.record(z.string()).optional(),
+  parameters: z.record(z.string(), z.string()).optional(),
 }).superRefine((value, ctx) => {
   if (value.linkedHostElementId !== undefined && value.hostElementId === undefined)
     ctx.addIssue({code: z.ZodIssueCode.custom, path: ['hostElementId'], message: 'The linked host requires its RevitLinkInstance hostElementId.'});
@@ -21,6 +21,6 @@ export const familyPlacementToolShape = {
   allowUnhostedWorkPlanePlacement: z.boolean().optional(),
   instances: z.array(instance).min(1).max(500),
   dryRun: z.boolean().default(false),
-  idempotency: z.object({enabled: z.boolean().default(true), toleranceFt: z.number().finite().positive().default(0.01)}).default({}),
+  idempotency: z.object({enabled: z.boolean().default(true), toleranceFt: z.number().finite().positive().default(0.01)}).prefault({}),
   behavior: z.enum(['allOrNothing', 'bestEffort']).default('allOrNothing'),
 };

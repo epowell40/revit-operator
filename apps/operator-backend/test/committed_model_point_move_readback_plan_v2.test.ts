@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {textMoveScheduleFixture} from './text_move_schedule_preservation.fixtures.js';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {committedModelPointMoveReadbackPlanV2,modelPointMovePostconditionSatisfiedV2} from '../src/verification/model_point_move_postcondition_v2.js';
@@ -13,12 +14,17 @@ import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 
+for(const anchor of ['model_point','tag_head','text_anchor','text_anchor_schedules'] as const)
 for(const variant of ['exact','wrong_origin','wrong_owner','read_failure','read_schema_rejected','paused_after_commit','missing_point','unsettled'] as const)
-test(`ordinary dynamic model-point move ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
+test(`ordinary dynamic ${anchor} move ${variant} triggers one separate guarded read without a provider recipe`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-tag-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try { await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
-  const retained=pointMoveFixtureV2(),f={apply_input:retained.input,native_apply:retained.native_apply,native_read:retained.actual_read.items.filter((i:any)=>retained.input.body.ids.includes(i.id))};
+  const tagFixture=anchor==='tag_head'?JSON.parse(fs.readFileSync('test/fixtures/tag-head-move-readback-259.json','utf8')):null;
+  const textFixture=anchor==='text_anchor'?JSON.parse(fs.readFileSync('test/fixtures/text-anchor-move-readback-original53.json','utf8')):null;
+  const scheduleFixture=anchor==='text_anchor_schedules'?textMoveScheduleFixture():null;
+  const retained=scheduleFixture?{input:scheduleFixture.input,native_apply:scheduleFixture.applied,actual_read:{items:scheduleFixture.read.result}}:textFixture?{input:textFixture.input,native_apply:textFixture.future_native_apply,actual_read:{items:textFixture.future_native_read.result}}:tagFixture?{input:tagFixture.input,native_apply:tagFixture.synthetic_future_apply,actual_read:{items:tagFixture.synthetic_future_read}}:pointMoveFixtureV2(),f={apply_input:retained.input,native_apply:retained.native_apply,native_read:retained.actual_read.items.filter((i:any)=>retained.input.body.ids.includes(i.id))};
+  if(scheduleFixture)f.native_read=scheduleFixture.read;
   if(variant==='missing_point')delete f.native_apply.snapshots[0].before.pointXyz;
   const goal=createGoal({title:'Move the marked model devices',objective:'Move the marked model devices.',acceptance_criteria:['The requested edit is established.'],status:'active',
     related_session_id:'tag-host-session',created_by:'tag-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'tag-model'}});
@@ -30,14 +36,14 @@ test(`ordinary dynamic model-point move ${variant} triggers one separate guarded
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();
     const read=args.path==='/revit/get-element-summary';if(read&&variant==='read_failure')throw Error('native_read_failed');
     const payload:any=read?structuredClone(f.native_read):structuredClone(f.native_apply);
-    if(read&&variant==='wrong_origin')payload[0].location.y+=.02;
-    if(read&&variant==='wrong_owner'){payload[0].id++;}
+    if(read&&variant==='wrong_origin')(payload.result??payload).find((r:any)=>f.apply_input.body.ids.includes(r.id)).location.y+=.02;
+    if(read&&variant==='wrong_owner'){(payload.result??payload)[0].id++;}
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
     if(!read&&variant==='paused_after_commit')controlAssignmentExecutionV2({binding,command_id:'user-pause',expected_command_id:null,action:'pause'});
     return {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',
      operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding,
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:read?'none':'applied',native_transaction_state:read?'not_applicable':variant==='unsettled'?'pending':'committed',authority:'native-host',
-      affected_target_identities:f.apply_input.body.ids.map((id:number)=>'element_id:'+id),result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
+      affected_target_identities:(scheduleFixture?f.native_apply.transaction.modified_element_ids:f.apply_input.body.ids).map((id:number)=>'element_id:'+id),result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
       raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
       request_identity:lease.request_identity,completed_at:new Date().toISOString()},observation:{raw_payload:payload,
        semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
@@ -55,7 +61,8 @@ test(`ordinary dynamic model-point move ${variant} triggers one separate guarded
    assert.equal(validations.filter(a=>a.path==='/revit/get-element-summary').length,['paused_after_commit','missing_point','unsettled','unknown_after_commit','later_write'].includes(variant)?0:variant==='read_schema_rejected'?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/get-element-summary').length,['read_schema_rejected','paused_after_commit','missing_point','unsettled','unknown_after_commit','later_write'].includes(variant)?0:1);
    if(variant==='exact'){
-    assert.deepEqual(calls[1].body.elementIds,f.apply_input.body.ids);
+    assert.deepEqual(calls[1].body.elementIds,[...f.apply_input.body.ids,...(scheduleFixture?.ids??[])]);
+    if(scheduleFixture)assert.deepEqual(calls[1].body.preservationScheduleIds,scheduleFixture.ids);
     const noProof:any=structuredClone(s);noProof.operations[apply.operation_id]!.verification_operation_ids=[];
     for(const oid of Object.keys(noProof.operations))if(oid!==apply.operation_id)delete noProof.operations[oid];
     for(const mutate of [(x:any)=>x.unresolved_unknown_operation_ids=['retained-old-unknown'],(x:any)=>x.execution_control={state:'paused'},(x:any)=>x.operations['later']={...x.operations[apply.operation_id],operation_id:'later',result:{...x.operations[apply.operation_id].result,completed_at:'2999-01-01T00:00:00Z'}}]){
@@ -73,6 +80,7 @@ test(`ordinary dynamic model-point move ${variant} triggers one separate guarded
      ['read completion before opening',(n:any)=>n.operations[read.operation_id].result.completed_at='2000-01-01T00:00:00Z'],
      ['foreign binding',(n:any)=>n.operations[read.operation_id].result.binding.document_fingerprint='other-document'],
      ['wrong signature',(n:any)=>n.operations[read.operation_id].result.request_identity.request_signature='different'],
+     ['missing preservation selector',(n:any)=>{if(scheduleFixture)delete n.operations[read.operation_id].input.body.preservationScheduleIds;else n.operations[read.operation_id].result.raw_payload_hash='wrong';}],
      ['wrong payload hash',(n:any)=>n.operations[read.operation_id].result.raw_payload_hash='0'.repeat(64)],
      ['missing receipt',(n:any)=>delete n.operations[apply.operation_id].result.receipt_id],
      ['unresolved unknown',(n:any)=>n.unresolved_unknown_operation_ids=['old-unknown']],

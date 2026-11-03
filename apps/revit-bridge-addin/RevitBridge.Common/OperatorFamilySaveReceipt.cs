@@ -26,7 +26,8 @@ namespace RevitBridge.Common
         }
         // Called only after Save/SaveAs returned. File bytes are read with Revit's
         // open handle shared; changing bytes or an absent file remain unverified.
-        public static object Saved(string sessionId, string path, bool documentPathMatches)
+        public static object Saved(string sessionId, string path, bool documentPathMatches,
+            string? requestedPath = null, string? workspaceRoot = null)
         {
             if (!Guid.TryParseExact(sessionId, "N", out _) || !Path.IsPathRooted(path)
                 || !string.Equals(Path.GetExtension(path), ".rfa", StringComparison.OrdinalIgnoreCase) || !documentPathMatches)
@@ -39,7 +40,25 @@ namespace RevitBridge.Common
             if (size <= 0 || !after.Exists || size != after.Length || stream.Length != size || written != after.LastWriteTimeUtc)
                 throw new InvalidOperationException("Saved family file changed during readback.");
             return new { schema = Schema, status = "saved", session_id = sessionId, path,
-                native_save_returned = true, document_path_verified = true, stable_read = true, size_bytes = size, sha256 = hash };
+                native_save_returned = true, document_path_verified = true, stable_read = true, size_bytes = size, sha256 = hash,
+                path_resolution = requestedPath == null ? null : ResolveRequestedPath(requestedPath, workspaceRoot, path) };
+        }
+
+        // Resolve the caller's complete path against the actual native workspace;
+        // a basename, a matching suffix, or a provider-authored flag is not proof.
+        private static object ResolveRequestedPath(string requested, string? root, string savedPath)
+        {
+            if (string.IsNullOrWhiteSpace(requested) || requested.Length > 2000 || requested.Any(char.IsControl)
+                || string.IsNullOrWhiteSpace(root) || !Path.IsPathRooted(root))
+                throw new InvalidOperationException("Family save path resolution is unavailable.");
+            var workspace = Path.GetFullPath(root!);
+            var resolved = Path.GetFullPath(Path.IsPathRooted(requested.Trim()) ? requested.Trim() : Path.Combine(workspace, requested.Trim()));
+            var prefix = workspace.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!resolved.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(resolved, Path.GetFullPath(savedPath), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Family save path does not match the resolved workspace target.");
+            return new { schema = "revit-operator.workspace-path-resolution.v1", requested_path = requested.Trim(),
+                workspace_root = workspace, resolved_path = savedPath, inside_workspace = true };
         }
         public static bool TrySettlement(JsonElement root, string effect, string method, string path, out OperatorAttemptSettlement? settlement)
         {

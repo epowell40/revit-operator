@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { retainAssignmentCompletionV2, retainAssignmentNativeDispatchV1 } from "./assignmentCompletionOutbox.js";
+import { createHash } from "node:crypto";
+import { deliverAssignmentCompletionV2, retainAssignmentCompletionV2, retainAssignmentNativeDispatchV1 } from "./assignmentCompletionOutbox.js";
 import type { NativePreparedDispatchV1 } from "./nativeTransport.js";
 import {
   canonicalPayloadJsonV2,
@@ -7,6 +8,7 @@ import {
   payloadRepresentationDigestV2
 } from "@revitoperator/payload-digest-v2";
 import {
+  isDetachedFamilyLabelEditV2,
   OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
   MAX_NATIVE_AFFECTED_TARGETS_V2,
   isNativeAffectedTargetIdentityV2,
@@ -18,6 +20,7 @@ import {
 import { createOperatorBackendClient, OPERATION_HANDOFF_SCHEMA } from "./operatorBackendClient.js";
 import { previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 import { nativeReadEvidence } from "./nativeReadEvidence.js";
+import { readNativeProgramEvidence } from "./dynamicNativeProgram.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -110,7 +113,7 @@ type OperationEdge = {
   markDispatch(lease: Context): Promise<void>;
   settle(lease: Context, mcpResult: unknown): Promise<unknown>;
 };
-type Scope = { context: Context; native_calls: NativeCall[]; parent_claimed: boolean; edge: OperationEdge; dynamic_result?: Record<string, unknown>; dynamic_dispatch_started?: boolean };
+type Scope = { context: Context; native_calls: NativeCall[]; parent_claimed: boolean; edge: OperationEdge; dynamic_result?: Record<string, unknown>; dynamic_dispatch_started?: boolean; dynamic_native_receipt_verified?: boolean };
 
 export type AssignmentKernelNativeRequestV2 = Readonly<{
   request_id: string;
@@ -141,13 +144,27 @@ export function recordAssignmentKernelDynamicResultV2(value: Record<string, unkn
   const snapshot = typeof evidence.snapshotReceipt === "string" && evidence.snapshotReceipt.trim() ? object(JSON.parse(evidence.snapshotReceipt)) : {};
   const expected = scope.context.binding.document_fingerprint?.replace(/^sha256:/, "");
   // The native snapshot serializes DynamicDocumentDto with PascalCase fields.
-  const actual = text(object(snapshot.document).ProjectFingerprint).replace(/^sha256:/, "");
+  const native = value.execution_lane === "native";
+  let nativeReceiptVerified = false;
+  const actual = text(object(native ? snapshot.Document : snapshot.document).ProjectFingerprint).replace(/^sha256:/, "");
   if (expected && actual !== expected) throw new Error("assignment_dynamic_result_document_mismatch");
+  if (native) {
+    if (!expected) throw new Error("assignment_dynamic_result_document_missing");
+    const proof = readNativeProgramEvidence(evidence, text(object(value.iteration).source_sha256), String(value.requested_mode), `sha256:${expected}`);
+    if (value.execution_ok === true && !proof) throw new Error("assignment_dynamic_result_native_receipt_missing");
+    const outcome = object(value.native_outcome), settlement = object(value.canonical_attempt_settlement);
+    if (proof && (outcome.persistent_effect !== proof.effect || outcome.native_transaction_state !== proof.transactionState
+        || outcome.task_verified !== false || outcome.verification_required !== true || settlement.effect_state !== proof.effect
+        || payloadDigestV2(settlement.affected_target_identities).digest !== payloadDigestV2(proof.affectedTargetIdentities).digest))
+      throw new Error("assignment_dynamic_result_native_outcome_mismatch");
+    nativeReceiptVerified = proof !== null;
+  }
   if (value.execution_ok === true && (!text(object(value.verification).evidence_sha256).match(/^sha256:[a-f0-9]{64}$/)
       || !text(object(value.iteration).source_sha256).match(/^sha256:[a-f0-9]{64}$/)
       || !Array.isArray(evidence.hostAuthenticationReceipts) || evidence.hostAuthenticationReceipts.length < 2))
     throw new Error("assignment_dynamic_result_authority_missing");
   scope.dynamic_result = structuredClone(value);
+  scope.dynamic_native_receipt_verified = nativeReceiptVerified;
 }
 
 function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
@@ -160,7 +177,8 @@ function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
   const apply = scope.context.requested_effect === "apply";
   // A failed compilation never ran an edit. Other failed apply executions are
   // conservatively unknown until the native receipt can be reconciled.
-  const effect = completed && apply ? "applied" : apply && worker.ok !== false ? "unknown" : "none";
+  const nativeOutcome = payload.execution_lane === "native" ? object(payload.native_outcome) : {};
+  const effect = nativeOutcome.persistent_effect ?? (completed && apply ? "applied" : apply && worker.ok !== false ? "unknown" : "none");
   const provenance = payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload");
   const receiptId = `dynamic-evidence:${text(object(payload.verification).evidence_sha256)}`;
   const operationResult = {
@@ -169,9 +187,12 @@ function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
     operation_id: scope.context.operation_id, binding: scope.context.binding,
     status: completed ? "succeeded" : "failed_after_dispatch",
     dispatch_state: "dispatched", persistent_effect: effect,
-    native_transaction_state: effect === "applied" ? "committed" : effect === "unknown" ? "unknown"
-      : completed && scope.context.requested_effect === "preview" && !snapshotReport ? "rolled_back" : "not_applicable",
-    authority: "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
+    native_transaction_state: nativeOutcome.native_transaction_state ?? (effect === "applied" ? "committed" : effect === "unknown" ? "unknown"
+      : completed && scope.context.requested_effect === "preview" && !snapshotReport ? "rolled_back" : "not_applicable"),
+    // The supervisor transports this result, but a validated native receipt
+    // establishes its execution authority. Missing receipts and snapshot-only
+    // results remain dynamic-runtime; generated prose cannot upgrade authority.
+    authority: scope.dynamic_native_receipt_verified ? "native-host" : "dynamic-runtime", result_schema_id: "operator-dynamic-runtime/mcp-program/v2",
     observation_required: true, raw_payload_hash: provenance.normalized.digest, payload_provenance: provenance,
     receipt_id: receiptId, native_correlation_id: receiptId,
     affected_target_identities: object(payload.canonical_attempt_settlement).affected_target_identities ?? [],
@@ -182,12 +203,63 @@ function dynamicDecoratedResultV2(result: unknown, scope: Scope): unknown {
     schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: operationResult,
     observation: {
       raw_payload: payload,
-      semantic_facts: completed && scope.context.fulfillment_role === "delegated_task_execution" && scope.context.eligible_criterion_ids.length > 0
-        ? [{ fact_id: scope.context.requested_effect === "preview" && !snapshotReport ? "task.preview_valid" : "task.result_available", fact_class: "domain", value: true }] : [],
+      semantic_facts: [
+        // Native receipt validation above proves execution, not task correctness.
+        // Retain the same control fact used by ordinary native operations so a
+        // real committed program reserves checking room in the existing loop.
+        ...(completed && scope.dynamic_native_receipt_verified
+          ? [{fact_id:'control.domain_succeeded',fact_class:'control',value:true}] : []),
+        ...(completed && scope.context.fulfillment_role === "delegated_task_execution" && scope.context.eligible_criterion_ids.length > 0
+        ? [{ fact_id: scope.context.requested_effect === "preview" && !snapshotReport ? "task.preview_valid" : "task.result_available", fact_class: "domain", value: true },
+          ...dynamicSnapshotCollectionFacts(payload)] : [])],
       target_scope: {}, verification_relevance: [evidenceClass(scope.context.fulfillment_role)],
       evidence_class: evidenceClass(scope.context.fulfillment_role)
     }
   } };
+}
+
+/** This is reached only through the trusted runner's recorded result. The
+ * supervisor already verified the native MAC; retain that exact snapshot/body
+ * binding here. These facts describe the input cohort, never worker report
+ * prose, filtered-match counts, parameter completeness, or linked documents. */
+function dynamicSnapshotCollectionFacts(payload: Record<string, unknown>): Record<string, unknown>[] {
+  try {
+    if (payload.requested_mode !== "read" || payload.execution_ok !== true || payload.execution_status !== "completed") return [];
+    const evidence = object(payload.evidence), worker = object(evidence.workerOutput), graph = object(worker.graph);
+    if (worker.ok !== true || worker.executionStatus !== "completed" || worker.sourceHash !== object(payload.iteration).source_sha256
+        || !Array.isArray(graph.operations) || graph.operations.length !== 0 || typeof evidence.snapshotReceipt !== "string") return [];
+    const raw = evidence.snapshotReceipt, snapshot = object(JSON.parse(raw)), coverage = object(snapshot.coverage);
+    if (snapshot.schema !== "dynamic-revit-snapshot/v0" || snapshot.sdk !== "dynamic-revit-sdk/v0"
+        || !/^sha256:[a-f0-9]{64}$/.test(text(snapshot.input_hash)) || graph.inputHash !== snapshot.input_hash
+        || coverage.SourceScope !== "active_document_non_type_elements" || coverage.HasMore !== false
+        || !Number.isSafeInteger(coverage.Limit) || Number(coverage.Limit) < 1 || Number(coverage.Limit) > 4096
+        || !Number.isSafeInteger(coverage.ReturnedCount) || Number(coverage.ReturnedCount) < 0 || Number(coverage.ReturnedCount) > Number(coverage.Limit)
+        || !Array.isArray(snapshot.elements) || snapshot.elements.length !== coverage.ReturnedCount
+        || !(coverage.Category === null || typeof coverage.Category === "string" && coverage.Category.trim().length > 0 && coverage.Category.length <= 128)
+        || !Array.isArray(coverage.ParameterNames) || coverage.ParameterNames.length > 16
+        || coverage.ParameterNames.some(p => typeof p !== "string" || !p.trim() || p.length > 128)
+        || new Set(coverage.ParameterNames).size !== coverage.ParameterNames.length) return [];
+    const ids = new Set<number>(), uids = new Set<string>();
+    for (const row of snapshot.elements) {
+      const e = object(row), id = Number(e.ElementId), uid = text(e.UniqueId);
+      if (!Number.isSafeInteger(e.ElementId) || id <= 0 || !uid || ids.has(id) || uids.has(uid)) return [];
+      ids.add(id); uids.add(uid);
+    }
+    if (!Array.isArray(evidence.hostAuthenticationReceipts)) return [];
+    const receipts = evidence.hostAuthenticationReceipts.map(r => typeof r === "string" ? object(JSON.parse(r)) : {});
+    const boot = receipts.filter(r => r.schema === "dynamic-revit-bootstrap-receipt/v0" && r.ok === true);
+    const auth = receipts.filter(r => r.schema === "dynamic-revit-authenticated-receipt/v0" && r.purpose === "snapshot-receipt");
+    if (boot.length !== 1 || auth.length !== 1 || !text(boot[0]!.runtimeInstanceId)
+        || auth[0]!.runtime_instance_id !== boot[0]!.runtimeInstanceId
+        || auth[0]!.receipt_hash !== `sha256:${createHash("sha256").update(raw, "utf8").digest("hex")}`
+        || !/^hmac-sha256:[a-f0-9]{64}$/.test(text(auth[0]!.host_receipt_mac))
+        || payloadDigestV2(auth[0]!.receipt).digest !== payloadDigestV2(snapshot).digest) return [];
+    const dimensions = {source_scope: "active_document_non_type_elements", category: coverage.Category ?? "all_non_type_elements",
+      cohort: "native_input_snapshot", input_hash: snapshot.input_hash, document_fingerprint: object(snapshot.document).ProjectFingerprint};
+    return [{fact_id: "collection.complete", fact_class: "domain", value: true, dimensions},
+      {fact_id: "collection.total", fact_class: "domain", value: coverage.ReturnedCount, dimensions},
+      {fact_id: "collection.mode", fact_class: "domain", value: "list", dimensions}];
+  } catch { return []; }
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -614,6 +686,9 @@ function nativeDomainFailure(payload: unknown): boolean {
   const root = object(payload);
   const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
   return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
+    // An explicit native refusal is not successful work. This does not infer
+    // no effect: only the independent native settlement receipt can do that.
+    || aliasedField(root, ["requestedEffectSatisfied"]) === false
     // Native HTTP success only confirms delivery. A requested failure rollback
     // or explicit native failure remains a rejected operation; effect truth is
     // still derived separately from the authoritative settlement receipt.
@@ -670,7 +745,8 @@ function semanticFacts(
     { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
     { fact_id: "control.payload_hash", fact_class: "control", value: sha256(payload) }
   ];
-  if (evidence === "task_result" && domainSucceeded && taskResultAdmitted) {
+  if (evidence === "task_result" && domainSucceeded && taskResultAdmitted
+      && !isDetachedFamilyLabelEditV2("POST", path)) {
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
     if (requestedEffect === "read") facts.push(...nativeReadEvidence(path, requestBody, payload));
   }
@@ -1115,6 +1191,5 @@ export function decorateAssignmentKernelMcpResultV2(result: unknown, capabilityI
   const scope = storage.getStore();
   if (!scope) return result;
   const envelope = decoratedResult(result, capabilityId, scope);
-  retainAssignmentCompletionV2(scope.context, envelope);
-  return envelope;
+  return deliverAssignmentCompletionV2(scope.context, envelope);
 }

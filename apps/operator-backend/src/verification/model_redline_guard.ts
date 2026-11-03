@@ -16,7 +16,17 @@ const DUCT_LABEL_RE = /\b\d{1,3}\s*(?:["']?\s*)?[x×]\s*\d{1,3}\b[\s\S]{0,80}\b(
 const ANNOTATION_ONLY_RE =
   /\b(annotation\s*only|text\s*only|coordination\s*note\s*only|not\s+a\s+model\s+element|do\s+not\s+(?:model|modify\s+the\s+model|create\s+(?:a\s+)?duct|write\s+model)|no\s+model\s+change)\b/i;
 const TEXT_ANNOTATION_RE = /\b(text\s*note|detail\s*annotation|annotation|coordination\s*note|red\s+text)\b/i;
-const COMPLETION_RE = /\b(done|complete|completed|created|modified|updated|placed|added|picked\s+up|implemented)\b/i;
+const COMPLETION_WORDS = String.raw`(?:done|complete|completed|created|modified|updated|placed|added|picked\s+up|implemented)`;
+const COMPLETION_RE = new RegExp(String.raw`\b${COMPLETION_WORDS}\b`, "i");
+// Remove only negated effect phrases, not an entire message containing "no".
+// A later positive claim must still face the ordinary native/visual checks.
+// Stop the subject at its auxiliary or a contrast, so "No issues were found
+// and I created equipment" cannot hide the positive creation claim.
+const NEGATED_COMPLETION_RE = new RegExp(
+  String.raw`\b(?:(?:no|none\s+of)\s+(?:(?!(?:was|were|is|are|has|have|had|but|however|yet|so|because|therefore|and|then|thus)\b)[\p{L}\p{N}_\p{Pd}]+\s+){1,8}|(?:nothing|none)\s+)` +
+  String.raw`(?:was|were|is|are|has\s+been|have\s+been|had\s+been)\s+${COMPLETION_WORDS}\b` +
+  String.raw`(?:\s*(?:,\s*(?:(?:and|or)\s+)?|(?:and|or)\s+)${COMPLETION_WORDS}\b)*`, "giu"
+);
 const BLOCKER_RE = /\b(cannot|can't|could\s+not|was\s+not\s+able|blocked|failed|no\s+model\s+change|did\s+not\s+(?:make|complete)|has\s+not\s+finished|not\s+created|not\s+modified|requires\s+confirmation)\b/i;
 const ANNOTATION_DISCLOSURE_RE = /\b(annotation\s*only|text\s*note|not\s+a\s+model\s+element|no\s+duct\s+element|no\s+model\s+change|not\s+a\s+modeled)\b/i;
 
@@ -115,7 +125,7 @@ function requestExplicitlyAnnotationOnly(req: ChatRequest): boolean {
 }
 
 function messageClaimsCompletion(message: string): boolean {
-  return COMPLETION_RE.test(message) && !BLOCKER_RE.test(message);
+  return COMPLETION_RE.test(message.replace(NEGATED_COMPLETION_RE, "")) && !BLOCKER_RE.test(message);
 }
 
 function messageDisclosesAnnotationOnly(message: string): boolean {

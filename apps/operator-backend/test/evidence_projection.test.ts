@@ -372,8 +372,10 @@ test("whole-area catalog replay exposes exact tool paths and required inputs wit
   for (const [index, tool] of doc.tools.entries()) {
     assert.equal(tool.path, original.matches[index].path);
     assert.deepEqual(tool.required_fields, original.matches[index].required_fields);
-    assert.equal(tool.request_schema, undefined);
-    assert(doc.omitted_paths.includes(`payload.matches[${index}].request_schema`));
+    if (tool.request_schema !== undefined) {
+      assert.deepEqual(tool.request_schema, original.matches[index].request_schema);
+      assert(!doc.omitted_paths.includes(`payload.matches[${index}].request_schema`));
+    } else assert(doc.omitted_paths.includes(`payload.matches[${index}].request_schema`));
   }
   assert.equal(doc.complete, false);
   assert.equal(doc.completion_eligible, false);

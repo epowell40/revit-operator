@@ -3,12 +3,13 @@ import type {AssignmentBindingV2,AssignmentSnapshotV2} from '../domain/assignmen
 import {sameAssignmentBindingV2,canonicalJsonV2} from '../domain/assignment-kernel/index.js';
 import {validAdvisoryProposalV1} from '../domain/assignment-kernel/execution_policy.js';
 import {getAssignmentKernelSnapshotV2} from '../assignments/assignment_kernel_v2_store.js';
-import {desktopHelperScopeForSnapshotV1} from '../assignments/desktop_executor_owner.js';
+import {desktopHelperScopeForSnapshotV1,desktopHelperScopeFromContextV1} from '../assignments/desktop_executor_owner.js';
 import {storeEvidence} from '../evidence/evidence_store.js';
-import type {ChatResponse} from '../contracts.js';
+import type {ChatRequest,ChatResponse} from '../contracts.js';
+import {renderTerminalResultV2} from '../assignments/assignment_kernel_v2_terminal_result.js';
 
 export const DESKTOP_HELPER_RETURN_REASON='desktop_scoped_helper_return';
-type Report={kind:'scope_report'|'proposed_question';claimed_completed:string[];remaining_work:string[];uncertainties:string[];question?:string};
+type Report={kind:'scope_report'|'proposed_question';claimed_completed:string[];remaining_work:string[];uncertainties:string[];question?:string;user_facing_text?:string};
 export type DesktopHelperReturnV1=NonNullable<ChatResponse['desktop_helper_return']>;
 const pending=new WeakMap<object,Map<string,DesktopHelperReturnV1>>();
 // Only an actual consumed in-process return can stop the inner runner. A
@@ -16,14 +17,23 @@ const pending=new WeakMap<object,Map<string,DesktopHelperReturnV1>>();
 const consumedReturns=new WeakSet<object>();
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9._:-]{1,240}$/.test(value);
 const strings=(v:unknown,max:number)=>Array.isArray(v)&&v.length<=max&&v.every(s=>typeof s==='string'&&s.trim()&&s.length<=1000);
+// A successful native terminal state ends execution, not delivery of already
+// requested prose. This exception never admits a question or changes state.
+function reportParentReady(snapshot:AssignmentSnapshotV2,report:Report):boolean{
+ // A completion barrier can already derive success while terminal publication
+ // waits for the provider turn to drain. Retain prose in either phase; the
+ // ordinary drain/control/usage guards still decide whether it is delivered.
+ if(['complete','verified_noop','complete_with_issues'].includes(snapshot.outcome))return report.kind==='scope_report';
+ return !snapshot.terminal&&snapshot.outcome==='active';
+}
 function normalize(tool:string,args:Record<string,unknown>):Report|null{
  if(tool==='host_desktop_helper_call_yield'){
   const p=args.report as any;if(!validAdvisoryProposalV1(p))throw Error('desktop_helper_budget_report_invalid');
-  return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties]};
+  return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties],...(p.user_facing_text===undefined?{}:{user_facing_text:p.user_facing_text})};
  }
  if(tool==='operator_manage_work_plan'&&args.action==='propose_completion'){
   const p=args.completionProposal as any;if(!validAdvisoryProposalV1(p))throw Error('desktop_helper_report_invalid');
-  return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties]};
+  return {kind:'scope_report',claimed_completed:[...p.claimed_completed],remaining_work:[...p.remaining_work],uncertainties:[...p.uncertainties],...(p.user_facing_text===undefined?{}:{user_facing_text:p.user_facing_text})};
  }
  if(!['operator_request_assignment_input','operator_request_clarification'].includes(tool))return null;
  if(typeof args.question!=='string'||!args.question.trim()||args.question.length>1200
@@ -44,7 +54,7 @@ export function retainDesktopHelperReturnV1(input:{owner:object;turn_id:unknown;
    ||!desktopHelperScopeForSnapshotV1(snapshot,input.marker))return null;
  const report=normalize(input.tool,input.arguments);if(!report)return null;
  if(!id(input.turn_id))throw Error('desktop_helper_turn_invalid');
- if(snapshot.terminal||snapshot.outcome!=='active'||snapshot.execution_control?.state==='paused'
+ if(!reportParentReady(snapshot,report)||snapshot.execution_control?.state==='paused'
    ||snapshot.completion_proposal||snapshot.provider_usage_hold||snapshot.provider_budget_exhausted||snapshot.progress_blocker
    ||snapshot.pending_input_variable_ids.length||snapshot.pending_review_ids.length||snapshot.unresolved_unknown_operation_ids.length)
   throw Error('desktop_helper_return_blocked_by_parent');
@@ -69,8 +79,10 @@ export function takeDesktopHelperReturnV1(owner:object,turnId:unknown):DesktopHe
 }
 export function desktopHelperReturnMessageV1(result:DesktopHelperReturnV1):string{
  const r=result.report,all=[...r.claimed_completed,...r.remaining_work,...r.uncertainties];
- const inline=JSON.stringify(r).length<=12000?r:{kind:r.kind,question:r.question,claimed_completed:r.claimed_completed.slice(0,3),
-   remaining_work:r.remaining_work.slice(0,3),uncertainties:r.uncertainties.slice(0,3),omitted_items:all.length-Math.min(3,r.claimed_completed.length)-Math.min(3,r.remaining_work.length)-Math.min(3,r.uncertainties.length)};
+ const limit=r.user_facing_text===undefined?3:1;
+ const inline=JSON.stringify(r).length<=12000?r:{kind:r.kind,question:r.question,
+   ...(r.user_facing_text===undefined?{}:{user_facing_text:r.user_facing_text}),claimed_completed:r.claimed_completed.slice(0,limit),
+   remaining_work:r.remaining_work.slice(0,limit),uncertainties:r.uncertainties.slice(0,limit),omitted_items:all.length-Math.min(limit,r.claimed_completed.length)-Math.min(limit,r.remaining_work.length)-Math.min(limit,r.uncertainties.length)};
  return 'Scoped backend helper returned to the desktop owner. This is an unverified subtask report, not completion, approval or supplied user input. '
   +'Use these findings for the remaining work and fresh inspection. Evaluate a proposed question yourself; a helper tool limitation is not a missing human answer. '
   +'Real missing design input still requires the user; do not invent values.\n'+JSON.stringify({report:inline,evidence_ref:result.evidence_ref});
@@ -80,10 +92,38 @@ export function desktopHelperReturnMessageV1(result:DesktopHelperReturnV1):strin
 export function desktopHelperReturnAfterDrainV1(result:DesktopHelperReturnV1|null,marker:unknown,snapshot:AssignmentSnapshotV2|null,stopReason:string|null):string|null{
  if(!result||!consumedReturns.has(result)||stopReason!==DESKTOP_HELPER_RETURN_REASON||!snapshot
    ||!sameAssignmentBindingV2(snapshot.current_binding,result.binding)||!desktopHelperScopeForSnapshotV1(snapshot,marker)
-   ||snapshot.terminal||snapshot.outcome!=='active'||!snapshot.quiescent||snapshot.execution_control?.state==='paused'
+   ||!reportParentReady(snapshot,result.report)||!snapshot.quiescent||snapshot.execution_control?.state==='paused'
    ||(snapshot.execution_control?.command_id??null)!==result.control_command_id
    ||snapshot.completion_proposal||snapshot.provider_usage_hold||snapshot.provider_budget_exhausted||snapshot.progress_blocker
    ||snapshot.pending_input_variable_ids.length||snapshot.pending_review_ids.length||snapshot.unresolved_unknown_operation_ids.length
    ||snapshot.in_flight_operation_ids.length||snapshot.in_flight_provider_call_ids.length)return null;
+ if(snapshot.terminal){
+  // The full technical report stays in its untrusted evidence artifact. A
+  // separately authored user answer avoids leaking stale helper/owner steps.
+  // Canonical native facts, failures and open issues still come from the host.
+  if(result.report.user_facing_text!==undefined)return renderTerminalResultV2(snapshot)
+   +'\n\nReported findings (not independently verified):\n'+result.report.user_facing_text;
+  const r=result.report,sections=[['Reported findings (not independently verified)',r.claimed_completed],
+   ['Reported remaining work',r.remaining_work],['Reported limits',r.uncertainties]] as const;
+  const prose=sections.filter(([,items])=>items.length).map(([title,items])=>title+':\n'+items.map(s=>'- '+s).join('\n')).join('\n\n');
+  return renderTerminalResultV2(snapshot)+(prose?'\n\n'+prose:'');
+ }
  return desktopHelperReturnMessageV1(result);
+}
+
+/** Preserve the real producer's drained subtask report through legacy prose
+ * guards. This is presentation, not completion: the report remains unverified,
+ * has no actions and cannot change canonical state. Serialized lookalikes do
+ * not carry the consumed in-process identity checked by the existing drain. */
+export function preserveDesktopHelperDecisionV1(req:ChatRequest,decision:ChatResponse):ChatResponse|null{
+ const helper=decision.desktop_helper_return,usage=decision.provider_turn_usage;
+ if(!helper||!consumedReturns.has(helper)||helper.verified!==false
+   ||!Array.isArray(decision.actions)||decision.actions.length!==0
+   ||!usage||usage.schema!=='revit-operator.provider-turn-usage/v1'||!['completed','interrupted'].includes(usage.disposition)
+   ||usage.session_id!==req.session_id||usage.message_id!==req.message_id||usage.turn_id!==helper.turn_id
+   ||req.assignment_id!==helper.binding.assignment_id||req.session_id!==helper.binding.session_id
+   ||req.assignment_run_id!==helper.binding.run_id||req.assignment_generation!==helper.binding.generation)return null;
+ const snapshot=getAssignmentKernelSnapshotV2(helper.binding.assignment_id);
+ const message=desktopHelperReturnAfterDrainV1(helper,desktopHelperScopeFromContextV1(req.context),snapshot,DESKTOP_HELPER_RETURN_REASON);
+ return message&&decision.assistant_message===message?decision:null;
 }

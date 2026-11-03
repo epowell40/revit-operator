@@ -21,7 +21,7 @@ test("repository discovery retains shared inventory root in direct and apps layo
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 223);
+  assert.equal(audit.tools.length, 227);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
   for(const route of ["/revit/import-drawing-spec","/revit/inspect-drawing-spec","/revit/import-excel-output","/revit/inspect-excel-import","/revit/import-vector-detail","/revit/inspect-vector-detail"]){
     const tool=audit.tools.find(tool=>tool.path===route);assert(tool,route);assert.equal(tool.evidence.live_safe,null);assert.equal(tool.evidence.useful,null);

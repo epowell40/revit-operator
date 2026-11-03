@@ -30,7 +30,29 @@ namespace RevitOperator.DynamicRevitSdk
             }
         }
 
-        private static string ComputeCore(string directory)
+        // Computes the exact staged image without copying it into the Revit host.
+        // Paths come only from the host-selected installed target, never generated
+        // code. The unchanged base package must still match its trusted pin. Both
+        // identities use the same observed base bytes, including every dependency.
+        public static string ComputeWithNativeTarget2024(string directory, string trustedBaseHash,
+            IReadOnlyDictionary<string, string> installedReferences)
+            => ComputeWithNativeTarget(directory, trustedBaseHash, installedReferences);
+
+        public static string ComputeWithNativeTarget(string directory, string trustedBaseHash,
+            IReadOnlyDictionary<string, string> installedReferences)
+        {
+            if (installedReferences == null || !DynamicNativeTargetProfile.KnownReferenceNames(installedReferences.Keys) ||
+                installedReferences.Values.Any(string.IsNullOrWhiteSpace))
+                throw new InvalidDataException("Native target requires its exact installed framework reference profile.");
+            if (string.IsNullOrWhiteSpace(trustedBaseHash)) throw new InvalidDataException("Trusted base package identity is required.");
+            try { return ComputeCore(directory, trustedBaseHash, installedReferences); }
+            catch (InvalidDataException) { throw; }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException || exception is CryptographicException)
+            { throw new InvalidDataException("Native target package identity could not be computed safely.", exception); }
+        }
+
+        private static string ComputeCore(string directory, string? trustedBaseHash = null,
+            IReadOnlyDictionary<string, string>? installedReferences = null)
         {
             var fullRoot = Path.GetFullPath(directory);
             var root = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -69,11 +91,24 @@ namespace RevitOperator.DynamicRevitSdk
             }
 
             if (files.Count == 0) throw new InvalidDataException("Runtime package identity has no files.");
+            if (installedReferences != null)
+            {
+                if (Directory.Exists(Path.Combine(root, "native-target")) || File.Exists(Path.Combine(root, "native-target")))
+                    throw new InvalidDataException("Installed base package already contains a native target overlay.");
+                foreach (var pair in installedReferences)
+                {
+                    var path = Path.GetFullPath(pair.Value);
+                    RejectReferenceReparsePoints(path);
+                    files.Add(new IdentityFile(path, "native-target/2024/" + pair.Key + ".dll", true));
+                }
+                if (files.Count > MaximumFileCount) throw new InvalidDataException("Runtime package with native references exceeds the file-count limit.");
+            }
             var duplicate = files.GroupBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() != 1);
             if (duplicate != null) throw new InvalidDataException("Runtime package contains an ambiguous relative path: " + duplicate.Key);
 
             long totalBytes = 0;
             var canonical = new StringBuilder("dynamic-revit-runtime-package-directory/v1\n");
+            var baseCanonical = new StringBuilder("dynamic-revit-runtime-package-directory/v1\n");
             foreach (var file in files.OrderBy(file => file.RelativePath, StringComparer.Ordinal))
             {
                 var relativePathBytes = Encoding.UTF8.GetByteCount(file.RelativePath);
@@ -84,6 +119,8 @@ namespace RevitOperator.DynamicRevitSdk
                 using (var stream = new FileStream(file.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
                 {
                     length = stream.Length;
+                    if (file.NativeReference && (length < 1 || length > 64L * 1024 * 1024))
+                        throw new InvalidDataException("Native target reference exceeds the byte limit.");
                     if (length > MaximumFileBytes) throw new InvalidDataException("Runtime package file exceeds the byte limit: " + file.RelativePath);
                     totalBytes = checked(totalBytes + length);
                     if (totalBytes > MaximumTotalBytes) throw new InvalidDataException("Runtime package exceeds the aggregate byte limit.");
@@ -91,11 +128,23 @@ namespace RevitOperator.DynamicRevitSdk
                     if (stream.Length != length) throw new InvalidDataException("Runtime package file changed while it was being identified: " + file.RelativePath);
                 }
                 RejectReparsePoint(file.FullPath, "Runtime package file");
-                canonical.Append(relativePathBytes).Append(':').Append(file.RelativePath).Append(':').Append(length).Append(':').Append(fileHash).Append('\n');
+                if (file.NativeReference) RejectReferenceReparsePoints(file.FullPath);
+                var line = relativePathBytes + ":" + file.RelativePath + ":" + length + ":" + fileHash + "\n";
+                canonical.Append(line);
+                if (!file.NativeReference) baseCanonical.Append(line);
             }
 
             RejectReparsePoint(root, "Runtime package root");
+            if (installedReferences != null && DynamicWire.Sha256(baseCanonical.ToString()) != trustedBaseHash)
+                throw new InvalidDataException("Installed base compiler package differs from its trusted identity.");
             using (var sha256 = SHA256.Create()) return "sha256:" + ToLowerHex(sha256.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString())));
+        }
+
+        private static void RejectReferenceReparsePoints(string path)
+        {
+            RejectReparsePoint(path, "Native target reference");
+            for (var parent = Directory.GetParent(path); parent != null; parent = parent.Parent)
+                RejectReparsePoint(parent.FullName, "Native target reference ancestor");
         }
 
         private static string RelativePath(string root, string path)
@@ -125,9 +174,10 @@ namespace RevitOperator.DynamicRevitSdk
 
         private sealed class IdentityFile
         {
-            public IdentityFile(string fullPath, string relativePath) { FullPath = fullPath; RelativePath = relativePath; }
+            public IdentityFile(string fullPath, string relativePath, bool nativeReference = false) { FullPath = fullPath; RelativePath = relativePath; NativeReference = nativeReference; }
             public string FullPath { get; }
             public string RelativePath { get; }
+            public bool NativeReference { get; }
         }
     }
 }

@@ -1,4 +1,5 @@
 import { recoverAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
+import {createHash} from 'node:crypto';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -514,14 +515,16 @@ for (const [withAssessment, withProjection] of [[false, false], [true, false], [
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }));
 
-test("dynamic PDF handoff permits verification helpers after criterion pass without repeating export", () => workspace(async () => {
-  const { binding, snapshot, prepared } = start("Export M000 in color and verify the PDF.");
+for (const mismatch of [false, true])
+test(`dynamic PDF handoff automatic readback ${mismatch ? "mismatch retains pending work" : "match completes"} without repeating export`, () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Export M000 in color and verify the PDF.", `pdf-handoff-${mismatch ? "mismatch" : "match"}`);
   const outputPath = "C:/fixture/M000.pdf";
   const file = { path: outputPath, size_bytes: 8251485, sha256: "a".repeat(64), exists: true, readable: true };
   const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf",
     phase: "apply", status: "complete", expected_output_paths: [outputPath], expected_export_calls: 1, export_calls: [true],
     outputs: [{ ...file, fresh_output: true }] };
   const calls: string[] = [];
+  let inspections = 0;
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
     callTool: async (tool: string, args: any, context: any) => {
       const lease = context.assignmentKernelV2;
@@ -530,7 +533,8 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
       const native = tool === "revit_call_tool";
       const apply = args.path === "/revit/export-pdf";
       const payload = apply ? { ok: true, status: "Success", artifact_receipt: receipt, selectedSheets: [{ sheetNumber: "M000", name: "Cover Sheet" }] }
-        : native ? { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true, requestedPaths: [outputPath], files: [file] }
+        : native ? { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true, requestedPaths: [outputPath],
+            files: [{ ...file, sha256: ++inspections === 1 && mismatch ? "b".repeat(64) : file.sha256 }] }
           : tool === "revit_search_tools" ? { matches: [{ method: "POST", path: "/revit/inspect-exported-files" }] } : { artifact_receipt: receipt };
       const facts = native ? [{ fact_id: apply ? "task.result_available" : "control.result_available", fact_class: apply ? "domain" : "control", value: true }]
         : tool === "revit_search_tools" ? [{ fact_id: "control.capability_available", fact_class: "control", value: true,
@@ -576,15 +580,24 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
   try {
     await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], fileName: "M000.pdf", colorMode: "Color", dryRun: false } });
     const applied = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert.equal(inspections, 1, "export reserves a separate native readback before returning");
     assert(Object.values(applied.criteria).every(c => c.status === "pass"));
-    assert.equal(applied.terminal, false, JSON.stringify({ outcome: applied.outcome, effect: applied.spec.requested_effect,
-      operations: Object.values(applied.operations).map(o => ({ purpose: o.purpose, requested: o.requested_effect, result: o.result })) }));
-    await run("lookup", "revit_search_tools", { query: "verify exported PDF file", max: 5, includeSchemas: true });
-    await run("evidence", "operator_retrieve_evidence", { evidenceId: "retained-export", fields: ["payload.artifact_receipt"] });
-    const afterHelpers = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
-    assert.equal(afterHelpers.terminal, false, JSON.stringify({ outcome: afterHelpers.outcome, blocker: afterHelpers.progress_blocker,
-      operations: Object.values(afterHelpers.operations).map(o => ({ purpose: o.purpose, requested: o.requested_effect, result: o.result })) }));
-    await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
+    assert.equal(applied.terminal, !mismatch, "only an exact separate digest readback can complete file delivery");
+    if (mismatch) {
+      await run("lookup", "revit_search_tools", { query: "verify exported PDF file", max: 5, includeSchemas: true });
+      await run("evidence", "operator_retrieve_evidence", { evidenceId: "retained-export", fields: ["payload.artifact_receipt"] });
+      assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.terminal, false,
+        "documentation and the export receipt do not repair mismatched native evidence");
+      const repeat: any = await handleCodexDynamicToolCall(runtime as any, { id: "repeat-inspect", method: "item/tool/call",
+        params: { namespace: "revit_operator", turnId: "pdf-handoff", tool: "revit_call_tool",
+          arguments: { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } } } } as any);
+      assert.equal(repeat.success, false, "equivalent retry still needs a typed retry or reconciliation basis");
+      assert.match(JSON.stringify(repeat), /operation_progress_equivalent_repeat/);
+      assert.deepEqual(calls, ["/revit/export-pdf", "/revit/inspect-exported-files", "revit_search_tools", "operator_retrieve_evidence"]);
+      assert.equal(inspections, 1);
+      assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.terminal, false);
+      return;
+    }
     const final = advanceAssignmentKernelProgressV2({ binding }).snapshot;
     assert.equal(final.outcome, "complete");
     assert.match(renderTerminalResultV2(final), /Verified file: C:\/fixture\/M000.pdf/);
@@ -597,7 +610,7 @@ test("dynamic PDF handoff permits verification helpers after criterion pass with
     assert.doesNotMatch(presentation.assistant_message, /post apply verification required/);
     assert.match(presentation.assistant_message, /Exported sheet M000: Cover Sheet/);
     assert.equal(presentation.teammate_loop_receipt?.verified, true);
-    assert.deepEqual(calls, ["/revit/export-pdf", "revit_search_tools", "operator_retrieve_evidence", "/revit/inspect-exported-files"]);
+    assert.deepEqual(calls, ["/revit/export-pdf", "/revit/inspect-exported-files"]);
     assert.equal(Object.values(final.operations).filter(o => o.persistent_effect === "applied").length, 1);
     assert.deepEqual(final.unresolved_unknown_operation_ids, []);
   } finally { endTeammateLoopOwner(owner); }
@@ -750,6 +763,53 @@ test("generated committed checkpoint retains evidence and completes only after e
   const presentation = guardGenericTeammateDecision(request, { assistant_message: renderTerminalResultV2(final), actions: [] } as any);
   assert.doesNotMatch(presentation.assistant_message, /post apply verification required|has not finished/);
   } finally { endTeammateLoopOwner(owner); }
+}));
+
+for(const variant of ['matched','mismatch'] as const)
+test(`native CSharp parameter checks automatically read once and preserve canonical ${variant} outcome`,()=>workspace(async()=>{
+ const prompt='Use a native C# program to set the Project Information Author to Checked and verify the actual value.';
+ const prepared=prepareAssignmentTurn({sessionId:'native-parameter-session-'+variant,messageId:'native-parameter-first-'+variant,userText:prompt,toolResults:[],source:'chat',createdBy:null,
+  requestContext:{revit:{document:{projectIdentity:{fingerprint:'c'.repeat(64)}}}}})!;
+ const binding=prepared.bindingV2!,snapshot=getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+ const source='public class Edit { public static string Execute(Autodesk.Revit.DB.Document d) { d.ProjectInformation.Author="Checked"; return "not proof"; } }';
+ const hash='sha256:'+createHash('sha256').update(source).digest('hex');
+ const receipt={schema:'dynamic-revit-native-execution-receipt/v1',preparation_id:'native-preparation',source_hash:hash,document_fingerprint:'sha256:'+binding.document_fingerprint,
+  document_session_id:'native-session',success:true,verified:false,transaction:{status:'committed',committed:true,affected_element_ids:[42],modified_element_ids:[42],added_element_ids:[],deleted_element_ids:[]}};
+ const nativePayload={schema:'revit-operator.dynamic-revit-program-run.v1',execution_lane:'native',requested_mode:'apply',execution_ok:true,execution_status:'completed',iteration:{source_sha256:hash},
+  native_outcome:{persistent_effect:'applied',native_transaction_state:'committed',task_verified:false,verification_required:true},
+  evidence:{schema:'dynamic-revit-native-program-evidence/v1',ok:true,nativeExecutionReceipt:JSON.stringify(receipt),
+   snapshotReceipt:JSON.stringify({Schema:'dynamic-revit-native-preparation/v1',PreparationId:'native-preparation',SourceHash:hash,Document:{ProjectFingerprint:'sha256:'+binding.document_fingerprint,SessionId:'native-session'}})}};
+ let calls=0;
+ const runtime={assignmentKernelV2Binding:()=>binding,queueAssignmentKernelV2TurnStop:()=>{},callTool:async(tool:string,args:any,context:any)=>{
+  calls++;context.onMcpAccepted();const lease=context.assignmentKernelV2,apply=tool==='operator_run_dynamic_revit_program';
+  if(!apply)assert.deepEqual(args.body,{elementIds:[42],names:['Author'],includeEmpty:true,limit:500});
+  const value=variant==='matched'?'Checked':'Different';
+  const raw=apply?nativePayload:{items:[{id:42,uniqueId:'unique-42',parameters:{Author:value},parameterDetails:[{name:'Author',value,storageType:'String',parameterId:-1}]}]};
+  return {content:[],structuredContent:{schema:ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+   operation_result_v2:{schema:'revit-operator.operation-result/v2',result_id:'native:'+lease.operation_id,operation_id:lease.operation_id,binding,
+    authority:'native-host',status:'succeeded',dispatch_state:'dispatched',persistent_effect:apply?'applied':'none',native_transaction_state:apply?'committed':'not_applicable',
+    result_schema_id:apply?'operator-dynamic-runtime/mcp-program/v2':'operator-native/test/v2',observation_required:true,
+    ...(apply?{affected_target_identities:['element_id:42']}:{}),receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,
+    raw_payload_hash:payloadDigestV2(raw).digest,request_identity:lease.request_identity,completed_at:new Date().toISOString()},
+   observation:{raw_payload:raw,semantic_facts:apply?[{fact_id:'task.result_available',fact_class:'domain',value:true}]:[],
+    verification_relevance:apply?['task_result']:['verification'],evidence_class:apply?'task_result':'verification'}}};
+ }};
+ const request=bindPreparedAssignmentToRequest({version:'operator.backend.v1',session_id:binding.session_id,user_text:prompt,
+  context:{revit:{process_id:4242,source:{live:true},document:{title:'Native program fixture',projectIdentity:{fingerprint:'c'.repeat(64)}}}}} as any,prepared);
+ const owner=beginTeammateLoopOwner(runtime,request);
+ try{
+  const response:any=await handleCodexDynamicToolCall(runtime as any,{id:'native-parameter-write',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'native-parameter-turn',
+   tool:'operator_run_dynamic_revit_program',arguments:{source,mode:'apply',target_revit_year:'2024',native_program:{entry_type:'Edit',effect_scope:'active_document',
+    parameter_checks:[{element_id:42,parameter_name:'Author',expected_value:'Checked'}]}}}} as any);
+  assert.equal(response.success,true,JSON.stringify(response));
+  const final=advanceAssignmentKernelProgressV2({binding}).snapshot;
+  assert.equal(calls,2,'one actual apply plus one separate read, without a second model call');
+  assert.equal(final.outcome,variant==='matched'?'complete':'active',JSON.stringify({criteria:final.criteria,plan:final.work_plan,operations:Object.values(final.operations).map(o=>({id:o.operation_id,purpose:o.purpose,role:o.fulfillment_role,verifies:o.verification_of_operation_id,result:o.result?.status,checks:o.observation_ids.map(id=>final.observations[id]?.facts)}))}));assert.deepEqual(final.unresolved_unknown_operation_ids,[]);
+  const edit=Object.values(final.operations).find(o=>o.requested_effect==='apply')!;
+  assert.equal(edit.persistent_effect,'applied');assert.equal(edit.verification_operation_ids.length,1);
+  const read=final.operations[edit.verification_operation_ids[0]];
+  assert.equal(read.observation_ids.some(id=>final.observations[id].facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true)),variant==='matched');
+ }finally{endTeammateLoopOwner(owner);}
 }));
 
 test("a supplementary read after verified apply uses its canonical discovery role despite the legacy verification assertion", () => workspace(async () => {
@@ -1417,17 +1477,18 @@ test("C26 HVAC workbook replay keeps requested assessment pending after exact fi
       findings: [{ priority: "high" as const, title: "Missing source data", text: "335 requested fields are absent in the selected spaces.", evidence_indices: [2,3] }],
       limitations: ["Recorded values do not establish final heating or cooling loads or code compliance."],
       questions: ["Which occupancy, envelope and equipment-load assumptions should be used?"] };
-    assert.throws(() => buildAssignmentResultDeliveryV2(applied, selected, assessment), /ineligible/,
-      "successful export alone cannot deliver an unverified artifact");
-    await run("lookup", "revit_search_tools", { query: "verify exported workbook", max: 5, includeSchemas: true });
-    await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
+    assert.deepEqual(calls, ["/revit/export-elements-xlsx", "/revit/inspect-exported-files"],
+      "export reserves one separate native file inspection without another provider call");
+    assert.equal(applied.terminal, false, "automatic file verification cannot supply the requested assessment");
+    assert.throws(() => buildAssignmentResultDeliveryV2(applied, selected), /assessment_required/);
+    const withoutReadback = structuredClone(applied);
+    (withoutReadback.operations[artifact.operation_id] as any).verification_operation_ids = [];
+    assert.throws(() => buildAssignmentResultDeliveryV2(withoutReadback, selected, assessment), /ineligible/,
+      "export receipt without its separate native readback still cannot deliver a verified artifact");
     const verified = advanceAssignmentKernelProgressV2({ binding }).snapshot;
     assert.equal(verified.terminal, false, "file verification must not silently omit requested analysis");
     assert(deriveProgressGapsV2(verified).some(g => g.kind === "result_delivery_required"));
     assert.throws(() => buildAssignmentResultDeliveryV2(verified, selected), /assessment_required/);
-    const lookup = Object.values(verified.observations).find(o => o.authority === "operator-mcp-transport")!;
-    assert.throws(() => buildAssignmentResultDeliveryV2(verified,
-      [{ label: "Tool documentation", observation_id: lookup.observation_id, path: ["matches"] }]), /ineligible/);
     const before = JSON.stringify(verified.criteria);
     const delivery = buildAssignmentResultDeliveryV2(verified, selected, assessment);
     assert.equal(JSON.stringify(verified.criteria), before, "interpretation never becomes evaluator truth");

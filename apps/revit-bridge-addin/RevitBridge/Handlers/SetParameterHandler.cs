@@ -78,6 +78,11 @@ namespace RevitBridge.Handlers
             var changedElementIds = new HashSet<long>();
             var titleblockHits = new Dictionary<long, HashSet<string>>();
             var appliedTargets = new List<AppliedTarget>();
+            var viewNameTargets = new HashSet<long>();
+            var viewNameBefore = new Dictionary<long, NativeViewNameObservation>();
+            var scheduleBaseline = apply
+                ? RevitBridge.Logic.AnnotationSchedulePreservation.CaptureBefore(doc)
+                : new Dictionary<long, object>();
             var circuitWiringBefore = new Dictionary<long, RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Snapshot>();
             var circuitWiringPreview = new Dictionary<long, RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Snapshot>();
             foreach (var entry in effectiveChanges)
@@ -191,6 +196,13 @@ namespace RevitBridge.Handlers
                         }
 
                         var before = ParameterValueUtil.SnapshotForWire(param);
+                        if (ParameterValueUtil.IsNativeViewNameParameter(param))
+                        {
+                            viewNameTargets.Add(entry.elementId);
+                            if (!viewNameBefore.ContainsKey(entry.elementId))
+                                try { viewNameBefore.Add(entry.elementId, NativeViewNameObservation.Read((View)elem)); }
+                                catch { /* Missing observation must not change mutation settlement. */ }
+                        }
                         var preserveTextCase = entry.preserveTextCase ?? p.preserveTextCase ?? false;
                         var requestedValue = preserveTextCase
                             ? (entry.value ?? "")
@@ -389,7 +401,7 @@ namespace RevitBridge.Handlers
                 titleblockImpacts = null;
             }
 
-            return Task.FromResult<object>(new
+            var response = new
             {
                 status = failureGuard.RollbackRequested ? "Native Failure"
                     : !apply ? "Dry Run"
@@ -420,7 +432,28 @@ namespace RevitBridge.Handlers
                 titleblockImpacts,
                 dependentCircuitWiring = RevitBridge.Logic.Handlers.CircuitCalculatedWiringObservation.Describe(
                     doc, circuitWiringBefore, circuitWiringPreview, transactionReceipt.Status)
-            });
+            };
+            return Task.FromResult(RevitBridge.Logic.AnnotationSchedulePreservation.AttachParameterResult(
+                doc, AttachViewNameObservations(doc, response, viewNameBefore, viewNameTargets, committed),
+                scheduleBaseline, targetElementIds));
+        }
+
+        private static object AttachViewNameObservations(Document doc, object payload,
+            Dictionary<long, NativeViewNameObservation> before, HashSet<long> targets, bool committed)
+        {
+            if (!committed || targets.Count == 0) return payload;
+            var after = new List<NativeViewNameObservation>();
+            var complete = targets.Count <= 100 && before.Count == targets.Count;
+            foreach (var id in targets.OrderBy(x => x).Take(100))
+                try { after.Add(NativeViewNameObservation.Read(doc.GetElement(ElementIdCompat.Create(id)) as View)); }
+                catch { complete = false; }
+            using (var json = JsonDocument.Parse(JsonSerializer.Serialize(payload)))
+            {
+                var result = json.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone());
+                result["viewNameChanges"] = new { schema = "operator.native_view_name_changes.v1",
+                    complete, before = before.OrderBy(p => p.Key).Select(p => p.Value).ToArray(), after };
+                return result;
+            }
         }
     }
 }

@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/revit/tag-elements",
+  "body": {
+    "viewId": 1371629,
+    "elementIds": [
+      1392653,
+      1398122
+    ],
+    "tagTypeId": 162121,
+    "onlyUntagged": true,
+    "addLeader": true,
+    "orientation": "Horizontal",
+    "offsetX": 4,
+    "offsetY": 2,
+    "dryRun": false,
+    "max": 2
+  }
+}

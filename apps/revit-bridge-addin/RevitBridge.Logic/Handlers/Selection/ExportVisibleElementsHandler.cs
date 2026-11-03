@@ -314,10 +314,7 @@ namespace RevitBridge.Logic.Handlers
 
         private static string ComputeFileSha256(string path)
         {
-            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var algorithm = SHA256.Create();
-            var hash = algorithm.ComputeHash(stream);
-            return "sha256:" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            return ExportedImageMetadata.ComputeSha256(path);
         }
 
         private static Dictionary<string, object?> BuildVisibleElementPayload(

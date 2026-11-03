@@ -5,6 +5,24 @@ using System.Text.Json;
 
 namespace RevitBridge.Common
 {
+    // Native-only freshness stamp. It invalidates prepared work; it never proves
+    // attribution, a successful transaction or the correctness of any model fact.
+    public sealed class OperatorDocumentChangeVersion
+    {
+        internal OperatorDocumentChangeVersion(int processId, string epoch, string session, long sequence)
+        { ProcessId=processId; Epoch=epoch; DocumentSessionId=session; Sequence=sequence; }
+        public int ProcessId { get; }
+        public string Epoch { get; }
+        public string DocumentSessionId { get; }
+        public long Sequence { get; }
+        public void RequireUnchanged(OperatorDocumentChangeVersion current)
+        {
+            if(current==null || ProcessId!=current.ProcessId || Epoch!=current.Epoch ||
+                DocumentSessionId!=current.DocumentSessionId || Sequence!=current.Sequence)
+                throw new InvalidOperationException("Prepared native work is stale or belongs to a different document/process session.");
+        }
+    }
+
     /// <summary>Bounded observations, never transaction authority, actor attribution or postcondition proof.</summary>
     public sealed class OperatorDocumentChangeObservationStore
     {
@@ -58,6 +76,13 @@ namespace RevitBridge.Common
 
         public void RecordCaptureFailure(DateTimeOffset at)
             => Append(new Entry { observedAtUtc = at.ToUniversalTime().ToString("o"), operation = "unavailable", complete = false, unavailableReason = "native_change_capture_failed" });
+
+        public OperatorDocumentChangeVersion CaptureVersion(string documentSessionId)
+        {
+            if(string.IsNullOrWhiteSpace(documentSessionId) || documentSessionId.Length>200)
+                throw new ArgumentException("A native document session is required.",nameof(documentSessionId));
+            lock(_gate)return new OperatorDocumentChangeVersion(_processId,_epoch,documentSessionId,_sequence);
+        }
 
         private void Append(Entry entry)
         {

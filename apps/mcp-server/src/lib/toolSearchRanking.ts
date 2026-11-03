@@ -12,6 +12,17 @@ export type ToolSearchCandidateV3 = Readonly<{
 
 export const TOOL_SEARCH_RANKING_VERSION_V3 = "operator.tool_search_ranking.v3" as const;
 
+// A top-N discovery result does not establish that an omitted route is absent.
+// A complete registry can count matches; the bounded native search cannot.
+export function toolSearchResultCoverageV3(returnedCount: number, totalMatches: number | null, knownOmitted = false) {
+  return {
+    total_matches: totalMatches,
+    returned_matches: returnedCount,
+    truncated: totalMatches === null ? (knownOmitted ? true : null) : totalMatches > returnedCount,
+    search_guidance: "Search results are ranked best matches. An omitted endpoint is not proof that it is unavailable. Use a separate focused query for each remaining action or its exact path before choosing an alternative. Null total_matches or truncated means upstream completeness is unknown. Discovery does not authorize execution or certify an effect."
+  };
+}
+
 export function isToolSearchRankingVersionV3(value: unknown): boolean {
   return String(value ?? "").trim() === TOOL_SEARCH_RANKING_VERSION_V3;
 }

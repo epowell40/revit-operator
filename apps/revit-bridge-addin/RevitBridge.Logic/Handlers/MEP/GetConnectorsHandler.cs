@@ -15,6 +15,15 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             public List<long> elementIds { get; set; } = new List<long>();
             public bool includeVerificationParameters { get; set; } = false;
+            public bool includeInlineAccessoryState { get; set; } = false;
+            public bool includeNativePlacementState { get; set; } = false;
+            public List<long> placementTypeIds { get; set; } = new List<long>();
+            public List<long> placementSystemIds { get; set; } = new List<long>();
+            public List<long> placementChangedIds { get; set; } = new List<long>();
+            public bool includeTeeReplacementState { get; set; } = false;
+            public List<long> replacementRemovedIds { get; set; } = new List<long>();
+            public List<long> replacementTypeIds { get; set; } = new List<long>();
+            public List<long> preservationScheduleIds { get; set; } = new List<long>();
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
             public bool includeFlexGeometry { get; set; } = true;
@@ -23,6 +32,14 @@ namespace RevitBridge.Logic.Handlers.MEP
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Read(app, jsonData, true);
+
+        // In-process native before/after collection uses the exact same policy
+        // and reader, without encoding and then immediately decoding its result.
+        internal Task<object> HandleUnpacked(UIApplication app, string jsonData)
+            => Read(app, jsonData, false);
+
+        private Task<object> Read(UIApplication app, string jsonData, bool encodePlacementResponse)
         {
             using (var input = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData))
                 if (!DuctVerificationInspectionPolicy.TryValidate(input.RootElement, out var error)) throw new ArgumentException(error);
@@ -299,7 +316,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ["filter"] = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors"
             };
             if (verificationParameters != null) result["verificationParameters"] = verificationParameters;
-            return Task.FromResult<object>(result);
+            if (p.includeInlineAccessoryState)
+                result["inlineAccessoryState"] = InlineAccessoryObservation.Read(doc, ids, p.preservationScheduleIds);
+            if (p.includeNativePlacementState)
+                result["nativePlacementState"] = NativeInteractiveAccessoryObservation.ReadState(doc, ids, p.placementSystemIds, p.preservationScheduleIds, p.placementTypeIds, p.placementChangedIds);
+            if (p.includeTeeReplacementState)
+                result["teeReplacementState"] = TeeTakeoffReplacementObservation.Read(doc, ids, p.replacementRemovedIds, p.preservationScheduleIds, p.replacementTypeIds);
+            return Task.FromResult<object>(encodePlacementResponse && p.includeNativePlacementState
+                ? NativePreservationSnapshotCodec.PackPlacementRead(result) : result);
         }
 
         // Diagnostic reads must propagate manager/enumeration errors to the failed owner row.

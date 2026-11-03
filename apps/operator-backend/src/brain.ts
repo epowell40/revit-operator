@@ -45,6 +45,7 @@ import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifi
 import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 import { isIndependentAssistantTurn } from "./goals/assistant_turn.js";
 import { finalizeCanonicalAssignment } from "./assignments/canonical_finalization.js";
+import { preserveDesktopHelperDecisionV1 } from "./brains/desktop_helper_return.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -265,6 +266,12 @@ export function __testOnlyMaybeBuildPersistedExistingConditionsTerminal(
 }
 
 function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
+  // A consumed, fully drained helper report may include the requested writing
+  // after native completion. Its presenter already includes the canonical
+  // result; preserve it before the generic terminal prose replacement.
+  // The existing guard still refuses Pause, unknowns, failures and lookalikes.
+  const helper = preserveDesktopHelperDecisionV1(req, decision);
+  if (helper) return helper;
   const canonical = finalizeCanonicalAssignment(req, decision);
   if (canonical) return canonical;
   const assistantMessage = (decision.assistant_message ?? "").toString();

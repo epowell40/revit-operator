@@ -24,6 +24,23 @@ const MOVE_PREVIEW_EFFECT_HASH = "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c025
 const MOVE_APPLY_EFFECT_HASH = "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b";
 const REQUEST_ID = "0123456789abcdef0123456789abcdef";
 
+test("retained quantify census refusal reaches existing read admission without adjacent route expansion", () => {
+  const here = new URL('./fixtures/quantify-inventory-predispatch.json', import.meta.url);
+  const fixture = JSON.parse(fs.readFileSync(fs.existsSync(here) ? here : new URL('../../test/fixtures/quantify-inventory-predispatch.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.payload.code, 'CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED');
+  assert.equal(fixture.payload.request_dispatched, false);
+  assert.equal(fixture.payload.outcome_unknown, false);
+  const env = { REVIT_OPERATOR_MODE: 'development', OPERATOR_TOOL_EXPOSURE_PROFILE: 'laboratory', OPERATOR_BRAIN: 'codex', OPERATOR_AUTH_MODE: 'shared_token' };
+  const request = directRequest({path:fixture.route,body_json:JSON.stringify(fixture.body)});
+  const result = authorizeDirectRevitExecution(request,env);
+  assert.equal(result.path,fixture.route);
+  assert.equal(result.policy_trust_source,'deployment');
+  assert.equal(result.request_hash,computeRequestHash('POST',fixture.route,fixture.body));
+  for(const overrides of [{method:'GET',body_present:false,body_json:''},{path:'/revit/quantify-visualize'},{path:'/revit/quantify-other'},{channel:'typed_mcp',alias:'revit_quantify'}])
+    assert.throws(()=>authorizeDirectRevitExecution({...request,...overrides},env),e=>e instanceof DirectRevitExecutionAuthorizationError&&e.code==='CERTIFICATION_DIRECT_TOOL_NOT_SUPPORTED');
+  assert.throws(()=>authorizeDirectRevitExecution({...request,body_json:'{'},env),e=>e instanceof DirectRevitExecutionAuthorizationError&&e.code==='CERTIFICATION_DIRECT_REQUEST_MALFORMED');
+});
+
 test("fixed product support denies excluded direct routes before every deployment authorization branch", () => {
   for (const mode of ["development", "hosted", "production", "local"]) {
     assert.throws(() => authorizeDirectRevitExecution(directRequest({ path: "/revit/fire-alarm-layout" }), {

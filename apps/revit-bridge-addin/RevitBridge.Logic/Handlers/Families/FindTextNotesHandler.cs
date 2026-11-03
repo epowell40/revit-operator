@@ -27,6 +27,7 @@ namespace RevitBridge.Logic.Handlers
             public long? viewId { get; set; }
             public long? elementId { get; set; }
             public List<long>? elementIds { get; set; }
+            public List<long>? preservationScheduleIds { get; set; }
             public int? max { get; set; }
         }
 
@@ -111,7 +112,7 @@ namespace RevitBridge.Logic.Handlers
                 var ownerViewId = SafeGetOwnerViewId(tn);
                 var ownerView = ownerViewId.HasValue ? targetDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(ownerViewId.Value)) as View : null;
                 var typeId = tn.GetTypeId(); var textType = typeId == null || typeId == ElementId.InvalidElementId ? null : targetDoc.GetElement(typeId);
-                var bb = Safe(() => tn.get_BoundingBox(null)); var coord = Safe(() => tn.Coord);
+                var bb = Safe(() => tn.get_BoundingBox(ownerView)) ?? Safe(() => tn.get_BoundingBox(null)); var coord = Safe(() => tn.Coord);
                 var center = bb == null ? null : Point((bb.Min + bb.Max) * 0.5);
                 items.Add(new
                 {
@@ -150,7 +151,9 @@ namespace RevitBridge.Logic.Handlers
                 itemsComplete = requestedElementIds.Count > 0 || items.Count < max,
                 elementIds,
                 textSamples,
-                items
+                items,
+                schedulePreservation = p.preservationScheduleIds == null ? null
+                    : AnnotationSchedulePreservation.Read(targetDoc, p.preservationScheduleIds)
             });
         }
 

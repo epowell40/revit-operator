@@ -7,7 +7,7 @@ import {committedSavedDocumentReadbackPlanV2} from '../src/verification/committe
 import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_kernel_v2_factory.js';
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
-import {beginTeammateLoopOwner,endTeammateLoopOwner} from '../src/teammate_loop_runtime.js';
+import {beginTeammateLoopOwner,endTeammateLoopOwner,guardTeammateMcpCall,recordTeammateMcpResult,teammateLoopReceiptForOwner} from '../src/teammate_loop_runtime.js';
 import {handleCodexDynamicToolCall} from '../src/brains/codex_dynamic_tool_handler.js';
 import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
@@ -15,6 +15,8 @@ import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-ker
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 import {recordCompletedAssignmentProviderReceiptV2,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from '../src/assignments/assignment_kernel_v2_progress.js';
 import {defaultAssignmentWorkBudgetV2} from '../src/assignments/assignment_work_allowance_v2.js';
+import {manageAssignmentWorkPlan} from '../src/assignments/assignment_work_plan.js';
+import {workPlanPendingV2} from '../src/domain/assignment-kernel/work_plan.js';
 
 function fixture(){
  const output='C:/fixture/result.rvt',identity={session_id:'native-document-1',project_fingerprint:'a'.repeat(64),path:output};
@@ -28,7 +30,7 @@ function fixture(){
     saved_document:{...identity,is_modified:false,is_modifiable:false,is_family_document:false}}};
 }
 
-for(const variant of ['exact','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save','last_provider_call','last_provider_call_advisory','last_provider_call_schema_rejected','last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'] as const)
+for(const variant of ['exact','prior_verified_stage_history','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save','last_provider_call','last_provider_call_advisory','last_provider_call_schema_rejected','last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'] as const)
 test(`ordinary native save ${variant} receives one guarded fresh file/document read without another save`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-save-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
@@ -42,9 +44,15 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
    f.receipt.save_document.after.session_id='native-after-save';
    f.read.saved_document.session_id='native-after-save';
   }
-  const goal=createGoal({title:'Save the updated model',objective:'Save the updated model as a new result.',acceptance_criteria:['The requested output is saved.'],status:'active',
+  const priorStage=variant==='prior_verified_stage_history';
+  const goal=createGoal({title:'Save the updated model',objective:priorStage?'Set equipment42 Manufacturer to ACME, independently verify it, then save the updated model as a new result.':'Save the updated model as a new result.',acceptance_criteria:['The requested output is saved.'],status:'active',
    related_session_id:'save-host-session',created_by:'save-host-principal',work_budget:{requested_effect:'apply',document_fingerprint:'a'.repeat(64)}});
   createAssignmentKernelForGoalV2({goal,run_id:'save-host-run'});const binding=getAssignmentKernelSnapshotV2(goal.id)!.current_binding;
+  const checklistCase=variant==='exact'||variant==='native_session_transition'||priorStage;
+  if(checklistCase)manageAssignmentWorkPlan({binding,action:'declare',declaration:{assumptions:[],items:[
+   {item_id:'save',description:'Save the updated model separately.',source_basis:'User requested output.'},
+   {item_id:'inspect-save',kind:'inspection',depends_on:['save'],description:'Verify exact saved file and clean native document.',source_basis:'User requested independent save verification.'}
+  ]}});
   const initial=getAssignmentKernelSnapshotV2(goal.id)!,limit=defaultAssignmentWorkBudgetV2(initial,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls;
   function fixtureProviderReceipt(index:number){const s=getAssignmentKernelSnapshotV2(goal.id)!;
    recordCompletedAssignmentProviderReceiptV2({binding,call_id:'last-call-fixture:'+index,controller_turn_id:'save-turn',provider:'test-only-fixture',model:'test-only-no-provider',reasoning_effort:'medium',
@@ -82,17 +90,39 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
       fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'save-task',user_text:goal.objective,
-   assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation} as any,{canonicalSupervisionOnly:true});
+   assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation,
+   context:{revit:{source:{live:true},process_id:42,document:{title:'Fixture',path:'C:/fixture/source.rvt',projectIdentity:{fingerprint:'a'.repeat(64)}}}}} as any,{canonicalSupervisionOnly:!priorStage});
   try {
+   if(priorStage){
+    // Reproduce346's cumulative helper history without claiming these synthetic
+    // prefix reads are native model evidence. The next SaveAs and automatic
+    // read run through the real dynamic handler and canonical evidence journal.
+    const invoke=(path:string,body:unknown,payload:unknown)=>{const gate=guardTeammateMcpCall(runtime,{tool:'revit_call_tool',arguments:{method:'POST',path,body}});assert.equal(gate.allowed,true,gate.message);recordTeammateMcpResult(runtime,gate,{content:[{type:'text',text:JSON.stringify(payload)}]});};
+    invoke('/revit/set-parameters',{elementIds:[42],parameters:{Manufacturer:'ACME'},dryRun:false,apply:true},{ok:true,elementIds:[42]});
+    for(const id of [100,101,102,103,104,42])invoke('/revit/get-parameters',{elementIds:[id],parameterNames:['Manufacturer']},{ok:true,items:[{id,parameters:{Manufacturer:'ACME'}}]});
+    assert.equal(teammateLoopReceiptForOwner(runtime)?.verified,true);
+    assert.equal(teammateLoopReceiptForOwner(runtime)?.verification_action_ids.length,6);
+   }
    const response:any=await handleCodexDynamicToolCall(runtime,{id:'user-save',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'save-turn',tool:'revit_call_tool',arguments:f.input}} as any);
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/save-as').length,1);assert.equal(response.success,true);
    assert.equal(validations.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'?0:schemaRejected?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'||schemaRejected||noDispatch?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   const expectedVerified=['exact','native_session_transition'].includes(variant)||lastCall&&!schemaRejected&&!noDispatch;
+   const expectedVerified=['exact','native_session_transition','prior_verified_stage_history'].includes(variant)||lastCall&&!schemaRejected&&!noDispatch;
    assert.equal(verified,expectedVerified);assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!expectedVerified);
    assert.deepEqual(s.in_flight_operation_ids,[]);assert.deepEqual(s.unresolved_unknown_operation_ids,[]);
+   if(priorStage){assert.equal(teammateLoopReceiptForOwner(runtime)?.verification_action_ids.length,7);assert.equal(teammateLoopReceiptForOwner(runtime)?.verified,true);}
+   if(checklistCase){
+    assert.equal(workPlanPendingV2(s),true,'Verified file alone does not silently complete declared scope');
+    manageAssignmentWorkPlan({binding,action:'complete',item_id:'save',operation_ids:[apply.operation_id]});
+    const readId=apply.verification_operation_ids[0]!;
+    manageAssignmentWorkPlan({binding,action:'complete',item_id:'inspect-save',operation_ids:[readId]});
+    __testOnlyResetGoalListCache();const durable=getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(workPlanPendingV2(durable),false,'Existing automatic verification closes exact saved-file scope after journal reload');
+    assert(durable.work_plan!.items.every(item=>item.completed_at));
+    assert.equal(Object.values(durable.operations).filter(op=>op.input.path==='/revit/save-as').length,1,'Checklist closure cannot replay save');
+   }
    if(lastCall){assert.equal(Object.keys(s.provider_calls).length,limit);assert.equal(defaultAssignmentWorkBudgetV2(s,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,limit);}
    if(schemaRejected){
     const before=structuredClone(s),stopped=structuredClone(s);Object.assign(stopped,{terminal:true,outcome:'blocked',terminal_reason:'provider_call_budget_exhausted'});

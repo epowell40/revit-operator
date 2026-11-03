@@ -47,4 +47,6 @@ export class AssignmentKernelTurnLeaseRegistryV2 {
     this.#unbound.clear();
     this.#byTurn.clear();
   }
+
+  hasActiveLease(): boolean { return this.#unbound.size>0||this.#byTurn.size>0; }
 }

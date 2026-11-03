@@ -3,13 +3,227 @@ import { compactWorkReviewV2, projectWorkReviewV2 } from '../src/assignments/wor
 import {renderTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import { retainWorkPlanInspectionV2 } from "../src/assignments/work_plan_inspection.js";
 import assert from "node:assert/strict";
+import {AssignmentJournalV2,type AssignmentEventV2} from '../src/domain/assignment-kernel/index.js';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { retainedTagReadFixtureV2 } from './fixtures/tag_property_read_fixture.js';
+import { summaryInspectionFixture, familyInspectionFixture } from './fixtures/native_inspection_coverage_fixture.js';
+import { completeWorkPlanItemV2 } from '../src/domain/assignment-kernel/work_plan.js';
 import { operationTargetSelectorV2 } from "../src/verification/verification_capability_admission_v2.js";
+import { revitRouteEffect } from "../src/action_path_mutability.js";
+import {example as nativeAccessoryExample} from './native_accessory_preservation.fixtures.js';
+import {committedNativeAccessoryReadbackPlanV2} from '../src/verification/native_accessory_evidence_v2.js';
+import {segmented} from './native_segmented_preservation_v2.test.js';
+
+test('native interactive accessory independent read settles through the existing kernel and survives durable restart',()=>{
+ for(const kind of ['duct','pipe'] as const)for(const variant of ['packed_correct','packed_wrong_port','packed_non_native','correct','large_remote_prefix','large_remote_damage','unchanged_remote','missing_remote','extra_remote','forged_changed','omitted_changed','wrong_port','stale','echo','non_native'])workspace(()=>{
+  const f=nativeAccessoryExample(kind),{goal,snapshot}=setup('apply');
+  if(variant.startsWith('large_remote')){
+   // Unchanged owners can precede every changed owner in a native system scan.
+   // The generic 128-token selector only sees these first 64 remote elements.
+   for(const scan of [f.apply.preservationBefore,f.apply.preservationAfter,f.after]){
+    const state=scan.nativePlacementState,source=scan.results.find((r:any)=>r.id===50),owner=state.owners.find((r:any)=>r.elementId===50);
+    const added=Array.from({length:70},(_,i)=>{
+     const id=1000+i,row=structuredClone(source),o=structuredClone(owner);row.id=id;
+     for(const p of row.connectors){p.physicalConnectedTo=[];p.connectedTo=[];p.physicalConnectionCount=0;p.isConnected=false;p.isPhysicallyConnected=false;}
+     row.openPhysicalConnectorCount=row.connectors.length;o.elementId=id;o.uniqueId=o.state.UniqueId='native-unique-'+id;
+     return {row,o};
+    });
+    scan.results.unshift(...added.map(x=>x.row));state.owners.unshift(...added.map(x=>x.o));state.requestedElementIds=scan.results.map((r:any)=>r.id);
+    state.systems[0].network.unshift(...added.map(x=>({elementId:x.row.id,uniqueId:x.o.uniqueId})));
+    for(const key of ['requestedCount','scannedElementCount','matchedElementCount'])scan[key]+=added.length;
+    scan.totalScannedConnectorCount+=added.length*2;scan.openPhysicalConnectorCount+=added.length*2;
+   }
+  }
+  if(variant==='unchanged_remote'){
+   // Real native insertion133 retained the remote network in readback while
+   // correctly excluding unchanged owners from its transaction footprint.
+   f.affected=f.affected.filter(t=>t!=='element_id:40');
+   for(const rows of [f.apply.transaction.modified_element_ids,f.apply.transaction.affected_element_ids,
+    f.apply.changeTracking.observedModifiedIds,f.apply.changeTracking.observedAddedIds]){
+    const at=rows.indexOf(40);if(at>=0)rows.splice(at,1);
+   }
+   for(const state of [f.apply.preservationAfter.nativePlacementState,f.after.nativePlacementState]){
+    state.requestedChangedIds=state.requestedChangedIds.filter((n:number)=>n!==40);
+    state.affected=state.affected.filter((r:any)=>r.elementId!==40);
+   }
+  }
+  manageAssignmentWorkPlan({binding:snapshot.current_binding,action:'declare',declaration:{assumptions:[],items:[
+   {item_id:'insert',description:'Insert and connect the requested accessory.',source_basis:'Requested native accessory insertion.'},
+   {item_id:'save',description:'Save the result separately.',source_basis:'Requested saved model.'},
+   {item_id:'inspect',kind:'inspection',depends_on:['insert','save'],description:'Inspect the affected work.',source_basis:'Requested result review.'}
+  ]}});
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'native-insert',provider_turn_id:'place',capability_id:'revit_call_tool',
+    classified_effect:'apply',target_tokens:['id:10'],arguments:f.input,opened_at:'2026-10-29T12:00:00Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const committed=envelope(apply.operation_id,apply.binding,f.apply,'applied');
+  Object.assign(committed.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:'+f.input.path+'/v2',
+    affected_target_identities:f.affected,completed_at:'2026-10-29T12:00:01Z'});
+  settleAssignmentKernelOperationV2(apply,committed);__testOnlyResetGoalListCache();
+  const current=advanceAssignmentKernelProgressV2({binding:apply.binding}).snapshot;
+  assert.equal(appliedOperationHasVerifiedPostconditionV2(current,apply.operation_id),false);
+  const plan=committedNativeAccessoryReadbackPlanV2(current,current.operations[apply.operation_id]!);assert.ok(plan);
+  if(variant==='missing_remote')plan.body.elementIds=plan.body.elementIds.filter((n:number)=>n!==40);
+  if(variant==='extra_remote')plan.body.elementIds.push(999);
+  if(variant==='forged_changed')plan.body.placementChangedIds=[999];
+  if(variant==='omitted_changed')plan.body.placementChangedIds.pop();
+  const read=openAssignmentKernelOperationV2({snapshot:current,controller_request_id:'native-insert-read',provider_turn_id:'inspect',capability_id:'revit_call_tool',
+    classified_effect:'read',target_tokens:operationTargetSelectorV2({operation:{capability_id:'revit_call_tool',method:plan.method,path:plan.path},value:plan.body}).principal_target_tokens,arguments:plan,opened_at:'2026-10-29T12:00:02Z'});
+  assert.equal(read.purpose,['missing_remote','extra_remote','forged_changed','omitted_changed'].includes(variant)?'discovery':'verification');markAssignmentKernelOperationDispatchStartedV2(read);
+  if(variant==='wrong_port'||variant==='packed_wrong_port')f.after.results.find((r:any)=>r.id===200).connectors[0].size.diameterFt=1;
+  if(variant==='large_remote_damage')f.after.nativePlacementState.owners.find((r:any)=>r.elementId===1000).state.metadata.level=999;
+  const readPayload=variant.startsWith('packed_')?segmented({...f.after,padding:'x'.repeat(2_000_001)}):f.after;
+  const response=envelope(read.operation_id,read.binding,variant==='echo'?{request:f.after}:readPayload);
+  Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-connectors/v2',
+    completed_at:variant==='stale'?'2026-10-29T11:59:59Z':'2026-10-29T12:00:03Z',...(['non_native','packed_non_native'].includes(variant)?{authority:'dynamic-runtime'}:{})});
+  const settled=settleAssignmentKernelOperationV2(read,response).snapshot;
+  const expected=variant==='correct'||variant==='unchanged_remote'||variant==='large_remote_prefix'||variant==='packed_correct';
+  assert.equal(appliedOperationHasVerifiedPostconditionV2(settled,apply.operation_id),expected,kind+':'+variant);
+  __testOnlyResetGoalListCache();assert.equal(appliedOperationHasVerifiedPostconditionV2(getAssignmentKernelSnapshotV2(goal.id)!,apply.operation_id),expected);
+  assert.equal(Object.values(settled.operations).filter(o=>o.requested_effect==='apply').length,1);
+  assert.equal(settled.outcome,'active','Insertion proof alone does not complete save, review or delivery.');
+ });
+});
+
+test('447 plural schedule parameter read gains only fresh exact native postcondition proof across durable restart',()=>{
+ for(const variant of ['correct','wrong_target','wrong_row','wrong_value','duplicate','echo','stale','non_native'])workspace(()=>{
+  const f=JSON.parse(fs.readFileSync('test/fixtures/schedule-cell-comments-read447.json','utf8').replace(/^\uFEFF/,'')),{goal,snapshot}=setup('apply');
+  manageAssignmentWorkPlan({binding:snapshot.current_binding,action:'declare',declaration:{assumptions:[],items:[
+   {item_id:'note',description:'Append the requested instance review note.',source_basis:'Requested parameter edit.'},
+   {item_id:'save',description:'Save the separate result.',source_basis:'Requested separate saved artifact.'},
+   {item_id:'inspect',kind:'inspection',depends_on:['note','save'],description:'Inspect the result and affected sheet.',source_basis:'Requested result verification.'}
+  ]}});
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'comments447',provider_turn_id:'edit',capability_id:'revit_call_tool',
+   classified_effect:'apply',target_tokens:['id:1543793'],arguments:f.input,opened_at:'2026-10-24T03:39:18.657Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const committed=envelope(apply.operation_id,apply.binding,{status:'Applied and Verified',sourceElementId:1543791},'applied');
+  Object.assign(committed.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/update-schedule-cell/v2',affected_target_identities:f.affected,completed_at:'2026-10-24T03:39:18.791Z'});
+  settleAssignmentKernelOperationV2(apply,committed);__testOnlyResetGoalListCache();
+  const state=advanceAssignmentKernelProgressV2({binding:apply.binding}).snapshot;
+  const proved=(s:any)=>appliedOperationHasVerifiedPostconditionV2(s,apply.operation_id);
+  assert.equal(proved(state),false,'Apply-local verification does not replace independent readback');
+  const read=openAssignmentKernelOperationV2({snapshot:state,controller_request_id:'comments447-read',provider_turn_id:'verify',capability_id:'revit_call_tool',
+   classified_effect:'read',target_tokens:['id:1543791'],arguments:f.read_input,opened_at:'2026-10-24T03:39:22.504Z'});
+  assert.equal(read.purpose,'verification');markAssignmentKernelOperationDispatchStartedV2(read);
+  const payload=f.native_read;
+  if(variant==='wrong_target')payload.items[0].id++;
+  if(variant==='wrong_row')payload.items[0].parameters.Mark='OTHER';
+  if(variant==='wrong_value')payload.items[0].parameterDetails.find((v:any)=>v.name==='Comments').valueString='OTHER';
+  if(variant==='duplicate')payload.items.push(structuredClone(payload.items[0]));
+  const result=envelope(read.operation_id,read.binding,variant==='echo'?{request:payload}:payload);
+  Object.assign(result.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-parameters/v2',
+   completed_at:variant==='stale'?'2026-10-24T03:39:17.000Z':'2026-10-24T03:39:23.092Z',...(variant==='non_native'?{authority:'dynamic-runtime'}:{})});
+  const settled=settleAssignmentKernelOperationV2(read,result).snapshot;
+  assert.equal(proved(settled),variant==='correct',variant);__testOnlyResetGoalListCache();assert.equal(proved(getAssignmentKernelSnapshotV2(goal.id)),variant==='correct',variant+' durable');
+  assert.equal(Object.values(settled.operations).filter(o=>o.requested_effect==='apply').length,1);
+  assert.equal(settled.outcome,'active','A parameter check cannot complete SaveAs, visual review or the whole task');
+ });
+});
+
+import {familySessionVerificationFixtureV2} from './fixtures/family_session_verification_fixture.js';
+import {committedFamilySessionReadbackPlanV2} from '../src/verification/family_session_verification_v2.js';
+
+function familyLifecycleCallThroughProductionGate(snapshot: any, args: any) {
+ const owner={}, lease=beginTeammateLoopOwner(owner,{version:OPERATOR_BACKEND_CONTRACT_VERSION,
+  session_id:snapshot.current_binding.session_id,message_id:'family-lifecycle-fixture',user_text:'Continue the authorized model work.',
+  assignment_id:snapshot.current_binding.assignment_id,assignment_run_id:snapshot.current_binding.run_id,
+  assignment_generation:snapshot.current_binding.generation,
+  context:{revit:{source:{live:true},document:{projectIdentity:{fingerprint:'document-execution'}}}}},
+  {canonicalSupervisionOnly:true});
+ try {const gate=guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:args},snapshot);
+  assert.equal(gate.allowed,true);assert(gate.call);return gate.call;
+ } finally {endTeammateLoopOwner(lease);}
+}
+
+test('family save and load require exact independent native readbacks across durable restart',()=>{
+ for(const kind of ['save','load'] as const)for(const variant of ['correct','mismatch','wrong_session','stale','non_native','echo','missing_resolution','changed_source'] as const)workspace(()=>{
+  const f:any=familySessionVerificationFixtureV2(kind),{goal,snapshot}=setup('apply');
+  if(variant==='missing_resolution'&&kind==='save')delete f.apply.family_save_receipt.path_resolution;
+  const applyCall=familyLifecycleCallThroughProductionGate(snapshot,f.input);
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'family-'+kind,provider_turn_id:'edit',capability_id:'revit_call_tool',
+   classified_effect:applyCall.effect,target_tokens:applyCall.principal_target_tokens,arguments:f.input,
+   opened_at:'2026-10-20T03:00:00.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const committed=envelope(apply.operation_id,apply.binding,f.apply,'applied');
+  Object.assign(committed.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:'+f.input.path+'/v2',
+   affected_target_identities:kind==='save'?['artifact_path:'+f.apply.filePath]:['element_id:100'],completed_at:'2026-10-20T03:00:01.000Z'});
+  settleAssignmentKernelOperationV2(apply,committed);__testOnlyResetGoalListCache();
+  const state=advanceAssignmentKernelProgressV2({binding:apply.binding}).snapshot;
+  const proved=(k:any)=>!deriveProgressGapsV2(k).some((g:any)=>g.gap_id==='verification:'+apply.operation_id);
+  assert.equal(proved(state),false,'apply receipt cannot verify itself');
+  assert.deepEqual(committedFamilySessionReadbackPlanV2(state,state.operations[apply.operation_id]!),
+   variant==='missing_resolution'&&kind==='save'?null:f.read,'automatic recipe uses retained native identity');
+  if(variant==='correct')for(const change of [
+   (s:any)=>s.execution_control={state:'paused'},(s:any)=>s.unresolved_unknown_operation_ids=['unknown'],
+   (s:any)=>s.current_binding={...s.current_binding,session_id:'foreign'},
+   (s:any)=>s.operations.later={...s.operations[apply.operation_id],operation_id:'later',result:{...s.operations[apply.operation_id].result,completed_at:'2026-10-20T03:00:01.500Z'}}
+  ]){const c=structuredClone(state);change(c);assert.equal(committedFamilySessionReadbackPlanV2(c,c.operations[apply.operation_id]),null,change.toString());}
+  if(variant==='changed_source'){
+   const o=state.observations[state.operations[apply.operation_id]!.observation_ids[0]!]!;
+   const ref=JSON.parse(fs.readFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!,'evidence','refs',o.raw_payload_ref.replace('evidence:','')+'.json'),'utf8'));
+   fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!,ref.artifact_location),'{}');
+  }
+  const readCall=familyLifecycleCallThroughProductionGate(state,f.read);
+  const read=openAssignmentKernelOperationV2({snapshot:state,controller_request_id:'family-read',provider_turn_id:'verify',capability_id:'revit_call_tool',
+   classified_effect:readCall.effect,target_tokens:readCall.principal_target_tokens,
+   arguments:f.read,opened_at:'2026-10-20T03:00:02.000Z'});
+  assert.equal(read.purpose,'verification');markAssignmentKernelOperationDispatchStartedV2(read);
+  if(variant==='mismatch'){if(kind==='save')f.payload.files[0].sha256='d'.repeat(64);else f.payload.result[0].uniqueId='foreign';}
+  if(variant==='wrong_session'){if(kind==='save')f.payload.saved_document.family_session_id='b'.repeat(32);else f.apply.family_reload_receipt.session_id='b'.repeat(32);}
+  const response=envelope(read.operation_id,read.binding,variant==='echo'?{request:f.payload}:f.payload);
+  Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:'+f.read.path+'/v2',
+   completed_at:variant==='stale'?'2026-10-20T02:59:59.000Z':'2026-10-20T03:00:03.000Z',
+   ...(variant==='non_native'?{authority:'dynamic-runtime'}:{})});
+  const settled=settleAssignmentKernelOperationV2(read,response).snapshot;
+  const expected=variant==='correct'||variant==='missing_resolution'&&kind==='load'||variant==='wrong_session'&&kind==='load';
+  // Mutating the local fixture after a load cannot replace the retained native apply payload.
+  assert.equal(proved(settled),expected,kind+':'+variant);__testOnlyResetGoalListCache();
+  assert.equal(proved(getAssignmentKernelSnapshotV2(goal.id)),expected,kind+':'+variant+' durable');
+ });
+});
+
+
+test('family label typography requires a separate exact child-document native read across durable restart',()=>{
+ for(const variant of ['correct','mismatch','wrong_session','wrong_uid','truncated','stale','non_native','echo'])workspace(()=>{
+  const handle='a'.repeat(32),style={font:'Arial',textSizeFeet:2.5/304.8,bold:false,italic:false,underline:false,widthFactor:1};
+  const input={method:'POST',path:'/revit/set-family-label-style',body:{familyDocumentId:handle,labelTypeId:788388,
+   expectedTypeUniqueId:'current-child-type',expectedStyle:style,style:{underline:true}}};
+  const target=`family_label_type:${handle}:788388`,{goal,snapshot}=setup('apply');
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'style-edit',provider_turn_id:'edit',capability_id:'revit_call_tool',
+   classified_effect:revitRouteEffect(input.path,input.method,input.body),target_tokens:[target],arguments:input,opened_at:'2026-10-19T22:00:00.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const committed=envelope(apply.operation_id,apply.binding,{scope:'family_session',familyDocumentId:handle,labelTypeId:788388,
+   familyStyleVerified:true,loadedProjectStyleVerified:false},'applied');
+  Object.assign(committed.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/set-family-label-style/v2',
+   affected_target_identities:['element_id:788388'],completed_at:'2026-10-19T22:00:01.000Z'});
+  settleAssignmentKernelOperationV2(apply,committed);__testOnlyResetGoalListCache();
+  const state=advanceAssignmentKernelProgressV2({binding:apply.binding}).snapshot;
+  assert(!state.operations[apply.operation_id]!.observation_ids.flatMap(id=>state.observations[id]!.facts).some(f=>f.fact_id==='task.result_available'),'detached family editing cannot certify the project task');
+  assert(deriveProgressGapsV2(state).some(g=>g.gap_id===`verification:${apply.operation_id}`),'apply-local style flag cannot verify itself');
+  const readInput={method:'POST',path:'/revit/inspect-family-label-styles',body:{familyDocumentId:handle,labelTypeId:788388,maxStyles:1}};
+  const read=openAssignmentKernelOperationV2({snapshot:state,controller_request_id:'style-read',provider_turn_id:'verify',capability_id:'revit_call_tool',
+   classified_effect:revitRouteEffect(readInput.path,readInput.method,readInput.body),target_tokens:[target],arguments:readInput,opened_at:'2026-10-19T22:00:02.000Z'});
+  assert.equal(read.purpose,'verification');markAssignmentKernelOperationDispatchStartedV2(read);
+  const payload:any={ok:true,observational:true,mutated:false,scope:'family_session',familyDocumentId:handle,
+   loadedProjectStyleVerified:false,count:1,totalStyles:1,truncated:false,items:[{labelTypeId:788388,uniqueId:'current-child-type',
+    style:{...style,underline:variant!=='mismatch'},labelIds:[788445],labelCount:1,labelsComplete:true}]};
+  if(variant==='wrong_session')payload.familyDocumentId='b'.repeat(32);
+  if(variant==='wrong_uid')payload.items[0].uniqueId='another-child-type';
+  if(variant==='truncated')payload.truncated=true;
+  const result=envelope(read.operation_id,read.binding,variant==='echo'?{request:payload}:payload);
+  Object.assign(result.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/inspect-family-label-styles/v2',
+   completed_at:variant==='stale'?'2026-10-19T21:59:59.000Z':'2026-10-19T22:00:03.000Z',
+   ...(variant==='non_native'?{authority:'dynamic-runtime'}:{})});
+  const settled=settleAssignmentKernelOperationV2(read,result).snapshot;
+  const proved=(s:any)=>!deriveProgressGapsV2(s).some(g=>g.gap_id===`verification:${apply.operation_id}`);
+  assert.equal(proved(settled),variant==='correct',variant);
+  __testOnlyResetGoalListCache();assert.equal(proved(getAssignmentKernelSnapshotV2(goal.id)),variant==='correct',variant+' durable');
+ });
+});
 test('retained tag edits require separately admitted exact native property checks across durable restart',()=>{
  for(const variant of ['correct','wrong_owner','wrong_tag','echo','stale','non_native','missing_owner','unsupported_leader'])workspace(()=>{
   const f=retainedTagReadFixtureV2();const {goal,snapshot}=setup('apply');
@@ -114,7 +328,7 @@ test("retained native host rejection crosses real MCP and durable assignment bou
         return m.decorateAssignmentKernelMcpResultV2({content:[{type:'text',text:JSON.stringify(payload)}]},'revit_call_tool');
       });
       process.stdout.write(JSON.stringify(result));
-    `],{cwd:process.cwd(),input:JSON.stringify({fixture,lease,pending,module:new URL('../../../mcp-server/dist/lib/assignmentKernelV2.js',import.meta.url).href}),encoding:"utf8",timeout:15000});
+    `],{cwd:process.cwd(),input:JSON.stringify({fixture,lease,pending,module:pathToFileURL(path.resolve(process.cwd(),'../mcp-server/dist/lib/assignmentKernelV2.js')).href}),encoding:"utf8",timeout:15000});
     assert.equal(producer.status,0,producer.stderr);
     const receipt=JSON.parse(producer.stdout);
     assert.equal(receipt.structuredContent.operation_result_v2.status,"failed_after_dispatch");
@@ -383,6 +597,68 @@ import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kern
 import { operationTargetIdentityAliasesV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
 import { existingMepConnectionFixture } from "./existing_mep_connection.fixtures.js";
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../src/verification/existing_mep_connection_readback_v2.js";
+import {inlineAccessoryFixture} from './inline_accessory_readback.fixtures.js';
+import {committedInlineAccessoryReadbackPlanV2,inlineAccessoryPostconditionSatisfiedV2,inlineAccessoryIncomingPostconditionV2} from '../src/verification/inline_accessory_evidence_v2.js';
+import {retainWorkPlanInspectionV2 as retainInlineInspection} from '../src/assignments/work_plan_inspection.js';
+import {teeTakeoffFixture} from './tee_takeoff_readback.fixtures.js';
+import {committedTeeTakeoffReadbackPlanV2,teeTakeoffPostconditionSatisfiedV2} from '../src/verification/tee_takeoff_evidence_v2.js';
+
+for(const valid of [true,false])test(`tee replacement ${valid?'preserved':'broken connection'} settles and covers deleted logical owners through one independent native read`,()=>workspace(()=>{
+  const f=teeTakeoffFixture(),{goal,snapshot}=setup('apply');
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'replace',provider_turn_id:'replace',capability_id:'revit_call_tool',
+    classified_effect:'apply',arguments:f.input,opened_at:'2026-09-26T03:00:00.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const receipt=envelope(apply.operation_id,apply.binding,f.apply,'applied');
+  Object.assign(receipt.structuredContent.operation_result_v2,{affected_target_identities:f.affected,
+    result_schema_id:'operator-native/POST:/revit/connect-existing-mep-branch/v2',completed_at:'2026-09-26T03:00:01.000Z'});
+  settleAssignmentKernelOperationV2(apply,receipt);prepareCodexAssignmentProgressV2(apply.binding);
+  const state=getAssignmentKernelSnapshotV2(goal.id)!,plan=committedTeeTakeoffReadbackPlanV2(state,state.operations[apply.operation_id]!);
+  assert.ok(plan);assert.deepEqual(plan.body.elementIds,[10,20,30,50,60]);assert.deepEqual(plan.body.replacementRemovedIds,[40,41]);
+  assert.deepEqual(plan.body.preservationScheduleIds,[900]);assert.deepEqual(plan.body.replacementTypeIds,[110,130,140,160]);
+  const read=openAssignmentKernelOperationV2({snapshot:state,controller_request_id:'replace-read',provider_turn_id:'read',capability_id:'revit_call_tool',
+    classified_effect:'read',target_tokens:plan.body.elementIds.map(id=>`id:${id}`),arguments:plan,opened_at:'2026-09-26T03:00:02.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  if(!valid)f.scan.results[4].connectors[0].physicalConnectedTo=[];
+  const response=envelope(read.operation_id,read.binding,f.scan);
+  Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-connectors/v2',completed_at:'2026-09-26T03:00:03.000Z'});
+  const settled=settleAssignmentKernelOperationV2(read,response);
+  assert.equal(settled.observation?.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true),valid);
+  assert.equal(deriveProgressGapsV2(settled.snapshot).some(g=>g.gap_id===`verification:${apply.operation_id}`),!valid);
+  if(valid){assert.equal(teeTakeoffPostconditionSatisfiedV2(settled.snapshot,settled.snapshot.operations[apply.operation_id]!,settled.snapshot.operations[read.operation_id]!.result!,f.scan),true);
+    assert.deepEqual(retainInlineInspection(settled.snapshot,[read.operation_id]).target_ids,[...f.affected].sort());}
+  else assert.throws(()=>retainInlineInspection(settled.snapshot,[read.operation_id]),/incomplete_native_read/);
+}));
+
+for(const valid of [true,false])test(`inline insertion ${valid?'valid':'broken connection'} settles through one independent combined native read`,()=>workspace(()=>{
+  const f=inlineAccessoryFixture(),{goal,snapshot}=setup('apply');
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'inline',provider_turn_id:'inline',capability_id:'revit_call_tool',
+    classified_effect:'apply',arguments:f.input,opened_at:'2026-09-26T03:00:00.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  const receipt=envelope(apply.operation_id,apply.binding,f.apply,'applied');
+  Object.assign(receipt.structuredContent.operation_result_v2,{affected_target_identities:f.affected,
+    result_schema_id:'operator-native/POST:/revit/connect-existing-mep-branch/v2',completed_at:'2026-09-26T03:00:01.000Z'});
+  settleAssignmentKernelOperationV2(apply,receipt);prepareCodexAssignmentProgressV2(apply.binding);
+  const state=getAssignmentKernelSnapshotV2(goal.id)!,plan=committedInlineAccessoryReadbackPlanV2(state,state.operations[apply.operation_id]!);
+  assert.ok(plan);assert.deepEqual(plan.body.elementIds,[10,20,30,40,50]);assert.deepEqual(plan.body.preservationScheduleIds,[60]);
+  const read=openAssignmentKernelOperationV2({snapshot:state,controller_request_id:'inline-read',provider_turn_id:'read',
+    capability_id:'revit_call_tool',classified_effect:'read',target_tokens:plan.body.elementIds.map(id=>`id:${id}`),
+    arguments:plan,opened_at:'2026-09-26T03:00:02.000Z'});
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  if(!valid)f.scan.results[2].connectors[0].physicalConnectedTo=[];
+  const response=envelope(read.operation_id,read.binding,f.scan);
+  Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-connectors/v2',
+    completed_at:'2026-09-26T03:00:03.000Z'});
+  const incoming=getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(inlineAccessoryIncomingPostconditionV2(incoming,incoming.operations[apply.operation_id]!,response.structuredContent.operation_result_v2,f.scan),valid,
+    JSON.stringify({read:incoming.operations[read.operation_id],apply:incoming.operations[apply.operation_id],control:incoming.execution_control}));
+  const settled=settleAssignmentKernelOperationV2(read,response);
+  assert.equal(settled.observation?.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true),valid);
+  assert.equal(deriveProgressGapsV2(settled.snapshot).some(g=>g.gap_id===`verification:${apply.operation_id}`),!valid);
+  if(valid){
+    assert.equal(inlineAccessoryPostconditionSatisfiedV2(settled.snapshot,settled.snapshot.operations[apply.operation_id]!,settled.snapshot.operations[read.operation_id]!.result!,f.scan),true);
+    assert.deepEqual(retainInlineInspection(settled.snapshot,[read.operation_id]).target_ids,[...f.affected].sort());
+  }else assert.throws(()=>retainInlineInspection(settled.snapshot,[read.operation_id]),/incomplete_native_read/);
+}));
 
 for (const mode of ["takeoff_fitting", "air_terminal_on_duct"] as const) {
   for (const valid of [true, false]) test(`existing branch ${mode} ${valid ? "valid" : "missing edge"} requires independent physical edges at controller settlement`, () => workspace(() => {
@@ -467,6 +743,54 @@ function setup(effect: "read" | "preview" | "apply" = "read", objectiveOverride?
   createAssignmentKernelForGoalV2({ goal, run_id: "run-execution" });
   return { goal, snapshot: getAssignmentKernelSnapshotV2(goal.id)! };
 }
+
+test('a repeated native inspection is refreshed only after a later committed edit to its declared target',()=>workspace(()=>{
+ const {goal,snapshot}=setup('apply');
+ const binding=snapshot.current_binding;
+ manageAssignmentWorkPlan({binding,action:'declare',declaration:{assumptions:[],items:[
+  {item_id:'edit',description:'Update the selected tag.',source_basis:'Selected equipment tag.'},
+  {item_id:'inspect',kind:'inspection',depends_on:['edit'],description:'Inspect the changed tag.',source_basis:'Requested result check.'}
+ ]}});
+ const state=()=>getAssignmentKernelSnapshotV2(goal.id)!;
+ const input={method:'POST',path:'/revit/get-element-summary',body:{elementIds:[7],includeTagReferences:true}};
+ const read=(id:string)=>openAssignmentKernelOperationV2({snapshot:state(),controller_request_id:id,provider_turn_id:id,
+  capability_id:'revit_call_tool',classified_effect:'read',target_tokens:['id:7'],arguments:input});
+ const settleRead=(lease:any,typeId:number)=>{markAssignmentKernelOperationDispatchStartedV2(lease);
+  const e=envelope(lease.operation_id,lease.binding,{result:[{id:7,found:true,className:'IndependentTag',typeId}]});
+  e.structuredContent.operation_result_v2.result_schema_id='operator-native/POST:/revit/get-element-summary/v2';
+  settleAssignmentKernelOperationV2(lease,e);
+ };
+ const prior=read('before');settleRead(prior,11);
+ assert.throws(()=>read('blind-before'),/equivalent/);
+ const edit=openAssignmentKernelOperationV2({snapshot:state(),controller_request_id:'type-change',provider_turn_id:'edit',
+  capability_id:'revit_call_tool',classified_effect:'apply',target_tokens:['id:7'],arguments:{method:'POST',path:'/revit/change-element-type',body:{elementIds:[7],newTypeId:22,dryRun:false}},opened_at:'2026-10-20T00:00:00.000Z'});
+ markAssignmentKernelOperationDispatchStartedV2(edit);
+ const applied=envelope(edit.operation_id,edit.binding,{status:'Applied',changedCount:1},'applied');
+ Object.assign(applied.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/change-element-type/v2',affected_target_identities:['element_id:7'],completed_at:'2026-10-20T00:00:01.000Z'});
+ settleAssignmentKernelOperationV2(edit,applied);__testOnlyResetGoalListCache();
+ const verification=openAssignmentKernelOperationV2({snapshot:state(),controller_request_id:'type-read',provider_turn_id:'verify',
+  capability_id:'revit_call_tool',classified_effect:'read',target_tokens:['id:7'],arguments:{method:'POST',path:'/revit/get-parameters',body:{elementIds:[7],names:['Type'],limit:100}},opened_at:'2026-10-20T00:00:02.000Z'});
+ markAssignmentKernelOperationDispatchStartedV2(verification);
+ const checked=envelope(verification.operation_id,verification.binding,{items:[{id:7,uniqueId:'tag-seven',found:true,parameters:{Type:'22'},parameterDetails:[{parameterId:-1002050,storageType:'ElementId',name:'Type',value:'22'}]}]});
+ Object.assign(checked.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-parameters/v2',completed_at:'2026-10-20T00:00:03.000Z'});
+ settleAssignmentKernelOperationV2(verification,checked);__testOnlyResetGoalListCache();
+ assert.equal(appliedOperationHasVerifiedPostconditionV2(state(),edit.operation_id),true,'The repeated read is post-edit inspection, not a substitute for automatic verification.');
+ const journal=new AssignmentJournalV2(getGoal(goal.id)!.assignment_kernel_v2!.events),current=journal.snapshot();
+ const {result:ignoredResult,admitted_assignment_version:ignoredAdmitted,settled_assignment_version:ignoredSettled,...base}=current.operations[prior.operation_id]!;
+ const forged:AssignmentEventV2={schema:'revit-operator.assignment-event/v2',event_id:'forged-refresh',assignment_id:goal.id,assignment_version:current.assignment_version+1,
+  binding:current.current_binding,actor:'test',occurred_at:new Date().toISOString(),event_type:'operation_admitted',operation:{...base,operation_id:'forged-refresh',
+   dispatch_state:'not_dispatched',settlement_state:'open',persistent_effect:'none',observation_ids:[],verification_operation_ids:[],
+   retry_of_operation_id:prior.operation_id,retry_basis:'committed_target_read',retry_after_operation_id:prior.operation_id}};
+ assert.throws(()=>journal.append(forged),{code:'operation_committed_read_refresh_invalid'},'Reducer independently rejects a caller-supplied false change basis.');
+ const refreshed=read('after');
+ const admitted=state().operations[refreshed.operation_id]!;
+ assert.equal(admitted.retry_basis,'committed_target_read');assert.equal(admitted.retry_of_operation_id,prior.operation_id);
+ assert.equal(admitted.retry_after_operation_id,edit.operation_id);assert.equal(admitted.requested_effect,'read');
+ settleRead(refreshed,22);__testOnlyResetGoalListCache();
+ assert.throws(()=>read('blind-after'),/equivalent/);
+ assert.equal(Object.values(state().operations).filter(o=>o.requested_effect==='apply').length,1,'Refresh never replays an edit.');
+ assert.equal(state().outcome,'active','A refreshed supporting read does not complete the task.');
+}));
 
 function hash(value: unknown): string {
   return createHash("sha256").update(canonicalJsonV2(value), "utf8").digest("hex");
@@ -781,10 +1105,72 @@ test("C43 inspection checklist closes from fresh native coverage after both edit
   assert.equal(Object.values(final.operations).filter(op => op.requested_effect === "apply").length, 2);
 }));
 
+test("ordinary element and loaded-family inspections close a declared plan through retained native evidence", () => {
+  for (const fixture of [summaryInspectionFixture(), familyInspectionFixture()]) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const binding = snapshot.current_binding;
+    manageAssignmentWorkPlan({ binding, action: "declare", declaration: { assumptions: [], items: [
+      { item_id: "edit", description: "Update the selected equipment tag.", source_basis: "User selected tag." },
+      { item_id: "inspect", kind: "inspection", depends_on: ["edit"], description: "Inspect the changed tag.", source_basis: "User requested result check." }
+    ] } });
+    const state = () => getAssignmentKernelSnapshotV2(goal.id)!;
+    const apply = openAssignmentKernelOperationV2({ snapshot: state(), controller_request_id: "ordinary-edit", provider_turn_id: "edit",
+      capability_id: "element.update", classified_effect: "apply", target_tokens: ["id:42"], arguments: { value: "new" } });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const edited = envelope(apply.operation_id, binding, { updated: true }, "applied");
+    edited.structuredContent.operation_result_v2.affected_target_identities = ["element_id:42"];
+    settleAssignmentKernelOperationV2(apply, edited);
+    advanceAssignmentKernelProgressV2({ binding });
+    const verify = openAssignmentKernelOperationV2({ snapshot: state(), controller_request_id: "ordinary-verify", provider_turn_id: "verify",
+      capability_id: "element.read", classified_effect: "read", target_tokens: ["id:42"], arguments: { target_id: "42" } });
+    markAssignmentKernelOperationDispatchStartedV2(verify);
+    settleAssignmentKernelOperationV2(verify, envelope(verify.operation_id, binding, { elementId: 42, value: "new" }));
+    advanceAssignmentKernelProgressV2({ binding });
+    manageAssignmentWorkPlan({ binding, action: "complete", item_id: "edit", operation_ids: [apply.operation_id] });
+    const read = openAssignmentKernelOperationV2({ snapshot: state(), controller_request_id: "ordinary-inspection", provider_turn_id: "inspection",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:42"], arguments: fixture.input });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const observed = envelope(read.operation_id, binding, fixture.payload);
+    observed.structuredContent.operation_result_v2.result_schema_id = `operator-native/POST:${fixture.input.path}/v2`;
+    settleAssignmentKernelOperationV2(read, observed);
+    const retained = retainWorkPlanInspectionV2(state(), [read.operation_id]);
+    assert.deepEqual(retained.target_ids, ["element_id:42"], "child label/type IDs never become project target coverage");
+    for (const stale of ["before-declaration", "later-edit"] as const) {
+      const changed: any = structuredClone(state());
+      if (stale === "before-declaration") changed.operations[read.operation_id].opened_at = changed.work_plan.items[1].declared_at;
+      else changed.operations.later = { ...changed.operations[apply.operation_id], operation_id: "later",
+        result: { ...changed.operations[apply.operation_id].result, completed_at: new Date(Date.parse(changed.operations[read.operation_id].opened_at) + 1).toISOString() } };
+      assert.throws(() => completeWorkPlanItemV2(changed, "inspect", [read.operation_id], new Date().toISOString(), retained), { code: "work_plan_inspection_unverified" });
+    }
+    assert.throws(() => completeWorkPlanItemV2(state(), "inspect", [read.operation_id], new Date().toISOString(),
+      { ...retained, target_ids: ["element_id:201"] }), { code: "work_plan_inspection_unverified" }, "child labels cannot stand in for the project tag");
+    const closed = manageAssignmentWorkPlan({ binding, action: "complete", item_id: "inspect", operation_ids: [read.operation_id] });
+    assert.equal(closed.outcome, "complete");
+    __testOnlyResetGoalListCache();
+    assert.equal(state().terminal, true, "the persisted journal agrees after restart");
+    assert.equal(Object.values(state().operations).filter(o => o.requested_effect === "apply").length, 1);
+    for (const mutate of [
+      (s: any) => s.operations[read.operation_id].result.authority = "model",
+      (s: any) => s.operations[read.operation_id].result.status = "failed_after_dispatch",
+      (s: any) => s.operations[read.operation_id].binding.generation++,
+      (s: any) => s.operations[read.operation_id].result.binding.session_id = "foreign",
+      (s: any) => s.operations[read.operation_id].result.result_schema_id = "operator-native/POST:/revit/other/v2",
+      (s: any) => s.operations[read.operation_id].input.body = { elementIds: [43], elementId: 43 },
+      (s: any) => s.operations[read.operation_id].persistent_effect = "unknown",
+      (s: any) => s.operations[read.operation_id].observation_ids = [],
+      (s: any) => s.observations[retained.observation_ids[0]].binding.document_fingerprint = "other-document",
+      (s: any) => s.observations[retained.observation_ids[0]].raw_payload_hash = "wrong"
+    ]) {
+      const changed = structuredClone(state()); mutate(changed);
+      assert.throws(() => retainWorkPlanInspectionV2(changed, [read.operation_id]), /work_plan_inspection/);
+    }
+  });
+});
+
 test("scope planning applies to broad work without adding a planning round trip to a single edit", () => {
-  for (const prompt of ["Redraw all ductwork in the entire work area.", "Place supply devices in every room.", "Reconstruct both units."])
+  for (const prompt of ["Redraw all ductwork in the entire work area.", "Place supply devices in every room.", "Reconstruct both units.", "Adjust the equipment tags on E101 so all the new equipment tags are underlined. Check the result. Do not save the model.", "Update every circuit wire size.", "Change the service parameter on all pumps.", "Resize each diffuser."])
     assert.equal(requiresDurableWorkPlan(prompt), true, prompt);
-  for (const prompt of ["Move this duct two feet.", "Create one HRU in room 403.", "Can you see all the rooms?"])
+  for (const prompt of ["Move this duct two feet.", "Create one HRU in room 403.", "Can you see all the rooms?", "Underline this one equipment tag.", "Read every circuit wire size."])
     assert.equal(requiresDurableWorkPlan(prompt), false, prompt);
 });
 

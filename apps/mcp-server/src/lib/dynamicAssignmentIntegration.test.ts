@@ -35,6 +35,22 @@ test("trusted generated report crosses the MCP boundary as bound task evidence",
   assert.deepEqual(output.structuredContent.observation.semantic_facts, [{ fact_id: "task.result_available", fact_class: "domain", value: true }]);
 });
 
+test("compact successful read text preserves the full canonical observation and its digest", async () => {
+  const payload = result();
+  payload.evidence.snapshotReceipt = JSON.stringify({ document: { ProjectFingerprint: "sha256:" + binding.document_fingerprint },
+    elements: Array.from({ length: 2000 }, (_, i) => ({ id: i, name: "Office", detail: "x".repeat(500) })) });
+  const output: any = await runWithAssignmentKernelV2(meta(), async () => {
+    beginAssignmentKernelDynamicDispatchV2(); recordAssignmentKernelDynamicResultV2(payload);
+    return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(presentDynamicProgramResult(payload)) }] }, capability);
+  });
+  assert.ok(Buffer.byteLength(output.content[0].text) < 3000);
+  const observation = output.structuredContent.observation;
+  assert.equal(observation.raw_payload.evidence.snapshotReceipt, payload.evidence.snapshotReceipt);
+  assert.equal(output.structuredContent.operation_result_v2.raw_payload_hash, payloadDigestV2(payload).digest);
+  assert.deepEqual(observation.raw_payload.report, payload.report);
+  assert.equal(output.structuredContent.operation_result_v2.persistent_effect, "none");
+});
+
 test("generated support read retains its successful result without attaching task facts to control evidence", async () => {
   const metadata: any = meta();
   metadata[ASSIGNMENT_KERNEL_V2_META_KEY].fulfillment_role = "supporting_control";

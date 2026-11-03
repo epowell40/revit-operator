@@ -291,10 +291,7 @@ namespace RevitBridge.Logic.Handlers
 
         public static (int widthPx, int heightPx) ReadImageSize(string path)
         {
-            using (var img = Image.FromFile(path))
-            {
-                return (img.Width, img.Height);
-            }
+            return ExportedImageMetadata.ReadDimensions(path);
         }
 
         public static string EnsureDefaultSelectionCaptureFolder(string? folder)

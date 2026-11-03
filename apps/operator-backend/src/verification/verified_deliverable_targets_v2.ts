@@ -2,17 +2,23 @@ import type {AssignmentSnapshotV2,OperationV2,OperationResultV2} from "../domain
 import {deletionRequestV2} from "./deletion_contract_v2.js";
 import {excelTableImportDeliverableTargetsV2} from "./excel_table_import_v2.js";
 import {vectorDetailImportDeliverableTargetsV2} from "./vector_detail_import_v2.js";
+import {settledVectorStrokeCadImportV2} from './vector_stroke_cad_readback_v2.js';
+import {committedNativeAnnotationDeliverableV2} from './native_annotation_postcondition_v2.js';
 
 /** Called only after the independent native postcondition has passed.
  * Platform owners/collateral are not principal work-credit targets. */
 export function verifiedDeliverableTargetGroupsV2(snapshot:AssignmentSnapshotV2,verificationSubject:OperationV2|null|undefined,result:OperationResultV2):string[][] {
  const groups:string[][]=[];
+    if(verificationSubject?.request_identity?.path==='/revit/link-cad'){
+      const cad=settledVectorStrokeCadImportV2(snapshot,verificationSubject);
+      if(cad)groups.push([`element_id:${cad.applied.elementId}`]);
+    }
     // The native sheet comparator checked every requested placement. The
     // read's containing sheet is not itself the edited deliverable. Keep
     // this platform mapping here; the generic domain consumes only the fact.
     const deletion=verificationSubject&&deletionRequestV2(verificationSubject.input);
-    if(verificationSubject&&['/revit/import-excel-output','/revit/import-vector-detail'].includes(verificationSubject.request_identity?.path??'')){
-      const deliverables=verificationSubject.request_identity?.path==='/revit/import-vector-detail'
+    if(verificationSubject&&['/revit/import-excel-output','/revit/import-vector-detail','/revit/import-vector-annotations'].includes(verificationSubject.request_identity?.path??'')){
+      const deliverables=['/revit/import-vector-detail','/revit/import-vector-annotations'].includes(verificationSubject.request_identity?.path??'')
         ?vectorDetailImportDeliverableTargetsV2(snapshot,verificationSubject):excelTableImportDeliverableTargetsV2(snapshot,verificationSubject);
       if(deliverables.length!==1)throw new Error('verified_deliverable_targets_invalid');
       groups.push(deliverables);
@@ -22,12 +28,9 @@ export function verifiedDeliverableTargetGroupsV2(snapshot:AssignmentSnapshotV2,
       // Matching succeeded against retained authoritative commit evidence, not
       // this read's contextual sheet/view identity. A single created/moved
       // annotation is the deliverable; its owner is never continuation credit.
-      const ids = verificationSubject.result?.affected_target_identities ?? [];
-      const requested = verificationSubject.input.body as Record<string, unknown>;
-      const contextual = new Set([`element_id:${requested?.sheetId}`, `element_id:${requested?.viewId}`]);
-      const deliverables = ids.filter(id => !contextual.has(id));
-      if (deliverables.length !== 1) throw new Error("verified_deliverable_targets_invalid");
-      groups.push(deliverables);
+      const id=committedNativeAnnotationDeliverableV2(snapshot,verificationSubject);
+      if (id===null) throw new Error("verified_deliverable_targets_invalid");
+      groups.push([`element_id:${id}`]);
     }
     if (verificationSubject?.request_identity?.path === "/revit/move-elements"
         && result.request_identity?.path === "/revit/sheets") {

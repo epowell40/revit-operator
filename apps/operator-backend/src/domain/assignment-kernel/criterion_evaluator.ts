@@ -5,6 +5,7 @@ import type { ObservationIdV2 } from "./identity.js";
 import { semanticFactIdentityV2, type SemanticFactV2 } from "./observation.js";
 import { observationAdmissibilityForCriterionV2 } from "./semantic_admissibility.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { verifiedSavedPartialV2 } from "./verified_saved_partial.js";
 
 function comparisonIdentity(comparison: Readonly<{ fact_id: string; dimensions?: Readonly<Record<string, string | number | boolean | null>>; target_id?: string }>): string {
   return semanticFactIdentityV2({ fact_id: comparison.fact_id, value: null, dimensions: comparison.dimensions, target_id: comparison.target_id });
@@ -62,7 +63,10 @@ export function evaluateCriterionV2(input: Readonly<{
     });
   }
 
-  const status = contradiction ? "uncertain" : requiredFactsPresent && desiredStateMatches ? "pass" : "uncertain";
+  const partial = !contradiction && requiredFactsPresent && desiredStateMatches && basis === "observation"
+    && criterion.required && criterion.semantic_fact_requirements.length === 1
+    && criterion.semantic_fact_requirements[0] === "task.result_available" && verifiedSavedPartialV2(input.snapshot);
+  const status = contradiction ? "uncertain" : partial ? "partial" : requiredFactsPresent && desiredStateMatches ? "pass" : "uncertain";
   return {
     criterion_id: criterion.criterion_id,
     status,
@@ -80,6 +84,7 @@ export function evaluateCriterionV2(input: Readonly<{
           ? "One or more required semantic facts are absent."
           : !desiredStateMatches
             ? "Observed state does not establish the authenticated desired state."
+            : partial ? "The completed subset has native verification, current inspection and a verified saved artifact. Explicitly deferred scope remains unfinished; this is partial delivery, not completion of that scope."
             : "All required semantic facts are authoritatively supported.",
     evaluated_at: input.evaluated_at
   };
